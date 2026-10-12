@@ -1,0 +1,86 @@
+name: iOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Apple only builds iOS apps on macOS with Xcode, so this runs on GitHub's Macs (no own Mac needed).
+    runs-on: macos-latest
+    env:
+      # The app talks to the live Worker API (the same accounts and stations as the web app).
+      NEXT_PUBLIC_BACKEND: cloudflare
+      NEXT_PUBLIC_API_URL: https://app.poinderecharge.com
+      IOS_BUILD_NUMBER: ${{ github.run_number }}
+      IOS_VERSION: 1.0.${{ github.run_number }}
+      HAS_APPLE_KEY: ${{ secrets.APP_STORE_CONNECT_KEY_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync ios
+
+      # Checks that the app compiles, without an Apple account (simulator build, unsigned).
+      - name: Build for the simulator
+        run: |
+          xcodebuild -version
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/derived" CODE_SIGNING_ALLOWED=NO build
+
+      # Signed build uploaded to App Store Connect (TestFlight), only once the API key is stored as GitHub secrets.
+      # Xcode creates the certificate and provisioning profile itself (cloud signing), so the key needs the Admin role.
+      - name: Build and upload to App Store Connect
+        if: ${{ env.HAS_APPLE_KEY == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY_BASE64 }}
+        run: |
+          # A store build must talk to the real backend, never ship the demo (it offers staff/admin logins).
+          if [ "$NEXT_PUBLIC_BACKEND" != "cloudflare" ]; then
+            echo "::error::Store builds must use the Cloudflare backend."
+            exit 1
+          fi
+          KEY="$RUNNER_TEMP/AuthKey_$APP_STORE_CONNECT_KEY_ID.p8"
+          echo "$APP_STORE_CONNECT_KEY_BASE64" | base64 -d > "$KEY"
+          AUTH=(-allowProvisioningUpdates
+            -authenticationKeyPath "$KEY"
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID"
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID")
+
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" MARKETING_VERSION="$IOS_VERSION" \
+            "${AUTH[@]}" archive
+
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+
+          # destination=upload sends the build straight to App Store Connect; it shows up in TestFlight after processing.
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export" \
+            "${AUTH[@]}"

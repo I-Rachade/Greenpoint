@@ -42,6 +42,8 @@ export const viewport: Viewport = {
   themeColor: "#1DB954",
   width: "device-width",
   initialScale: 1,
+  // Edge to edge in the iOS/Android app; globals.css keeps content clear of the notch and home bar.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
