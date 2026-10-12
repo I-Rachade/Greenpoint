@@ -15,6 +15,8 @@ const eslintConfig = defineConfig([
     // Native app projects (Capacitor), including the web files copied into them.
     "android/**",
     "ios/**",
+    // Local Cloudflare Worker state and bundles.
+    ".wrangler/**",
   ]),
 ]);
 

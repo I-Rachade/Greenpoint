@@ -12,9 +12,9 @@ jobs:
     permissions:
       contents: write # publish the test APK as a release download
     env:
-      # Without these the app runs in demo mode (sample stations, code 123456).
-      NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      # The app talks to the live Worker API (the same accounts and stations as the web app).
+      NEXT_PUBLIC_BACKEND: cloudflare
+      NEXT_PUBLIC_API_URL: https://app.poinderecharge.com
       ANDROID_VERSION_CODE: ${{ github.run_number }}
       ANDROID_VERSION_NAME: 1.0.${{ github.run_number }}
       HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
@@ -47,11 +47,14 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ github.token }}
+          NOTES: Neueste Test-Version der Android-App, verbunden mit app.poinderecharge.com. Wird bei jedem Build ersetzt.
         run: |
           cp android/app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/poinderecharge-test.apk"
           if ! gh release view android-test --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create android-test --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
-              --title "Android Test-APK" --notes "Neueste Test-Version der Android-App (Demo-Modus, Code 123456). Wird bei jedem Build ersetzt."
+              --title "Android Test-APK" --notes "$NOTES"
+          else
+            gh release edit android-test --repo "$GITHUB_REPOSITORY" --notes "$NOTES"
           fi
           gh release upload android-test "$RUNNER_TEMP/poinderecharge-test.apk" --repo "$GITHUB_REPOSITORY" --clobber
 
@@ -66,8 +69,8 @@ jobs:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           # A store build must talk to the real backend, never ship the demo (it offers staff/admin logins).
-          if [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] || [ -z "$NEXT_PUBLIC_SUPABASE_ANON_KEY" ]; then
-            echo "::error::Set the NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY repository variables before building for Google Play."
+          if [ "$NEXT_PUBLIC_BACKEND" != "cloudflare" ]; then
+            echo "::error::Store builds must use the Cloudflare backend."
             exit 1
           fi
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"

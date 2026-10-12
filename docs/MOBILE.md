@@ -32,7 +32,17 @@ npx @capacitor/assets@3 generate --android --assetPath resources
 
 ## Test-APK aus GitHub
 
-Direkter Link fürs Handy: https://github.com/I-Rachade/Greenpoint/releases/download/android-test/poinderecharge-test.apk (Release `android-test`, wird bei jedem Build ersetzt). Außerdem hängt jeder Lauf von **Actions > Android** `poinderecharge-debug-apk` an. Herunterladen, entpacken, die APK aufs Handy kopieren und öffnen (Installation aus unbekannten Quellen erlauben). Ohne die Repository-Variablen `NEXT_PUBLIC_SUPABASE_URL` und `NEXT_PUBLIC_SUPABASE_ANON_KEY` (Settings > Secrets and variables > Actions > Variables) läuft sie im Demo-Modus.
+Direkter Link fürs Handy: https://github.com/I-Rachade/Greenpoint/releases/download/android-test/poinderecharge-test.apk (Release `android-test`, wird bei jedem Build ersetzt). Außerdem hängt jeder Lauf von **Actions > Android** `poinderecharge-debug-apk` an. Herunterladen, entpacken, die APK aufs Handy kopieren und öffnen (Installation aus unbekannten Quellen erlauben).
+
+## Backend und Login
+
+Die App spricht mit derselben Worker-API wie die Webapp (`NEXT_PUBLIC_BACKEND=cloudflare`, `NEXT_PUBLIC_API_URL=https://app.poinderecharge.com`, gesetzt im Workflow). In der App ist der Ursprung `https://localhost`; der Worker erlaubt ihn per CORS (`worker/http.ts`), die Sitzung läuft über den Bearer-Token, nicht über Cookies. Anmeldung wie im Web: Registrierung mit SMS-Code, danach Telefonnummer und PIN.
+
+Lokal ohne diese Variablen gebaut (`npm run android:sync`) läuft die App im Demo-Modus. Für einen lokalen Build gegen die echte API:
+
+```bash
+NEXT_PUBLIC_BACKEND=cloudflare NEXT_PUBLIC_API_URL=https://app.poinderecharge.com npm run android:sync
+```
 
 ## Google Play
 
@@ -42,7 +52,7 @@ Direkter Link fürs Handy: https://github.com/I-Rachade/Greenpoint/releases/down
 
 ## Noch offen
 
-- Push-Benachrichtigungen (Firebase, Supabase-Tabelle für Geräte-Tokens, Versand per Edge Function)
+- Push-Benachrichtigungen (Firebase, D1-Tabelle für Geräte-Tokens, Versand aus dem Worker)
 - App-Links mit Verifizierung (`.well-known/assetlinks.json`, braucht den Signatur-Fingerabdruck aus der Play Console)
 - Konto löschen in der App, Seite `/privacy`
 - iOS (`npx cap add ios`, Build über Codemagic), sobald das Apple-Konto da ist
