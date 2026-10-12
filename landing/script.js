@@ -12,7 +12,7 @@
     "cta.mobile": "Mobile apps",
     "hero.eyebrow": "Lomé, Togo",
     "hero.title": "The nearest charging station, live.",
-    "hero.lead": "pointderecharge shows you on the map where to charge or swap the battery of your electric moped, tuk-tuk, bike or scooter, with free spots and full batteries in real time.",
+    "hero.lead": "poinderecharge shows you on the map where to charge or swap the battery of your electric moped, tuk-tuk, bike or scooter, with free spots and full batteries in real time.",
     "hero.p1": "Free",
     "hero.p2": "No install needed",
     "hero.p3": "French and English",
@@ -25,7 +25,7 @@
     "how.title": "How it works",
     "how.lead": "Three steps, and you're back on the road with a full battery.",
     "how.s1t": "Open the map",
-    "how.s1": "pointderecharge finds your location and shows the stations around you, nearest first.",
+    "how.s1": "poinderecharge finds your location and shows the stations around you, nearest first.",
     "how.s2t": "See availability live",
     "how.s2": "Free charging spots, full batteries for swapping, opening hours and prices, updated in real time.",
     "how.s3t": "Book and ride",
@@ -53,9 +53,9 @@
     "gp.p2": "Free charges with your points",
     "gp.p3": "Bonuses for regular riders",
     "op.title": "Do you run a station?",
-    "op.lead": "List your charging or swap station on pointderecharge. Riders find you on the map, and you update your available batteries in one tap.",
+    "op.lead": "List your charging or swap station on poinderecharge. Riders find you on the map, and you update your available batteries in one tap.",
     "op.cta": "Contact us",
-    "dl.title": "pointderecharge on your phone",
+    "dl.title": "poinderecharge on your phone",
     "dl.lead": "The Android and iPhone apps are coming soon. Meanwhile the web app already works in your browser and can be added to your home screen.",
     "dl.soon": "Coming soon on",
     "dl.get": "Get it on",
@@ -66,16 +66,16 @@
 
   var meta = {
     fr: {
-      title: "pointderecharge – Recharge et échange de batterie à Lomé",
+      title: "poinderecharge – Recharge et échange de batterie à Lomé",
       desc: document.querySelector('meta[name="description"]').getAttribute("content")
     },
     en: {
-      title: "pointderecharge – Charging and battery swap in Lomé",
-      desc: "pointderecharge shows the nearest charging or battery swap station for your electric moped, tuk-tuk, bike or scooter in Lomé, live."
+      title: "poinderecharge – Charging and battery swap in Lomé",
+      desc: "poinderecharge shows the nearest charging or battery swap station for your electric moped, tuk-tuk, bike or scooter in Lomé, live."
     }
   };
 
-  var links = window.POINTDERECHARGE_LINKS || {};
+  var links = window.POINDERECHARGE_LINKS || {};
   var nodes = document.querySelectorAll("[data-i18n]");
   var fr = {};
   nodes.forEach(function (el) { fr[el.getAttribute("data-i18n")] = el.textContent; });

@@ -1,4 +1,4 @@
-/* pointderecharge landing page. Colours and fonts follow design/tokens.css. */
+/* poinderecharge landing page. Colours and fonts follow design/tokens.css. */
 :root {
   --font-heading: Poppins, "Segoe UI", Roboto, sans-serif;
   --font-body: Inter, "Segoe UI", Roboto, sans-serif;
@@ -232,7 +232,7 @@ p { margin: 0 0 1em; }
 
 [hidden] { display: none !important; }
 
-/* pointderecharge lettering (assets/schriftzug.svg, 656 x 130) */
+/* poinderecharge lettering (assets/schriftzug.svg, 656 x 130) */
 .brand { display: inline-flex; align-items: center; text-decoration: none; }
 .brand img { height: 38px; width: auto; }
 .ph-top img { height: 24px; width: auto; }
