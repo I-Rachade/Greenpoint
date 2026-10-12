@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { DemoBackend, DEMO_CODE } from "@/lib/backend";
+import { DemoBackend, DEMO_CODE, HOSTED_DEMO } from "@/lib/backend";
 import { format } from "@/lib/i18n/format";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
@@ -23,7 +23,9 @@ export function Header() {
     <header className="z-20 border-b border-black/10 bg-white dark:border-white/10 dark:bg-zinc-950">
       {backend.mode === "demo" && (
         <div className="flex flex-wrap items-center justify-center gap-x-3 bg-amber-100 px-4 py-1 text-center text-xs text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">
-          <span>{t.demo.banner}</span>
+          <span className={HOSTED_DEMO ? "font-semibold" : undefined}>
+            {HOSTED_DEMO ? t.demo.hostedBanner : t.demo.banner}
+          </span>
           <span className="font-mono">{format(t.demo.codeHint, { code: DEMO_CODE })}</span>
           <button
             type="button"

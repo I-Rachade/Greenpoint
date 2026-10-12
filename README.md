@@ -57,7 +57,7 @@ src/
     backend/           Datenzugriff: Demo (Browser) und Supabase (Produktion)
 supabase/
   migrations/          Datenbank-Schema (SQL), in Reihenfolge ausführen
-  seed.sql             Beispielstationen
+  seed.sql             Beispielstationen, nur für Test-Projekte
 assets/logo/, design/  Logo, Farben und Schriften
 docs/                  Architektur und Deployment
 ```

@@ -4,11 +4,13 @@ import type { Availability } from "@/lib/availability";
 import { useI18n } from "./i18n-provider";
 
 // Status colours from the design rules: green available, orange low, red closed.
+// Light grey: nobody has reported for a while, so the numbers may be out of date.
 export const AVAILABILITY_COLORS: Record<Availability, string> = {
   available: "#1DB954",
   limited: "#F59E0B",
   full: "#5B6B63",
   closed: "#D93B3B",
+  unknown: "#D4D4D8",
 };
 
 /** Text colour with enough contrast on each status colour. */
@@ -17,6 +19,7 @@ const TEXT_COLORS: Record<Availability, string> = {
   limited: "#0B3B2E",
   full: "#FFFFFF",
   closed: "#FFFFFF",
+  unknown: "#27272A",
 };
 
 export function AvailabilityBadge({ value }: { value: Availability }) {

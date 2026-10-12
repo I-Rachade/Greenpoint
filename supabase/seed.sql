@@ -1,4 +1,5 @@
--- Example data for Lomé. Replace with the real stations before going live.
+-- Example data for Lomé, for TEST PROJECTS ONLY. Never run this in the live database:
+-- the stations are made up but sit at real places in Lomé, so riders would ride there.
 -- Coordinates are approximate placeholders.
 
 insert into public.operators (id, name, is_own, contact_phone) values

@@ -26,12 +26,11 @@ describe("normalizeTogoPhone", () => {
     ["+228 90 12 34 56", "+22890123456"],
     ["0022890123456", "+22890123456"],
     ["22890123456", "+22890123456"],
-    ["+4915112345678", "+4915112345678"],
   ])("accepts %s", (input, expected) => {
     expect(normalizeTogoPhone(input)).toBe(expected);
   });
 
-  it.each(["", "1234", "9012345678", "abc"])("rejects %s", (input) => {
+  it.each(["", "1234", "9012345678", "abc", "+4915112345678", "0033612345678"])("rejects %s", (input) => {
     expect(normalizeTogoPhone(input)).toBeNull();
   });
 });
