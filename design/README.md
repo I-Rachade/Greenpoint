@@ -1,6 +1,6 @@
 # pointderecharge Design
 
-- **Schrift:** Poppins (Titel, Buttons) und Inter (Texte, Zahlen), beide von Google Fonts.
+- **Schrift (festgelegt):** Poppins (Titel, Buttons, Logo-Schriftzug) und Inter (Texte, Zahlen), beide von Google Fonts.
 - **Farben:** siehe `farbpalette.png`, als Werte in `tokens.json` und `tokens.css`.
 - **Logo:** siehe `assets/logo/`.
 
