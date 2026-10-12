@@ -1,10 +1,10 @@
-export type VehicleType = "scooter" | "tuktuk" | "ebike" | "moped";
+export type VehicleType = "scooter" | "tricycle" | "ebike" | "moped";
 export type StationKind = "charging" | "swap" | "both";
 export type UserRole = "rider" | "operator" | "fleet_manager" | "admin";
 export type ReservationType = "battery" | "slot";
 export type ReservationStatus = "active" | "completed" | "cancelled" | "expired";
 
-export const VEHICLE_TYPES: VehicleType[] = ["scooter", "tuktuk", "ebike", "moped"];
+export const VEHICLE_TYPES: VehicleType[] = ["scooter", "tricycle", "ebike", "moped"];
 
 export interface Station {
   id: string;

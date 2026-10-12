@@ -3,7 +3,7 @@
 
 create type public.user_role as enum ('rider', 'operator', 'fleet_manager', 'admin');
 create type public.station_kind as enum ('charging', 'swap', 'both');
-create type public.vehicle_type as enum ('scooter', 'tuktuk', 'ebike', 'moped');
+create type public.vehicle_type as enum ('scooter', 'tricycle', 'ebike', 'moped');
 create type public.reservation_type as enum ('battery', 'slot');
 create type public.reservation_status as enum ('active', 'completed', 'cancelled', 'expired');
 

@@ -14,7 +14,7 @@ import {
 import { BackendError, type Backend, type StatusPatch } from "./backend";
 import { DEMO_OPERATORS, DEMO_STATIONS, initialDemoStatus } from "./demo-data";
 
-const STORAGE_KEY = "poinderecharge-demo-v1";
+const STORAGE_KEY = "poinderecharge-demo-v2";
 /** Every demo login accepts this code. */
 export const DEMO_CODE = "123456";
 
