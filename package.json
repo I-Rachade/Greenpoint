@@ -27,7 +27,6 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
-    "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^8.5.3",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^20",

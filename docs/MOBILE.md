@@ -27,7 +27,7 @@ npm run android:open   # öffnet das Projekt in Android Studio, dort ▶ Run
 Icons und Startbildschirm neu erzeugen, nachdem `resources/` geändert wurde:
 
 ```bash
-npx capacitor-assets generate --android --assetPath resources
+npx @capacitor/assets@3 generate --android --assetPath resources
 ```
 
 ## Test-APK aus GitHub
