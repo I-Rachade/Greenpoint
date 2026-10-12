@@ -50,6 +50,7 @@ interface ReservationRow {
   status: Reservation["status"];
   created_at: string;
   expires_at: string;
+  cancel_reason?: string | null;
 }
 
 interface HoldRow {
@@ -68,6 +69,13 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "station_closed",
   "service_not_offered",
   "none_available",
+  "daily_limit",
+  "cooldown",
+  "wrong_pickup_code",
+  "own_reservation",
+  "reservation_not_active",
+  "phone_not_allowed",
+  "forbidden",
 ];
 
 function fail(error: { message: string; code?: string } | null): never {
@@ -75,6 +83,8 @@ function fail(error: { message: string; code?: string } | null): never {
   const code = KNOWN_CODES.find((c) => message.includes(c));
   if (code) throw new BackendError(code, message);
   if (error?.code === "42501") throw new BackendError("forbidden", message);
+  // The phone trigger on auth.users makes Supabase answer with this generic text.
+  if (/database error saving new user/i.test(message)) throw new BackendError("phone_not_allowed", message);
   if (/token|otp|expired/i.test(message)) throw new BackendError("invalid_code", message);
   throw new BackendError("unknown", message);
 }
@@ -88,6 +98,7 @@ function toReservation(r: ReservationRow): Reservation {
     status: r.status,
     createdAt: r.created_at,
     expiresAt: r.expires_at,
+    cancelReason: r.cancel_reason ?? null,
   };
 }
 
@@ -231,13 +242,28 @@ export class SupabaseBackend implements Backend {
       .order("created_at", { ascending: false })
       .limit(50);
     if (error) fail(error);
-    return (data as ReservationRow[]).map(toReservation);
+    const reservations = (data as ReservationRow[]).map(toReservation);
+    const codes = await this.pickupCodes(reservations.map((r) => r.id));
+    return reservations.map((r) => ({ ...r, pickupCode: codes.get(r.id) }));
   }
 
   async reserve(stationId: string, type: ReservationType) {
     const { data, error } = await this.client.rpc("reserve", { p_station: stationId, p_type: type });
     if (error) fail(error);
-    return toReservation(data as ReservationRow);
+    const reservation = toReservation(data as ReservationRow);
+    const codes = await this.pickupCodes([reservation.id]);
+    return { ...reservation, pickupCode: codes.get(reservation.id) };
+  }
+
+  /** Pickup codes are in their own table that only the rider can read. */
+  private async pickupCodes(ids: string[]): Promise<Map<string, string>> {
+    if (!ids.length) return new Map();
+    const { data, error } = await this.client
+      .from("reservation_codes")
+      .select("reservation_id, code")
+      .in("reservation_id", ids);
+    if (error) fail(error);
+    return new Map((data as { reservation_id: string; code: string }[]).map((c) => [c.reservation_id, c.code]));
   }
 
   async cancelReservation(id: string) {
@@ -280,8 +306,8 @@ export class SupabaseBackend implements Backend {
     return (data as ReservationRow[]).map(toReservation);
   }
 
-  async completeReservation(id: string) {
-    const { error } = await this.client.from("reservations").update({ status: "completed" }).eq("id", id);
+  async completeReservation(id: string, pickupCode: string) {
+    const { error } = await this.client.rpc("complete_reservation", { p_reservation: id, p_code: pickupCode });
     if (error) fail(error);
   }
 

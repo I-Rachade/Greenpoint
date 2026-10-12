@@ -2,7 +2,15 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { availableBatteries, availableSlots, offersCharging, offersSwap, stationAvailability } from "@/lib/availability";
+import {
+  availableBatteries,
+  availableSlots,
+  isStale,
+  offersCharging,
+  offersSwap,
+  stationAvailability,
+  withinOpeningHours,
+} from "@/lib/availability";
 import { directionsUrl, formatDistance } from "@/lib/geo";
 import { displayStatus, type ChargingPointDisplay } from "@/lib/iot/charging-points";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
@@ -41,8 +49,11 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
     setBusy(true);
     setMessage(null);
     try {
-      await backend.reserve(station.id, type);
-      setMessage({ ok: true, text: format(t.station.reserved, { minutes: RESERVATION_MINUTES }) });
+      const reservation = await backend.reserve(station.id, type);
+      setMessage({
+        ok: true,
+        text: format(t.station.reserved, { code: reservation.pickupCode ?? "–", minutes: RESERVATION_MINUTES }),
+      });
       onChanged();
     } catch (err) {
       setMessage({ ok: false, text: errorMessage(err) });
@@ -134,6 +145,10 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
       <p className="text-xs text-zinc-500">
         {format(t.station.updated, { time: relativeTime(station.status.updatedAt, now) })}
       </p>
+      {station.status.isOpen && !withinOpeningHours(station.openingHours, now) && (
+        <p className="text-sm text-red-700 dark:text-red-400">{t.station.outsideHours}</p>
+      )}
+      {isStale(station, now) && <p className="text-sm text-amber-700 dark:text-amber-400">{t.station.stale}</p>}
 
       <div className="flex flex-wrap gap-2">
         <a

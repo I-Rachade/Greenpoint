@@ -50,13 +50,18 @@ export function ReservationList() {
         {reservations.map((r) => {
           const status = effectiveStatus(r, now);
           return (
-            <li key={r.id} className="flex items-center gap-3 rounded-lg border border-black/10 p-3 dark:border-white/10">
+            <li key={r.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-black/10 p-3 dark:border-white/10">
               <div className="min-w-0 flex-1">
                 <div className="font-medium">{names.get(r.stationId) ?? "–"}</div>
                 <div className="text-sm text-zinc-600 dark:text-zinc-400">
                   {r.type === "battery" ? t.reservations.battery : t.reservations.slot} ·{" "}
                   {new Date(r.createdAt).toLocaleString()}
                 </div>
+                {status === "cancelled" && r.cancelReason && (
+                  <div className="text-sm text-red-700 dark:text-red-400">
+                    {t.reservations.cancelReasons[r.cancelReason] ?? r.cancelReason}
+                  </div>
+                )}
               </div>
               <div className="text-right text-sm">
                 <div className={status === "active" ? "font-semibold text-gp-green-dark dark:text-gp-green" : "text-zinc-500"}>
@@ -70,6 +75,15 @@ export function ReservationList() {
                 <button type="button" onClick={() => cancel(r.id)} className="text-sm text-red-600 hover:underline">
                   {t.reservations.cancel}
                 </button>
+              )}
+              {status === "active" && r.pickupCode && (
+                <div className="w-full rounded-lg bg-gp-green/10 p-3 text-center dark:bg-gp-green/15">
+                  <div className="text-xs text-zinc-600 dark:text-zinc-400">{t.reservations.pickupCode}</div>
+                  <div className="font-mono text-4xl font-bold tracking-[0.3em] text-gp-green-dark dark:text-gp-green">
+                    {r.pickupCode}
+                  </div>
+                  <div className="text-xs text-zinc-600 dark:text-zinc-400">{t.reservations.pickupHint}</div>
+                </div>
               )}
             </li>
           );

@@ -61,6 +61,10 @@ export interface Reservation {
   status: ReservationStatus;
   createdAt: string;
   expiresAt: string;
+  /** 4-digit code the rider shows at the station. Only present on the rider's own reservations. */
+  pickupCode?: string;
+  /** Set when the reservation was cancelled for the rider, e.g. "station_closed". */
+  cancelReason?: string | null;
 }
 
 export interface Profile {
@@ -92,3 +96,9 @@ export interface Operator {
 
 /** How long a reservation holds a battery or slot before it lapses. */
 export const RESERVATION_MINUTES = 20;
+/** Status reports older than this are shown as uncertain. */
+export const STALE_STATUS_HOURS = 2;
+/** Unused (cancelled or expired) reservations a rider may have in 24 hours. Mirrors reserve(). */
+export const MAX_UNUSED_RESERVATIONS_PER_DAY = 3;
+/** Pause at a station after an unused reservation there. Mirrors reserve(). */
+export const STATION_COOLDOWN_MINUTES = 60;

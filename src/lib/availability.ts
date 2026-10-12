@@ -1,6 +1,6 @@
 import { distanceMeters, type LatLng } from "./geo";
 import { freeConnectedPoints, isConnected } from "./iot/charging-points";
-import type { Reservation, StationView, VehicleType, StationKind } from "./types";
+import { STALE_STATUS_HOURS, type Reservation, type StationView, type VehicleType, type StationKind } from "./types";
 
 export function offersCharging(kind: StationKind): boolean {
   return kind === "charging" || kind === "both";
@@ -11,12 +11,37 @@ export function offersSwap(kind: StationKind): boolean {
 }
 
 /**
+ * Whether `now` falls inside opening hours written as "07:00-21:00" (Lomé time, which is UTC).
+ * Ranges past midnight work; any other text counts as open. Mirrors within_opening_hours() in SQL.
+ */
+export function withinOpeningHours(hours: string, now: Date = new Date()): boolean {
+  const m = /^\s*(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})\s*$/.exec(hours ?? "");
+  if (!m) return true;
+  const open = Number(m[1]) * 60 + Number(m[2]);
+  const close = Number(m[3]) * 60 + Number(m[4]);
+  const t = now.getUTCHours() * 60 + now.getUTCMinutes();
+  if (open === close) return true;
+  if (open < close) return t >= open && t < close;
+  return t >= open || t < close;
+}
+
+/** Open according to staff and to the opening hours. */
+export function isOpenNow(station: StationView, now: Date = new Date()): boolean {
+  return station.status.isOpen && withinOpeningHours(station.openingHours, now);
+}
+
+/** True when nobody has reported the station's status for a while, so the numbers may be wrong. */
+export function isStale(station: StationView, now: Date = new Date()): boolean {
+  return now.getTime() - new Date(station.status.updatedAt).getTime() > STALE_STATUS_HOURS * 3_600_000;
+}
+
+/**
  * Charging slots a new rider can still get: free slots minus slots already held by reservations.
  * Stations with connected sockets count their reporting free outlets instead, so a socket
  * that went silent is not offered.
  */
 export function availableSlots(station: StationView, now: Date = new Date()): number {
-  if (!station.status.isOpen || !offersCharging(station.kind)) return 0;
+  if (!isOpenNow(station, now) || !offersCharging(station.kind)) return 0;
   const points = station.chargingPoints ?? [];
   const free = points.some(isConnected) ? freeConnectedPoints(points, now) : station.status.freeSlots;
   return Math.max(0, free - station.reservedSlots);
@@ -24,14 +49,15 @@ export function availableSlots(station: StationView, now: Date = new Date()): nu
 
 /** Full swap batteries a new rider can still get. */
 export function availableBatteries(station: StationView): number {
-  if (!station.status.isOpen || !offersSwap(station.kind)) return 0;
+  if (!isOpenNow(station) || !offersSwap(station.kind)) return 0;
   return Math.max(0, station.status.fullBatteries - station.reservedBatteries);
 }
 
-export type Availability = "available" | "limited" | "full" | "closed";
+export type Availability = "available" | "limited" | "full" | "closed" | "unknown";
 
 export function stationAvailability(station: StationView): Availability {
-  if (!station.status.isOpen) return "closed";
+  if (!isOpenNow(station)) return "closed";
+  if (isStale(station)) return "unknown";
   const total = availableSlots(station) + availableBatteries(station);
   if (total === 0) return "full";
   if (total <= 2) return "limited";
@@ -96,9 +122,10 @@ export function rankStations(
       distance: position ? distanceMeters(position, station) : null,
     }));
   ranked.sort((a, b) =>
-    a.distance !== null && b.distance !== null
+    Number(isStale(a.station)) - Number(isStale(b.station)) ||
+    (a.distance !== null && b.distance !== null
       ? a.distance - b.distance
-      : a.station.name.localeCompare(b.station.name),
+      : a.station.name.localeCompare(b.station.name)),
   );
   return ranked;
 }

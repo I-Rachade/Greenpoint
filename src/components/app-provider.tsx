@@ -42,7 +42,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       active = false;
       unsubscribe();
     };
-  });
+  }, [backend]);
 
   return <AppContext value={{ backend, profile, ready }}>{children}</AppContext>;
 }
