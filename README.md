@@ -1,6 +1,6 @@
 # pointderecharge
 
-Adresse: https://app.pointderecharge.com (Landingpage: https://pointderecharge.com) · Repository: `Greenpoint` · Treueprogramm: greenpoint · Kontakt: contact@pointderecharge.com
+Adresse: https://app.poinderecharge.com (Landingpage: https://poinderecharge.com) · Repository: `Greenpoint` · Treueprogramm: greenpoint · Kontakt: contact@poinderecharge.com
 
 Webapp für Fahrer von E-Scootern, E-Tuktuks, E-Bikes und E-Rollern in Lomé (Togo): Sie zeigt live die nächste Ladestation oder Akkutausch-Station, ob dort Ladeplätze frei oder volle Akkus da sind, und erlaubt Reservierungen. Stationspersonal meldet den Status mit einem Tipp vom Handy.
 
