@@ -119,7 +119,7 @@ describe("charging points", () => {
 
 describe("handleDeviceRequest", () => {
   const URL = "https://x.supabase.co/functions/v1/device-events";
-  function post(body: unknown, headers: Record<string, string> = { "x-greenpoint-key": "s3cret" }, query = "") {
+  function post(body: unknown, headers: Record<string, string> = { "x-device-key": "s3cret" }, query = "") {
     return new Request(URL + query, { method: "POST", headers, body: JSON.stringify(body) });
   }
   const calls: Parameters<Ingest>[] = [];
@@ -131,7 +131,7 @@ describe("handleDeviceRequest", () => {
   it("checks the secret", async () => {
     expect((await handleDeviceRequest(post({}), undefined, ingest)).status).toBe(503);
     expect((await handleDeviceRequest(post({}, {}), "s3cret", ingest)).status).toBe(401);
-    expect((await handleDeviceRequest(post({}, { "x-greenpoint-key": "s3creT" }), "s3cret", ingest)).status).toBe(401);
+    expect((await handleDeviceRequest(post({}, { "x-device-key": "s3creT" }), "s3cret", ingest)).status).toBe(401);
   });
 
   it("ingests a TTN uplink sent with a bearer token", async () => {

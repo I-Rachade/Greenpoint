@@ -1,6 +1,6 @@
 # Verbundene Steckdosen (LoRa)
 
-Greenpoint kann den Status von vernetzten Ladesteckdosen live anzeigen, z. B. LoRa-Doppelsteckdosen zum Selbstladen von E-Scootern. Jeder Ausgang ist ein Ladeplatz (`charging_points`). Die Steckdose meldet, ob ein Ausgang frei ist, lädt, fertig ist oder gestört ist; die App zeigt das sofort auf der Stationsseite und zählt die freien Plätze automatisch.
+pointderecharge kann den Status von vernetzten Ladesteckdosen live anzeigen, z. B. LoRa-Doppelsteckdosen zum Selbstladen von E-Scootern. Jeder Ausgang ist ein Ladeplatz (`charging_points`). Die Steckdose meldet, ob ein Ausgang frei ist, lädt, fertig ist oder gestört ist; die App zeigt das sofort auf der Stationsseite und zählt die freien Plätze automatisch.
 
 Fernsteuerung (Ausgang ein/aus) und Abrechnung pro Ladevorgang kommen in Phase 2 mit der Bezahlung, sobald die API des Herstellers bekannt ist. Hintergrund und Fragen an den Hersteller: `planung/lora-ladesteckdose.md` im Projektordner.
 
@@ -42,7 +42,7 @@ Steckdose --LoRa--> Gateway --4G--> Netzwerkserver (TTN / ChirpStack)
    Danach die Bezeichnungen der Ladeplätze an die Aufkleber neben dem QR-Code anpassen und `charging_slots` der Station auf die Anzahl der Ausgänge setzen.
 4. Netzwerkserver oder Hersteller-Cloud auf die Funktion zeigen lassen:
    - URL: `https://<projekt>.supabase.co/functions/v1/device-events?format=ttn` (oder `chirpstack`, `generic`)
-   - Header: `X-Greenpoint-Key: <DEVICE_WEBHOOK_SECRET>`
+   - Header: `X-Device-Key: <DEVICE_WEBHOOK_SECRET>`
 
 ## Formate
 
@@ -84,8 +84,8 @@ function decodeUplink(input) {
 
 ```bash
 curl -X POST "https://<projekt>.supabase.co/functions/v1/device-events" \
-  -H "X-Greenpoint-Key: $DEVICE_WEBHOOK_SECRET" \
+  -H "X-Device-Key: $DEVICE_WEBHOOK_SECRET" \
   -d '{"device":"A84041000181F0A1","outlets":[{"outlet":1,"status":"charging","power_watts":180}]}'
 ```
 
-Im Demo-Modus der App zeigt die Station "Greenpoint Déckon (prises connectées)" eine solche Steckdose mit Beispieldaten.
+Im Demo-Modus der App zeigt die Station "Déckon (prises connectées)" eine solche Steckdose mit Beispieldaten.

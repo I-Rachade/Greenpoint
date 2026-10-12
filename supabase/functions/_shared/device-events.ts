@@ -141,7 +141,7 @@ function sameSecret(given: string | null, expected: string): boolean {
 }
 
 function providedKey(request: Request): string | null {
-  const key = request.headers.get("x-greenpoint-key");
+  const key = request.headers.get("x-device-key");
   if (key) return key.trim();
   const auth = request.headers.get("authorization");
   return auth?.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : null;
@@ -149,7 +149,7 @@ function providedKey(request: Request): string | null {
 
 /**
  *   POST .../device-events?format=generic|ttn|chirpstack
- *   X-Greenpoint-Key: <DEVICE_WEBHOOK_SECRET>   (or Authorization: Bearer <secret>)
+ *   X-Device-Key: <DEVICE_WEBHOOK_SECRET>   (or Authorization: Bearer <secret>)
  */
 export async function handleDeviceRequest(request: Request, secret: string | undefined, ingest: Ingest) {
   if (request.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
