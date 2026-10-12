@@ -14,7 +14,7 @@ interface AppContextValue {
 const AppContext = createContext<AppContextValue | null>(null);
 
 function sameProfile(a: Profile | null, b: Profile | null): boolean {
-  return a === b || (!!a && !!b && a.id === b.id && a.role === b.role && a.phone === b.phone && a.email === b.email && a.fullName === b.fullName);
+  return a === b || (!!a && !!b && a.id === b.id && a.role === b.role && a.phone === b.phone && a.email === b.email && a.fullName === b.fullName && a.driverStatus === b.driverStatus);
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {

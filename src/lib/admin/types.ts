@@ -51,7 +51,12 @@ export type AuditTable =
   | "payments"
   | "parcels"
   | "parcel_depots"
-  | "parcel_sizes";
+  | "parcel_sizes"
+  | "drivers"
+  | "fleet_vehicles"
+  | "delivery_jobs"
+  | "driver_ledger"
+  | "driver_settings";
 
 export const AUDIT_TABLES: AuditTable[] = [
   "reservations",
@@ -66,6 +71,11 @@ export const AUDIT_TABLES: AuditTable[] = [
   "parcels",
   "parcel_depots",
   "parcel_sizes",
+  "drivers",
+  "fleet_vehicles",
+  "delivery_jobs",
+  "driver_ledger",
+  "driver_settings",
 ];
 
 export type AuditAction = "insert" | "update" | "delete";

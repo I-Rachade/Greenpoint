@@ -1,0 +1,383 @@
+// Drivers: people who drive one of our vehicles and carry parcels express between
+// stations, pick them up at a customer's home or deliver them there.
+// Shared by the app, the demo backend and the Worker. Plan: planung/fahrer.md.
+
+import { distanceMeters, LOME_CENTER, type LatLng } from "./geo";
+import { PARCEL_SIZES, type ParcelMeasures, type ParcelSize } from "./parcels";
+
+/** Our own vehicles; drivers never use their own. */
+export type FleetVehicleType = "moto" | "tricycle" | "car";
+export const FLEET_VEHICLE_TYPES: FleetVehicleType[] = ["moto", "tricycle", "car"];
+
+export type DriverStatus =
+  | "pending" // applied in the app, waiting for the admin
+  | "active"
+  | "rejected"
+  | "suspended";
+
+export type JobKind =
+  | "express" // station A to station B, paid at the counter in A
+  | "pickup" // a customer's home to station B, paid to the driver
+  | "delivery"; // station A to the recipient's home, paid to the driver at the door
+
+export type JobStatus =
+  | "open" // no driver yet
+  | "assigned" // offered to the first driver in line, waiting for "J'y vais"
+  | "accepted" // the driver is on the way to the start
+  | "picked_up" // the driver has the parcel
+  | "at_door" // delivery: the driver is at the recipient's
+  | "returning" // delivery: nobody there, back to the station
+  | "done"
+  | "failed" // delivery: brought back to the station
+  | "cancelled";
+
+/** Where a home delivery stands, on the parcel (its status stays "arrived" until delivered). */
+export type DeliveryStatus = "booked" | "out_for_delivery" | "delivered" | "failed";
+
+/** What a vehicle type may carry on one trip. */
+export interface VehicleLimit {
+  type: FleetVehicleType;
+  maxSize: ParcelSize;
+  maxWeightKg: number;
+}
+
+/** Prices and rules, set in the backoffice. */
+export interface DriverSettings {
+  baseFcfa: number;
+  /** Per started kilometre, straight line. */
+  perKmFcfa: number;
+  /** Added for express trips between stations. */
+  expressFcfa: number;
+  /** Share of the fare the driver earns, in percent. */
+  driverSharePct: number;
+  /** A driver who owes this much or more cannot queue until settled. */
+  cashLimitFcfa: number;
+  /** Minutes at the door before "nobody there" is allowed. */
+  waitMinutes: number;
+  /** Minutes a driver has to confirm an offered job. */
+  acceptMinutes: number;
+  /** How close to a station a driver must be to queue there, in metres; 0 = no check. */
+  queueRadiusM: number;
+  vehicles: VehicleLimit[];
+}
+
+/** Starting values (decided on 12/10/2026, planung/fahrer.md). */
+export const DEFAULT_DRIVER_SETTINGS: DriverSettings = {
+  baseFcfa: 500,
+  perKmFcfa: 100,
+  expressFcfa: 1000,
+  driverSharePct: 55,
+  cashLimitFcfa: 20_000,
+  waitMinutes: 10,
+  acceptMinutes: 5,
+  queueRadiusM: 500,
+  vehicles: [
+    { type: "moto", maxSize: "M", maxWeightKg: 20 },
+    { type: "tricycle", maxSize: "XL", maxWeightKg: 150 },
+    { type: "car", maxSize: "XL", maxWeightKg: 100 },
+  ],
+};
+
+/** Pickups and deliveries only within this distance of the centre of Lomé. */
+export const SERVICE_RADIUS_KM = 25;
+
+export function inServiceArea(p: LatLng): boolean {
+  return distanceMeters(p, LOME_CENTER) <= SERVICE_RADIUS_KM * 1000;
+}
+
+export function validPoint(p: unknown): p is LatLng {
+  const q = p as LatLng | null;
+  return (
+    !!q &&
+    typeof q.lat === "number" &&
+    typeof q.lng === "number" &&
+    Number.isFinite(q.lat) &&
+    Number.isFinite(q.lng) &&
+    Math.abs(q.lat) <= 90 &&
+    Math.abs(q.lng) <= 180
+  );
+}
+
+/** The fare: base price plus every started kilometre, plus the express surcharge between stations. */
+export function fareFor(meters: number, express: boolean, s: DriverSettings): number {
+  const km = Math.max(1, Math.ceil(meters / 1000));
+  return s.baseFcfa + km * s.perKmFcfa + (express ? s.expressFcfa : 0);
+}
+
+/** What the driver earns for a trip, in whole francs. */
+export function driverEarning(fareFcfa: number, s: Pick<DriverSettings, "driverSharePct">): number {
+  return Math.floor((fareFcfa * s.driverSharePct) / 100);
+}
+
+/** True when a vehicle of this type may carry a parcel of this size and weight. */
+export function vehicleFits(type: FleetVehicleType, size: ParcelSize, weightKg: number, s: DriverSettings): boolean {
+  const limit = s.vehicles.find((v) => v.type === type);
+  if (!limit) return false;
+  return PARCEL_SIZES.indexOf(size) <= PARCEL_SIZES.indexOf(limit.maxSize) && weightKg <= limit.maxWeightKg;
+}
+
+export function validSettings(s: DriverSettings): boolean {
+  const int = (v: unknown, min: number, max: number) => Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
+  return (
+    !!s &&
+    int(s.baseFcfa, 0, 1_000_000) &&
+    int(s.perKmFcfa, 0, 100_000) &&
+    int(s.expressFcfa, 0, 1_000_000) &&
+    int(s.driverSharePct, 0, 100) &&
+    int(s.cashLimitFcfa, 0, 10_000_000) &&
+    int(s.waitMinutes, 0, 120) &&
+    int(s.acceptMinutes, 1, 120) &&
+    int(s.queueRadiusM, 0, 50_000) &&
+    Array.isArray(s.vehicles) &&
+    FLEET_VEHICLE_TYPES.every((type) => {
+      const v = s.vehicles.find((x) => x.type === type);
+      return !!v && PARCEL_SIZES.includes(v.maxSize) && typeof v.maxWeightKg === "number" && v.maxWeightKg > 0 && v.maxWeightKg <= 1000;
+    })
+  );
+}
+
+/** One driver waiting at a station. */
+export interface QueueEntry {
+  driverId: string;
+  stationId: string;
+  vehicleType: FleetVehicleType;
+  /** ISO time the driver joined; earlier is first in line. */
+  since: string;
+}
+
+/**
+ * The driver who gets a job: stations are tried from the one nearest the start
+ * of the job, and at each the first in line whose vehicle fits wins.
+ */
+export function pickDriver(
+  start: LatLng,
+  queue: QueueEntry[],
+  stations: { id: string; lat: number; lng: number }[],
+  fits: (type: FleetVehicleType) => boolean,
+): QueueEntry | null {
+  const byDistance = stations
+    .map((s) => ({ id: s.id, d: distanceMeters(start, s) }))
+    .sort((a, b) => a.d - b.d);
+  for (const station of byDistance) {
+    const first = queue
+      .filter((q) => q.stationId === station.id && fits(q.vehicleType))
+      .sort((a, b) => a.since.localeCompare(b.since))[0];
+    if (first) return first;
+  }
+  return null;
+}
+
+/** The station nearest a point, or null when there is none. */
+export function nearestStation<T extends LatLng>(p: LatLng, stations: T[]): T | null {
+  let best: T | null = null;
+  let bestD = Infinity;
+  for (const s of stations) {
+    const d = distanceMeters(p, s);
+    if (d < bestD) {
+      best = s;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/** Letters and digits without look-alikes, for the code under the driver's QR code. */
+const CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+const BADGE_PREFIX = "POINDERECHARGE-CHAUFFEUR";
+
+export function newDriverCode(random: (n: number) => Uint32Array = (n) => crypto.getRandomValues(new Uint32Array(n))): string {
+  return [...random(8)].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
+}
+
+/** What the driver's QR code holds. Staff scan it to hand over or receive parcels and to settle. */
+export function driverBadgePayload(code: string): string {
+  return `${BADGE_PREFIX}:${code}`;
+}
+
+/** Reads a scanned driver QR code or a typed driver code. */
+export function parseDriverBadge(input: string): string | null {
+  const text = input.trim().toUpperCase();
+  const body = text.startsWith(`${BADGE_PREFIX}:`) ? text.slice(BADGE_PREFIX.length + 1) : text.replace(/[\s-]/g, "");
+  return new RegExp(`^[${CODE_ALPHABET}]{8}$`).test(body) ? body : null;
+}
+
+export interface FleetVehicle {
+  id: string;
+  type: FleetVehicleType;
+  plate: string;
+  isActive: boolean;
+}
+
+export interface FleetVehicleInput {
+  type: FleetVehicleType;
+  plate: string;
+  isActive: boolean;
+}
+
+export type DriverDocument = "id" | "license" | "portrait";
+export const DRIVER_DOCUMENTS: DriverDocument[] = ["id", "license", "portrait"];
+
+export interface Driver {
+  userId: string;
+  status: DriverStatus;
+  fullName: string;
+  phone: string | null;
+  idNumber: string;
+  licenseNumber: string;
+  /** The kind of vehicle the driver asked to drive. */
+  wantedType: FleetVehicleType;
+  vehicle: FleetVehicle | null;
+  /** Storage keys of the uploaded documents; read them with `driverFileUrl`. */
+  documents: Partial<Record<DriverDocument, string>>;
+  /** The code under the QR code; only for the driver and admins. */
+  code?: string;
+  createdAt: string;
+  reviewedAt: string | null;
+  /** Owed to us (positive) or to the driver (negative), in FCFA. */
+  balanceFcfa: number;
+  lastSettledAt: string | null;
+  /** Where the driver waits, if anywhere. */
+  queue: { stationId: string; since: string; position: number } | null;
+}
+
+export interface DriverApplication {
+  fullName: string;
+  idNumber: string;
+  licenseNumber: string;
+  wantedType: FleetVehicleType;
+}
+
+/** A home address: a pin on the map, a description and a phone number. */
+export interface HomePoint extends LatLng {
+  note: string;
+  phone: string;
+}
+
+/** The driver, as the customer and staff see them. */
+export interface JobDriver {
+  name: string;
+  phone: string | null;
+  plate: string | null;
+  vehicleType: FleetVehicleType | null;
+}
+
+export interface DeliveryJob {
+  id: string;
+  kind: JobKind;
+  status: JobStatus;
+  /** Null for a pickup until the driver has collected the parcel. */
+  parcelId: string | null;
+  trackingNo: string | null;
+  /** Start station (express, delivery). */
+  fromStationId: string | null;
+  /** Destination station (express, pickup). */
+  toStationId: string | null;
+  /** The customer's home: start of a pickup, end of a delivery. */
+  home: HomePoint | null;
+  /** Booked size (pickup) or the parcel's size. */
+  size: ParcelSize;
+  weightKg: number | null;
+  content: string;
+  distanceM: number;
+  fareFcfa: number;
+  /** Cash the driver collects from the customer (0 for express). */
+  collectFcfa: number;
+  /** Pickup bookings: who gets the parcel at station B. */
+  recipient: { phone: string; name: string | null } | null;
+  declaredValue: number | null;
+  driver: JobDriver | null;
+  /** The customer's name, for the driver. */
+  customerName: string | null;
+  createdAt: string;
+  assignedAt: string | null;
+  acceptedAt: string | null;
+  pickedUpAt: string | null;
+  atDoorAt: string | null;
+  doneAt: string | null;
+  /** Storage key of the photo taken at the door. */
+  proofKey: string | null;
+}
+
+export interface PickupBooking {
+  home: HomePoint;
+  toStationId: string;
+  recipientPhone: string;
+  recipientName?: string;
+  content: string;
+  size: ParcelSize;
+  declaredValue?: number | null;
+}
+
+export type LedgerKind = "collected" | "earning" | "settlement";
+
+export interface LedgerEntry {
+  id: string;
+  at: string;
+  kind: LedgerKind;
+  amountFcfa: number;
+  jobId: string | null;
+  stationId: string | null;
+}
+
+/** Cash collected minus earnings minus settlements: positive means the driver owes us. */
+export function balanceOf(entries: Pick<LedgerEntry, "kind" | "amountFcfa">[]): number {
+  return entries.reduce((sum, e) => sum + (e.kind === "collected" ? e.amountFcfa : -e.amountFcfa), 0);
+}
+
+/** Everything the driver page needs. */
+export interface DriverHome {
+  /** Null when the user never applied. */
+  driver: Driver | null;
+  job: DeliveryJob | null;
+  history: DeliveryJob[];
+  ledger: LedgerEntry[];
+  settings: DriverSettings;
+}
+
+/** A driver who showed their QR code at a station, and what staff can do for them. */
+export interface DriverAtStation {
+  driver: JobDriver & { userId: string };
+  balanceFcfa: number;
+  /** A job whose parcel the driver comes to take here. */
+  handOver: DeliveryJob | null;
+  /** A job whose parcel the driver brings here (express, pickup, or a failed delivery coming back). */
+  receive: DeliveryJob | null;
+}
+
+/** For station staff: who waits here and which parcels drivers take or bring. */
+export interface StationDrivers {
+  queue: { driver: JobDriver; since: string }[];
+  /** Jobs whose parcel a driver will take here. */
+  outgoing: DeliveryJob[];
+  /** Jobs whose parcel a driver is bringing here. */
+  incoming: DeliveryJob[];
+}
+
+/** Backoffice: everything about drivers. */
+export interface AdminDrivers {
+  drivers: Driver[];
+  vehicles: FleetVehicle[];
+  /** Newest first, at most 500. */
+  jobs: DeliveryJob[];
+  settings: DriverSettings;
+}
+
+export type DriverDecision =
+  | { action: "approve"; vehicleId: string }
+  | { action: "reject" }
+  | { action: "suspend" }
+  | { action: "reactivate" }
+  | { action: "vehicle"; vehicleId: string | null };
+
+/** Jobs that still tie up a driver. */
+export const BUSY_JOB_STATUSES: JobStatus[] = ["assigned", "accepted", "picked_up", "at_door", "returning"];
+/** Jobs not finished yet. */
+export const OPEN_JOB_STATUSES: JobStatus[] = ["open", ...BUSY_JOB_STATUSES];
+
+/** Pickup jobs before the parcel exists: what the driver measured at the door. */
+export interface PickupCollect {
+  measures: ParcelMeasures;
+}
+
+/** Biggest image the driver documents and door photos may have after shrinking. */
+export const MAX_DRIVER_IMAGE_BYTES = 2 * 1024 * 1024;

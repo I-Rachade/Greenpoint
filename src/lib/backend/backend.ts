@@ -12,6 +12,22 @@ import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelSizeTier } from "../parcels";
 import type { Promotion, PromotionInput } from "../promo";
+import type {
+  AdminDrivers,
+  DeliveryJob,
+  DriverApplication,
+  DriverAtStation,
+  DriverDecision,
+  DriverDocument,
+  DriverHome,
+  DriverSettings,
+  FleetVehicleInput,
+  HomePoint,
+  PickupBooking,
+  StationDrivers,
+} from "../drivers";
+import type { LatLng } from "../geo";
+import type { ParcelMeasures } from "../parcels";
 
 /** Where a code goes: by SMS to the phone number or by e-mail. */
 export type CodeChannel = "sms" | "email";
@@ -48,6 +64,23 @@ export type BackendErrorCode =
   | "parcel_not_found"
   | "parcel_wrong_status"
   | "code_locked"
+  | "parcel_with_driver"
+  | "not_a_driver"
+  | "phone_required"
+  | "driver_busy"
+  | "driver_not_found"
+  | "too_far"
+  | "cash_limit"
+  | "outside_area"
+  | "job_not_found"
+  | "job_wrong_status"
+  | "wait_longer"
+  | "photo_missing"
+  | "vehicle_unavailable"
+  | "vehicle_too_small"
+  | "no_vehicle"
+  | "documents_missing"
+  | "balance_changed"
   | "rate_limited"
   | "payment_not_offered"
   | "payment_exists"
@@ -156,6 +189,51 @@ export interface Backend {
   saveParcelSizes(sizes: ParcelSizeTier[]): Promise<void>;
   /** A parcel in storage was handed out after all, or auctioned. */
   closeStoredParcel(id: string, outcome: "released" | "auctioned"): Promise<void>;
+
+  // Drivers (see src/lib/drivers.ts)
+  /** The signed-in user's driver page: application, current trip, history and cash. */
+  driverHome(): Promise<DriverHome>;
+  /** Applies to drive one of our vehicles (again, after a refusal). */
+  applyDriver(input: DriverApplication): Promise<void>;
+  /** A photo of the ID card, the licence or the applicant (shrunk in the app first). */
+  uploadDriverDocument(kind: DriverDocument, image: Blob): Promise<void>;
+  /** Joins the line at a station; the position proves the driver is there. */
+  joinDriverQueue(stationId: string, position: LatLng | null): Promise<void>;
+  leaveDriverQueue(): Promise<void>;
+  acceptJob(id: string): Promise<void>;
+  /** The trip goes to the next in line; the driver goes to the back. */
+  declineJob(id: string): Promise<void>;
+  /** Pickup at home: measured and paid; the parcel gets its tracking number. */
+  collectPickup(id: string, measures: ParcelMeasures): Promise<DeliveryJob>;
+  arriveAtDoor(id: string): Promise<void>;
+  uploadDeliveryPhoto(id: string, image: Blob): Promise<void>;
+  /** Hands the parcel over at the door for the recipient's pickup code. */
+  deliverJob(id: string, code: string): Promise<void>;
+  /** Nobody there after the waiting time: back to the station. */
+  failDelivery(id: string): Promise<void>;
+  /** Trips the signed-in customer booked. */
+  myJobs(): Promise<DeliveryJob[]>;
+  bookPickup(input: PickupBooking): Promise<DeliveryJob>;
+  /** The recipient has a waiting parcel brought home; the driver gets the pickup right. */
+  bookDelivery(parcelId: string, home: HomePoint): Promise<DeliveryJob>;
+  /** Customer (before the driver has the parcel) or admin. */
+  cancelJob(id: string): Promise<void>;
+  /** Station staff: drivers in line and parcels drivers take or bring. */
+  stationDrivers(stationId: string): Promise<StationDrivers>;
+  /** Station staff scanned a driver's QR code (or typed the code). */
+  driverAtStation(stationId: string, badge: string): Promise<DriverAtStation>;
+  handToDriver(stationId: string, badge: string, jobId: string): Promise<void>;
+  receiveFromDriver(stationId: string, badge: string, jobId: string): Promise<void>;
+  /** Daily settlement for the balance staff saw. */
+  settleDriver(stationId: string, badge: string, amountFcfa: number): Promise<void>;
+  /** Backoffice: drivers, vehicles, trips and prices (admins only). */
+  adminDrivers(): Promise<AdminDrivers>;
+  reviewDriver(userId: string, decision: DriverDecision): Promise<void>;
+  saveFleetVehicle(id: string | null, input: FleetVehicleInput): Promise<void>;
+  saveDriverSettings(settings: DriverSettings): Promise<void>;
+  assignJob(jobId: string, driverId: string): Promise<void>;
+  /** A displayable URL for a private photo (documents, door photos); admins only. */
+  driverFileUrl(key: string): Promise<string>;
 
   // Advertising popup (see src/lib/promo.ts)
   /** The ad to show when the app opens, or null. Public. */

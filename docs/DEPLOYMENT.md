@@ -68,6 +68,10 @@ npm run db:migrate
 
 `wrangler.jsonc` hat einen Cron-Trigger `0 8 * * *` (8 Uhr UTC = 8 Uhr in Lomé). Er schickt Abhol-Erinnerungen und legt Pakete nach 7 Tagen ins Entrepôt (`runParcelDeadlines` in `worker/parcels.ts`). Der Trigger wird mit dem nächsten Deploy des Workers aktiv; vorher muss Migration `0005_parcels.sql` ausgeführt sein. Lokal testen: `npx wrangler dev --test-scheduled`, dann `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+8+*+*+*"`.
 
+## 5b. Fahrer (Migration 0007)
+
+Vor dem Deploy des Workers mit der Fahrer-Funktion `npm run db:migrate` ausführen, damit `0007_drivers.sql` läuft. Die Migration legt nur Tabellen und Spalten an und ist auch mit dem alten Worker sicher. Danach im Backoffice unter **Chauffeurs** die eigenen Fahrzeuge mit Kennzeichen anlegen und die Preise prüfen (Start: 500 FCFA + 100 FCFA/km, Express +1 000 FCFA, Fahrer 55 %). Kein neuer Secret, kein neuer Cron: offene Fahrten werden bei jedem Aufruf der Fahrer- und Stationsseiten neu verteilt.
+
 ## 6. Lokal entwickeln
 
 - Nur Oberfläche, mit Beispieldaten im Browser: `npm run dev`.

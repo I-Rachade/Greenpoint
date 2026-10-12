@@ -1,5 +1,3 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "./env";
 import {
@@ -11,57 +9,7 @@ import {
 } from "./payment-providers";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
 import type { Profile } from "../src/lib/types";
-
-// --- A minimal D1 on top of SQLite, with the real migrations -------------------
-
-type Value = string | number | null;
-
-class Statement {
-  constructor(
-    private db: DatabaseSync,
-    private sql: string,
-    private params: Value[] = [],
-  ) {}
-  bind(...params: unknown[]) {
-    return new Statement(this.db, this.sql, params.map((p) => (p === undefined ? null : (p as Value))));
-  }
-  async first<T>() {
-    return (this.db.prepare(this.sql).get(...this.params) as T | undefined) ?? null;
-  }
-  async all<T>() {
-    return { results: this.db.prepare(this.sql).all(...this.params) as T[] };
-  }
-  async run() {
-    try {
-      return this.db.prepare(this.sql).run(...this.params);
-    } catch (err) {
-      throw new Error(`D1_ERROR: ${(err as Error).message}`);
-    }
-  }
-}
-
-function fakeD1() {
-  const db = new DatabaseSync(":memory:");
-  db.exec("pragma foreign_keys = on"); // as in D1
-  const dir = new URL("./migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) db.exec(readFileSync(new URL(file, dir), "utf8"));
-  const d1 = {
-    prepare: (sql: string) => new Statement(db, sql),
-    async batch(statements: Statement[]) {
-      db.exec("begin");
-      try {
-        const out = [];
-        for (const s of statements) out.push(await s.run());
-        db.exec("commit");
-        return out;
-      } catch (err) {
-        db.exec("rollback");
-        throw err;
-      }
-    },
-  };
-  return { db, d1 };
-}
+import { fakeD1 } from "./test-d1";
 
 const OWN_OPERATOR = "00000000-0000-4000-8000-000000000001";
 const RIDER: Profile = { id: "rider-1", phone: "+22896123456", fullName: null, role: "rider" };

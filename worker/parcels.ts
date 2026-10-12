@@ -22,8 +22,10 @@ import {
   type ParcelSizeTier,
   type ParcelStatus,
 } from "../src/lib/parcels";
+import type { DeliveryStatus } from "../src/lib/drivers";
 import type { Profile } from "../src/lib/types";
 import type { Env } from "./env";
+import { cancelParcelJob, createExpressJob, driverSettings } from "./drivers";
 import { ApiError, nowIso, randomDigits, uuid } from "./http";
 import { notifyPerson, type Message } from "./notify";
 
@@ -45,9 +47,9 @@ export interface ParcelCtx {
   ): D1PreparedStatement;
 }
 
-const APP_URL = "https://app.poinderecharge.com/colis";
+export const APP_URL = "https://app.poinderecharge.com/colis";
 
-interface ParcelRow {
+export interface ParcelRow {
   id: string;
   tracking_no: string;
   from_station_id: string;
@@ -77,6 +79,9 @@ interface ParcelRow {
   in_transit_at: string | null;
   arrived_at: string | null;
   picked_up_at: string | null;
+  express: number;
+  delivery_status: DeliveryStatus | null;
+  job_id: string | null;
 }
 
 interface SizeRow {
@@ -95,7 +100,7 @@ interface DepotRow {
   lockers: number;
 }
 
-function toParcel(r: ParcelRow, withCode: boolean): Parcel {
+export function toParcel(r: ParcelRow, withCode: boolean): Parcel {
   return {
     id: r.id,
     trackingNo: r.tracking_no,
@@ -117,6 +122,9 @@ function toParcel(r: ParcelRow, withCode: boolean): Parcel {
     pickedUpAt: r.picked_up_at,
     pickupDeadline: r.pickup_deadline,
     lockerNo: r.locker_no,
+    express: !!r.express,
+    deliveryStatus: r.delivery_status ?? null,
+    jobId: r.job_id ?? null,
     ...(withCode && r.status === "arrived" && r.pickup_code ? { pickupCode: r.pickup_code } : {}),
   };
 }
@@ -137,36 +145,37 @@ const toDepot = (r: DepotRow): ParcelDepot => ({
   lockers: r.lockers,
 });
 
-async function sizes(db: D1Database): Promise<ParcelSizeTier[]> {
+export async function sizes(db: D1Database): Promise<ParcelSizeTier[]> {
   const { results } = await db.prepare("select * from parcel_sizes").all<SizeRow>();
   return results.map(toTier).sort((a, b) => PARCEL_SIZES.indexOf(a.size) - PARCEL_SIZES.indexOf(b.size));
 }
 
 /** Public: active depots and prices. */
 export async function parcelInfo(c: ParcelCtx): Promise<ParcelInfo> {
-  const [depots, tiers] = await Promise.all([
+  const [depots, tiers, driverSettingsValue] = await Promise.all([
     c.db
       .prepare(
         "select d.* from parcel_depots d join stations s on s.id = d.station_id where d.is_active = 1 and s.is_active = 1",
       )
       .all<DepotRow>(),
     sizes(c.db),
+    driverSettings(c.db),
   ]);
-  return { depots: depots.results.map(toDepot), sizes: tiers };
+  return { depots: depots.results.map(toDepot), sizes: tiers, driverSettings: driverSettingsValue };
 }
 
-interface StationInfo {
+export interface StationInfo {
   id: string;
   name: string;
   address: string;
   opening_hours: string;
 }
 
-async function station(db: D1Database, id: string): Promise<StationInfo | null> {
+export async function station(db: D1Database, id: string): Promise<StationInfo | null> {
   return db.prepare("select id, name, address, opening_hours from stations where id = ?").bind(id).first<StationInfo>();
 }
 
-async function requireDepot(db: D1Database, stationId: string) {
+export async function requireDepot(db: D1Database, stationId: string) {
   const row = await db
     .prepare(
       "select 1 from parcel_depots d join stations s on s.id = d.station_id where d.station_id = ? and d.is_active = 1 and s.is_active = 1",
@@ -176,13 +185,13 @@ async function requireDepot(db: D1Database, stationId: string) {
   if (!row) throw new ApiError("depot_inactive");
 }
 
-async function requireStaff(c: ParcelCtx, stationId: string): Promise<Profile> {
+export async function requireStaff(c: ParcelCtx, stationId: string): Promise<Profile> {
   const user = await c.requireUser();
   if (!(await c.isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
   return user;
 }
 
-function cleanName(value: unknown): string | null {
+export function cleanName(value: unknown): string | null {
   const name = String(value ?? "").trim().slice(0, 80);
   return name || null;
 }
@@ -191,7 +200,7 @@ function cleanName(value: unknown): string | null {
  * The account of this phone number; creates one without a PIN when there is
  * none. The person sets a PIN with "code by SMS" the first time they open the app.
  */
-async function accountFor(c: ParcelCtx, phone: string, name: string | null, actor: string): Promise<{ id: string; created: boolean }> {
+export async function accountFor(c: ParcelCtx, phone: string, name: string | null, actor: string): Promise<{ id: string; created: boolean }> {
   const find = () => c.db.prepare("select id from users where phone = ?").bind(phone).first<{ id: string }>();
   const existing = await find();
   if (existing) return { id: existing.id, created: false };
@@ -209,16 +218,101 @@ async function accountFor(c: ParcelCtx, phone: string, name: string | null, acto
   return { id: user.id, created: user.id === id };
 }
 
-const event = (c: ParcelCtx, parcelId: string, actor: string | null, status: ParcelStatus, stationId: string | null) =>
+export const event = (c: ParcelCtx, parcelId: string, actor: string | null, status: ParcelStatus, stationId: string | null) =>
   c.db
     .prepare("insert into parcel_events (parcel_id, at, actor, status, station_id) values (?, ?, ?, ?, ?)")
     .bind(parcelId, nowIso(), actor, status, stationId);
 
 /** "12/10" in Lomé time (UTC, no daylight saving). */
-const shortDate = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+export const shortDate = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 
-function party(name: string | null, phone: string) {
+export function party(name: string | null, phone: string) {
   return name ? `${name} (${phone})` : phone;
+}
+
+/** What a new parcel needs; shared by the counter (createParcel) and drivers collecting at home (worker/drivers.ts). */
+export interface NewParcel {
+  fromStationId: string;
+  toStationId: string;
+  senderId: string;
+  senderPhone: string;
+  senderName: string | null;
+  recipientId: string;
+  recipientPhone: string;
+  recipientName: string | null;
+  content: string;
+  declared: number | null;
+  measures: { lengthCm: number; widthCm: number; heightCm: number; weightKg: number };
+  tier: ParcelSizeTier;
+  paymentMethod: "cash" | "cash_driver";
+  status: "deposited" | "in_transit";
+  express: boolean;
+  jobId?: string;
+  actor: string;
+}
+
+/** Inserts a parcel with a fresh tracking number, its first history entry and the log entry. */
+export async function insertParcel(c: ParcelCtx, p: NewParcel): Promise<{ id: string; trackingNo: string }> {
+  const now = nowIso();
+  const id = uuid();
+  let trackingNo = "";
+  for (let attempt = 0; attempt < 5 && !trackingNo; attempt++) {
+    const candidate = newTrackingNo();
+    try {
+      await c.db
+        .prepare(
+          `insert into parcels (id, tracking_no, from_station_id, to_station_id, sender_user_id, sender_phone, sender_name,
+           recipient_user_id, recipient_phone, recipient_name, content, declared_value, length_cm, width_cm, height_cm,
+           weight_kg, size, price_fcfa, payment_method, paid_at, status, created_by, created_at, in_transit_at, express, job_id)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          id,
+          candidate,
+          p.fromStationId,
+          p.toStationId,
+          p.senderId,
+          p.senderPhone,
+          p.senderName,
+          p.recipientId,
+          p.recipientPhone,
+          p.recipientName,
+          p.content,
+          p.declared,
+          p.measures.lengthCm,
+          p.measures.widthCm,
+          p.measures.heightCm,
+          p.measures.weightKg,
+          p.tier.size,
+          p.tier.priceFcfa,
+          p.paymentMethod,
+          now,
+          p.status,
+          p.actor,
+          now,
+          p.status === "in_transit" ? now : null,
+          p.express ? 1 : 0,
+          p.jobId ?? null,
+        )
+        .run();
+      trackingNo = candidate;
+    } catch (err) {
+      if (!/UNIQUE/i.test(String(err))) throw err;
+    }
+  }
+  if (!trackingNo) throw new ApiError("unknown", 500);
+  await c.db.batch([
+    event(c, id, p.actor, p.status, p.status === "deposited" ? p.fromStationId : null),
+    c.audit(
+      p.actor,
+      "parcels",
+      "insert",
+      id,
+      { tracking_no: trackingNo, to_station_id: p.toStationId, size: p.tier.size, price_fcfa: p.tier.priceFcfa, ...(p.express ? { express: true } : {}) },
+      { stationId: p.fromStationId, userId: p.senderId },
+    ),
+  ]);
+  return { id, trackingNo };
 }
 
 // Staff at station A -----------------------------------------------------------
@@ -256,62 +350,31 @@ export async function createParcel(c: ParcelCtx, fromStationId: string, input: P
   const sender = await accountFor(c, senderPhone, senderName, staff.id);
   const recipient = await accountFor(c, recipientPhone, recipientName, staff.id);
 
-  const now = nowIso();
-  const id = uuid();
-  let trackingNo = "";
-  for (let attempt = 0; attempt < 5 && !trackingNo; attempt++) {
-    const candidate = newTrackingNo();
-    try {
-      await c.db
-        .prepare(
-          `insert into parcels (id, tracking_no, from_station_id, to_station_id, sender_user_id, sender_phone, sender_name,
-           recipient_user_id, recipient_phone, recipient_name, content, declared_value, length_cm, width_cm, height_cm,
-           weight_kg, size, price_fcfa, payment_method, paid_at, status, created_by, created_at)
-           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cash', ?, 'deposited', ?, ?)`,
-        )
-        .bind(
-          id,
-          candidate,
-          fromStationId,
-          toStationId,
-          sender.id,
-          senderPhone,
-          senderName,
-          recipient.id,
-          recipientPhone,
-          recipientName,
-          content,
-          declared,
-          measures.lengthCm,
-          measures.widthCm,
-          measures.heightCm,
-          measures.weightKg,
-          tier.size,
-          tier.priceFcfa,
-          now,
-          staff.id,
-          now,
-        )
-        .run();
-      trackingNo = candidate;
-    } catch (err) {
-      if (!/UNIQUE/i.test(String(err))) throw err;
-    }
-  }
-  if (!trackingNo) throw new ApiError("unknown", 500);
-  await c.db.batch([
-    event(c, id, staff.id, "deposited", fromStationId),
-    c.audit(staff.id, "parcels", "insert", id, { tracking_no: trackingNo, to_station_id: toStationId, size: tier.size, price_fcfa: tier.priceFcfa }, {
-      stationId: fromStationId,
-      userId: sender.id,
-    }),
-  ]);
+  const { id, trackingNo } = await insertParcel(c, {
+    fromStationId,
+    toStationId,
+    senderId: sender.id,
+    senderPhone,
+    senderName,
+    recipientId: recipient.id,
+    recipientPhone,
+    recipientName,
+    content,
+    declared,
+    measures,
+    tier,
+    paymentMethod: "cash",
+    status: "deposited",
+    express: !!input.express,
+    actor: staff.id,
+  });
+  const fare = input.express ? await createExpressJob(c, id, staff.id) : 0;
 
   const [from, to] = await Promise.all([station(c.db, fromStationId), station(c.db, toStationId)]);
   await Promise.all([
     notifyPerson(c.env, id, "deposited", sender.id, {
       subject: `Colis ${trackingNo} déposé`,
-      text: `poinderecharge : colis ${trackingNo} déposé à ${from?.name} pour ${to?.name}. ${tier.priceFcfa} FCFA payés. Suivi : ${APP_URL}`,
+      text: `poinderecharge : colis ${trackingNo} déposé à ${from?.name} pour ${to?.name}${fare ? " en express" : ""}. ${tier.priceFcfa + fare} FCFA payés. Suivi : ${APP_URL}`,
     }),
     notifyPerson(c.env, id, "deposited", recipient.id, {
       subject: `Un colis est en route pour vous (${trackingNo})`,
@@ -353,7 +416,8 @@ async function loadParcels(c: ParcelCtx, ids: unknown): Promise<ParcelRow[]> {
 export async function markInTransit(c: ParcelCtx, stationId: string, ids: unknown) {
   const staff = await requireStaff(c, stationId);
   const rows = await loadParcels(c, ids);
-  if (rows.some((r) => r.from_station_id !== stationId || r.status !== "deposited")) throw new ApiError("parcel_wrong_status");
+  // Express parcels go with a driver, not on the collection run.
+  if (rows.some((r) => r.from_station_id !== stationId || r.status !== "deposited" || r.express)) throw new ApiError("parcel_wrong_status");
   const now = nowIso();
   await c.db.batch(
     rows.flatMap((r) => [
@@ -386,40 +450,38 @@ function arrivalMessage(r: ParcelRow, to: StationInfo | null, reminder: boolean)
 export async function markArrived(c: ParcelCtx, stationId: string, ids: unknown) {
   const staff = await requireStaff(c, stationId);
   const rows = await loadParcels(c, ids);
-  if (rows.some((r) => r.to_station_id !== stationId || r.status !== "in_transit")) throw new ApiError("parcel_wrong_status");
+  // Express parcels arrive when staff scan the driver who brings them (worker/drivers.ts).
+  if (rows.some((r) => r.to_station_id !== stationId || r.status !== "in_transit" || r.express)) throw new ApiError("parcel_wrong_status");
   const to = await station(c.db, stationId);
-  for (const r of rows) {
-    const now = nowIso();
-    const deadline = deadlineFrom(now);
-    let code = "";
-    for (let attempt = 0; attempt < 10 && !code; attempt++) {
-      const candidate = randomDigits(6);
-      try {
-        const res = await c.db
-          .prepare(
-            "update parcels set status = 'arrived', pickup_code = ?, arrived_at = ?, pickup_deadline = ? where id = ? and status = 'in_transit'",
-          )
-          .bind(candidate, now, deadline, r.id)
-          .run();
-        if (!res.meta.changes) throw new ApiError("parcel_wrong_status");
-        code = candidate;
-      } catch (err) {
-        if (!/UNIQUE/i.test(String(err))) throw err;
-      }
+  for (const r of rows) await arriveParcel(c, r, staff.id, stationId, to);
+}
+
+/** One parcel arrives at its station: it gets its pickup code and the recipient is told. */
+export async function arriveParcel(c: ParcelCtx, r: ParcelRow, actor: string, stationId: string, to: StationInfo | null) {
+  const now = nowIso();
+  const deadline = deadlineFrom(now);
+  let code = "";
+  for (let attempt = 0; attempt < 10 && !code; attempt++) {
+    const candidate = randomDigits(6);
+    try {
+      const res = await c.db
+        .prepare(
+          "update parcels set status = 'arrived', pickup_code = ?, arrived_at = ?, pickup_deadline = ? where id = ? and status = 'in_transit'",
+        )
+        .bind(candidate, now, deadline, r.id)
+        .run();
+      if (!res.meta.changes) throw new ApiError("parcel_wrong_status");
+      code = candidate;
+    } catch (err) {
+      if (!/UNIQUE/i.test(String(err))) throw err;
     }
-    if (!code) throw new ApiError("unknown", 500);
-    await c.db.batch([
-      event(c, r.id, staff.id, "arrived", stationId),
-      c.audit(staff.id, "parcels", "update", r.id, { status: ["in_transit", "arrived"] }, { stationId }),
-    ]);
-    await notifyPerson(
-      c.env,
-      r.id,
-      "arrived",
-      r.recipient_user_id,
-      arrivalMessage({ ...r, pickup_code: code, pickup_deadline: deadline }, to, false),
-    );
   }
+  if (!code) throw new ApiError("unknown", 500);
+  await c.db.batch([
+    event(c, r.id, actor, "arrived", stationId),
+    c.audit(actor, "parcels", "update", r.id, { status: ["in_transit", "arrived"] }, { stationId }),
+  ]);
+  await notifyPerson(c.env, r.id, "arrived", r.recipient_user_id, arrivalMessage({ ...r, pickup_code: code, pickup_deadline: deadline }, to, false));
 }
 
 /** Sends the arrival message again (the recipient lost it or changed phone). */
@@ -456,6 +518,7 @@ export async function pickUpParcel(c: ParcelCtx, stationId: string, rawInput: un
     .prepare("select * from parcels where to_station_id = ? and status = 'arrived' and pickup_code = ?")
     .bind(stationId, input.code)
     .first<ParcelRow>();
+  if (row?.delivery_status === "out_for_delivery") throw new ApiError("parcel_with_driver");
   if (!row || (input.trackingNo && row.tracking_no !== input.trackingNo)) {
     await c.db.batch([
       c.db.prepare("insert into parcel_code_failures (station_id, at) values (?, ?)").bind(stationId, nowIso()),
@@ -469,6 +532,8 @@ export async function pickUpParcel(c: ParcelCtx, stationId: string, rawInput: un
     .bind(now, staff.id, row.id)
     .run();
   if (!done.meta.changes) throw new ApiError("parcel_wrong_status");
+  // The recipient came in person after booking a home delivery: the trip is off.
+  if (row.delivery_status === "booked") await cancelParcelJob(c, row.id, staff.id);
   await c.db.batch([
     event(c, row.id, staff.id, "picked_up", stationId),
     c.audit(staff.id, "parcels", "update", row.id, { status: ["arrived", "picked_up"] }, { stationId, userId: row.recipient_user_id }),
@@ -492,6 +557,7 @@ export async function cancelParcel(c: ParcelCtx, parcelId: string) {
     event(c, row.id, staff.id, "cancelled", row.from_station_id),
     c.audit(staff.id, "parcels", "update", row.id, { status: ["deposited", "cancelled"] }, { stationId: row.from_station_id }),
   ]);
+  if (row.job_id) await cancelParcelJob(c, row.id, staff.id);
 }
 
 /**
@@ -608,7 +674,10 @@ export async function saveSizes(c: ParcelCtx, input: unknown) {
  */
 export async function runParcelDeadlines(env: Env) {
   const now = new Date();
-  const { results } = await env.DB.prepare("select * from parcels where status = 'arrived'").all<ParcelRow>();
+  // A parcel out with a driver is not at the station: no reminder, no storage.
+  const { results } = await env.DB.prepare(
+    "select * from parcels where status = 'arrived' and (delivery_status is null or delivery_status <> 'out_for_delivery')",
+  ).all<ParcelRow>();
   for (const r of results) {
     if (!r.arrived_at) continue;
     const days = (now.getTime() - new Date(r.arrived_at).getTime()) / 86_400_000;

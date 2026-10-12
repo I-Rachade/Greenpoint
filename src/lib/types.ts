@@ -75,6 +75,8 @@ export interface Profile {
   email: string | null;
   fullName: string | null;
   role: UserRole;
+  /** Set when the user applied as a driver (src/lib/drivers.ts). */
+  driverStatus?: "pending" | "active" | "rejected" | "suspended" | null;
 }
 
 export interface StationInput {

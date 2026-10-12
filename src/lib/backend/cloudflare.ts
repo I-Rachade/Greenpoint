@@ -3,6 +3,22 @@ import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelSizeTier } from "../parcels";
 import type { Promotion, PromotionInput } from "../promo";
 import type {
+  AdminDrivers,
+  DeliveryJob,
+  DriverApplication,
+  DriverAtStation,
+  DriverDecision,
+  DriverDocument,
+  DriverHome,
+  DriverSettings,
+  FleetVehicleInput,
+  HomePoint,
+  PickupBooking,
+  StationDrivers,
+} from "../drivers";
+import type { LatLng } from "../geo";
+import type { ParcelMeasures } from "../parcels";
+import type {
   Operator,
   Profile,
   Reservation,
@@ -44,6 +60,23 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "parcel_not_found",
   "parcel_wrong_status",
   "code_locked",
+  "parcel_with_driver",
+  "not_a_driver",
+  "phone_required",
+  "driver_busy",
+  "driver_not_found",
+  "too_far",
+  "cash_limit",
+  "outside_area",
+  "job_not_found",
+  "job_wrong_status",
+  "wait_longer",
+  "photo_missing",
+  "vehicle_unavailable",
+  "vehicle_too_small",
+  "no_vehicle",
+  "documents_missing",
+  "balance_changed",
   "invalid_contact",
   "contact_taken",
   "rate_limited",
@@ -361,6 +394,137 @@ export class CloudflareBackend implements Backend {
   async closeStoredParcel(id: string, outcome: "released" | "auctioned") {
     await this.call("POST", `/api/admin/parcels/${encodeURIComponent(id)}/${outcome}`);
     this.changed();
+  }
+
+  // Drivers ----------------------------------------------------------------------------
+
+  driverHome() {
+    return this.call<DriverHome>("GET", "/api/driver");
+  }
+
+  private async act(method: string, path: string, body?: unknown) {
+    await this.call(method, path, body);
+    this.changed();
+  }
+
+  applyDriver(input: DriverApplication) {
+    return this.act("POST", "/api/driver/apply", input);
+  }
+
+  uploadDriverDocument(kind: DriverDocument, image: Blob) {
+    return this.act("POST", `/api/driver/documents/${kind}`, image);
+  }
+
+  joinDriverQueue(stationId: string, position: LatLng | null) {
+    return this.act("POST", "/api/driver/queue", { stationId, position });
+  }
+
+  leaveDriverQueue() {
+    return this.act("DELETE", "/api/driver/queue");
+  }
+
+  private job(id: string, action: string, body?: unknown) {
+    return this.act("POST", `/api/driver/jobs/${encodeURIComponent(id)}/${action}`, body);
+  }
+
+  acceptJob(id: string) {
+    return this.job(id, "accept");
+  }
+
+  declineJob(id: string) {
+    return this.job(id, "decline");
+  }
+
+  async collectPickup(id: string, measures: ParcelMeasures) {
+    const job = await this.call<DeliveryJob>("POST", `/api/driver/jobs/${encodeURIComponent(id)}/collect`, { measures });
+    this.changed();
+    return job;
+  }
+
+  arriveAtDoor(id: string) {
+    return this.job(id, "door");
+  }
+
+  uploadDeliveryPhoto(id: string, image: Blob) {
+    return this.job(id, "photo", image);
+  }
+
+  deliverJob(id: string, code: string) {
+    return this.job(id, "deliver", { code });
+  }
+
+  failDelivery(id: string) {
+    return this.job(id, "absent");
+  }
+
+  async myJobs() {
+    if (!this.token) return [];
+    return this.call<DeliveryJob[]>("GET", "/api/jobs/mine");
+  }
+
+  async bookPickup(input: PickupBooking) {
+    const job = await this.call<DeliveryJob>("POST", "/api/jobs/pickup", input);
+    this.changed();
+    return job;
+  }
+
+  async bookDelivery(parcelId: string, home: HomePoint) {
+    const job = await this.call<DeliveryJob>("POST", `/api/parcels/${encodeURIComponent(parcelId)}/delivery`, { home });
+    this.changed();
+    return job;
+  }
+
+  cancelJob(id: string) {
+    return this.act("POST", `/api/jobs/${encodeURIComponent(id)}/cancel`);
+  }
+
+  stationDrivers(stationId: string) {
+    return this.call<StationDrivers>("GET", `/api/stations/${encodeURIComponent(stationId)}/drivers`);
+  }
+
+  driverAtStation(stationId: string, badge: string) {
+    return this.call<DriverAtStation>("POST", `/api/stations/${encodeURIComponent(stationId)}/drivers/scan`, { badge });
+  }
+
+  handToDriver(stationId: string, badge: string, jobId: string) {
+    return this.act("POST", `/api/stations/${encodeURIComponent(stationId)}/drivers/handover`, { badge, jobId });
+  }
+
+  receiveFromDriver(stationId: string, badge: string, jobId: string) {
+    return this.act("POST", `/api/stations/${encodeURIComponent(stationId)}/drivers/receive`, { badge, jobId });
+  }
+
+  settleDriver(stationId: string, badge: string, amountFcfa: number) {
+    return this.act("POST", `/api/stations/${encodeURIComponent(stationId)}/drivers/settle`, { badge, amount: amountFcfa });
+  }
+
+  adminDrivers() {
+    return this.call<AdminDrivers>("GET", "/api/admin/drivers");
+  }
+
+  reviewDriver(userId: string, decision: DriverDecision) {
+    return this.act("POST", `/api/admin/drivers/${encodeURIComponent(userId)}/review`, decision);
+  }
+
+  saveFleetVehicle(id: string | null, input: FleetVehicleInput) {
+    return this.act("POST", "/api/admin/fleet", { id, input });
+  }
+
+  saveDriverSettings(settings: DriverSettings) {
+    return this.act("POST", "/api/admin/driver-settings", { settings });
+  }
+
+  assignJob(jobId: string, driverId: string) {
+    return this.act("POST", `/api/admin/jobs/${encodeURIComponent(jobId)}/assign`, { driverId });
+  }
+
+  /** Private photos need the session, so they are fetched and shown from memory. */
+  async driverFileUrl(key: string) {
+    const headers: Record<string, string> = {};
+    if (this.token) headers.Authorization = `Bearer ${this.token}`;
+    const res = await fetch(`${this.apiBase}/api/admin/driver-files/${key}`, { headers }).catch(() => null);
+    if (!res?.ok) throw new BackendError("forbidden");
+    return URL.createObjectURL(await res.blob());
   }
 
   // Advertising popup ---------------------------------------------------------------

@@ -61,6 +61,37 @@ import {
   saveSizes,
   stationParcels,
 } from "./parcels";
+import {
+  acceptJob,
+  adminDrivers,
+  applyDriver,
+  arriveAtDoor,
+  assignJob,
+  bookDelivery,
+  bookPickup,
+  cancelJob,
+  collectPickup,
+  declineJob,
+  deliverJob,
+  driverAtStation,
+  driverFile,
+  driverHome,
+  failDelivery,
+  handToDriver,
+  joinQueue,
+  leaveQueue,
+  myJobs,
+  receiveFromDriver,
+  reviewDriver,
+  saveDriverSettings,
+  saveFleetVehicle,
+  settleDriver,
+  stationDrivers,
+  uploadDriverDocument,
+  uploadProof,
+} from "./drivers";
+import type { DriverApplication, DriverDecision, FleetVehicleInput, PickupBooking } from "../src/lib/drivers";
+import type { ParcelMeasures } from "../src/lib/parcels";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
@@ -947,6 +978,76 @@ const ROUTES: [string, RegExp, Handler][] = [
     },
   ],
   ["POST", /^\/api\/admin\/parcel-sizes$/, async (c) => saveSizes(c, (await readJson<{ sizes: unknown }>(c.request)).sizes)],
+  // Drivers (worker/drivers.ts)
+  ["GET", /^\/api\/driver$/, (c) => driverHome(c)],
+  ["POST", /^\/api\/driver\/apply$/, async (c) => applyDriver(c, await readJson<DriverApplication>(c.request))],
+  ["POST", /^\/api\/driver\/documents\/(id|license|portrait)$/, (c, [kind]) => uploadDriverDocument(c, kind, c.request)],
+  [
+    "POST",
+    /^\/api\/driver\/queue$/,
+    async (c) => {
+      const { stationId, position } = await readJson<{ stationId: string; position: unknown }>(c.request);
+      return joinQueue(c, String(stationId), position);
+    },
+  ],
+  ["DELETE", /^\/api\/driver\/queue$/, (c) => leaveQueue(c)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/accept$/, (c, [id]) => acceptJob(c, id)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/decline$/, (c, [id]) => declineJob(c, id)],
+  [
+    "POST",
+    /^\/api\/driver\/jobs\/([\w-]+)\/collect$/,
+    async (c, [id]) => collectPickup(c, id, (await readJson<{ measures: ParcelMeasures }>(c.request)).measures),
+  ],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/door$/, (c, [id]) => arriveAtDoor(c, id)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/photo$/, (c, [id]) => uploadProof(c, id, c.request)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/deliver$/, async (c, [id]) => deliverJob(c, id, (await readJson<{ code: string }>(c.request)).code)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/absent$/, (c, [id]) => failDelivery(c, id)],
+  ["GET", /^\/api\/jobs\/mine$/, (c) => myJobs(c)],
+  ["POST", /^\/api\/jobs\/pickup$/, async (c) => bookPickup(c, await readJson<PickupBooking>(c.request))],
+  ["POST", /^\/api\/parcels\/([\w-]+)\/delivery$/, async (c, [id]) => bookDelivery(c, id, (await readJson<{ home: unknown }>(c.request)).home)],
+  ["POST", /^\/api\/jobs\/([\w-]+)\/cancel$/, (c, [id]) => cancelJob(c, id)],
+  ["GET", /^\/api\/stations\/([\w-]+)\/drivers$/, (c, [id]) => stationDrivers(c, id)],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/drivers\/scan$/,
+    async (c, [id]) => driverAtStation(c, id, (await readJson<{ badge: string }>(c.request)).badge),
+  ],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/drivers\/(handover|receive)$/,
+    async (c, [id, action]) => {
+      const { badge, jobId } = await readJson<{ badge: string; jobId: string }>(c.request);
+      return action === "handover" ? handToDriver(c, id, badge, String(jobId)) : receiveFromDriver(c, id, badge, String(jobId));
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/drivers\/settle$/,
+    async (c, [id]) => {
+      const { badge, amount } = await readJson<{ badge: string; amount: number }>(c.request);
+      return settleDriver(c, id, badge, amount);
+    },
+  ],
+  ["GET", /^\/api\/admin\/drivers$/, (c) => adminDrivers(c)],
+  [
+    "POST",
+    /^\/api\/admin\/drivers\/([\w-]+)\/review$/,
+    async (c, [id]) => reviewDriver(c, id, await readJson<DriverDecision>(c.request)),
+  ],
+  [
+    "POST",
+    /^\/api\/admin\/fleet$/,
+    async (c) => {
+      const { id, input } = await readJson<{ id: string | null; input: FleetVehicleInput }>(c.request);
+      return saveFleetVehicle(c, id ? String(id) : null, input);
+    },
+  ],
+  ["POST", /^\/api\/admin\/driver-settings$/, async (c) => saveDriverSettings(c, (await readJson<{ settings: unknown }>(c.request)).settings)],
+  [
+    "POST",
+    /^\/api\/admin\/jobs\/([\w-]+)\/assign$/,
+    async (c, [id]) => assignJob(c, id, String((await readJson<{ driverId: string }>(c.request)).driverId)),
+  ],
   [
     "POST",
     /^\/api\/admin\/stations$/,
@@ -1042,6 +1143,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     // Sockets authenticate with their own key, not a user session.
     if (url.pathname === "/api/devices/events") return await handleDeviceEvents(request, env);
     if (url.pathname === "/api/devices/commands") return await handleDeviceCommands(request, env);
+    // Private photos of drivers and door handovers: admins only, read as a file.
+    const fileMatch = /^\/api\/admin\/driver-files\/((?:drivers|proofs)\/[\w/.-]+)$/.exec(url.pathname);
+    if (fileMatch && request.method === "GET") return await driverFile(c, fileMatch[1]);
     for (const [method, pattern, handler] of ROUTES) {
       const m = pattern.exec(url.pathname);
       if (!m) continue;

@@ -3,6 +3,8 @@
 // recipient picks up with a 6-digit code or the QR code in the app.
 // Shared by the app, the demo backend and the Worker. Plan: planung/paketdepot.md.
 
+import type { DeliveryStatus, DriverSettings } from "./drivers";
+
 export type ParcelSize = "S" | "M" | "L" | "XL";
 export const PARCEL_SIZES: ParcelSize[] = ["S", "M", "L", "XL"];
 
@@ -161,6 +163,12 @@ export interface Parcel {
   /** When the parcel goes into storage if nobody picks it up. */
   pickupDeadline: string | null;
   lockerNo: number | null;
+  /** Carried straight to station B by a driver instead of the collection run. */
+  express: boolean;
+  /** Home delivery booked by the recipient (see src/lib/drivers.ts). */
+  deliveryStatus: DeliveryStatus | null;
+  /** The driver trip for this parcel (express, pickup or home delivery). */
+  jobId: string | null;
   /** Only for the recipient, and only once the parcel has arrived. */
   pickupCode?: string;
   /** For the signed-in customer: did they send it, or is it for them? */
@@ -176,12 +184,16 @@ export interface ParcelInput {
   content: string;
   declaredValue?: number | null;
   measures: ParcelMeasures;
+  /** A driver carries it straight to station B; the fare is paid at the counter too. */
+  express?: boolean;
 }
 
 /** Public: the depots and prices, so customers know where and for how much. */
 export interface ParcelInfo {
   depots: ParcelDepot[];
   sizes: ParcelSizeTier[];
+  /** Trip prices, so the app can show what a pickup or delivery costs. */
+  driverSettings: DriverSettings;
 }
 
 /** Everything the backoffice parcel page needs. */

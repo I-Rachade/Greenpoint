@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import type { CodeChannel } from "@/lib/backend/backend";
 import { CONTACT_EMAIL } from "@/lib/config";
@@ -50,6 +51,9 @@ export function AccountPanel() {
             <ContactRow kind="phone" value={profile.phone} />
             <ContactRow kind="email" value={profile.email} />
           </section>
+          <Link href="/chauffeur" className="block text-sm text-gp-green-dark underline dark:text-gp-green">
+            {profile.driverStatus ? t.nav.driver : t.account.becomeDriver}
+          </Link>
           <DeleteAccount phone={profile.phone} email={profile.email} onDeleted={() => setDeleted(true)} />
         </>
       )}
