@@ -69,3 +69,9 @@ NEXT_PUBLIC_BACKEND=cloudflare NEXT_PUBLIC_API_URL=https://app.poinderecharge.co
 ```
 
 Der Worker erlaubt Anfragen aus der App (`https://localhost`, `capacitor://localhost`), siehe `worker/http.ts`.
+
+## Rechtliche Seiten
+
+Mentions légales (`/mentions-legales`), CGU (`/cgu`) und Datenschutzerklärung (`/confidentialite`), Französisch verbindlich, Englisch als Übersetzung. Texte in `src/lib/legal/content.ts`. Angaben, die nur die Firma kennt, stehen dort als `[À COMPLÉTER : …]` / `[TO BE COMPLETED: …]` und sind auf der Seite gelb markiert, bis sie ausgefüllt sind.
+
+Datenschutz-URL für Google Play und App Store: `https://app.poinderecharge.com/confidentialite`. Wer sich registriert, muss vorher CGU und Datenschutzerklärung per Häkchen annehmen.

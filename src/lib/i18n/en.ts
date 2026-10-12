@@ -340,6 +340,17 @@ export const en: Dictionary = {
     email: "Email",
     link: "Contact",
   },
+  legal: {
+    notice: "Legal notice",
+    terms: "Terms",
+    privacy: "Privacy",
+    updated: "Last updated: {date}",
+    back: "Back to the map",
+    accept: "I accept the {terms} and the {privacy}.",
+    acceptTerms: "terms of use",
+    acceptPrivacy: "privacy policy",
+    mustAccept: "Please accept the terms of use and the privacy policy.",
+  },
   errors: {
     not_authenticated: "Please log in.",
     already_reserved: "You already have an active reservation.",

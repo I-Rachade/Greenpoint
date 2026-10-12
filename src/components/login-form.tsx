@@ -1,15 +1,17 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { Fragment, useState, type FormEvent } from "react";
 import { HOSTED_DEMO } from "@/lib/backend";
 import { CONTACT_EMAIL } from "@/lib/config";
 import { useErrorMessage } from "@/lib/hooks";
+import { LEGAL_PATHS } from "@/lib/legal/content";
 import { normalizeTogoPhone } from "@/lib/phone";
 import { PIN_LENGTH } from "@/lib/pin";
 import type { Profile, UserRole } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
+import { LegalLinks } from "./legal-links";
 
 // On the public site the demo only offers the rider view (anyone could otherwise "log in" as admin).
 const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["rider"] : ["rider", "operator", "admin"];
@@ -36,6 +38,8 @@ export function LoginForm() {
   const [pin, setPin] = useState("");
   const [pinConfirm, setPinConfirm] = useState("");
   const [demoRole, setDemoRole] = useState<UserRole>("rider");
+  /** New accounts must accept the terms and the privacy policy before the SMS code is sent. */
+  const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,6 +49,7 @@ export function LoginForm() {
     setCode("");
     setPin("");
     setPinConfirm("");
+    setAccepted(false);
     setError(null);
   }
 
@@ -82,6 +87,10 @@ export function LoginForm() {
 
   function sendCode(e: FormEvent) {
     e.preventDefault();
+    if (mode === "register" && !accepted) {
+      setError(t.legal.mustAccept);
+      return;
+    }
     const phone = phoneOrError();
     if (!phone) return;
     void run(async () => {
@@ -140,6 +149,22 @@ export function LoginForm() {
     </label>
   );
 
+  const legalLink = (href: string, label: string) => (
+    // A new tab keeps the number typed so far.
+    <a href={href} target="_blank" rel="noopener" className="font-medium text-gp-green-dark underline dark:text-gp-green">
+      {label}
+    </a>
+  );
+  const acceptText = t.legal.accept.split(/(\{terms\}|\{privacy\})/).map((part, i) => (
+    <Fragment key={i}>
+      {part === "{terms}"
+        ? legalLink(LEGAL_PATHS.terms, t.legal.acceptTerms)
+        : part === "{privacy}"
+          ? legalLink(LEGAL_PATHS.privacy, t.legal.acceptPrivacy)
+          : part}
+    </Fragment>
+  ));
+
   const roleField = backend.mode === "demo" && DEMO_ROLES.length > 1 && (
     <label className="block space-y-1">
       <span className="text-sm font-medium">{t.demo.role}</span>
@@ -179,7 +204,19 @@ export function LoginForm() {
         <form onSubmit={sendCode} className="space-y-3">
           <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.login.smsIntro}</p>
           {phoneField}
-          <button type="submit" className={button} disabled={busy}>
+          {mode === "register" && (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 shrink-0 accent-gp-green-dark"
+                checked={accepted}
+                onChange={(e) => setAccepted(e.target.checked)}
+                required
+              />
+              <span>{acceptText}</span>
+            </label>
+          )}
+          <button type="submit" className={button} disabled={busy || (mode === "register" && !accepted)}>
             {t.login.sendCode}
           </button>
           <button type="button" className={link} onClick={() => switchMode("pin")}>
@@ -235,6 +272,7 @@ export function LoginForm() {
           {CONTACT_EMAIL}
         </a>
       </p>
+      <LegalLinks />
     </div>
   );
 }

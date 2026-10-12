@@ -339,6 +339,17 @@ export const fr = {
     email: "E-mail",
     link: "Contact",
   },
+  legal: {
+    notice: "Mentions légales",
+    terms: "CGU",
+    privacy: "Confidentialité",
+    updated: "Dernière mise à jour : {date}",
+    back: "Retour à la carte",
+    accept: "J'accepte les {terms} et la {privacy}.",
+    acceptTerms: "conditions générales d'utilisation",
+    acceptPrivacy: "politique de confidentialité",
+    mustAccept: "Veuillez accepter les conditions d'utilisation et la politique de confidentialité.",
+  },
   errors: {
     not_authenticated: "Veuillez vous connecter.",
     already_reserved: "Vous avez déjà une réservation active.",

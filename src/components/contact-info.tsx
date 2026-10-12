@@ -2,6 +2,7 @@
 
 import { CONTACT_EMAIL } from "@/lib/config";
 import { useI18n } from "./i18n-provider";
+import { LegalLinks } from "./legal-links";
 
 export function ContactInfo() {
   const { t } = useI18n();
@@ -15,6 +16,7 @@ export function ContactInfo() {
           {CONTACT_EMAIL}
         </a>
       </p>
+      <LegalLinks className="pt-4" />
     </div>
   );
 }
