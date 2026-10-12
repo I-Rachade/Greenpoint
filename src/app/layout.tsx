@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Poppins } from "next/font/google";
+import localFont from "next/font/local";
 import { AppProvider } from "@/components/app-provider";
 import { Header } from "@/components/header";
 import { I18nProvider } from "@/components/i18n-provider";
@@ -7,8 +7,21 @@ import { NativeShell } from "@/components/native-shell";
 import { PromoPopup } from "@/components/promo-popup";
 import "./globals.css";
 
-const inter = Inter({ variable: "--font-inter", subsets: ["latin"], weight: ["400", "600"] });
-const poppins = Poppins({ variable: "--font-poppins", subsets: ["latin"], weight: ["600", "700"] });
+// Fonts are bundled with the app so the build never has to reach Google Fonts.
+const inter = localFont({
+  variable: "--font-inter",
+  src: [
+    { path: "./fonts/inter-latin-400-normal.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/inter-latin-600-normal.woff2", weight: "600", style: "normal" },
+  ],
+});
+const poppins = localFont({
+  variable: "--font-poppins",
+  src: [
+    { path: "./fonts/poppins-latin-600-normal.woff2", weight: "600", style: "normal" },
+    { path: "./fonts/poppins-latin-700-normal.woff2", weight: "700", style: "normal" },
+  ],
+});
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://app.poinderecharge.com"),
