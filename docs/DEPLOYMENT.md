@@ -25,14 +25,13 @@ Unter **Workers & Pages > pointderecharge-app > Settings > Variables and secrets
 
 | Name | Typ | Inhalt |
 |---|---|---|
-| `TWILIO_ACCOUNT_SID` | Secret | Twilio Account SID |
-| `TWILIO_AUTH_TOKEN` | Secret | Twilio Auth Token |
-| `TWILIO_MESSAGING_SERVICE_SID` | Secret | Messaging Service SID (Absendername `poinderecharge`) |
+| `DIDIT_API_KEY` | Secret | API-Schlüssel aus der Didit Business Console (verschickt die Login-Codes) |
+| `DIDIT_CHANNEL` | Text, optional | `sms` (Standard) oder `whatsapp`; ist der Kanal für eine Nummer nicht verfügbar, schickt Didit eine SMS |
 | `ADMIN_PHONES` | Text | Nummern, die beim **ersten** Login Admin werden, z. B. `+22890123456` (mehrere mit Komma) |
 | `TEST_OTP` | Text, optional | Testnummern mit festem Code ohne SMS, z. B. `+22890000001=123456`. In Produktion leer lassen oder nur für eigene Nummern. |
 | `OTP_HOURLY_LIMIT` | Text, optional | höchstens so viele Login-SMS pro Stunde insgesamt (Standard 30) |
 
-Twilio: unter **Messaging > Settings > Geo permissions** nur **Togo** aktivieren. Die App nimmt ohnehin nur +228-Nummern an; die Geo-Sperre schützt zusätzlich vor teuren SMS ins Ausland.
+Didit: Konto auf https://business.didit.me anlegen, Guthaben aufladen (Telefon-Verifizierung ist erst nach der ersten Aufladung aktiv), unter der Anwendung den API-Schlüssel kopieren. Kosten: 0,04 $ pro verschickten Code plus Gebühr des Netzes je nach Land und Kanal (https://docs.didit.me/getting-started/phone-verification-pricing); die Prüfung des Codes ist kostenlos. Die App nimmt nur +228-Nummern an, damit keine teuren Codes ins Ausland gehen. Didit lehnt Wegwerf- und Internet-Nummern beim Login ab.
 
 ## 4. Rollen vergeben
 

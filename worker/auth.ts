@@ -1,7 +1,7 @@
 import { normalizeTogoPhone } from "../src/lib/phone";
 import type { Profile, UserRole } from "../src/lib/types";
 import type { Env } from "./env";
-import { ApiError, nowIso, randomDigits, sha256, uuid } from "./http";
+import { ApiError, nowIso, sha256, uuid } from "./http";
 
 const CODE_MINUTES = 10;
 const MAX_ATTEMPTS = 5;
@@ -40,36 +40,43 @@ function hourAgo(): string {
   return new Date(Date.now() - 3_600_000).toISOString();
 }
 
-async function sendSms(env: Env, to: string, body: string) {
-  if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_MESSAGING_SERVICE_SID) {
-    console.error("Twilio secrets missing: no SMS sent");
+const DIDIT_API = "https://verification.didit.me/v3/phone";
+/** Marks rows of codes sent by Didit: Didit keeps the code, we only log the send. */
+const DIDIT_MARK = "didit";
+
+async function didit<T>(env: Env, path: "send" | "check", body: unknown): Promise<{ status: number; data: T }> {
+  if (!env.DIDIT_API_KEY) {
+    console.error("DIDIT_API_KEY missing: no SMS sent");
     throw new ApiError("unknown", 503);
   }
-  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`, {
+  const res = await fetch(`${DIDIT_API}/${path}/`, {
     method: "POST",
-    headers: {
-      Authorization: `Basic ${btoa(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`)}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({ To: to, MessagingServiceSid: env.TWILIO_MESSAGING_SERVICE_SID, Body: body }),
+    headers: { "x-api-key": env.DIDIT_API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
+  const data = (await res.json().catch(() => ({}))) as T;
+  if (res.status === 429) throw new ApiError("rate_limited", 429);
+  if (res.status === 400) throw new ApiError(path === "send" ? "phone_not_allowed" : "invalid_code");
   if (!res.ok) {
-    console.error("Twilio error", res.status, await res.text());
+    console.error(`Didit ${path} error`, res.status, JSON.stringify(data));
     throw new ApiError("unknown", 502);
   }
+  return { status: res.status, data };
 }
 
-/** Sends a 6-digit login code by SMS. Only Togolese numbers (+228). */
+function expiresIn(minutes: number): string {
+  return new Date(Date.now() + minutes * 60_000).toISOString();
+}
+
+/** Sends a login code by SMS through Didit. Only Togolese numbers (+228). */
 export async function sendCode(env: Env, rawPhone: string) {
   const phone = normalizeTogoPhone(rawPhone ?? "");
   if (!phone) throw new ApiError("phone_not_allowed");
 
   const fixed = testCode(env, phone);
   if (fixed) {
-    await env.DB.prepare(
-      "insert into otp_codes (phone, code_hash, created_at, expires_at) values (?, ?, ?, ?)",
-    )
-      .bind(phone, await sha256(`${phone}:${fixed}`), nowIso(), new Date(Date.now() + CODE_MINUTES * 60_000).toISOString())
+    await env.DB.prepare("insert into otp_codes (phone, code_hash, created_at, expires_at) values (?, ?, ?, ?)")
+      .bind(phone, await sha256(`${phone}:${fixed}`), nowIso(), expiresIn(CODE_MINUTES))
       .run();
     return;
   }
@@ -85,11 +92,23 @@ export async function sendCode(env: Env, rawPhone: string) {
     throw new ApiError("rate_limited", 429);
   }
 
-  const code = randomDigits(6);
+  const { data } = await didit<{ status: string; reason?: string | null }>(env, "send", {
+    phone_number: phone,
+    options: {
+      code_size: 6,
+      locale: "fr",
+      preferred_channel: env.DIDIT_CHANNEL || "sms",
+      sms_sender_name: "poinderecharge",
+    },
+  });
+  if (data.status === "Blocked") {
+    console.warn("Didit blocked send", data.reason);
+    throw new ApiError("rate_limited", 429);
+  }
+  // Logged for the hourly limits; Didit codes are valid for 5 minutes.
   await env.DB.prepare("insert into otp_codes (phone, code_hash, created_at, expires_at) values (?, ?, ?, ?)")
-    .bind(phone, await sha256(`${phone}:${code}`), nowIso(), new Date(Date.now() + CODE_MINUTES * 60_000).toISOString())
+    .bind(phone, DIDIT_MARK, nowIso(), expiresIn(5))
     .run();
-  await sendSms(env, phone, `poinderecharge : votre code est ${code}. Il expire dans ${CODE_MINUTES} minutes.`);
 }
 
 /** Checks the code, creates the user on first login, and opens a session. */
@@ -97,6 +116,7 @@ export async function verifyCode(env: Env, rawPhone: string, rawCode: string): P
   const phone = normalizeTogoPhone(rawPhone ?? "");
   if (!phone) throw new ApiError("phone_not_allowed");
   const code = String(rawCode ?? "").trim();
+  if (!/^\d{6}$/.test(code)) throw new ApiError("invalid_code");
 
   const row = await env.DB.prepare(
     "select id, code_hash, attempts from otp_codes where phone = ? and used = 0 and expires_at > ? order by id desc limit 1",
@@ -104,7 +124,20 @@ export async function verifyCode(env: Env, rawPhone: string, rawCode: string): P
     .bind(phone, nowIso())
     .first<{ id: number; code_hash: string; attempts: number }>();
   if (!row || row.attempts >= MAX_ATTEMPTS) throw new ApiError("invalid_code");
-  if (row.code_hash !== (await sha256(`${phone}:${code}`))) {
+
+  if (row.code_hash === DIDIT_MARK) {
+    const { data } = await didit<{ status: string }>(env, "check", {
+      phone_number: phone,
+      code,
+      // Throwaway and internet numbers are a common way to make many accounts.
+      disposable_number_action: "DECLINE",
+      voip_number_action: "DECLINE",
+    });
+    if (data.status !== "Approved") {
+      await env.DB.prepare("update otp_codes set attempts = attempts + 1 where id = ?").bind(row.id).run();
+      throw new ApiError("invalid_code");
+    }
+  } else if (row.code_hash !== (await sha256(`${phone}:${code}`))) {
     await env.DB.prepare("update otp_codes set attempts = attempts + 1 where id = ?").bind(row.id).run();
     throw new ApiError("invalid_code");
   }

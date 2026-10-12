@@ -3,10 +3,10 @@ export interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   MEDIA: R2Bucket;
-  /** Twilio account that sends the login SMS (secrets). */
-  TWILIO_ACCOUNT_SID?: string;
-  TWILIO_AUTH_TOKEN?: string;
-  TWILIO_MESSAGING_SERVICE_SID?: string;
+  /** Didit API key (secret) for the login codes, see docs/DEPLOYMENT.md. */
+  DIDIT_API_KEY?: string;
+  /** How Didit delivers the code: "sms" (default) or "whatsapp" etc.; falls back to SMS. */
+  DIDIT_CHANNEL?: string;
   /** Numbers that log in with a fixed code and get no SMS, e.g. "+22890000001=123456,+22890000002=654321". */
   TEST_OTP?: string;
   /** Numbers that become admin on their first login, e.g. "+22890000001". */

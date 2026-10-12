@@ -7,12 +7,12 @@ Browser / Android-App (Next.js, statisch)  ──►  Cloudflare Worker "pointde
   Karte (MapLibre + OpenFreeMap)                  /api/*: Logik und Rechte (worker/api.ts)
   Seiten für Fahrer/Personal/Admin                D1 (SQLite): Stationen, Status, Reservierungen
                                                   R2: Bilder der Werbung
-                                                  Login: Telefonnummer + SMS-Code (Twilio)
+                                                  Login: Telefonnummer + SMS-Code (Didit)
 ```
 
 - Alles läuft bei **Cloudflare**: Der Worker liefert die statische Webapp (`out/`) aus und beantwortet unter `/api/*` alle Datenanfragen. Datenbank ist **D1** (`poinderecharge-db`), Bilder liegen in **R2** (`poinderecharge-media`). Die Mobile App ruft dieselbe API unter `https://app.poinderecharge.com/api` auf.
 - **Sicherheit** liegt im Worker: Jede Anfrage prüft die Sitzung (Bearer-Token, in D1 nur als SHA-256 gespeichert) und die Rolle. Jeder darf Stationen und Status lesen, nur zugeordnetes Personal darf den Status seiner Station ändern, nur Admins dürfen Stationen, Rollen und Werbung ändern. Eine Reservierung prüft die freie Menge und legt sie in derselben SQL-Anweisung an, damit zwei Fahrer nicht gleichzeitig den letzten Akku bekommen; ein eindeutiger Index erlaubt nur eine aktive Reservierung pro Fahrer.
-- **Login**: 6-stelliger SMS-Code über Twilio, 10 Minuten gültig, 5 Versuche, höchstens 5 Codes pro Nummer und Stunde und 30 pro Stunde insgesamt (`OTP_HOURLY_LIMIT`). Nur +228-Nummern. Sitzungen gelten 60 Tage.
+- **Login**: 6-stelliger SMS-Code über Didit (Code und Prüfung bei Didit, 5 Minuten gültig, 3 Versuche), höchstens 5 Codes pro Nummer und Stunde und 30 pro Stunde insgesamt (`OTP_HOURLY_LIMIT`). Nur +228-Nummern. Sitzungen gelten 60 Tage.
 - **Live-Status**: Offene Seiten laden die Daten alle 15 Sekunden neu (nur wenn sichtbar) und sofort nach eigenen Änderungen.
 
 ## Datenmodell (Phase 1)
