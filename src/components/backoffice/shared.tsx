@@ -12,9 +12,14 @@ export function useAdminSnapshot() {
   return useLiveQuery(() => backend.adminSnapshot());
 }
 
-export function userLabel(user: Pick<AdminUser, "fullName" | "phone"> | undefined, fallback = "?"): string {
+/** Phone number and/or e-mail address of an account. */
+export function userContact(user: Pick<AdminUser, "phone" | "email">): string {
+  return [user.phone, user.email].filter(Boolean).join(" · ") || "?";
+}
+
+export function userLabel(user: Pick<AdminUser, "fullName" | "phone" | "email"> | undefined, fallback = "?"): string {
   if (!user) return fallback;
-  return user.fullName ? `${user.fullName} (${user.phone})` : user.phone;
+  return user.fullName ? `${user.fullName} (${userContact(user)})` : userContact(user);
 }
 
 /** Lookups by id for tables that only carry ids. */

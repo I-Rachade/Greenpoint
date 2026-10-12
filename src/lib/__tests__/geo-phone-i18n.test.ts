@@ -4,6 +4,7 @@ import { en } from "../i18n/en";
 import { format } from "../i18n/format";
 import { fr } from "../i18n/fr";
 import { normalizeTogoPhone } from "../phone";
+import { normalizeEmail, parseContact } from "../contact";
 
 describe("geo", () => {
   it("measures distances across Lomé", () => {
@@ -32,6 +33,17 @@ describe("normalizeTogoPhone", () => {
 
   it.each(["", "1234", "9012345678", "abc", "+4915112345678", "0033612345678"])("rejects %s", (input) => {
     expect(normalizeTogoPhone(input)).toBeNull();
+  });
+});
+
+describe("parseContact", () => {
+  it("reads e-mail addresses and Togolese numbers from the same field", () => {
+    expect(parseContact(" Awa.K@Exemple.TG ")).toEqual({ kind: "email", value: "awa.k@exemple.tg" });
+    expect(parseContact("90 12 34 56")).toEqual({ kind: "phone", value: "+22890123456" });
+    expect(parseContact("awa@exemple")).toBeNull();
+    expect(parseContact("+33612345678")).toBeNull();
+    expect(parseContact("")).toBeNull();
+    expect(normalizeEmail("a b@c.d")).toBeNull();
   });
 });
 

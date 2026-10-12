@@ -74,19 +74,51 @@ describe("DemoBackend reservations", () => {
 });
 
 describe("DemoBackend account deletion", () => {
-  it("needs the PIN, then removes the login and the reservations", async () => {
+  it("needs the code, then removes the login and the reservations", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-12T12:00:00Z"));
     const backend = new DemoBackend();
     await asRole(backend, "rider");
     await backend.reserve(STATION, "battery");
 
-    await expect(backend.deleteAccount("1111")).rejects.toMatchObject({ code: "invalid_pin" });
-    await backend.deleteAccount("2580");
+    // The account has no e-mail address, so no code can go there.
+    await expect(backend.sendDeleteCode("email")).rejects.toBeTruthy();
+    await backend.sendDeleteCode("sms");
+    await expect(backend.deleteAccount("sms", "000000")).rejects.toMatchObject({ code: "invalid_code" });
+    await backend.deleteAccount("sms", DEMO_CODE);
 
     expect(await backend.getProfile()).toBeNull();
     await expect(backend.signIn("+22890123456", "2580")).rejects.toMatchObject({ code: "invalid_pin" });
     expect((await backend.listStations()).find((s) => s.id === STATION)!.reservedBatteries).toBe(0);
     vi.useRealTimers();
+  });
+});
+
+describe("DemoBackend connected sockets", () => {
+  it("lets an admin add, switch and remove a socket", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890123456", DEMO_CODE, "2580", "admin");
+    const before = await backend.listDevices();
+
+    await expect(backend.createDevice({ externalId: "x", stationId: STATION })).rejects.toMatchObject({ code: "invalid_device" });
+    await backend.createDevice({ externalId: "123456", stationId: STATION, outlets: 2, link: "vendor_cloud" });
+    await expect(backend.createDevice({ externalId: "123456", stationId: STATION })).rejects.toMatchObject({ code: "device_exists" });
+
+    const added = (await backend.listDevices()).find((d) => d.externalId === "123456")!;
+    expect(added.points.map((p) => p.label)).toEqual(["3456-1", "3456-2"]);
+    const station = (await backend.listStations()).find((s) => s.id === STATION)!;
+    expect(station.chargingPoints).toHaveLength(2);
+
+    await backend.switchOutlet("123456", 2, true);
+    expect((await backend.listDevices()).find((d) => d.externalId === "123456")!.points[1].status).toBe("charging");
+
+    await backend.deleteDevice("123456");
+    expect(await backend.listDevices()).toHaveLength(before.length);
+  });
+
+  it("is admin only", async () => {
+    const backend = new DemoBackend();
+    await asRole(backend, "rider");
+    await expect(backend.listDevices()).rejects.toMatchObject({ code: "forbidden" });
   });
 });
