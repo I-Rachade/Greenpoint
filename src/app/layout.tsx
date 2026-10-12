@@ -3,6 +3,7 @@ import { Inter, Poppins } from "next/font/google";
 import { AppProvider } from "@/components/app-provider";
 import { Header } from "@/components/header";
 import { I18nProvider } from "@/components/i18n-provider";
+import { NativeShell } from "@/components/native-shell";
 import "./globals.css";
 
 const inter = Inter({ variable: "--font-inter", subsets: ["latin"], weight: ["400", "600"] });
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex h-full flex-col">
         <I18nProvider>
           <AppProvider>
+            <NativeShell />
             <Header />
             <main className="flex min-h-0 flex-1 flex-col">{children}</main>
           </AppProvider>
