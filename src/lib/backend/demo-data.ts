@@ -2,17 +2,17 @@ import type { ChargingPoint, Operator, Station, StationStatus } from "../types";
 
 // Example stations in Lomé (approximate positions). Mirrors supabase/seed.sql.
 export const DEMO_OPERATORS: Operator[] = [
-  { id: "op-greenpoint", name: "Greenpoint", isOwn: true },
+  { id: "op-pointderecharge", name: "pointderecharge", isOwn: true },
   { id: "op-example", name: "Exemple Opérateur", isOwn: false },
 ];
 
 export const DEMO_STATIONS: Station[] = [
   {
     id: "st-grand-marche",
-    operatorId: "op-greenpoint",
-    operatorName: "Greenpoint",
+    operatorId: "op-pointderecharge",
+    operatorName: "pointderecharge",
     isOwn: true,
-    name: "Greenpoint Grand Marché",
+    name: "pointderecharge Grand Marché",
     address: "Boulevard du 13 Janvier",
     lat: 6.1262,
     lng: 1.2236,
@@ -25,10 +25,10 @@ export const DEMO_STATIONS: Station[] = [
   },
   {
     id: "st-tokoin",
-    operatorId: "op-greenpoint",
-    operatorName: "Greenpoint",
+    operatorId: "op-pointderecharge",
+    operatorName: "pointderecharge",
     isOwn: true,
-    name: "Greenpoint Tokoin",
+    name: "pointderecharge Tokoin",
     address: "Avenue de la Libération",
     lat: 6.1496,
     lng: 1.2187,
@@ -41,10 +41,10 @@ export const DEMO_STATIONS: Station[] = [
   },
   {
     id: "st-universite",
-    operatorId: "op-greenpoint",
-    operatorName: "Greenpoint",
+    operatorId: "op-pointderecharge",
+    operatorName: "pointderecharge",
     isOwn: true,
-    name: "Greenpoint Université",
+    name: "pointderecharge Université",
     address: "Université de Lomé",
     lat: 6.1735,
     lng: 1.2115,
@@ -57,10 +57,10 @@ export const DEMO_STATIONS: Station[] = [
   },
   {
     id: "st-be",
-    operatorId: "op-greenpoint",
-    operatorName: "Greenpoint",
+    operatorId: "op-pointderecharge",
+    operatorName: "pointderecharge",
     isOwn: true,
-    name: "Greenpoint Bè",
+    name: "pointderecharge Bè",
     address: "Bè Kpota",
     lat: 6.137,
     lng: 1.242,
@@ -73,10 +73,10 @@ export const DEMO_STATIONS: Station[] = [
   },
   {
     id: "st-agoe",
-    operatorId: "op-greenpoint",
-    operatorName: "Greenpoint",
+    operatorId: "op-pointderecharge",
+    operatorName: "pointderecharge",
     isOwn: true,
-    name: "Greenpoint Agoè",
+    name: "pointderecharge Agoè",
     address: "Agoè Assiyéyé",
     lat: 6.2245,
     lng: 1.208,
@@ -105,10 +105,10 @@ export const DEMO_STATIONS: Station[] = [
   },
   {
     id: "st-deckon",
-    operatorId: "op-greenpoint",
-    operatorName: "Greenpoint",
+    operatorId: "op-pointderecharge",
+    operatorName: "pointderecharge",
     isOwn: true,
-    name: "Greenpoint Déckon (prises connectées)",
+    name: "pointderecharge Déckon (prises connectées)",
     address: "Carrefour Déckon",
     lat: 6.1318,
     lng: 1.2296,

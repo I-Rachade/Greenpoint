@@ -1,6 +1,6 @@
 // French is the default language. Every key here must also exist in en.ts.
 export const fr = {
-  appName: "Greenpoint",
+  appName: "pointderecharge",
   tagline: "Trouvez la station de recharge la plus proche à Lomé",
   nav: {
     map: "Carte",

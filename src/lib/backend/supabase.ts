@@ -168,7 +168,7 @@ export class SupabaseBackend implements Backend {
 
   subscribe(onChange: () => void) {
     const channel = this.client
-      .channel(`greenpoint-${crypto.randomUUID()}`)
+      .channel(`pointderecharge-${crypto.randomUUID()}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "station_status" }, onChange)
       .on("postgres_changes", { event: "*", schema: "public", table: "reservations" }, onChange)
       .on("postgres_changes", { event: "*", schema: "public", table: "charging_points" }, onChange)

@@ -9,10 +9,10 @@ const inter = Inter({ variable: "--font-inter", subsets: ["latin"], weight: ["40
 const poppins = Poppins({ variable: "--font-poppins", subsets: ["latin"], weight: ["600", "700"] });
 
 export const metadata: Metadata = {
-  title: "Greenpoint",
+  title: "pointderecharge",
   description: "Trouvez la station de recharge ou d'échange de batterie la plus proche à Lomé.",
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, title: "Greenpoint", statusBarStyle: "default" },
+  appleWebApp: { capable: true, title: "pointderecharge", statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {

@@ -14,7 +14,7 @@ function station(overrides: Partial<StationView> = {}): StationView {
   return {
     id: "s1",
     operatorId: "op",
-    operatorName: "Greenpoint",
+    operatorName: "pointderecharge",
     isOwn: true,
     name: "A",
     address: "",
