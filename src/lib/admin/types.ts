@@ -46,7 +46,8 @@ export type AuditTable =
   | "station_status"
   | "station_staff"
   | "reservations"
-  | "charging_points";
+  | "charging_points"
+  | "promotions";
 
 export const AUDIT_TABLES: AuditTable[] = [
   "reservations",
@@ -56,6 +57,7 @@ export const AUDIT_TABLES: AuditTable[] = [
   "profiles",
   "charging_points",
   "operators",
+  "promotions",
 ];
 
 export type AuditAction = "insert" | "update" | "delete";
