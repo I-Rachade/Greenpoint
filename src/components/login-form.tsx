@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { CONTACT_EMAIL } from "@/lib/config";
 import { useErrorMessage } from "@/lib/hooks";
 import { normalizeTogoPhone } from "@/lib/phone";
 import type { UserRole } from "@/lib/types";
@@ -139,6 +140,11 @@ export function LoginForm() {
           {error}
         </p>
       )}
+      <p className="pt-4 text-center text-xs text-zinc-500">
+        <a href={`mailto:${CONTACT_EMAIL}`} className="hover:underline">
+          {CONTACT_EMAIL}
+        </a>
+      </p>
     </div>
   );
 }

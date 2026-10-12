@@ -30,6 +30,6 @@
    - `NEXT_PUBLIC_SUPABASE_URL` = Project URL
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY` = anon public Key
 4. "Save and Deploy". Jeder Push auf `main` veröffentlicht automatisch; jeder Pull Request bekommt eine Vorschau-Adresse.
-5. Eigene Domain: im Pages-Projekt unter **Custom domains**.
+5. Domain: Die Webapp läuft unter **app.pointderecharge.com**, die Landingpage unter **pointderecharge.com**. Die Domain liegt bereits bei Cloudflare. Im Pages-Projekt **Custom domains** > **Set up a custom domain** > `app.pointderecharge.com` > **Activate domain**. Cloudflare legt den DNS-Eintrag und das HTTPS-Zertifikat selbst an.
 
-In Supabase unter **Authentication > URL Configuration** die Cloudflare-Adresse als Site URL eintragen.
+In Supabase unter **Authentication > URL Configuration** als Site URL `https://app.pointderecharge.com` eintragen.
