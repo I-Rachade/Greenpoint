@@ -201,6 +201,9 @@ p { margin: 0 0 1em; }
 .footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
 .footer p { margin: 0; }
 .footer .muted { color: #8FB0A2; }
+.footer-legal { display: flex; gap: 16px; flex-wrap: wrap; }
+.footer-legal a { color: #BFD6CB; text-decoration: underline; text-underline-offset: 3px; }
+.footer-legal a:hover { color: #fff; }
 
 /* Responsive */
 @media (max-width: 960px) {

@@ -10,5 +10,8 @@
   ],
   "assets": {
     "directory": "."
-  }
+  },
+  // Branches other than production build a Preview (`npx wrangler preview`),
+  // which needs this block. Empty: Previews use the top-level settings.
+  "previews": {}
 }

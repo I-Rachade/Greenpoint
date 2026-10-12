@@ -62,7 +62,10 @@
     "dl.getIos": "Download on the",
     "aria.lang": "Language",
     "aria.vehicles": "Vehicles",
-    "footer.text": "Charging and battery swapping for electric mobility in Lomé."
+    "footer.text": "Charging and battery swapping for electric mobility in Lomé.",
+    "footer.notice": "Legal notice",
+    "footer.terms": "Terms of use",
+    "footer.privacy": "Privacy"
   };
   var frExtra = { "dl.get": "Disponible sur", "dl.getIos": "Télécharger dans l'" };
 
