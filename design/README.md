@@ -1,4 +1,4 @@
-# Greenpoint Design
+# pointderecharge Design
 
 - **Schrift:** Poppins (Titel, Buttons) und Inter (Texte, Zahlen), beide von Google Fonts.
 - **Farben:** siehe `farbpalette.png`, als Werte in `tokens.json` und `tokens.css`.
