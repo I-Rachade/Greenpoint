@@ -1,7 +1,7 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
-import maplibregl, { type Map as MapLibreMap, type Marker } from "maplibre-gl";
+import { Map as MapLibreMap, Marker, NavigationControl } from "maplibre-gl";
 import { useEffect, useRef } from "react";
 import { stationAvailability } from "@/lib/availability";
 import { LOME_CENTER, type LatLng } from "@/lib/geo";
@@ -52,14 +52,14 @@ export function StationMap({ stations, position, selectedId, onSelect }: Props) 
 
   useEffect(() => {
     if (!containerRef.current) return;
-    const map = new maplibregl.Map({
+    const map = new MapLibreMap({
       container: containerRef.current,
       style: MAP_STYLE,
       center: [LOME_CENTER.lng, LOME_CENTER.lat],
       zoom: 12,
       attributionControl: { compact: true },
     });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    map.addControl(new NavigationControl({ showCompass: false }), "top-right");
     mapRef.current = map;
     return () => {
       map.remove();
@@ -78,7 +78,7 @@ export function StationMap({ stations, position, selectedId, onSelect }: Props) 
         e.stopPropagation();
         onSelectRef.current(station.id);
       });
-      return new maplibregl.Marker({ element: el }).setLngLat([station.lng, station.lat]).addTo(map);
+      return new Marker({ element: el }).setLngLat([station.lng, station.lat]).addTo(map);
     });
   }, [stations, selectedId]);
 
@@ -98,7 +98,7 @@ export function StationMap({ stations, position, selectedId, onSelect }: Props) 
       border: "3px solid white",
       boxShadow: "0 0 0 6px rgba(47,128,237,.25)",
     });
-    userMarkerRef.current = new maplibregl.Marker({ element: el }).setLngLat([position.lng, position.lat]).addTo(map);
+    userMarkerRef.current = new Marker({ element: el }).setLngLat([position.lng, position.lat]).addTo(map);
   }, [position]);
 
   // Fly to the selected station.

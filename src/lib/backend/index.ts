@@ -3,7 +3,7 @@ import { DemoBackend } from "./demo";
 import { SupabaseBackend } from "./supabase";
 
 export * from "./backend";
-export { DemoBackend, DEMO_CODE } from "./demo";
+export { DemoBackend, DEMO_CODE, HOSTED_DEMO } from "./demo";
 
 let instance: Backend | null = null;
 

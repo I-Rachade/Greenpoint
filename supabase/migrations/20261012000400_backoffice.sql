@@ -82,6 +82,11 @@ create policy "admins read audit log" on public.audit_log
 
 revoke insert, update, delete, truncate on public.audit_log from anon, authenticated;
 
+-- Admins may cancel any reservation from the backoffice (20261012000300 removed
+-- the broad "staff completes" policy that used to cover admins too).
+create policy "admins update reservations" on public.reservations
+  for update using (public.is_admin()) with check (public.is_admin());
+
 -- Users with their last login (auth.users is not reachable through the API).
 create function public.admin_list_users()
 returns table (

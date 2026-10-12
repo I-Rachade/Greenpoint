@@ -114,6 +114,7 @@ function StationForm({
           value={form.openingHours}
           onChange={(e) => set("openingHours", e.target.value)}
         />
+        <span className="text-xs text-zinc-500">{t.admin.openingHoursHint}</span>
       </label>
       <label className={label}>
         <span>{t.admin.chargingSlots}</span>

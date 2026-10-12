@@ -5,8 +5,10 @@ import {
   availableSlots,
   countHolding,
   isHolding,
+  isStale,
   rankStations,
   stationAvailability,
+  withinOpeningHours,
 } from "../availability";
 import type { Reservation, StationView } from "../types";
 
@@ -111,5 +113,31 @@ describe("rankStations", () => {
     expect(rankStations(all, null, { ...DEFAULT_FILTER, service: "charging" }).map((r) => r.station.id)).toEqual(["near"]);
     const emptySwap = station({ id: "empty", kind: "swap", reservedBatteries: 5 });
     expect(rankStations([emptySwap], null, { ...DEFAULT_FILTER, onlyAvailable: true })).toEqual([]);
+  });
+});
+
+describe("opening hours and stale reports", () => {
+  const at = (hhmm: string) => new Date(`2026-10-12T${hhmm}:00Z`);
+
+  it("checks simple and overnight ranges in Lomé time (UTC)", () => {
+    expect(withinOpeningHours("07:00-21:00", at("06:59"))).toBe(false);
+    expect(withinOpeningHours("07:00-21:00", at("07:00"))).toBe(true);
+    expect(withinOpeningHours("07:00-21:00", at("21:00"))).toBe(false);
+    expect(withinOpeningHours("18:00-02:00", at("01:30"))).toBe(true);
+    expect(withinOpeningHours("18:00-02:00", at("12:00"))).toBe(false);
+    expect(withinOpeningHours("00:00-24:00", at("03:00"))).toBe(true);
+  });
+
+  it("ignores opening hours it cannot read", () => {
+    expect(withinOpeningHours("", at("03:00"))).toBe(true);
+    expect(withinOpeningHours("Lun-Sam 8h-18h", at("03:00"))).toBe(true);
+  });
+
+  it("marks reports older than two hours as stale", () => {
+    const now = at("12:00");
+    const s = (updatedAt: string) =>
+      station({ status: { stationId: "s1", isOpen: true, freeSlots: 2, fullBatteries: 5, updatedAt } });
+    expect(isStale(s("2026-10-12T10:30:00Z"), now)).toBe(false);
+    expect(isStale(s("2026-10-12T09:30:00Z"), now)).toBe(true);
   });
 });

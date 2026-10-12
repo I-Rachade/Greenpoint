@@ -1,0 +1,74 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEMO_CODE, DemoBackend } from "../backend/demo";
+
+// Runs without a browser: the demo falls back to in-memory storage.
+const STATION = "st-grand-marche"; // open around the clock in the demo data
+
+async function asRole(backend: DemoBackend, role: "rider" | "operator") {
+  await backend.verifyCode("+22890123456", DEMO_CODE, role);
+}
+
+describe("DemoBackend reservations", () => {
+  let backend: DemoBackend;
+  beforeEach(() => {
+    // Midday in Lomé, so every demo station is within its opening hours.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-12T12:00:00Z"));
+    backend = new DemoBackend();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("gives the rider a pickup code that staff never see", async () => {
+    await asRole(backend, "rider");
+    const r = await backend.reserve(STATION, "battery");
+    expect(r.pickupCode).toMatch(/^\d{4}$/);
+    const staffView = await backend.stationReservations(STATION);
+    expect(staffView.find((x) => x.id === r.id)?.pickupCode).toBeUndefined();
+  });
+
+  it("completes only with the right code and takes the battery off the counter", async () => {
+    await asRole(backend, "rider");
+    const r = await backend.reserve(STATION, "battery");
+    const before = (await backend.listStations()).find((s) => s.id === STATION)!.status.fullBatteries;
+
+    await expect(backend.completeReservation(r.id, r.pickupCode!)).rejects.toMatchObject({ code: "own_reservation" });
+
+    await asRole(backend, "operator");
+    const wrong = r.pickupCode === "0000" ? "1111" : "0000";
+    await expect(backend.completeReservation(r.id, wrong)).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    await backend.completeReservation(r.id, r.pickupCode!);
+
+    const after = (await backend.listStations()).find((s) => s.id === STATION)!;
+    expect(after.status.fullBatteries).toBe(before - 1);
+    expect(after.reservedBatteries).toBe(0);
+  });
+
+  it("cancels active reservations when the station closes", async () => {
+    await asRole(backend, "rider");
+    const r = await backend.reserve(STATION, "slot");
+    await asRole(backend, "operator");
+    await backend.updateStatus(STATION, { isOpen: false });
+    await asRole(backend, "rider");
+    const mine = (await backend.myReservations()).find((x) => x.id === r.id)!;
+    expect(mine.status).toBe("cancelled");
+    expect(mine.cancelReason).toBe("station_closed");
+  });
+
+  it("pauses re-reserving at a station after cancelling there", async () => {
+    await asRole(backend, "rider");
+    const r = await backend.reserve(STATION, "battery");
+    await backend.cancelReservation(r.id);
+    await expect(backend.reserve(STATION, "battery")).rejects.toMatchObject({ code: "cooldown" });
+  });
+
+  it("limits unused reservations per day", async () => {
+    await asRole(backend, "rider");
+    for (const station of ["st-tokoin", "st-agoe", "st-universite"]) {
+      const r = await backend.reserve(station, station === "st-universite" ? "slot" : "battery");
+      await backend.cancelReservation(r.id);
+    }
+    await expect(backend.reserve(STATION, "battery")).rejects.toMatchObject({ code: "daily_limit" });
+  });
+});

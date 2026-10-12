@@ -20,7 +20,7 @@ export const DEMO_STATIONS: Station[] = [
     vehicleTypes: ["scooter", "ebike", "moped"],
     chargingSlots: 6,
     batteryCapacity: 12,
-    openingHours: "07:00-21:00",
+    openingHours: "00:00-24:00",
     phone: null,
   },
   {
