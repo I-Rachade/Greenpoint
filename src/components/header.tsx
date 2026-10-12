@@ -34,14 +34,14 @@ export function Header() {
           </button>
         </div>
       )}
-      <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 py-2 sm:gap-3 sm:px-4">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2 px-3 py-2 sm:flex-nowrap sm:gap-3 sm:px-4">
         <Link href="/" className="flex items-center gap-2 font-semibold text-green-700 dark:text-green-400">
-          <span aria-hidden className="grid h-7 w-7 place-items-center rounded-full bg-green-600 text-sm text-white">
-            ⚡
-          </span>
-          <span className="hidden sm:inline">{t.appName}</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-mini.svg" alt="" width={28} height={28} className="h-7 w-7" />
+          {t.appName}
         </Link>
-        <nav className="flex flex-1 gap-1 overflow-x-auto text-sm">
+        <span className="flex-1 sm:hidden" />
+        <nav className="order-last flex w-full gap-1 overflow-x-auto text-sm sm:order-none sm:w-auto sm:flex-1">
           {links
             .filter((l) => l.show)
             .map((l) => (

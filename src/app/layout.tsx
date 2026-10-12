@@ -13,11 +13,12 @@ const geistSans = Geist({
 export const metadata: Metadata = {
   title: "Greenpoint",
   description: "Trouvez la station de recharge ou d'échange de batterie la plus proche à Lomé.",
+  manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, title: "Greenpoint", statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#16a34a",
+  themeColor: "#1DB954",
   width: "device-width",
   initialScale: 1,
 };

@@ -1,9 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  cacheComponents: true,
-  partialPrefetching: true,
+  // Fully static site (see docs/DEPLOYMENT.md): every page talks to Supabase from the browser.
+  output: "export",
   turbopack: {
     rules: {
       "*.css": {
