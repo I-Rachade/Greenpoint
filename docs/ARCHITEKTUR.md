@@ -40,7 +40,7 @@ So kann jeder die App sofort ausprobieren, und die Oberfläche hängt nicht an d
 ## Später (Phase 2 und 3)
 
 - Bezahlung mit Flooz und T-Money über einen Zahlungsanbieter (Supabase Edge Function für die Rückmeldung des Anbieters)
-- GreenPlus-Treuepunkte (Regeln, Prämien, Punktebuchungen; siehe Projektplan)
+- greenpoint-Treuepunkte (Regeln, Prämien, Punktebuchungen; siehe Projektplan)
 - Vernetzte Steckdosen (LoRa): Geräte melden den Status von `charging_points` selbst
 - Flottenbereich für Lieferdienste
 - Mobile App mit Expo, gleiche Supabase-Datenbank

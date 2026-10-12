@@ -1,6 +1,6 @@
 # pointderecharge
 
-Repository: `Greenpoint`. Treueprogramm: GreenPlus.
+Repository: `Greenpoint`. Treueprogramm: greenpoint.
 
 Webapp für Fahrer von E-Scootern, E-Tuktuks, E-Bikes und E-Rollern in Lomé (Togo): Sie zeigt live die nächste Ladestation oder Akkutausch-Station, ob dort Ladeplätze frei oder volle Akkus da sind, und erlaubt Reservierungen. Stationspersonal meldet den Status mit einem Tipp vom Handy.
 
