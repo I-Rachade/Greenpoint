@@ -1,0 +1,66 @@
+import type {
+  Operator,
+  Profile,
+  Reservation,
+  ReservationType,
+  StationInput,
+  StationStatus,
+  StationView,
+  UserRole,
+} from "../types";
+
+export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots" | "fullBatteries">>;
+
+/** Error codes shared by both backends, translated in the UI (see i18n `errors`). */
+export type BackendErrorCode =
+  | "not_authenticated"
+  | "already_reserved"
+  | "station_not_found"
+  | "station_closed"
+  | "service_not_offered"
+  | "none_available"
+  | "invalid_code"
+  | "forbidden"
+  | "unknown";
+
+export class BackendError extends Error {
+  constructor(public code: BackendErrorCode, message?: string) {
+    super(message ?? code);
+  }
+}
+
+/**
+ * Everything the app needs from its data source. Two implementations exist:
+ * `DemoBackend` (browser storage, no setup) and `SupabaseBackend` (production).
+ */
+export interface Backend {
+  readonly mode: "demo" | "supabase";
+
+  // Stations (public)
+  listStations(): Promise<StationView[]>;
+  /** Calls `onChange` whenever station data may have changed. Returns an unsubscribe function. */
+  subscribe(onChange: () => void): () => void;
+
+  // Auth
+  getProfile(): Promise<Profile | null>;
+  onAuthChange(callback: (profile: Profile | null) => void): () => void;
+  sendCode(phone: string): Promise<void>;
+  /** `demoRole` is only honoured by the demo backend, so testers can try every view. */
+  verifyCode(phone: string, code: string, demoRole?: UserRole): Promise<Profile>;
+  signOut(): Promise<void>;
+
+  // Rider
+  myReservations(): Promise<Reservation[]>;
+  reserve(stationId: string, type: ReservationType): Promise<Reservation>;
+  cancelReservation(id: string): Promise<void>;
+
+  // Station staff
+  staffStations(): Promise<StationView[]>;
+  updateStatus(stationId: string, patch: StatusPatch): Promise<void>;
+  stationReservations(stationId: string): Promise<Reservation[]>;
+  completeReservation(id: string): Promise<void>;
+
+  // Admin
+  listOperators(): Promise<Operator[]>;
+  saveStation(id: string | null, input: StationInput): Promise<void>;
+}
