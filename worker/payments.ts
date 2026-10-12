@@ -20,12 +20,12 @@ import {
 interface PaymentRow {
   id: string;
   identifier: string;
-  user_id: string;
+  user_id: string | null;
   station_id: string;
   reservation_id: string | null;
   amount_xof: number;
   network: PaymentNetwork;
-  phone: string;
+  phone: string | null;
   provider: string;
   provider_reference: string | null;
   status: PaymentStatus;

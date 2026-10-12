@@ -42,6 +42,7 @@ class Statement {
 
 function fakeD1() {
   const db = new DatabaseSync(":memory:");
+  db.exec("pragma foreign_keys = on"); // as in D1
   const dir = new URL("./migrations/", import.meta.url);
   for (const file of readdirSync(dir).sort()) db.exec(readFileSync(new URL(file, dir), "utf8"));
   const d1 = {
@@ -262,6 +263,20 @@ describe("refreshPayment and myPayments", () => {
     expect(refreshed.paidAt).not.toBeNull();
     expect(await myPayments(env, RIDER)).toHaveLength(1);
     expect(await myPayments(env, OTHER)).toHaveLength(0);
+  });
+});
+
+describe("account deletion", () => {
+  it("keeps the payment but forgets who paid and from which number", async () => {
+    const { db, env } = setup();
+    await start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" });
+    db.exec("delete from reservations where user_id = 'rider-1'; delete from users where id = 'rider-1'");
+    expect(db.prepare("select user_id, phone, reservation_id, amount_xof from payments").get()).toEqual({
+      user_id: null,
+      phone: null,
+      reservation_id: null,
+      amount_xof: 500,
+    });
   });
 });
 

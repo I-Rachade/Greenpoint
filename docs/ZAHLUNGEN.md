@@ -25,6 +25,7 @@ App ──(1) POST /api/payments──► Worker ──(2)──► PayGate Glob
 - Nur **eigene Stationen** (`operators.is_own`) nehmen Zahlungen an. Geld für fremde Betreiber einzusammeln kann nach BCEAO-Instruktion 001-01-2024 ein Zahlungsdienst sein (siehe `planung/rechtliches-togo.md`). Das wird erst freigeschaltet, wenn der Anbieter Split-Payment anbietet und ein Anwalt zugestimmt hat.
 - Höchstens eine offene oder erfolgreiche Zahlung pro Reservierung (eindeutiger Index, gilt auch bei gleichzeitigen Anfragen). Nach einer abgelehnten Zahlung darf der Fahrer es erneut versuchen.
 - Preise in FCFA, ganze Zahl, Vielfaches von 5. Ohne Preis wird für die Station nichts verlangt.
+- Löscht ein Fahrer sein Konto, bleiben seine Zahlungen für die Buchhaltung erhalten, aber ohne Nutzer und ohne Mobile-Money-Nummer (Trigger in der Migration).
 - Fahrer sehen nur ihre eigenen Zahlungen. Jede Zahlung und jeder Statuswechsel landet im Aktivitätsprotokoll.
 - Netz-Vorauswahl nach Vorwahl (`detectNetwork`): Togocom/T-Money 70–73, 90–93; Moov/Flooz 78, 79, 96–99. Nur ein Vorschlag, der Fahrer kann wechseln.
 
