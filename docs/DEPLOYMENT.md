@@ -40,6 +40,6 @@ Wurde das Projekt als **Worker** angelegt (Workers & Pages > Create > Import a r
 - **Settings > Build > Branch control**: Production branch ist der Branch mit der App (`claude/project-thread-r72vlu`, später `main`). Der Standard-Branch des Repos enthält die App nicht; baut Cloudflare ihn, meldet wrangler "Could not detect a directory containing static files". "Retry build" baut denselben alten Commit noch einmal, erst ein neuer Push nimmt den umgestellten Branch.
 - Die zwei `NEXT_PUBLIC_…`-Werte und `NODE_VERSION` unter **Settings > Build > Variables and secrets** eintragen (Build-Variablen, nicht Laufzeit-Variablen), weil sie beim Bauen in die App geschrieben werden.
 - Domain: nach dem ersten Deploy im Worker **Settings > Domains & Routes > Add > Custom domain** > `app.poinderecharge.com`. (Über `wrangler.jsonc` klappt das im Cloudflare-Build nicht.)
-- Der Worker-Name im Dashboard muss mit `name` in `wrangler.jsonc` übereinstimmen: `pointderecharge-app`. Der Worker `greenpoint` gehört der Landingpage und bleibt unverändert.
+- Der Worker-Name im Dashboard muss mit `name` in `wrangler.jsonc` übereinstimmen: `pointderecharge-app`. Der Worker behält diesen Namen, obwohl die App jetzt poinderecharge heißt; ein Umbenennen würde einen neuen Worker erfordern. Der Worker `greenpoint` gehört der Landingpage und bleibt unverändert.
 
 In Supabase unter **Authentication > URL Configuration** als Site URL `https://app.poinderecharge.com` eintragen.

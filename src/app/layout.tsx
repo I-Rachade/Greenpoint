@@ -10,17 +10,17 @@ const poppins = Poppins({ variable: "--font-poppins", subsets: ["latin"], weight
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://app.poinderecharge.com"),
-  title: "pointderecharge",
+  title: "poinderecharge",
   description: "Trouvez la station de recharge ou d'échange de batterie la plus proche à Lomé.",
   manifest: "/manifest.webmanifest",
   openGraph: {
     type: "website",
     url: "https://app.poinderecharge.com",
-    siteName: "pointderecharge",
+    siteName: "poinderecharge",
     locale: "fr_TG",
     images: ["/icon-512.png"],
   },
-  appleWebApp: { capable: true, title: "pointderecharge", statusBarStyle: "default" },
+  appleWebApp: { capable: true, title: "poinderecharge", statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {

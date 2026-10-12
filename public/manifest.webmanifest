@@ -1,6 +1,6 @@
 {
-  "name": "pointderecharge",
-  "short_name": "pointderecharge",
+  "name": "poinderecharge",
+  "short_name": "poinderecharge",
   "description": "Stations de recharge et d'échange de batterie à Lomé",
   "start_url": "/",
   "display": "standalone",

@@ -18,7 +18,7 @@ Browser (Next.js, statisch)  ──►  Supabase
 | Tabelle | Inhalt |
 |---|---|
 | `profiles` | ein Eintrag pro Nutzer: Telefon, Name, Rolle (`rider`, `operator`, `fleet_manager`, `admin`) |
-| `operators` | Betreiber (pointderecharge selbst und fremde) |
+| `operators` | Betreiber (poinderecharge selbst und fremde) |
 | `stations` | Name, Position, Typ (Laden/Tausch/beides), Fahrzeugtypen, Kapazität, Öffnungszeiten |
 | `station_status` | live: offen, freie Plätze, volle Akkus, wann und von wem gemeldet |
 | `station_staff` | welcher Nutzer welche Station melden darf |
