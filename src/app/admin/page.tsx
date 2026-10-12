@@ -1,10 +1,5 @@
-import { AdminStations } from "@/components/admin-stations";
-import { RequireLogin } from "@/components/require-login";
+import { AdminOverview } from "@/components/backoffice/overview";
 
 export default function AdminPage() {
-  return (
-    <RequireLogin roles={["admin"]}>
-      <AdminStations />
-    </RequireLogin>
-  );
+  return <AdminOverview />;
 }

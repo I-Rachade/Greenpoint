@@ -11,6 +11,14 @@ import type {
   StationKind,
 } from "../types";
 import { BackendError, type Backend, type BackendErrorCode, type StatusPatch } from "./backend";
+import {
+  ADMIN_HISTORY_DAYS,
+  type AdminSnapshot,
+  type AdminStation,
+  type AuditEntry,
+  type AuditFilter,
+  type ChargingPointInfo,
+} from "../admin/types";
 
 // Row shapes as returned by Supabase (snake_case).
 interface StationRow {
@@ -39,6 +47,36 @@ interface ReservationRow {
   created_at: string;
   expires_at: string;
   cancel_reason?: string | null;
+}
+
+interface AdminUserRow {
+  id: string;
+  phone: string;
+  full_name: string | null;
+  role: UserRole;
+  created_at: string;
+  last_sign_in_at: string | null;
+}
+
+interface ChargingPointRow {
+  id: string;
+  station_id: string;
+  label: string;
+  status: ChargingPointInfo["status"];
+  device_id: string | null;
+  last_seen_at: string | null;
+}
+
+interface AuditRow {
+  id: number;
+  at: string;
+  actor: string | null;
+  table_name: AuditEntry["table"];
+  action: AuditEntry["action"];
+  row_id: string;
+  station_id: string | null;
+  user_id: string | null;
+  changes: Record<string, unknown>;
 }
 
 interface HoldRow {
@@ -314,5 +352,110 @@ export class SupabaseBackend implements Backend {
       ? await this.client.from("stations").update(row).eq("id", id)
       : await this.client.from("stations").insert(row);
     if (error) fail(error);
+  }
+
+  // Backoffice ---------------------------------------------------------------
+
+  async adminSnapshot(): Promise<AdminSnapshot> {
+    const since = new Date(Date.now() - ADMIN_HISTORY_DAYS * 86_400_000).toISOString();
+    const [stations, holds, users, staff, reservations, points] = await Promise.all([
+      this.client.from("stations").select(`${STATION_SELECT}, is_active`).order("name"),
+      this.holds(),
+      this.client.rpc("admin_list_users"),
+      this.client.from("station_staff").select("station_id, user_id"),
+      this.client
+        .from("reservations")
+        .select("*")
+        .gte("created_at", since)
+        .order("created_at", { ascending: false })
+        .limit(5000),
+      this.client.from("charging_points").select("id, station_id, label, status, device_id, last_seen_at").order("label"),
+    ]);
+    for (const r of [stations, users, staff, reservations, points]) if (r.error) fail(r.error);
+    return {
+      stations: (stations.data as unknown as (StationRow & { is_active: boolean })[]).map(
+        (row): AdminStation => ({ ...toStationView(row, holds), isActive: row.is_active }),
+      ),
+      users: (users.data as AdminUserRow[]).map((u) => ({
+        id: u.id,
+        phone: u.phone,
+        fullName: u.full_name,
+        role: u.role,
+        createdAt: u.created_at,
+        lastSignInAt: u.last_sign_in_at,
+      })),
+      staff: (staff.data as { station_id: string; user_id: string }[]).map((r) => ({
+        stationId: r.station_id,
+        userId: r.user_id,
+      })),
+      reservations: (reservations.data as ReservationRow[]).map(toReservation),
+      chargingPoints: (points.data as ChargingPointRow[]).map(
+        (p): ChargingPointInfo => ({
+          id: p.id,
+          stationId: p.station_id,
+          label: p.label,
+          status: p.status,
+          deviceId: p.device_id,
+          lastSeenAt: p.last_seen_at,
+        }),
+      ),
+    };
+  }
+
+  async auditLog(filter: AuditFilter): Promise<AuditEntry[]> {
+    let query = this.client
+      .from("audit_log")
+      .select("*")
+      .order("id", { ascending: false })
+      .limit(filter.limit ?? 100);
+    if (filter.table) query = query.eq("table_name", filter.table);
+    if (filter.actorId) query = query.eq("actor", filter.actorId);
+    if (filter.stationId) query = query.eq("station_id", filter.stationId);
+    if (filter.beforeId) query = query.lt("id", filter.beforeId);
+    const { data, error } = await query;
+    if (error) fail(error);
+    return (data as AuditRow[]).map((r) => ({
+      id: r.id,
+      at: r.at,
+      actorId: r.actor,
+      table: r.table_name,
+      action: r.action,
+      rowId: r.row_id,
+      stationId: r.station_id,
+      userId: r.user_id,
+      changes: r.changes,
+    }));
+  }
+
+  async setUserRole(userId: string, role: UserRole) {
+    const { data, error } = await this.client.from("profiles").update({ role }).eq("id", userId).select("id");
+    if (error) fail(error);
+    if (!data?.length) throw new BackendError("forbidden");
+  }
+
+  async assignStaff(stationId: string, userId: string) {
+    const { error } = await this.client
+      .from("station_staff")
+      .upsert({ station_id: stationId, user_id: userId }, { ignoreDuplicates: true });
+    if (error) fail(error);
+  }
+
+  async unassignStaff(stationId: string, userId: string) {
+    const { error } = await this.client
+      .from("station_staff")
+      .delete()
+      .eq("station_id", stationId)
+      .eq("user_id", userId);
+    if (error) fail(error);
+  }
+
+  async setStationActive(stationId: string, active: boolean) {
+    const { data, error } = await this.client
+      .from("stations")
+      .update({ is_active: active })
+      .eq("id", stationId)
+      .select("id");
+    if (error) fail(error);
+    if (!data?.length) throw new BackendError("forbidden");
   }
 }
