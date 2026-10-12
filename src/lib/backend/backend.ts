@@ -10,7 +10,8 @@ import type {
 } from "../types";
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { Device, DeviceInput } from "../iot/devices";
-import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelSizeTier } from "../parcels";
+import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
+import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
 import type { Promotion, PromotionInput } from "../promo";
 
 /** Where a code goes: by SMS to the phone number or by e-mail. */
@@ -48,6 +49,7 @@ export type BackendErrorCode =
   | "parcel_not_found"
   | "parcel_wrong_status"
   | "code_locked"
+  | "invalid_webhook"
   | "rate_limited"
   | "payment_not_offered"
   | "payment_exists"
@@ -156,6 +158,22 @@ export interface Backend {
   saveParcelSizes(sizes: ParcelSizeTier[]): Promise<void>;
   /** A parcel in storage was handed out after all, or auctioned. */
   closeStoredParcel(id: string, outcome: "released" | "auctioned"): Promise<void>;
+
+  // Partner API (see src/lib/partners.ts)
+  /** Parcels other apps booked for drop-off at this station (its staff). */
+  stationBookings(stationId: string): Promise<StationBooking[]>;
+  /** Staff take in a booked parcel after measuring it and checking its content; it becomes a parcel. */
+  acceptBooking(stationId: string, bookingId: string, measures: ParcelMeasures): Promise<Parcel>;
+  /** Backoffice: partners, their keys and the latest webhook messages (admins only). */
+  adminPartners(): Promise<AdminPartners>;
+  savePartner(id: string | null, input: PartnerInput): Promise<void>;
+  /** A new API key; the full key is only in this answer. */
+  createPartnerKey(partnerId: string, label: string): Promise<PartnerKey & { key: string }>;
+  revokePartnerKey(partnerId: string, keyId: string): Promise<void>;
+  /** A new webhook secret; the partner must switch to it. */
+  rotatePartnerSecret(partnerId: string): Promise<string>;
+  /** Sends a webhook message again. */
+  retryPartnerEvent(eventId: string): Promise<void>;
 
   // Advertising popup (see src/lib/promo.ts)
   /** The ad to show when the app opens, or null. Public. */

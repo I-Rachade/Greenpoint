@@ -68,6 +68,10 @@ npm run db:migrate
 
 `wrangler.jsonc` hat einen Cron-Trigger `0 8 * * *` (8 Uhr UTC = 8 Uhr in Lomé). Er schickt Abhol-Erinnerungen und legt Pakete nach 7 Tagen ins Entrepôt (`runParcelDeadlines` in `worker/parcels.ts`). Der Trigger wird mit dem nächsten Deploy des Workers aktiv; vorher muss Migration `0005_parcels.sql` ausgeführt sein. Lokal testen: `npx wrangler dev --test-scheduled`, dann `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+8+*+*+*"`.
 
+## 5b. Minuten-Cron (Partner-Webhooks)
+
+Der zweite Cron-Trigger `* * * * *` schickt fällige Webhooks an Partner-Apps und wiederholt fehlgeschlagene (`runPartnerEvents` in `worker/partners.ts`). Vorher muss Migration `0008_partner_api.sql` ausgeführt sein. Siehe [PARTNER-API.md](PARTNER-API.md).
+
 ## 6. Lokal entwickeln
 
 - Nur Oberfläche, mit Beispieldaten im Browser: `npm run dev`.

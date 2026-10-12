@@ -1,6 +1,7 @@
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { Device, DeviceInput } from "../iot/devices";
-import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelSizeTier } from "../parcels";
+import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
+import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
 import type { Promotion, PromotionInput } from "../promo";
 import type {
   Operator,
@@ -44,6 +45,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "parcel_not_found",
   "parcel_wrong_status",
   "code_locked",
+  "invalid_webhook",
   "invalid_contact",
   "contact_taken",
   "rate_limited",
@@ -361,6 +363,46 @@ export class CloudflareBackend implements Backend {
   async closeStoredParcel(id: string, outcome: "released" | "auctioned") {
     await this.call("POST", `/api/admin/parcels/${encodeURIComponent(id)}/${outcome}`);
     this.changed();
+  }
+
+  // Partner API --------------------------------------------------------------------
+
+  stationBookings(stationId: string) {
+    return this.call<StationBooking[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/bookings`);
+  }
+
+  async acceptBooking(stationId: string, bookingId: string, measures: ParcelMeasures) {
+    const parcel = await this.call<Parcel>(
+      "POST",
+      `/api/stations/${encodeURIComponent(stationId)}/bookings/${encodeURIComponent(bookingId)}/accept`,
+      { measures },
+    );
+    this.changed();
+    return parcel;
+  }
+
+  adminPartners() {
+    return this.call<AdminPartners>("GET", "/api/admin/partners");
+  }
+
+  async savePartner(id: string | null, input: PartnerInput) {
+    await this.call("POST", "/api/admin/partners", { id, input });
+  }
+
+  createPartnerKey(partnerId: string, label: string) {
+    return this.call<PartnerKey & { key: string }>("POST", `/api/admin/partners/${encodeURIComponent(partnerId)}/keys`, { label });
+  }
+
+  async revokePartnerKey(partnerId: string, keyId: string) {
+    await this.call("POST", `/api/admin/partners/${encodeURIComponent(partnerId)}/keys/${encodeURIComponent(keyId)}/revoke`);
+  }
+
+  async rotatePartnerSecret(partnerId: string) {
+    return (await this.call<{ secret: string }>("POST", `/api/admin/partners/${encodeURIComponent(partnerId)}/secret`)).secret;
+  }
+
+  async retryPartnerEvent(eventId: string) {
+    await this.call("POST", `/api/admin/partner-events/${encodeURIComponent(eventId)}/retry`);
   }
 
   // Advertising popup ---------------------------------------------------------------

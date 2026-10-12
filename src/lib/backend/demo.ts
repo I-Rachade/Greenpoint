@@ -40,8 +40,21 @@ import {
   type ParcelDepot,
   type ParcelDepotInput,
   type ParcelInput,
+  type ParcelMeasures,
   type ParcelSizeTier,
 } from "../parcels";
+import {
+  BOOKING_DAYS,
+  keyPrefix,
+  newApiKey,
+  newWebhookSecret,
+  validWebhookUrl,
+  type AdminPartners,
+  type Partner,
+  type PartnerInput,
+  type PartnerKey,
+  type StationBooking,
+} from "../partners";
 import { normalizeTogoPhone } from "../phone";
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 
@@ -76,6 +89,9 @@ interface DemoState {
   parcelDepots?: ParcelDepot[];
   parcelSizes?: ParcelSizeTier[];
   parcelCodeFailures?: { stationId: string; at: string }[];
+  /** Partner API: partners and bookings waiting for drop-off (demo only, no API calls). */
+  partners?: Partner[];
+  bookings?: (StationBooking & { partnerId: string; fromStationId: string })[];
   /** Demo PINs by phone number or e-mail address (stored in clear: demo only). */
   pins?: Record<string, string>;
 }
@@ -122,6 +138,50 @@ function seedDepots(): ParcelDepot[] {
     note: "au comptoir",
     lockers: 0,
   }));
+}
+
+/** One partner shop and one booked parcel, so the drop-off at the station can be tried. */
+function seedPartners(): Partner[] {
+  return [
+    {
+      id: "partner-demo",
+      name: "Boutique Démo",
+      contactEmail: "contact@boutique-demo.tg",
+      contactPhone: "+22890000099",
+      isActive: true,
+      webhookUrl: null,
+      webhookSecret: "whsec_demo",
+      sharePickupCode: false,
+      createdAt: "2026-10-01T08:00:00.000Z",
+      keys: [],
+      parcels30d: 0,
+      amount30d: 0,
+      openBookings: 1,
+    },
+  ];
+}
+
+function seedBookings(now: Date): NonNullable<DemoState["bookings"]> {
+  return [
+    {
+      id: "booking-demo",
+      partnerId: "partner-demo",
+      partnerName: "Boutique Démo",
+      reference: "CMD-1042",
+      trackingNo: "GP-DEM42X",
+      fromStationId: "st-grand-marche",
+      toStationId: "st-tokoin",
+      sender: { name: "Boutique Démo", phone: "+22890000099" },
+      recipient: { name: "Afi", phone: "+22891234567" },
+      content: "Chaussures",
+      declaredValue: 15000,
+      measures: { lengthCm: 35, widthCm: 25, heightCm: 15, weightKg: 1.5 },
+      size: "M",
+      priceFcfa: 500,
+      createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + BOOKING_DAYS * 86_400_000).toISOString(),
+    },
+  ];
 }
 
 /** An example ad, switched off, so testers can try the popup from the backoffice. */
@@ -1040,6 +1100,119 @@ export class DemoBackend implements Backend {
       parcels.map((p) => (p.id === id ? { ...p, status: outcome } : p)),
       { table: "parcels", action: "update", rowId: id, stationId: parcel.toStationId, changes: { status: ["stored", outcome] } },
     );
+  }
+
+  // Partner API ---------------------------------------------------------------
+
+  private bookingsOf(state: DemoState) {
+    return state.bookings ?? seedBookings(new Date());
+  }
+
+  private partnersOf(state: DemoState) {
+    return state.partners ?? seedPartners();
+  }
+
+  async stationBookings(stationId: string): Promise<StationBooking[]> {
+    const state = this.load();
+    this.requireStaff(state);
+    return this.bookingsOf(state).filter((b) => b.fromStationId === stationId);
+  }
+
+  async acceptBooking(stationId: string, bookingId: string, measures: ParcelMeasures): Promise<Parcel> {
+    const state = this.load();
+    const booking = this.bookingsOf(state).find((b) => b.id === bookingId && b.fromStationId === stationId);
+    if (!booking) throw new BackendError("parcel_not_found");
+    // Takes it in like a parcel handed in at the counter, then keeps the booking's number.
+    const parcel = await this.createParcel(stationId, {
+      senderPhone: booking.sender.phone,
+      senderName: booking.sender.name ?? undefined,
+      recipientPhone: booking.recipient.phone,
+      recipientName: booking.recipient.name ?? undefined,
+      toStationId: booking.toStationId,
+      content: booking.content,
+      declaredValue: booking.declaredValue,
+      measures,
+    });
+    const after = this.load();
+    const taken: Parcel = { ...parcel, trackingNo: booking.trackingNo, paymentMethod: "partner", paidAt: null };
+    this.save({
+      ...after,
+      parcels: (after.parcels ?? []).map((p) => (p.id === parcel.id ? taken : p)),
+      bookings: this.bookingsOf(after).filter((b) => b.id !== bookingId),
+    });
+    return taken;
+  }
+
+  async adminPartners(): Promise<AdminPartners> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const bookings = this.bookingsOf(state);
+    return {
+      partners: this.partnersOf(state).map((p) => ({ ...p, openBookings: bookings.filter((b) => b.partnerId === p.id).length })),
+      events: [],
+    };
+  }
+
+  async savePartner(id: string | null, input: PartnerInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const name = input.name.trim().slice(0, 80);
+    const contactPhone = normalizeTogoPhone(input.contactPhone);
+    if (!name) throw new BackendError("unknown", "name missing");
+    if (!contactPhone) throw new BackendError("phone_not_allowed");
+    const webhookUrl = input.webhookUrl.trim() || null;
+    if (webhookUrl && !validWebhookUrl(webhookUrl)) throw new BackendError("invalid_webhook");
+    const partners = this.partnersOf(state);
+    const fields = { name, contactPhone, contactEmail: input.contactEmail.trim() || null, isActive: input.isActive, webhookUrl, sharePickupCode: input.sharePickupCode };
+    const before = id ? partners.find((p) => p.id === id) : undefined;
+    const saved: Partner = before
+      ? { ...before, ...fields }
+      : { id: `partner-${Date.now().toString(36)}`, ...fields, webhookSecret: newWebhookSecret(), createdAt: new Date().toISOString(), keys: [], parcels30d: 0, amount30d: 0, openBookings: 0 };
+    this.save(
+      withAudit(
+        { ...state, partners: before ? partners.map((p) => (p.id === id ? saved : p)) : [...partners, saved] },
+        { table: "partners", action: before ? "update" : "insert", rowId: saved.id, changes: before ? diff(before, saved) : fields },
+      ),
+    );
+  }
+
+  private updatePartner(state: DemoState, id: string, change: (p: Partner) => Partner) {
+    const partners = this.partnersOf(state);
+    if (!partners.some((p) => p.id === id)) throw new BackendError("unknown", "partner not found");
+    return { ...state, partners: partners.map((p) => (p.id === id ? change(p) : p)) };
+  }
+
+  async createPartnerKey(partnerId: string, label: string): Promise<PartnerKey & { key: string }> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const key = newApiKey();
+    const row: PartnerKey = { id: crypto.randomUUID(), label: label.trim().slice(0, 60), prefix: keyPrefix(key), createdAt: new Date().toISOString(), lastUsedAt: null, revokedAt: null };
+    this.save(
+      withAudit(
+        this.updatePartner(state, partnerId, (p) => ({ ...p, keys: [row, ...p.keys] })),
+        { table: "partner_api_keys", action: "insert", rowId: row.id, changes: { partner_id: partnerId, label: row.label, prefix: row.prefix } },
+      ),
+    );
+    return { ...row, key };
+  }
+
+  async revokePartnerKey(partnerId: string, keyId: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const at = new Date().toISOString();
+    this.save(this.updatePartner(state, partnerId, (p) => ({ ...p, keys: p.keys.map((k) => (k.id === keyId ? { ...k, revokedAt: at } : k)) })));
+  }
+
+  async rotatePartnerSecret(partnerId: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const secret = newWebhookSecret();
+    this.save(this.updatePartner(state, partnerId, (p) => ({ ...p, webhookSecret: secret })));
+    return secret;
+  }
+
+  async retryPartnerEvent() {
+    // The demo sends no webhooks.
   }
 
   async currentPromotion(): Promise<Promotion | null> {
