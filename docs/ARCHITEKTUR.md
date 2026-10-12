@@ -32,6 +32,7 @@ Browser / Android-App (Next.js, statisch)  ──►  Cloudflare Worker "pointde
 | `parcel_depots`, `parcel_sizes` | Paket-Depot pro Station und Größen/Preise (S–XL, bis 50 kg), im Backoffice pflegbar |
 | `parcels`, `parcel_events` | Pakete von Station A nach B: Absender/Empfänger per Telefon, Inhalt, Maße, Preis, Status (`deposited` → `in_transit` → `arrived` → `picked_up`, nach 7 Tagen `stored` → `released`/`auctioned`), 6-stelliger Abholcode (sieht nur der Empfänger) |
 | `parcel_notifications`, `parcel_code_failures` | gesendete E-Mails zu Paketen; Sperre nach 5 falschen Codes pro Station |
+| `partners`, `partner_api_keys`, `partner_bookings`, `partner_events` | Partner-API: andere Apps buchen Transporte mit einem Schlüssel (nur SHA-256 gespeichert) und bekommen jede Statusänderung als signierten Webhook, siehe [PARTNER-API.md](PARTNER-API.md) |
 | `promotions` | Werbung für das Fenster beim Öffnen der App |
 | `audit_log` | Aktivitätsprotokoll: wer hat wann Status, Reservierungen, Rollen, Personal oder Stationen geändert (nur Admins lesen, siehe [BACKOFFICE.md](BACKOFFICE.md)) |
 

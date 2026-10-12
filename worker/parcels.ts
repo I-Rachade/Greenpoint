@@ -18,6 +18,7 @@ import {
   type ParcelDepotInput,
   type ParcelInfo,
   type ParcelInput,
+  type ParcelMeasures,
   type ParcelSize,
   type ParcelSizeTier,
   type ParcelStatus,
@@ -137,7 +138,7 @@ const toDepot = (r: DepotRow): ParcelDepot => ({
   lockers: r.lockers,
 });
 
-async function sizes(db: D1Database): Promise<ParcelSizeTier[]> {
+export async function sizes(db: D1Database): Promise<ParcelSizeTier[]> {
   const { results } = await db.prepare("select * from parcel_sizes").all<SizeRow>();
   return results.map(toTier).sort((a, b) => PARCEL_SIZES.indexOf(a.size) - PARCEL_SIZES.indexOf(b.size));
 }
@@ -166,7 +167,7 @@ async function station(db: D1Database, id: string): Promise<StationInfo | null> 
   return db.prepare("select id, name, address, opening_hours from stations where id = ?").bind(id).first<StationInfo>();
 }
 
-async function requireDepot(db: D1Database, stationId: string) {
+export async function requireDepot(db: D1Database, stationId: string) {
   const row = await db
     .prepare(
       "select 1 from parcel_depots d join stations s on s.id = d.station_id where d.station_id = ? and d.is_active = 1 and s.is_active = 1",
@@ -176,13 +177,13 @@ async function requireDepot(db: D1Database, stationId: string) {
   if (!row) throw new ApiError("depot_inactive");
 }
 
-async function requireStaff(c: ParcelCtx, stationId: string): Promise<Profile> {
+export async function requireStaff(c: ParcelCtx, stationId: string): Promise<Profile> {
   const user = await c.requireUser();
   if (!(await c.isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
   return user;
 }
 
-function cleanName(value: unknown): string | null {
+export function cleanName(value: unknown): string | null {
   const name = String(value ?? "").trim().slice(0, 80);
   return name || null;
 }
@@ -237,37 +238,79 @@ export async function createParcel(c: ParcelCtx, fromStationId: string, input: P
   if (declared !== null && !(Number.isInteger(declared) && declared >= 0 && declared <= 100_000_000)) {
     throw new ApiError("bad_request");
   }
+  const measures = cleanMeasures(input.measures);
+  await requireDepot(c.db, fromStationId);
+  await requireDepot(c.db, toStationId);
+  return storeParcel(c, staff.id, {
+    fromStationId,
+    toStationId,
+    sender: { phone: senderPhone, name: cleanName(input.senderName) },
+    recipient: { phone: recipientPhone, name: cleanName(input.recipientName) },
+    content,
+    declaredValue: declared,
+    measures,
+  });
+}
+
+/** Measures from a request, or a bad_request error. */
+export function cleanMeasures(input: Partial<ParcelMeasures> | undefined): ParcelMeasures {
   const measures = {
-    lengthCm: Number(input.measures?.lengthCm),
-    widthCm: Number(input.measures?.widthCm),
-    heightCm: Number(input.measures?.heightCm),
-    weightKg: Number(input.measures?.weightKg),
+    lengthCm: Number(input?.lengthCm),
+    widthCm: Number(input?.widthCm),
+    heightCm: Number(input?.heightCm),
+    weightKg: Number(input?.weightKg),
   };
   if (![measures.lengthCm, measures.widthCm, measures.heightCm, measures.weightKg].every((v) => Number.isFinite(v) && v > 0)) {
     throw new ApiError("bad_request");
   }
-  await requireDepot(c.db, fromStationId);
-  await requireDepot(c.db, toStationId);
-  const tier = validMeasures(measures) ? sizeFor(measures, await sizes(c.db)) : null;
-  if (!tier) throw new ApiError("parcel_too_large");
+  return measures;
+}
 
-  const senderName = cleanName(input.senderName);
-  const recipientName = cleanName(input.recipientName);
-  const sender = await accountFor(c, senderPhone, senderName, staff.id);
-  const recipient = await accountFor(c, recipientPhone, recipientName, staff.id);
+/** The size tier and price for these measures, or parcel_too_large. */
+export async function tierFor(db: D1Database, measures: ParcelMeasures): Promise<ParcelSizeTier> {
+  const tier = validMeasures(measures) ? sizeFor(measures, await sizes(db)) : null;
+  if (!tier) throw new ApiError("parcel_too_large");
+  return tier;
+}
+
+export interface NewParcel {
+  fromStationId: string;
+  toStationId: string;
+  sender: { phone: string; name: string | null };
+  recipient: { phone: string; name: string | null };
+  content: string;
+  declaredValue: number | null;
+  measures: ParcelMeasures;
+  /** Booked through the partner API (worker/partners.ts): billed to the partner, keeps the booking's tracking number. */
+  partner?: { id: string; bookingId: string; trackingNo: string };
+}
+
+/**
+ * Stores a parcel handed in at the counter (status deposited), creates accounts
+ * for unknown phone numbers and tells sender and recipient. Inputs are checked.
+ */
+export async function storeParcel(c: ParcelCtx, actor: string, p: NewParcel): Promise<Parcel> {
+  const tier = await tierFor(c.db, p.measures);
+  const { fromStationId, toStationId, measures } = p;
+  const senderPhone = p.sender.phone;
+  const senderName = p.sender.name;
+  const recipientPhone = p.recipient.phone;
+  const recipientName = p.recipient.name;
+  const sender = await accountFor(c, senderPhone, senderName, actor);
+  const recipient = await accountFor(c, recipientPhone, recipientName, actor);
 
   const now = nowIso();
   const id = uuid();
   let trackingNo = "";
   for (let attempt = 0; attempt < 5 && !trackingNo; attempt++) {
-    const candidate = newTrackingNo();
+    const candidate = attempt === 0 && p.partner ? p.partner.trackingNo : newTrackingNo();
     try {
       await c.db
         .prepare(
           `insert into parcels (id, tracking_no, from_station_id, to_station_id, sender_user_id, sender_phone, sender_name,
            recipient_user_id, recipient_phone, recipient_name, content, declared_value, length_cm, width_cm, height_cm,
-           weight_kg, size, price_fcfa, payment_method, paid_at, status, created_by, created_at)
-           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cash', ?, 'deposited', ?, ?)`,
+           weight_kg, size, price_fcfa, payment_method, paid_at, status, created_by, created_at, partner_id, partner_booking_id)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'deposited', ?, ?, ?, ?)`,
         )
         .bind(
           id,
@@ -280,17 +323,21 @@ export async function createParcel(c: ParcelCtx, fromStationId: string, input: P
           recipient.id,
           recipientPhone,
           recipientName,
-          content,
-          declared,
+          p.content,
+          p.declaredValue,
           measures.lengthCm,
           measures.widthCm,
           measures.heightCm,
           measures.weightKg,
           tier.size,
           tier.priceFcfa,
+          // Partner parcels are billed to the partner, not paid at the counter.
+          p.partner ? "partner" : "cash",
+          p.partner ? null : now,
+          actor,
           now,
-          staff.id,
-          now,
+          p.partner?.id ?? null,
+          p.partner?.bookingId ?? null,
         )
         .run();
       trackingNo = candidate;
@@ -300,8 +347,8 @@ export async function createParcel(c: ParcelCtx, fromStationId: string, input: P
   }
   if (!trackingNo) throw new ApiError("unknown", 500);
   await c.db.batch([
-    event(c, id, staff.id, "deposited", fromStationId),
-    c.audit(staff.id, "parcels", "insert", id, { tracking_no: trackingNo, to_station_id: toStationId, size: tier.size, price_fcfa: tier.priceFcfa }, {
+    event(c, id, actor, "deposited", fromStationId),
+    c.audit(actor, "parcels", "insert", id, { tracking_no: trackingNo, to_station_id: toStationId, size: tier.size, price_fcfa: tier.priceFcfa, ...(p.partner ? { partner_id: p.partner.id } : {}) }, {
       stationId: fromStationId,
       userId: sender.id,
     }),
@@ -311,7 +358,7 @@ export async function createParcel(c: ParcelCtx, fromStationId: string, input: P
   await Promise.all([
     notifyPerson(c.env, id, "deposited", sender.id, {
       subject: `Colis ${trackingNo} déposé`,
-      text: `poinderecharge : colis ${trackingNo} déposé à ${from?.name} pour ${to?.name}. ${tier.priceFcfa} FCFA payés. Suivi : ${APP_URL}`,
+      text: `poinderecharge : colis ${trackingNo} déposé à ${from?.name} pour ${to?.name}. ${p.partner ? "" : `${tier.priceFcfa} FCFA payés. `}Suivi : ${APP_URL}`,
     }),
     notifyPerson(c.env, id, "deposited", recipient.id, {
       subject: `Un colis est en route pour vous (${trackingNo})`,

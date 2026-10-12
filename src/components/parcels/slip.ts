@@ -50,7 +50,7 @@ export async function drawSlip(parcel: Parcel, stations: StationView[], t: Dicti
   add(`${t.parcels.content} : ${parcel.content}`);
   const m = parcel.measures;
   add(`${t.parcels.size} ${parcel.size} · ${m.lengthCm}×${m.widthCm}×${m.heightCm} cm · ${m.weightKg} kg`);
-  add(`${t.parcels.price} : ${fcfa(parcel.priceFcfa)} (cash)`, 22, true);
+  add(`${t.parcels.price} : ${fcfa(parcel.priceFcfa)} (${parcel.paymentMethod === "partner" ? t.parcels.billedToPartner : "cash"})`, 22, true);
   if (parcel.declaredValue != null) add(`${t.parcels.declaredValue} : ${fcfa(parcel.declaredValue)}`);
   add(`${t.parcels.liability} : ${fcfa(liabilityLimit(parcel.priceFcfa, parcel.declaredValue))}`, 22, false, 14);
   add(new Date(parcel.createdAt).toLocaleString("fr-FR"), 20, false, 14);
