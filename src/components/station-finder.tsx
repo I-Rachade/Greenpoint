@@ -22,6 +22,7 @@ import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
 import { AvailabilityBadge } from "./availability-badge";
 import { useI18n } from "./i18n-provider";
+import { LegalLinks } from "./legal-links";
 import { StationDetail } from "./station-detail";
 
 // MapLibre needs the browser (WebGL), so it is never rendered on the server.
@@ -155,9 +156,12 @@ export function StationFinder() {
                 </li>
               ))}
             </ul>
-            <Link href="/contact" className="border-t border-black/10 px-3 py-2 text-center text-xs text-zinc-500 hover:underline dark:border-white/10">
-              {t.contact.link} · {CONTACT_EMAIL}
-            </Link>
+            <div className="space-y-1 border-t border-black/10 px-3 py-2 dark:border-white/10">
+              <Link href="/contact" className="block text-center text-xs text-zinc-500 hover:underline">
+                {t.contact.link} · {CONTACT_EMAIL}
+              </Link>
+              <LegalLinks />
+            </div>
           </>
         )}
       </aside>

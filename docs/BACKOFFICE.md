@@ -41,8 +41,7 @@ Das Protokoll wächst mit jeder Reservierung und Statusmeldung. Ältere Einträg
 
 ## Werbe-Popup („Publicité“)
 
-- Erscheint beim Öffnen der App (Karte, Reservierungen, Kontakt), nie im Backoffice, in der Stationsansicht oder beim Login.
-- Höchstens einmal pro Tag und Gerät. Wird die Werbung im Backoffice geändert oder eine andere aktiv, erscheint sie am selben Tag noch einmal.
+- Erscheint jedes Mal, wenn man die Karte öffnet oder zur Karte zurückkehrt; auf anderen Seiten (Backoffice, Betreiber, Login, Reservierungen, Kontakt, Rechtstexte) nie.
 - Läuft keine Werbung (keine aktiv oder außerhalb des Zeitraums), erscheint nichts. Sind mehrere aktiv, zeigt die App die zuletzt geänderte.
 - Schließen per ×, Tippen neben das Fenster oder Zurück/Escape. Der Button öffnet den Link in einem neuen Tab; nur `https://`- und `http://`-Links werden angenommen.
 - Tabelle `promotions` in D1 (lesen darf jeder nur die laufende Werbung, ändern nur Admins). Bilder liegen im R2-Bucket `poinderecharge-media` und werden unter `/api/media/…` ausgeliefert (max. 2 MB, PNG/JPG/WebP/GIF, hochladen nur Admins). Änderungen stehen im Aktivitätsprotokoll.

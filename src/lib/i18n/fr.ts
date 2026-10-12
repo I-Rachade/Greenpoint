@@ -365,7 +365,7 @@ export const fr = {
     },
     promotions: {
       title: "Publicité à l'ouverture",
-      intro: "Une fenêtre s'affiche à l'ouverture de l'app, au plus une fois par jour et par appareil. Si plusieurs sont actives, c'est la dernière modifiée qui s'affiche.",
+      intro: "Une fenêtre s'affiche chaque fois que l'on ouvre la carte ou que l'on y revient. Si plusieurs sont actives, c'est la dernière modifiée qui s'affiche.",
       add: "Nouvelle publicité",
       empty: "Aucune publicité pour le moment.",
       edit: "Modifier",
@@ -414,6 +414,17 @@ export const fr = {
     intro: "Une question, une station à signaler ou envie de devenir partenaire ? Écrivez-nous.",
     email: "E-mail",
     link: "Contact",
+  },
+  legal: {
+    notice: "Mentions légales",
+    terms: "CGU",
+    privacy: "Confidentialité",
+    updated: "Dernière mise à jour : {date}",
+    back: "Retour à la carte",
+    accept: "J'accepte les {terms} et la {privacy}.",
+    acceptTerms: "conditions générales d'utilisation",
+    acceptPrivacy: "politique de confidentialité",
+    mustAccept: "Veuillez accepter les conditions d'utilisation et la politique de confidentialité.",
   },
   parcels: {
     title: "Mes colis",

@@ -4,13 +4,10 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
-import { safeImage, safeLink, seenMarker, type Promotion } from "@/lib/promo";
+import { safeImage, safeLink, type Promotion } from "@/lib/promo";
 
-const SEEN_KEY = "poinderecharge-promo-seen";
-/** Staff, admins and the login flow are never interrupted by an ad. */
-const QUIET_PATHS = ["/admin", "/operator", "/login"];
-/** Fallback when browser storage is blocked: at most once per app start. */
-let shownThisSession = false;
+/** The ad shows on the map only; other pages are never interrupted. */
+const MAP_PATH = "/";
 
 /** Content of the ad window; also used as the preview in the backoffice. */
 export function PromoCard({
@@ -66,47 +63,39 @@ export function PromoCard({
 }
 
 /**
- * Shows the current ad (managed in /admin/promotions) when the app opens,
- * at most once a day per device. Nothing shows when no ad is running.
+ * Shows the current ad (managed in /admin/promotions) every time the rider
+ * opens or comes back to the map. Nothing shows when no ad is running.
  */
 export function PromoPopup() {
   const { backend } = useApp();
   const pathname = usePathname();
   const [promo, setPromo] = useState<Promotion | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const quiet = QUIET_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  const onMap = pathname === MAP_PATH;
 
   useEffect(() => {
-    if (quiet || shownThisSession) return;
+    if (!onMap) return;
     let active = true;
     backend.currentPromotion().then(
       (p) => {
-        if (!active || !p || shownThisSession) return;
-        const marker = seenMarker(p, new Date());
-        try {
-          if (window.localStorage.getItem(SEEN_KEY) === marker) return;
-          window.localStorage.setItem(SEEN_KEY, marker);
-        } catch {
-          // Storage blocked: the session flag below still limits it to once per start.
-        }
-        shownThisSession = true;
-        setPromo(p);
+        // A fresh copy, so the window opens again even when the ad is unchanged.
+        if (active) setPromo(p ? { ...p } : null);
       },
       () => {
-        // No ad is better than an error on opening the app.
+        // No ad is better than an error on opening the map.
       },
     );
     return () => {
       active = false;
     };
-  }, [backend, quiet]);
+  }, [backend, onMap]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
-    if (promo && dialog && !dialog.open) dialog.showModal();
-  }, [promo]);
+    if (onMap && promo && dialog && !dialog.open) dialog.showModal();
+  }, [onMap, promo]);
 
-  if (!promo) return null;
+  if (!onMap || !promo) return null;
   const close = () => dialogRef.current?.close();
 
   return (
