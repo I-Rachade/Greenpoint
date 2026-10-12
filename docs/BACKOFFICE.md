@@ -32,7 +32,7 @@ Die Schwellen stehen als Konstanten oben in `insights.ts`.
 
 ## Aktivitätsprotokoll (Audit-Log)
 
-Migration `supabase/migrations/20261012000300_backoffice.sql`:
+Migration `supabase/migrations/20261012000400_backoffice.sql`:
 
 - Tabelle `audit_log`: Zeitpunkt, wer (`actor` = `auth.uid()`, leer = System, z. B. Steckdosen-Webhook oder SQL-Editor), Tabelle, Aktion, betroffene Station und betroffener Nutzer, und die Änderung (`{Spalte: [alt, neu]}` bzw. die ganze Zeile beim Anlegen/Löschen).
 - Ein Trigger `audit_row()` schreibt bei jeder Änderung an `profiles`, `operators`, `stations`, `station_status`, `station_staff`, `reservations` und `charging_points`. Spalten, die sich von selbst ändern (`updated_at`, `last_seen_at`, `power_watts`, `energy_wh` …), zählen nicht; ein Herzschlag einer Steckdose ohne echte Änderung schreibt also nichts.

@@ -60,7 +60,7 @@ export const AUDIT_TABLES: AuditTable[] = [
 
 export type AuditAction = "insert" | "update" | "delete";
 
-/** One row of the activity log (see supabase/migrations/20261012000300_backoffice.sql). */
+/** One row of the activity log (see supabase/migrations/20261012000400_backoffice.sql). */
 export interface AuditEntry {
   id: number;
   at: string;
