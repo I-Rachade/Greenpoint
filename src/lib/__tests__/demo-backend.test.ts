@@ -73,6 +73,27 @@ describe("DemoBackend reservations", () => {
   });
 });
 
+describe("DemoBackend account deletion", () => {
+  it("needs the code, then removes the login and the reservations", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-12T12:00:00Z"));
+    const backend = new DemoBackend();
+    await asRole(backend, "rider");
+    await backend.reserve(STATION, "battery");
+
+    // The account has no e-mail address, so no code can go there.
+    await expect(backend.sendDeleteCode("email")).rejects.toBeTruthy();
+    await backend.sendDeleteCode("sms");
+    await expect(backend.deleteAccount("sms", "000000")).rejects.toMatchObject({ code: "invalid_code" });
+    await backend.deleteAccount("sms", DEMO_CODE);
+
+    expect(await backend.getProfile()).toBeNull();
+    await expect(backend.signIn("+22890123456", "2580")).rejects.toMatchObject({ code: "invalid_pin" });
+    expect((await backend.listStations()).find((s) => s.id === STATION)!.reservedBatteries).toBe(0);
+    vi.useRealTimers();
+  });
+});
+
 describe("DemoBackend connected sockets", () => {
   it("lets an admin add, switch and remove a socket", async () => {
     const backend = new DemoBackend();

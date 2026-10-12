@@ -8,7 +8,7 @@ import type { AdminUser } from "@/lib/admin/types";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { UserRole } from "@/lib/types";
-import { field, indexSnapshot, Loading, Table, td, th, useAdminSnapshot, userLabel, useDateTime } from "./shared";
+import { field, indexSnapshot, Loading, Table, td, th, useAdminSnapshot, userContact, userLabel, useDateTime } from "./shared";
 
 const ROLES: UserRole[] = ["rider", "operator", "fleet_manager", "admin"];
 
@@ -91,7 +91,7 @@ export function UsersTable() {
           return (
             <tr key={u.id}>
               <td className={td}>
-                <div className="font-medium tabular-nums">{u.phone}</div>
+                <div className="font-medium tabular-nums break-all">{userContact(u)}</div>
                 <div className="text-xs text-zinc-500">
                   {u.fullName}
                   {isSelf && ` (${b.self})`}
@@ -102,7 +102,7 @@ export function UsersTable() {
                   className={field}
                   value={u.role}
                   disabled={isSelf}
-                  aria-label={`${b.role} ${u.phone}`}
+                  aria-label={`${b.role} ${userContact(u)}`}
                   onChange={(e) => changeRole(u, e.target.value as UserRole)}
                 >
                   {ROLES.map((r) => (
@@ -132,7 +132,7 @@ export function UsersTable() {
                     <select
                       className="rounded-lg border border-dashed border-black/20 bg-transparent px-2 py-0.5 text-xs dark:border-white/20"
                       value=""
-                      aria-label={`${b.assign} ${u.phone}`}
+                      aria-label={`${b.assign} ${userContact(u)}`}
                       onChange={(e) => e.target.value && run(() => backend.assignStaff(e.target.value, u.id))}
                     >
                       <option value="">{b.assign}</option>

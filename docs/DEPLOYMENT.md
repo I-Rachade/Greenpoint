@@ -7,6 +7,7 @@ Die ganze App läuft bei Cloudflare, im Worker **`pointderecharge-app`**: die We
 - D1-Datenbank **`poinderecharge-db`** (Region Westeuropa), Schema aus `worker/migrations/` ausgeführt.
 - R2-Bucket **`poinderecharge-media`** für die Bilder der Werbung.
 - Beide sind in `wrangler.jsonc` mit dem Worker verbunden (`DB` und `MEDIA`).
+- E-Mail-Versand über **Cloudflare Email Service** (Binding `EMAIL`), Absender `noreply@poinderecharge.com`. Einmalig einzurichten, siehe Abschnitt 3a.
 
 ## 2. Build in Cloudflare
 
@@ -25,18 +26,30 @@ Unter **Workers & Pages > pointderecharge-app > Settings > Variables and secrets
 
 | Name | Typ | Inhalt |
 |---|---|---|
-| `DIDIT_API_KEY` | Secret | API-Schlüssel aus der Didit Business Console (verschickt die SMS-Codes für Registrierung und neue PIN) |
+| `DIDIT_API_KEY` | Secret | API-Schlüssel aus der Didit Business Console (verschickt die SMS-Codes für Registrierung, neue PIN und Kontolöschung) |
 | `DIDIT_CHANNEL` | Text, optional | `sms` (Standard) oder `whatsapp`; ist der Kanal für eine Nummer nicht verfügbar, schickt Didit eine SMS |
 | `ADMIN_PHONES` | Text | Nummern, die bei der **Registrierung** Admin werden, z. B. `+22890123456` (mehrere mit Komma) |
+| `ADMIN_EMAILS` | Text, optional | E-Mail-Adressen, die bei der **Registrierung** Admin werden, z. B. `chef@poinderecharge.com` (mehrere mit Komma) |
 | `DEVICE_WEBHOOK_SECRET` | Secret, optional | Schlüssel der vernetzten Steckdosen, siehe [steckdosen-lora.md](steckdosen-lora.md) |
-| `TEST_OTP` | Text, optional | Testnummern mit festem Code ohne SMS, z. B. `+22890000001=123456`. In Produktion leer lassen oder nur für eigene Nummern. |
+| `TEST_OTP` | Text, optional | Testnummern oder -adressen mit festem Code ohne SMS/E-Mail, z. B. `+22890000001=123456,test@poinderecharge.com=123456`. In Produktion leer lassen oder nur für eigene Kontakte. |
 | `OTP_HOURLY_LIMIT` | Text, optional | höchstens so viele SMS-Codes pro Stunde insgesamt (Standard 30) |
+| `EMAIL_HOURLY_LIMIT` | Text, optional | höchstens so viele Code-E-Mails pro Stunde insgesamt (Standard 100) |
 
 Didit: Konto auf https://business.didit.me anlegen, Guthaben aufladen (Telefon-Verifizierung ist erst nach der ersten Aufladung aktiv), unter der Anwendung den API-Schlüssel kopieren. Kosten: 0,04 $ pro verschickten Code plus Gebühr des Netzes je nach Land und Kanal (https://docs.didit.me/getting-started/phone-verification-pricing); die Prüfung des Codes ist kostenlos. Die App nimmt nur +228-Nummern an, damit keine teuren Codes ins Ausland gehen. Didit lehnt Wegwerf- und Internet-Nummern bei der Registrierung ab. SMS kosten nur bei Registrierung und vergessener PIN; der tägliche Login mit PIN ist kostenlos.
 
+## 3a. E-Mail-Versand (Cloudflare Email Service)
+
+Registrierung, Login und Kontolöschung gehen mit Telefonnummer **oder** E-Mail-Adresse. Codes per E-Mail erzeugt der Worker selbst (6 Ziffern, 10 Minuten gültig, nur der Hash wird gespeichert) und verschickt sie über das Binding `EMAIL` in `wrangler.jsonc`. Einmalig im Cloudflare-Dashboard:
+
+1. **Compute > Email Service > Email Sending > Onboard Domain**, Domain `poinderecharge.com` wählen und die vorgeschlagenen DNS-Einträge übernehmen (MX und SPF auf `cf-bounce.poinderecharge.com`, DKIM, DMARC auf `_dmarc.poinderecharge.com`). Cloudflare trägt sie selbst ein, weil die Domain bei Cloudflare liegt.
+2. Warten, bis die Domain als verifiziert angezeigt wird (meist 5 bis 15 Minuten).
+3. Email Sending braucht den **Workers Paid**-Plan.
+
+Ohne diese Schritte schlägt nur der E-Mail-Versand fehl (Meldung „Une erreur est survenue“); SMS und PIN-Login laufen weiter.
+
 ## 4. Rollen vergeben
 
-- Admin: Nummer in `ADMIN_PHONES` eintragen, bevor sie sich registriert. Wer schon angemeldet war: in der Cloudflare-Konsole (**D1 > poinderecharge-db > Console**) `update users set role = 'admin' where phone = '+228…';`.
+- Admin: Nummer in `ADMIN_PHONES` (oder Adresse in `ADMIN_EMAILS`) eintragen, bevor sie sich registriert. Wer schon angemeldet war: in der Cloudflare-Konsole (**D1 > poinderecharge-db > Console**) `update users set role = 'admin' where phone = '+228…';` bzw. `where email = '…';`.
 - Danach vergibt der Admin alle Rollen im Backoffice unter **Utilisateurs**. Personal entsteht, indem man jemanden einer Station zuordnet.
 
 ## 5. Datenbank-Änderungen
@@ -56,7 +69,7 @@ npm run db:migrate
   1. `npx wrangler d1 migrations apply DB --local`
   2. Datei `.dev.vars` anlegen (wird nicht eingecheckt):
      ```
-     TEST_OTP=+22890000001=123456,+22890000002=123456
+     TEST_OTP=+22890000001=123456,+22890000002=123456,test@example.com=123456
      ADMIN_PHONES=+22890000001
      ```
   3. `NEXT_PUBLIC_BACKEND=cloudflare npm run dev:worker`, dann http://localhost:8787 öffnen.
