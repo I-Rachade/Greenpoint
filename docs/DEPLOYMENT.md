@@ -30,6 +30,7 @@ Unter **Workers & Pages > pointderecharge-app > Settings > Variables and secrets
 | `DIDIT_CHANNEL` | Text, optional | `sms` (Standard) oder `whatsapp`; ist der Kanal für eine Nummer nicht verfügbar, schickt Didit eine SMS |
 | `ADMIN_PHONES` | Text | Nummern, die bei der **Registrierung** Admin werden, z. B. `+22890123456` (mehrere mit Komma) |
 | `ADMIN_EMAILS` | Text, optional | E-Mail-Adressen, die bei der **Registrierung** Admin werden, z. B. `chef@poinderecharge.com` (mehrere mit Komma) |
+| `DEVICE_WEBHOOK_SECRET` | Secret, optional | Schlüssel der vernetzten Steckdosen, siehe [steckdosen-lora.md](steckdosen-lora.md) |
 | `TEST_OTP` | Text, optional | Testnummern oder -adressen mit festem Code ohne SMS/E-Mail, z. B. `+22890000001=123456,test@poinderecharge.com=123456`. In Produktion leer lassen oder nur für eigene Kontakte. |
 | `OTP_HOURLY_LIMIT` | Text, optional | höchstens so viele SMS-Codes pro Stunde insgesamt (Standard 30) |
 | `EMAIL_HOURLY_LIMIT` | Text, optional | höchstens so viele Code-E-Mails pro Stunde insgesamt (Standard 100) |

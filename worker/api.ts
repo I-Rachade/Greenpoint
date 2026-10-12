@@ -31,6 +31,20 @@ import {
   signIn,
   signOut,
 } from "./auth";
+import {
+  chargingPointsByStation,
+  createDevice,
+  deleteDevice,
+  handleDeviceCommands,
+  handleDeviceEvents,
+  hasConnectedPointsSql,
+  listDevices,
+  liveFreePointsSql,
+  onlineSince,
+  startOutlet,
+  stopOutlet,
+} from "./devices";
+import type { DeviceInput } from "../src/lib/iot/devices";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 
@@ -220,7 +234,12 @@ class Ctx {
       .prepare(`${STATION_SELECT} ${where} order by s.name`)
       .bind(nowIso(), ...params)
       .all<StationRow>();
-    return results.map(toStationView);
+    const points = await chargingPointsByStation(this.db);
+    return results.map((r) => {
+      const station = toStationView(r);
+      const chargingPoints = points.get(r.id);
+      return chargingPoints ? { ...station, chargingPoints } : station;
+    });
   }
 }
 
@@ -279,15 +298,19 @@ async function reserve(c: Ctx, stationId: string, type: ReservationType): Promis
   let inserted: D1Result;
   try {
     // The availability check and the insert are one statement, so two riders
-    // cannot take the last battery at once.
+    // cannot take the last battery at once. Stations with connected sockets count
+    // their outlets that reported in the last minutes instead of the staff counter.
     inserted = await c.db
       .prepare(
         `insert into reservations (id, user_id, station_id, type, status, created_at, expires_at, pickup_code)
          select ?1, ?2, ?3, ?4, 'active', ?5, ?6, ?7
-         where (select case when ?4 = 'slot' then free_slots else full_batteries end from station_status where station_id = ?3)
+         where (select case when ?4 = 'battery' then full_batteries
+                            when ${hasConnectedPointsSql("?3")} then ${liveFreePointsSql("?3", "?8")}
+                            else free_slots end
+                from station_status where station_id = ?3)
              - (select count(*) from reservations where station_id = ?3 and type = ?4 and status = 'active' and expires_at > ?5) > 0`,
       )
-      .bind(id, user.id, stationId, type, now, expires, code)
+      .bind(id, user.id, stationId, type, now, expires, code, onlineSince())
       .run();
   } catch (err) {
     if (/UNIQUE/i.test(String(err))) throw new ApiError("already_reserved");
@@ -914,6 +937,41 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
   ["DELETE", /^\/api\/admin\/promotions\/([\w-]+)$/, (c, [id]) => deletePromotion(c, id)],
   ["POST", /^\/api\/admin\/media$/, (c) => uploadImage(c)],
+  [
+    "POST",
+    /^\/api\/admin\/devices$/,
+    async (c) => {
+      const admin = await c.requireAdmin();
+      return createDevice(c.db, await readJson<DeviceInput>(c.request), admin.id);
+    },
+  ],
+  [
+    "GET",
+    /^\/api\/admin\/devices$/,
+    async (c) => {
+      await c.requireAdmin();
+      return listDevices(c.db);
+    },
+  ],
+  [
+    "DELETE",
+    /^\/api\/admin\/devices\/([\w:%-]+)$/,
+    async (c, [device]) => {
+      const admin = await c.requireAdmin();
+      return deleteDevice(c.db, decodeURIComponent(device), admin.id);
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/admin\/devices\/([\w:%-]+)\/outlets\/(\d+)\/(start|stop)$/,
+    async (c, [encoded, outlet, action]) => {
+      const admin = await c.requireAdmin();
+      const device = decodeURIComponent(encoded);
+      if (action === "stop") return stopOutlet(c.db, device, Number(outlet), admin.id);
+      const { minutes } = await readJson<{ minutes?: number }>(c.request).catch(() => ({ minutes: undefined }));
+      return startOutlet(c.db, device, Number(outlet), admin.id, minutes);
+    },
+  ],
 ];
 
 export async function handleApi(request: Request, env: Env): Promise<Response> {
@@ -922,6 +980,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   try {
     const mediaMatch = /^\/api\/media\/(promotions\/[\w-]+\.(?:png|jpg|webp|gif))$/.exec(url.pathname);
     if (mediaMatch && (request.method === "GET" || request.method === "HEAD")) return await media(c, mediaMatch[1]);
+    // Sockets authenticate with their own key, not a user session.
+    if (url.pathname === "/api/devices/events") return await handleDeviceEvents(request, env);
+    if (url.pathname === "/api/devices/commands") return await handleDeviceCommands(request, env);
     for (const [method, pattern, handler] of ROUTES) {
       const m = pattern.exec(url.pathname);
       if (!m) continue;

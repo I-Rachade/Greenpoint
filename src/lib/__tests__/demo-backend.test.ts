@@ -93,3 +93,32 @@ describe("DemoBackend account deletion", () => {
     vi.useRealTimers();
   });
 });
+
+describe("DemoBackend connected sockets", () => {
+  it("lets an admin add, switch and remove a socket", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890123456", DEMO_CODE, "2580", "admin");
+    const before = await backend.listDevices();
+
+    await expect(backend.createDevice({ externalId: "x", stationId: STATION })).rejects.toMatchObject({ code: "invalid_device" });
+    await backend.createDevice({ externalId: "123456", stationId: STATION, outlets: 2, link: "vendor_cloud" });
+    await expect(backend.createDevice({ externalId: "123456", stationId: STATION })).rejects.toMatchObject({ code: "device_exists" });
+
+    const added = (await backend.listDevices()).find((d) => d.externalId === "123456")!;
+    expect(added.points.map((p) => p.label)).toEqual(["3456-1", "3456-2"]);
+    const station = (await backend.listStations()).find((s) => s.id === STATION)!;
+    expect(station.chargingPoints).toHaveLength(2);
+
+    await backend.switchOutlet("123456", 2, true);
+    expect((await backend.listDevices()).find((d) => d.externalId === "123456")!.points[1].status).toBe("charging");
+
+    await backend.deleteDevice("123456");
+    expect(await backend.listDevices()).toHaveLength(before.length);
+  });
+
+  it("is admin only", async () => {
+    const backend = new DemoBackend();
+    await asRole(backend, "rider");
+    await expect(backend.listDevices()).rejects.toMatchObject({ code: "forbidden" });
+  });
+});

@@ -19,4 +19,6 @@ export interface Env {
   OTP_HOURLY_LIMIT?: string;
   /** Most code e-mails sent per hour across all addresses. Default 100. */
   EMAIL_HOURLY_LIMIT?: string;
+  /** Shared key of the connected sockets (secret), see docs/steckdosen-lora.md. */
+  DEVICE_WEBHOOK_SECRET?: string;
 }

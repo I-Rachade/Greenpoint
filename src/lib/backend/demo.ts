@@ -15,7 +15,7 @@ import {
   type UserRole,
 } from "../types";
 import { BackendError, type Backend, type CodeChannel, type StatusPatch } from "./backend";
-import { DEMO_OPERATORS, DEMO_STATIONS, initialDemoStatus } from "./demo-data";
+import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, initialDemoStatus } from "./demo-data";
 import { DEMO_STAFF, demoHistory, demoUsers } from "../admin/demo-seed";
 import {
   ADMIN_HISTORY_DAYS,
@@ -27,6 +27,7 @@ import {
 } from "../admin/types";
 import { validPinFormat, weakPin } from "../pin";
 import { MAX_PROMO_IMAGE_BYTES, pickPromotion, type Promotion, type PromotionInput } from "../promo";
+import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 
 const STORAGE_KEY = "poinderecharge-demo-v3";
 /** Every demo registration accepts this SMS code. */
@@ -53,6 +54,7 @@ interface DemoState {
   inactive?: string[];
   audit?: AuditEntry[];
   promotions?: Promotion[];
+  devices?: Device[];
   /** Demo PINs by phone number or e-mail address (stored in clear: demo only). */
   pins?: Record<string, string>;
 }
@@ -71,6 +73,24 @@ function freshState(): DemoState {
     audit: [],
     promotions: [demoPromotion(now)],
   };
+}
+
+/** The connected socket of the "Déckon" station, as a device. */
+function seedDevices(): Device[] {
+  const [first] = DEMO_CHARGING_POINTS;
+  return [
+    {
+      externalId: first.deviceId!,
+      stationId: first.stationId,
+      vendor: "LoRa",
+      model: "2 prises",
+      link: "lorawan",
+      outlets: DEMO_CHARGING_POINTS.length,
+      lastSeenAt: null,
+      createdAt: "2026-10-01T08:00:00.000Z",
+      points: DEMO_CHARGING_POINTS,
+    },
+  ];
 }
 
 /** An example ad, switched off, so testers can try the popup from the backoffice. */
@@ -175,6 +195,7 @@ export class DemoBackend implements Backend {
   }
 
   private views(state: DemoState, stations: Station[]): StationView[] {
+    const seen = new Date().toISOString();
     return stations.map((s) => {
       let status = state.statuses.find((st) => st.stationId === s.id)!;
       // Pretend staff report regularly, so an old demo session does not turn grey.
@@ -182,7 +203,12 @@ export class DemoBackend implements Backend {
         status = { ...status, updatedAt: new Date().toISOString() };
       }
       const held = countHolding(state.reservations, s.id);
-      return { ...s, status, reservedSlots: held.slots, reservedBatteries: held.batteries };
+      // Demo sockets pretend to report all the time.
+      const chargingPoints = (state.devices ?? seedDevices())
+        .flatMap((d) => d.points)
+        .filter((p) => p.stationId === s.id)
+        .map((p) => ({ ...p, lastSeenAt: seen }));
+      return { ...s, status, reservedSlots: held.slots, reservedBatteries: held.batteries, chargingPoints };
     });
   }
 
@@ -618,6 +644,87 @@ export class DemoBackend implements Backend {
   }
 
   // Advertising popup ---------------------------------------------------------
+
+  // Connected sockets ---------------------------------------------------------
+
+  async listDevices(): Promise<Device[]> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const seen = new Date().toISOString();
+    return (state.devices ?? seedDevices()).map((d) => ({
+      ...d,
+      lastSeenAt: seen,
+      points: d.points.map((p) => ({ ...p, lastSeenAt: seen })),
+    }));
+  }
+
+  async createDevice(input: DeviceInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!validDeviceInput(input)) throw new BackendError("invalid_device");
+    if (!state.stations.some((s) => s.id === input.stationId)) throw new BackendError("station_not_found");
+    const externalId = normalizeDeviceId(input.externalId);
+    const devices = state.devices ?? seedDevices();
+    if (devices.some((d) => d.externalId === externalId)) throw new BackendError("device_exists");
+    const outlets = input.outlets ?? 2;
+    const device: Device = {
+      externalId,
+      stationId: input.stationId,
+      vendor: input.vendor?.trim() ?? "",
+      model: input.model?.trim() ?? "",
+      link: input.link ?? "lorawan",
+      outlets,
+      lastSeenAt: null,
+      createdAt: new Date().toISOString(),
+      points: Array.from({ length: outlets }, (_, i) => ({
+        id: `cp-${externalId}-${i + 1}`,
+        stationId: input.stationId,
+        label: outletLabel(externalId, i + 1),
+        status: "free",
+        deviceId: externalId,
+        outlet: i + 1,
+        powerWatts: 0,
+        lastSeenAt: null,
+      })),
+    };
+    this.save(
+      withAudit(
+        { ...state, devices: [device, ...devices] },
+        { table: "charging_points", action: "insert", rowId: externalId, stationId: input.stationId, changes: { device: externalId, outlets } },
+      ),
+    );
+  }
+
+  async deleteDevice(externalId: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const devices = state.devices ?? seedDevices();
+    const before = devices.find((d) => d.externalId === externalId);
+    if (!before) return;
+    this.save(
+      withAudit(
+        { ...state, devices: devices.filter((d) => d !== before) },
+        { table: "charging_points", action: "delete", rowId: externalId, stationId: before.stationId, changes: { device: externalId } },
+      ),
+    );
+  }
+
+  async switchOutlet(externalId: string, outlet: number, on: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!canSwitch(externalId)) throw new BackendError("forbidden");
+    const devices = (state.devices ?? seedDevices()).map((d) =>
+      d.externalId !== externalId
+        ? d
+        : {
+            ...d,
+            points: d.points.map((p) =>
+              p.outlet === outlet ? { ...p, status: on ? ("charging" as const) : ("free" as const), powerWatts: on ? 150 : 0 } : p,
+            ),
+          },
+    );
+    this.save({ ...state, devices });
+  }
 
   async currentPromotion(): Promise<Promotion | null> {
     return pickPromotion(this.load().promotions ?? [], new Date());
