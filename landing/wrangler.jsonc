@@ -3,7 +3,7 @@
 {
   "name": "greenpoint",
   "compatibility_date": "2026-10-01",
-  "workers_dev": true,
+  "workers_dev": false,
   "routes": [
     { "pattern": "poinderecharge.com", "custom_domain": true },
     { "pattern": "www.poinderecharge.com", "custom_domain": true }

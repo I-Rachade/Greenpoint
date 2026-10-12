@@ -27,9 +27,9 @@
     "how.s1t": "Open the map",
     "how.s1": "poinderecharge finds your location and shows the stations around you, nearest first.",
     "how.s2t": "See availability live",
-    "how.s2": "Free charging spots, full batteries for swapping, opening hours and prices, updated in real time.",
+    "how.s2": "Free charging spots, full batteries for swapping and opening hours, updated in real time.",
     "how.s3t": "Book and ride",
-    "how.s3": "Reserve a spot or a battery, get directions to the station and earn greenpoint points.",
+    "how.s3": "Reserve a spot or a battery and get directions to the station.",
     "svc.chargeT": "Charging",
     "svc.charge": "Plug your vehicle into a socket and charge during a break.",
     "svc.swapT": "Battery swap",
@@ -47,9 +47,9 @@
     "who.delivery": "Keep your riders on the road and track charging across your whole fleet.",
     "who.operatorT": "Station operators",
     "who.operator": "Make your station visible and manage batteries and bookings from your phone.",
-    "gp.eyebrow": "Loyalty programme",
-    "gp.lead": "Every charge and every swap earns you points. Redeem them for free charges and discounts with our partners.",
-    "gp.p1": "Points every time you visit a station",
+    "gp.eyebrow": "Loyalty programme · coming soon",
+    "gp.lead": "Soon, your charges and battery swaps will earn you points to redeem for free charges and discounts with our partners.",
+    "gp.p1": "Points for your charges and swaps",
     "gp.p2": "Free charges with your points",
     "gp.p3": "Bonuses for regular riders",
     "op.title": "Do you run a station?",
@@ -60,6 +60,8 @@
     "dl.soon": "Coming soon on",
     "dl.get": "Get it on",
     "dl.getIos": "Download on the",
+    "aria.lang": "Language",
+    "aria.vehicles": "Vehicles",
     "footer.text": "Charging and battery swapping for electric mobility in Lomé."
   };
   var frExtra = { "dl.get": "Disponible sur", "dl.getIos": "Télécharger dans l'" };
@@ -77,8 +79,10 @@
 
   var links = window.POINDERECHARGE_LINKS || {};
   var nodes = document.querySelectorAll("[data-i18n]");
+  var ariaNodes = document.querySelectorAll("[data-i18n-aria]");
   var fr = {};
   nodes.forEach(function (el) { fr[el.getAttribute("data-i18n")] = el.textContent; });
+  ariaNodes.forEach(function (el) { fr[el.getAttribute("data-i18n-aria")] = el.getAttribute("aria-label"); });
   Object.keys(frExtra).forEach(function (k) { fr[k] = frExtra[k]; });
   var dict = { fr: fr, en: en };
 
@@ -112,6 +116,7 @@
   function apply(lang) {
     if (!dict[lang]) lang = "fr";
     nodes.forEach(function (el) { el.textContent = t(lang, el.getAttribute("data-i18n")); });
+    ariaNodes.forEach(function (el) { el.setAttribute("aria-label", t(lang, el.getAttribute("data-i18n-aria"))); });
     document.documentElement.lang = lang;
     document.title = meta[lang].title;
     document.querySelector('meta[name="description"]').setAttribute("content", meta[lang].desc);

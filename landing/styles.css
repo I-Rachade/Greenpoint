@@ -46,7 +46,7 @@ p { margin: 0 0 1em; }
 
 .wrap { width: 100%; max-width: 1140px; margin: 0 auto; padding: 0 20px; }
 .muted { color: var(--gp-text-muted); }
-.green { color: var(--gp-green); }
+.green { color: var(--gp-green-dark); }
 
 /* Buttons */
 .btn {
