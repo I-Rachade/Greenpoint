@@ -49,7 +49,7 @@ export function Header() {
                 key={l.href}
                 href={l.href}
                 className={`whitespace-nowrap rounded-full px-3 py-1 ${
-                  pathname === l.href
+                  pathname === l.href || (l.href === "/admin" && pathname.startsWith("/admin/"))
                     ? "bg-gp-green-dark text-white"
                     : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
                 }`}

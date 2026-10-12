@@ -8,6 +8,7 @@ import type {
   StationView,
   UserRole,
 } from "../types";
+import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 
 export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots" | "fullBatteries">>;
 
@@ -63,4 +64,12 @@ export interface Backend {
   // Admin
   listOperators(): Promise<Operator[]>;
   saveStation(id: string | null, input: StationInput): Promise<void>;
+
+  // Backoffice (admins only; see src/lib/admin)
+  adminSnapshot(): Promise<AdminSnapshot>;
+  auditLog(filter: AuditFilter): Promise<AuditEntry[]>;
+  setUserRole(userId: string, role: UserRole): Promise<void>;
+  assignStaff(stationId: string, userId: string): Promise<void>;
+  unassignStaff(stationId: string, userId: string): Promise<void>;
+  setStationActive(stationId: string, active: boolean): Promise<void>;
 }

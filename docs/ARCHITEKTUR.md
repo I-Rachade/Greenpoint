@@ -25,6 +25,7 @@ Browser (Next.js, statisch)  ──►  Supabase
 | `reservations` | Akku oder Ladeplatz, gültig 20 Minuten |
 | `charging_points` | einzelne Ladeplätze pro Station (Vorbereitung für vernetzte Steckdosen) |
 | `station_holds` (View) | Anzahl aktiver Reservierungen pro Station, ohne zu zeigen, wer reserviert hat |
+| `audit_log` | Aktivitätsprotokoll: wer hat wann Status, Reservierungen, Rollen, Personal oder Stationen geändert (nur Admins lesen, siehe [BACKOFFICE.md](BACKOFFICE.md)) |
 
 Verfügbar = gemeldete freie Plätze bzw. volle Akkus minus aktive Reservierungen (`src/lib/availability.ts` und `reserve()` rechnen gleich).
 
