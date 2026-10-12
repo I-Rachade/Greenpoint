@@ -64,6 +64,10 @@ npm run db:migrate
 
 (braucht ein Cloudflare-Login: `npx wrangler login`). Die Cloudflare-Konsole unter D1 zeigt die Tabellen und erlaubt SQL.
 
+## 5a. Täglicher Cron (Paket-Depot)
+
+`wrangler.jsonc` hat einen Cron-Trigger `0 8 * * *` (8 Uhr UTC = 8 Uhr in Lomé). Er schickt Abhol-Erinnerungen und legt Pakete nach 7 Tagen ins Entrepôt (`runParcelDeadlines` in `worker/parcels.ts`). Der Trigger wird mit dem nächsten Deploy des Workers aktiv; vorher muss Migration `0005_parcels.sql` ausgeführt sein. Lokal testen: `npx wrangler dev --test-scheduled`, dann `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+8+*+*+*"`.
+
 ## 6. Lokal entwickeln
 
 - Nur Oberfläche, mit Beispieldaten im Browser: `npm run dev`.

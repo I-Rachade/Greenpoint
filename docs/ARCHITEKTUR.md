@@ -29,6 +29,9 @@ Browser / Android-App (Next.js, statisch)  ──►  Cloudflare Worker "pointde
 | `charging_points` | einzelne Ladeplätze pro Station; bei vernetzten Steckdosen meldet das Gerät den Status |
 | `devices`, `device_messages`, `device_commands` | vernetzte Steckdosen (LoRa), ihre Rohmeldungen und Schaltbefehle, siehe [steckdosen-lora.md](steckdosen-lora.md) |
 | `payments` | Flooz/T-Money-Zahlungen pro Reservierung; Preise stehen an der Station (siehe [ZAHLUNGEN.md](ZAHLUNGEN.md)) |
+| `parcel_depots`, `parcel_sizes` | Paket-Depot pro Station und Größen/Preise (S–XL, bis 50 kg), im Backoffice pflegbar |
+| `parcels`, `parcel_events` | Pakete von Station A nach B: Absender/Empfänger per Telefon, Inhalt, Maße, Preis, Status (`deposited` → `in_transit` → `arrived` → `picked_up`, nach 7 Tagen `stored` → `released`/`auctioned`), 6-stelliger Abholcode (sieht nur der Empfänger) |
+| `parcel_notifications`, `parcel_code_failures` | gesendete E-Mails zu Paketen; Sperre nach 5 falschen Codes pro Station |
 | `promotions` | Werbung für das Fenster beim Öffnen der App |
 | `audit_log` | Aktivitätsprotokoll: wer hat wann Status, Reservierungen, Rollen, Personal oder Stationen geändert (nur Admins lesen, siehe [BACKOFFICE.md](BACKOFFICE.md)) |
 
