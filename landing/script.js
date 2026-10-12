@@ -12,7 +12,7 @@
     "cta.mobile": "Mobile apps",
     "hero.eyebrow": "Lomé, Togo",
     "hero.title": "The nearest charging station, live.",
-    "hero.lead": "poinderecharge shows you on the map where to charge or swap the battery of your electric moped, tuk-tuk, bike or scooter, with free spots and full batteries in real time.",
+    "hero.lead": "poinderecharge shows you on the map where to charge or swap the battery of your electric moped, tricycle, bike or scooter, with free spots and full batteries in real time.",
     "hero.p1": "Free",
     "hero.p2": "No install needed",
     "hero.p3": "French and English",
@@ -35,7 +35,7 @@
     "svc.swapT": "Battery swap",
     "svc.swap": "Drop off the empty battery, take a full one and ride on in two minutes.",
     "veh.moped": "Electric moped",
-    "veh.tuktuk": "Electric tuk-tuk",
+    "veh.tricycle": "Electric tricycle",
     "veh.ebike": "E-bike",
     "veh.scooter": "E-scooter",
     "who.title": "Who is it for?",
@@ -71,7 +71,7 @@
     },
     en: {
       title: "poinderecharge – Charging and battery swap in Lomé",
-      desc: "poinderecharge shows the nearest charging or battery swap station for your electric moped, tuk-tuk, bike or scooter in Lomé, live."
+      desc: "poinderecharge shows the nearest charging or battery swap station for your electric moped, tricycle, bike or scooter in Lomé, live."
     }
   };
 
