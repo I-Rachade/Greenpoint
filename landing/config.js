@@ -1,7 +1,7 @@
 // Links for the landing page. Change them here, nothing else needs editing.
 // A store link left as null shows the button as "coming soon" (not clickable).
-window.GREENPOINT_LINKS = {
-  // Address of the Greenpoint web app (the station map).
+window.POINTDERECHARGE_LINKS = {
+  // Address of the pointderecharge web app (the station map).
   webapp: "/",
   // Google Play page, e.g. "https://play.google.com/store/apps/details?id=..."
   android: null,

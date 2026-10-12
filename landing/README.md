@@ -1,4 +1,4 @@
-# Greenpoint Landingpage
+# pointderecharge Landingpage
 
 Statische Seite (HTML, CSS, JS, ohne Build), die die App erklärt und zu Webapp und App-Stores führt.
 Liegt bewusst in einem eigenen Ordner, damit sie die Next.js-Webapp nicht berührt.
