@@ -1,4 +1,5 @@
 import { distanceMeters, type LatLng } from "./geo";
+import { freeConnectedPoints, isConnected } from "./iot/charging-points";
 import type { Reservation, StationView, VehicleType, StationKind } from "./types";
 
 export function offersCharging(kind: StationKind): boolean {
@@ -9,10 +10,16 @@ export function offersSwap(kind: StationKind): boolean {
   return kind === "swap" || kind === "both";
 }
 
-/** Charging slots a new rider can still get: free slots minus slots already held by reservations. */
-export function availableSlots(station: StationView): number {
+/**
+ * Charging slots a new rider can still get: free slots minus slots already held by reservations.
+ * Stations with connected sockets count their reporting free outlets instead, so a socket
+ * that went silent is not offered.
+ */
+export function availableSlots(station: StationView, now: Date = new Date()): number {
   if (!station.status.isOpen || !offersCharging(station.kind)) return 0;
-  return Math.max(0, station.status.freeSlots - station.reservedSlots);
+  const points = station.chargingPoints ?? [];
+  const free = points.some(isConnected) ? freeConnectedPoints(points, now) : station.status.freeSlots;
+  return Math.max(0, free - station.reservedSlots);
 }
 
 /** Full swap batteries a new rider can still get. */

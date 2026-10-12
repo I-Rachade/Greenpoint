@@ -69,6 +69,16 @@ export const en: Dictionary = {
     reserved: "Reserved! Valid for {minutes} minutes.",
     close: "Close",
     call: "Call",
+    outlets: "Outlets",
+    liveOutlets: "Connected outlets, live status",
+    outletStatus: {
+      free: "Free",
+      reserved: "Reserved",
+      charging: "Charging",
+      done: "Charging finished",
+      fault: "Out of order",
+      offline: "Offline",
+    },
   },
   time: {
     justNow: "just now",

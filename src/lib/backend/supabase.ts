@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type {
+  ChargingPoint,
   Operator,
   Profile,
   Reservation,
@@ -28,6 +29,17 @@ interface StationRow {
   phone: string | null;
   operators: { name: string; is_own: boolean } | null;
   station_status: { is_open: boolean; free_slots: number; full_batteries: number; updated_at: string } | null;
+  charging_points: ChargingPointRow[] | null;
+}
+
+interface ChargingPointRow {
+  id: string;
+  label: string;
+  status: ChargingPoint["status"];
+  device_id: string | null;
+  outlet: number | null;
+  power_watts: number | null;
+  last_seen_at: string | null;
 }
 
 interface ReservationRow {
@@ -47,7 +59,7 @@ interface HoldRow {
 }
 
 const STATION_SELECT =
-  "id, operator_id, name, address, lat, lng, kind, vehicle_types, charging_slots, battery_capacity, opening_hours, phone, operators(name, is_own), station_status(is_open, free_slots, full_batteries, updated_at)";
+  "id, operator_id, name, address, lat, lng, kind, vehicle_types, charging_slots, battery_capacity, opening_hours, phone, operators(name, is_own), station_status(is_open, free_slots, full_batteries, updated_at), charging_points(id, label, status, device_id, outlet, power_watts, last_seen_at)";
 
 const KNOWN_CODES: BackendErrorCode[] = [
   "not_authenticated",
@@ -106,6 +118,18 @@ function toStationView(row: StationRow, holds: Map<string, HoldRow>): StationVie
     },
     reservedSlots: hold?.reserved_slots ?? 0,
     reservedBatteries: hold?.reserved_batteries ?? 0,
+    chargingPoints: (row.charging_points ?? [])
+      .map((p) => ({
+        id: p.id,
+        stationId: row.id,
+        label: p.label,
+        status: p.status,
+        deviceId: p.device_id,
+        outlet: p.outlet,
+        powerWatts: p.power_watts,
+        lastSeenAt: p.last_seen_at,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
   };
 }
 
@@ -147,6 +171,7 @@ export class SupabaseBackend implements Backend {
       .channel(`greenpoint-${crypto.randomUUID()}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "station_status" }, onChange)
       .on("postgres_changes", { event: "*", schema: "public", table: "reservations" }, onChange)
+      .on("postgres_changes", { event: "*", schema: "public", table: "charging_points" }, onChange)
       .subscribe();
     // Riders only receive their own reservation events (row level security),
     // so poll as well to pick up other riders' holds and expiries.

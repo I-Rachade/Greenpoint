@@ -68,6 +68,16 @@ export const fr = {
     reserved: "Réservé ! Valable {minutes} minutes.",
     close: "Fermer",
     call: "Appeler",
+    outlets: "Prises",
+    liveOutlets: "Prises connectées, état en direct",
+    outletStatus: {
+      free: "Libre",
+      reserved: "Réservée",
+      charging: "En charge",
+      done: "Charge terminée",
+      fault: "En panne",
+      offline: "Hors ligne",
+    },
   },
   time: {
     justNow: "à l'instant",

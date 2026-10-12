@@ -4,12 +4,22 @@ import Link from "next/link";
 import { useState } from "react";
 import { availableBatteries, availableSlots, offersCharging, offersSwap, stationAvailability } from "@/lib/availability";
 import { directionsUrl, formatDistance } from "@/lib/geo";
+import { displayStatus, type ChargingPointDisplay } from "@/lib/iot/charging-points";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { RESERVATION_MINUTES, type ReservationType, type StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { AvailabilityBadge } from "./availability-badge";
 import { useI18n } from "./i18n-provider";
+
+const OUTLET_COLORS: Record<ChargingPointDisplay, string> = {
+  free: "bg-green-600",
+  reserved: "bg-amber-500",
+  charging: "bg-sky-600",
+  done: "bg-sky-600",
+  fault: "bg-red-600",
+  offline: "bg-zinc-400",
+};
 
 interface Props {
   station: StationView;
@@ -41,7 +51,9 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
     }
   }
 
-  const slots = availableSlots(station);
+  const slots = availableSlots(station, now);
+  const points = station.chargingPoints ?? [];
+  const connected = points.some((p) => p.deviceId !== null);
   const batteries = availableBatteries(station);
 
   return (
@@ -89,6 +101,29 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
           </div>
         )}
       </div>
+
+      {points.length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium">{connected ? t.station.liveOutlets : t.station.outlets}</h3>
+          <ul className="mt-1 divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+            {points.map((p) => {
+              const shown = displayStatus(p, now);
+              return (
+                <li key={p.id} className="flex items-center justify-between gap-2 py-1.5">
+                  <span className="flex items-center gap-2">
+                    <span className={`h-2.5 w-2.5 rounded-full ${OUTLET_COLORS[shown]}`} aria-hidden />
+                    {p.label}
+                  </span>
+                  <span className="text-zinc-600 dark:text-zinc-400">
+                    {t.station.outletStatus[shown]}
+                    {shown === "charging" && p.powerWatts ? ` · ${p.powerWatts} W` : ""}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
         <dt className="text-zinc-500">{t.station.openingHours}</dt>

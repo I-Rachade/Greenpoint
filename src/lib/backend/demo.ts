@@ -12,7 +12,7 @@ import {
   type UserRole,
 } from "../types";
 import { BackendError, type Backend, type StatusPatch } from "./backend";
-import { DEMO_OPERATORS, DEMO_STATIONS, initialDemoStatus } from "./demo-data";
+import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, initialDemoStatus } from "./demo-data";
 
 const STORAGE_KEY = "greenpoint-demo-v1";
 /** Every demo login accepts this code. */
@@ -68,10 +68,15 @@ export class DemoBackend implements Backend {
   }
 
   private views(state: DemoState, stations: Station[]): StationView[] {
+    const seen = new Date().toISOString();
     return stations.map((s) => {
       const status = state.statuses.find((st) => st.stationId === s.id)!;
       const held = countHolding(state.reservations, s.id);
-      return { ...s, status, reservedSlots: held.slots, reservedBatteries: held.batteries };
+      const chargingPoints = DEMO_CHARGING_POINTS.filter((p) => p.stationId === s.id).map((p) => ({
+        ...p,
+        lastSeenAt: seen,
+      }));
+      return { ...s, status, reservedSlots: held.slots, reservedBatteries: held.batteries, chargingPoints };
     });
   }
 

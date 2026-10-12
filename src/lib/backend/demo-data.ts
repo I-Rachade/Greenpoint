@@ -1,4 +1,4 @@
-import type { Operator, Station, StationStatus } from "../types";
+import type { ChargingPoint, Operator, Station, StationStatus } from "../types";
 
 // Example stations in Lomé (approximate positions). Mirrors supabase/seed.sql.
 export const DEMO_OPERATORS: Operator[] = [
@@ -103,6 +103,46 @@ export const DEMO_STATIONS: Station[] = [
     openingHours: "08:00-19:00",
     phone: null,
   },
+  {
+    id: "st-deckon",
+    operatorId: "op-greenpoint",
+    operatorName: "Greenpoint",
+    isOwn: true,
+    name: "Greenpoint Déckon (prises connectées)",
+    address: "Carrefour Déckon",
+    lat: 6.1318,
+    lng: 1.2296,
+    kind: "charging",
+    vehicleTypes: ["scooter", "ebike"],
+    chargingSlots: 2,
+    batteryCapacity: 0,
+    openingHours: "24h/24",
+    phone: null,
+  },
+];
+
+/** One LoRa dual-outlet socket at Déckon. The demo backend stamps them as just seen. */
+export const DEMO_CHARGING_POINTS: ChargingPoint[] = [
+  {
+    id: "cp-deckon-1",
+    stationId: "st-deckon",
+    label: "F0A1-1",
+    status: "charging",
+    deviceId: "A84041000181F0A1",
+    outlet: 1,
+    powerWatts: 180,
+    lastSeenAt: null,
+  },
+  {
+    id: "cp-deckon-2",
+    stationId: "st-deckon",
+    label: "F0A1-2",
+    status: "free",
+    deviceId: "A84041000181F0A1",
+    outlet: 2,
+    powerWatts: 0,
+    lastSeenAt: null,
+  },
 ];
 
 export function initialDemoStatus(now: string): StationStatus[] {
@@ -113,6 +153,7 @@ export function initialDemoStatus(now: string): StationStatus[] {
     "st-be": [0, 0],
     "st-agoe": [0, 11],
     "st-hedzranawoe": [1, 0],
+    "st-deckon": [1, 0],
   };
   return DEMO_STATIONS.map((s) => ({
     stationId: s.id,
