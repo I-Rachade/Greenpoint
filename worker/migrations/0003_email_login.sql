@@ -1,4 +1,5 @@
--- Accounts with an e-mail address, a phone number, or both. Registration,
+-- Accounts with an e-mail address, a phone number, or both. Safe to apply
+-- before the new Worker is deployed: the old code keeps working on this schema. Registration,
 -- "PIN forgotten" and account deletion are confirmed with a code sent by SMS
 -- or by e-mail.
 --
@@ -44,5 +45,5 @@ drop table backup_sessions;
 drop table backup_station_staff;
 drop table backup_reservations;
 
--- Codes go to a phone number or an e-mail address.
-alter table otp_codes rename column phone to target;
+-- otp_codes.phone keeps its name (the running Worker still uses it) and now
+-- holds the phone number or the e-mail address a code was sent to.

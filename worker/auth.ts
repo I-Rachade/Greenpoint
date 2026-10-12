@@ -123,17 +123,18 @@ async function deliverCode(env: Env, contact: Contact) {
   const target = contact.value;
   const fixed = testCode(env, target);
   if (fixed) {
-    await env.DB.prepare("insert into otp_codes (target, code_hash, created_at, expires_at) values (?, ?, ?, ?)")
+    await env.DB.prepare("insert into otp_codes (phone, code_hash, created_at, expires_at) values (?, ?, ?, ?)")
       .bind(target, await sha256(`${target}:${fixed}`), nowIso(), expiresIn(CODE_MINUTES))
       .run();
     return;
   }
 
+  // otp_codes.phone holds the number or the address (see migration 0003).
   // Per address and in total per channel: SMS cost money, e-mails count against the sending quota.
   const since = hourAgo();
-  const kindFilter = contact.kind === "phone" ? "target like '+%'" : "target like '%@%'";
+  const kindFilter = contact.kind === "phone" ? "phone like '+%'" : "phone like '%@%'";
   const counts = await env.DB.prepare(
-    `select (select count(*) from otp_codes where target = ? and created_at > ?) as mine, (select count(*) from otp_codes where ${kindFilter} and created_at > ?) as total`,
+    `select (select count(*) from otp_codes where phone = ? and created_at > ?) as mine, (select count(*) from otp_codes where ${kindFilter} and created_at > ?) as total`,
   )
     .bind(target, since, since)
     .first<{ mine: number; total: number }>();
@@ -146,7 +147,7 @@ async function deliverCode(env: Env, contact: Contact) {
   if (contact.kind === "email") {
     const code = randomDigits(6);
     // Stored before sending, so a code that arrives can always be checked.
-    await env.DB.prepare("insert into otp_codes (target, code_hash, created_at, expires_at) values (?, ?, ?, ?)")
+    await env.DB.prepare("insert into otp_codes (phone, code_hash, created_at, expires_at) values (?, ?, ?, ?)")
       .bind(target, await sha256(`${target}:${code}`), nowIso(), expiresIn(CODE_MINUTES))
       .run();
     await sendEmailCode(env, target, code);
@@ -167,7 +168,7 @@ async function deliverCode(env: Env, contact: Contact) {
     throw new ApiError("rate_limited", 429);
   }
   // Logged for the hourly limits; Didit codes are valid for 5 minutes.
-  await env.DB.prepare("insert into otp_codes (target, code_hash, created_at, expires_at) values (?, ?, ?, ?)")
+  await env.DB.prepare("insert into otp_codes (phone, code_hash, created_at, expires_at) values (?, ?, ?, ?)")
     .bind(target, DIDIT_MARK, nowIso(), expiresIn(5))
     .run();
 }
@@ -189,7 +190,7 @@ export async function sendCode(env: Env, rawContact: string) {
 async function checkCode(env: Env, target: string, code: string) {
   if (!/^\d{6}$/.test(code)) throw new ApiError("invalid_code");
   const row = await env.DB.prepare(
-    "select id, code_hash, attempts from otp_codes where target = ? and used = 0 and expires_at > ? order by id desc limit 1",
+    "select id, code_hash, attempts from otp_codes where phone = ? and used = 0 and expires_at > ? order by id desc limit 1",
   )
     .bind(target, nowIso())
     .first<{ id: number; code_hash: string; attempts: number }>();
@@ -453,7 +454,7 @@ export async function deleteAccount(
     env.DB.prepare("delete from sessions where user_id = ?").bind(profile.id),
     env.DB.prepare("delete from station_staff where user_id = ?").bind(profile.id),
     env.DB.prepare("delete from reservations where user_id = ?").bind(profile.id),
-    env.DB.prepare("delete from otp_codes where target in (?, ?)").bind(profile.phone ?? "", profile.email ?? ""),
+    env.DB.prepare("delete from otp_codes where phone in (?, ?)").bind(profile.phone ?? "", profile.email ?? ""),
     env.DB.prepare("delete from users where id = ?").bind(profile.id),
   ]);
 }
