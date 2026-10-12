@@ -1,6 +1,6 @@
 import type { ChargingPoint, Operator, Station, StationStatus } from "../types";
 
-// Example stations in Lomé (approximate positions). Mirrors supabase/seed.sql.
+// Example stations in Lomé (approximate positions).
 export const DEMO_OPERATORS: Operator[] = [
   { id: "op-poinderecharge", name: "poinderecharge", isOwn: true },
   { id: "op-example", name: "Exemple Opérateur", isOwn: false },

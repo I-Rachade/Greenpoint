@@ -8,7 +8,7 @@ import {
   parseDeviceEvent,
   toIngestOutlets,
   type Ingest,
-} from "../../../supabase/functions/_shared/device-events";
+} from "../iot/device-events";
 import type { ChargingPoint, StationView } from "../types";
 
 const NOW = new Date("2026-10-12T12:00:00Z");
@@ -118,7 +118,7 @@ describe("charging points", () => {
 });
 
 describe("handleDeviceRequest", () => {
-  const URL = "https://x.supabase.co/functions/v1/device-events";
+  const URL = "https://app.poinderecharge.com/api/devices/events";
   function post(body: unknown, headers: Record<string, string> = { "x-device-key": "s3cret" }, query = "") {
     return new Request(URL + query, { method: "POST", headers, body: JSON.stringify(body) });
   }

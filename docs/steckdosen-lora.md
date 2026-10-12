@@ -11,37 +11,33 @@ Steckdose --LoRa--> Gateway --4G--> Netzwerkserver (TTN / ChirpStack)
                                     oder Hersteller-Cloud
                                           |
                                           v  HTTPS + Schlüssel
-                     Supabase Edge Function "device-events"
+                     Worker pointderecharge-app: POST /api/devices/events
                                           |
                                           v
-                     ingest_device_event()  ->  charging_points, station_status
+                     D1 poinderecharge-db: charging_points, station_status
                                           |
-                                          v  Realtime
+                                          v  Abfrage alle 15 s
                                         App
 ```
 
-- `supabase/migrations/20261012000200_devices.sql`: Tabellen `devices` und `device_messages`, Funktion `ingest_device_event`.
-- `supabase/functions/device-events/`: Edge Function, nimmt Meldungen an.
-- `supabase/functions/_shared/device-events.ts`: liest die Formate (wird auch in den Tests geprüft).
+- `worker/migrations/0003_devices.sql`: Tabellen `devices` und `device_messages`, Spalten `outlet` und `energy_wh` an `charging_points`.
+- `worker/devices.ts`: nimmt Meldungen an, legt Geräte an, zählt freie Plätze.
+- `src/lib/iot/device-events.ts`: liest die Formate (wird auch in den Tests geprüft).
 - `src/lib/iot/charging-points.ts`: "offline", wenn ein Gerät 15 Minuten nichts meldet.
 
 ## Einrichten
 
-1. Migration einspielen (`supabase db push`).
-2. Funktion veröffentlichen und Schlüssel setzen:
+1. Migration einspielen: `npx wrangler d1 migrations apply DB --remote`.
+2. Schlüssel setzen: im Cloudflare-Dashboard unter **Workers > pointderecharge-app > Settings > Variables and secrets** ein Secret `DEVICE_WEBHOOK_SECRET` mit einem langen zufälligen Wert anlegen. Ohne Schlüssel lehnt der Worker alle Meldungen ab (503).
+3. Gerät anlegen (als Admin angemeldet, Token aus dem Login). Das legt pro Ausgang einen Ladeplatz an, bezeichnet `<letzte 4 Zeichen>-<Ausgang>`:
    ```bash
-   supabase functions deploy device-events --no-verify-jwt
-   supabase secrets set DEVICE_WEBHOOK_SECRET=<langer zufälliger Wert>
+   curl -X POST https://app.poinderecharge.com/api/admin/devices \
+     -H "Authorization: Bearer <admin-token>" -H "Content-Type: application/json" \
+     -d '{"externalId":"A84041000181F0A1","stationId":"<station-id>","vendor":"Hersteller","model":"Modell","link":"lorawan","outlets":2}'
    ```
-   `--no-verify-jwt`, weil der Netzwerkserver kein Supabase-Login hat; geschützt ist die Funktion über den Schlüssel.
-3. Gerät anlegen (Supabase SQL-Editor). Das legt pro Ausgang automatisch einen Ladeplatz an:
-   ```sql
-   insert into devices (external_id, station_id, vendor, model, link, outlets)
-   values ('A84041000181F0A1', '<station-id>', 'Hersteller', 'Modell', 'lorawan', 2);
-   ```
-   Danach die Bezeichnungen der Ladeplätze an die Aufkleber neben dem QR-Code anpassen und `charging_slots` der Station auf die Anzahl der Ausgänge setzen.
-4. Netzwerkserver oder Hersteller-Cloud auf die Funktion zeigen lassen:
-   - URL: `https://<projekt>.supabase.co/functions/v1/device-events?format=ttn` (oder `chirpstack`, `generic`)
+   Danach die Bezeichnungen der Ladeplätze an die Aufkleber neben dem QR-Code anpassen (D1-Konsole: `update charging_points set label = 'A1' where device_id = '…' and outlet = 1;`) und `charging_slots` der Station auf die Anzahl der Ausgänge setzen.
+4. Netzwerkserver oder Hersteller-Cloud auf den Worker zeigen lassen:
+   - URL: `https://app.poinderecharge.com/api/devices/events?format=ttn` (oder `chirpstack`, `generic`)
    - Header: `X-Device-Key: <DEVICE_WEBHOOK_SECRET>`
 
 ## Formate
@@ -86,7 +82,7 @@ function decodeUplink(input) {
 ## Testen ohne Hardware
 
 ```bash
-curl -X POST "https://<projekt>.supabase.co/functions/v1/device-events" \
+curl -X POST "https://app.poinderecharge.com/api/devices/events" \
   -H "X-Device-Key: $DEVICE_WEBHOOK_SECRET" \
   -d '{"device":"A84041000181F0A1","outlets":[{"outlet":1,"status":"charging","power_watts":180}]}'
 ```

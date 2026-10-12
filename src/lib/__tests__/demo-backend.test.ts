@@ -5,7 +5,7 @@ import { DEMO_CODE, DemoBackend } from "../backend/demo";
 const STATION = "st-grand-marche"; // open around the clock in the demo data
 
 async function asRole(backend: DemoBackend, role: "rider" | "operator") {
-  await backend.verifyCode("+22890123456", DEMO_CODE, role);
+  await backend.register("+22890123456", DEMO_CODE, "2580", role);
 }
 
 describe("DemoBackend reservations", () => {

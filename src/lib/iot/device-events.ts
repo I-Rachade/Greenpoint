@@ -1,5 +1,5 @@
 // Parsing and handling of connected-socket messages. Dependency-free so it runs
-// both in the Supabase Edge Function (Deno) and in the app's tests (Node).
+// both in the Worker (worker/devices.ts) and in the app's tests (Node).
 
 /** Status a device can report. "reserved" is set by the app, never by hardware. */
 export type DeviceStatus = "free" | "charging" | "done" | "fault";
@@ -116,7 +116,7 @@ export function parseDeviceEvent(format: DeviceFormat, body: unknown): DeviceEve
   }
 }
 
-/** Shape expected by the `ingest_device_event` database function. */
+/** Outlet readings as the Worker stores them (worker/devices.ts). */
 export function toIngestOutlets(event: DeviceEvent) {
   return event.outlets.map((o) => ({
     outlet: o.outlet,
@@ -126,7 +126,7 @@ export function toIngestOutlets(event: DeviceEvent) {
   }));
 }
 
-/** Calls the `ingest_device_event` database function; returns the number of outlets updated. */
+/** Stores one message; returns the number of outlets updated. */
 export type Ingest = (
   externalId: string,
   outlets: ReturnType<typeof toIngestOutlets>,
@@ -148,7 +148,7 @@ function providedKey(request: Request): string | null {
 }
 
 /**
- *   POST .../device-events?format=generic|ttn|chirpstack
+ *   POST /api/devices/events?format=generic|ttn|chirpstack
  *   X-Device-Key: <DEVICE_WEBHOOK_SECRET>   (or Authorization: Bearer <secret>)
  */
 export async function handleDeviceRequest(request: Request, secret: string | undefined, ingest: Ingest) {
