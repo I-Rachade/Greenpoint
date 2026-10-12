@@ -1,0 +1,1064 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "poinderecharge Partner API",
+    "version": "1.0.0",
+    "description": "Book parcel transports between poinderecharge stations in Lomé and follow every status change, as the poinderecharge app does.\n\nAuthenticate with your API key: `Authorization: Bearer pdr_live_…`. Keys are issued by poinderecharge.\n\nStatus changes are sent to your webhook (signed with HMAC-SHA256, header `Poinderecharge-Signature: t=<unix>,v1=<hex>` over `<t>.<raw body>`) and can also be read with `GET /events`.\n\nAmounts are in FCFA (XOF). Phone numbers must be Togolese (+228). New event types and statuses may be added; ignore the ones you do not know.",
+    "contact": {
+      "name": "poinderecharge",
+      "email": "contact@poinderecharge.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://app.poinderecharge.com/api/partner/v1"
+    }
+  ],
+  "security": [
+    {
+      "apiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Stations and prices"
+    },
+    {
+      "name": "Bookings"
+    },
+    {
+      "name": "Events and webhooks"
+    }
+  ],
+  "paths": {
+    "/stations": {
+      "get": {
+        "tags": [
+          "Stations and prices"
+        ],
+        "summary": "Stations that take and hand out parcels",
+        "operationId": "listStations",
+        "responses": {
+          "200": {
+            "description": "Stations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stations": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Station"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/prices": {
+      "get": {
+        "tags": [
+          "Stations and prices"
+        ],
+        "summary": "Size tiers and prices",
+        "description": "A parcel gets the smallest size it fits by its three sides (in any orientation) and weight.",
+        "operationId": "listPrices",
+        "responses": {
+          "200": {
+            "description": "Sizes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "currency": {
+                      "const": "XOF"
+                    },
+                    "sizes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SizeTier"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/quote": {
+      "post": {
+        "tags": [
+          "Stations and prices"
+        ],
+        "summary": "Price for a parcel between two stations",
+        "operationId": "quote",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuoteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Price",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Quote"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid field, unknown station or parcel too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bookings": {
+      "post": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "Book a transport",
+        "operationId": "createBooking",
+        "description": "Creates a booking. The sender brings the parcel to `fromStationId` within 7 days; the staff measure it, check the content and take it in. The recipient picks it up at `toStationId` with a 6-digit code they get in the poinderecharge app (and by e-mail if their account has one). If the measured parcel is larger than booked, the larger size and price apply.\n\nSending the same `reference` again returns the first booking (status 200, header `Idempotent-Replay: true`), so retries after a timeout are safe.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Booked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Booking"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "A booking with this reference already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Booking"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid field (see `field`), unknown station or parcel too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "Your bookings, newest first",
+        "operationId": "listBookings",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "booked",
+                "cancelled",
+                "expired",
+                "deposited",
+                "in_transit",
+                "arrived",
+                "picked_up",
+                "stored",
+                "released",
+                "auctioned"
+              ]
+            }
+          },
+          {
+            "name": "reference",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "`nextBefore` of the previous page",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bookings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "bookings": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Booking"
+                      }
+                    },
+                    "nextBefore": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bookings/{id}": {
+      "get": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "One booking with its history",
+        "operationId": "getBooking",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Booking id or tracking number (GP-…)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Booking",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookingDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bookings/{id}/cancel": {
+      "post": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "Cancel a booking not yet dropped off",
+        "operationId": "cancelBooking",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookingDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already dropped off, cancelled or expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "tags": [
+          "Events and webhooks"
+        ],
+        "summary": "Status changes, oldest first",
+        "operationId": "listEvents",
+        "description": "The same messages as the webhook. Use it if you have no webhook, or to catch up after downtime: pass the id of the last event you processed as `after`.",
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Event"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webhook": {
+      "get": {
+        "tags": [
+          "Events and webhooks"
+        ],
+        "summary": "Your webhook address and signing secret",
+        "operationId": "getWebhook",
+        "responses": {
+          "200": {
+            "description": "Webhook",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Webhook"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Events and webhooks"
+        ],
+        "summary": "Set or remove your webhook address",
+        "operationId": "setWebhook",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uri",
+                    "description": "https only; null removes it",
+                    "example": "https://shop.example.tg/poinderecharge/webhook"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Webhook"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Not an https address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webhook/test": {
+      "post": {
+        "tags": [
+          "Events and webhooks"
+        ],
+        "summary": "Send a `ping` event to your webhook now",
+        "operationId": "testWebhook",
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "delivered": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "error": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webhook/secret": {
+      "post": {
+        "tags": [
+          "Events and webhooks"
+        ],
+        "summary": "Replace the signing secret",
+        "operationId": "rotateWebhookSecret",
+        "responses": {
+          "200": {
+            "description": "New secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "secret": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {
+    "parcelStatus": {
+      "post": {
+        "summary": "A status change of one of your bookings",
+        "description": "POSTed to your webhook address. Answer with any 2xx within 10 seconds. Otherwise it is sent again after 1, 5, 30 minutes, 2, 6, 12 and 24 hours. Messages may arrive twice or out of order: use `id` to skip duplicates and `data.booking` for the current state.\n\nHeaders: `Poinderecharge-Event` (type), `Poinderecharge-Event-Id`, `Poinderecharge-Signature`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Received"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Your API key, pdr_live_…"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "phone_not_allowed",
+            "enum": [
+              "missing_api_key",
+              "invalid_api_key",
+              "partner_inactive",
+              "invalid_request",
+              "invalid_json",
+              "phone_not_allowed",
+              "station_not_found",
+              "same_station",
+              "parcel_too_large",
+              "booking_not_found",
+              "booking_not_cancellable",
+              "not_found",
+              "method_not_allowed",
+              "unknown"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string",
+            "example": "recipient.phone"
+          }
+        }
+      },
+      "Station": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "lat": {
+            "type": "number"
+          },
+          "lng": {
+            "type": "number"
+          },
+          "openingHours": {
+            "type": "string",
+            "example": "07:00-21:00"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "type": "string",
+            "description": "Where at the station, e.g. 'au comptoir'"
+          }
+        }
+      },
+      "SizeTier": {
+        "type": "object",
+        "properties": {
+          "size": {
+            "type": "string",
+            "enum": [
+              "S",
+              "M",
+              "L",
+              "XL"
+            ]
+          },
+          "maxLengthCm": {
+            "type": "number"
+          },
+          "maxWidthCm": {
+            "type": "number"
+          },
+          "maxHeightCm": {
+            "type": "number"
+          },
+          "maxWeightKg": {
+            "type": "number"
+          },
+          "priceFcfa": {
+            "type": "integer"
+          }
+        }
+      },
+      "Measures": {
+        "type": "object",
+        "required": [
+          "lengthCm",
+          "widthCm",
+          "heightCm",
+          "weightKg"
+        ],
+        "properties": {
+          "lengthCm": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "example": 30
+          },
+          "widthCm": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "example": 20
+          },
+          "heightCm": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "example": 10
+          },
+          "weightKg": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 50,
+            "example": 1.2
+          }
+        }
+      },
+      "QuoteRequest": {
+        "type": "object",
+        "required": [
+          "fromStationId",
+          "toStationId",
+          "parcel"
+        ],
+        "properties": {
+          "fromStationId": {
+            "type": "string"
+          },
+          "toStationId": {
+            "type": "string"
+          },
+          "parcel": {
+            "$ref": "#/components/schemas/Measures"
+          }
+        }
+      },
+      "Quote": {
+        "type": "object",
+        "properties": {
+          "size": {
+            "type": "string",
+            "enum": [
+              "S",
+              "M",
+              "L",
+              "XL"
+            ]
+          },
+          "priceFcfa": {
+            "type": "integer"
+          },
+          "currency": {
+            "const": "XOF"
+          }
+        }
+      },
+      "Person": {
+        "type": "object",
+        "required": [
+          "phone"
+        ],
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 80
+          },
+          "phone": {
+            "type": "string",
+            "description": "Togolese number, e.g. 90123456 or +22890123456"
+          }
+        }
+      },
+      "BookingRequest": {
+        "type": "object",
+        "required": [
+          "reference",
+          "fromStationId",
+          "toStationId",
+          "recipient",
+          "parcel"
+        ],
+        "properties": {
+          "reference": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Your order number, unique among your bookings",
+            "example": "CMD-1042"
+          },
+          "fromStationId": {
+            "type": "string",
+            "description": "Where the parcel is dropped off"
+          },
+          "toStationId": {
+            "type": "string",
+            "description": "Where the recipient picks it up"
+          },
+          "sender": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Person"
+              }
+            ],
+            "description": "Who drops the parcel off. Default: your company's name and phone."
+          },
+          "recipient": {
+            "$ref": "#/components/schemas/Person"
+          },
+          "parcel": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Measures"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "content"
+                ],
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "maxLength": 300,
+                    "example": "Chaussures"
+                  },
+                  "declaredValue": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "description": "FCFA; limits our liability"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "Booking": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "trackingNo": {
+            "type": "string",
+            "example": "GP-7K3M9Q"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "booked",
+              "cancelled",
+              "expired",
+              "deposited",
+              "in_transit",
+              "arrived",
+              "picked_up",
+              "stored",
+              "released",
+              "auctioned"
+            ],
+            "description": "booked: waiting for drop-off. deposited: taken in at the drop-off station. in_transit: on its way. arrived: waiting for the recipient. picked_up: handed to the recipient. stored: not picked up within 7 days. released / auctioned: handed out from storage or sold. cancelled, expired: booking not dropped off. More statuses (home delivery by drivers) will be added."
+          },
+          "fromStationId": {
+            "type": "string"
+          },
+          "toStationId": {
+            "type": "string"
+          },
+          "sender": {
+            "$ref": "#/components/schemas/Person"
+          },
+          "recipient": {
+            "$ref": "#/components/schemas/Person"
+          },
+          "parcel": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Measures"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string"
+                  },
+                  "declaredValue": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "size": {
+                    "type": "string",
+                    "enum": [
+                      "S",
+                      "M",
+                      "L",
+                      "XL"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "As booked; after drop-off as measured at the counter"
+          },
+          "priceFcfa": {
+            "type": "integer",
+            "description": "Billed to you"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "handedInAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "inTransitAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "arrivedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "pickedUpAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "pickupDeadline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "pickupCode": {
+            "type": "string",
+            "description": "Only while arrived, and only if poinderecharge enabled it for you"
+          }
+        }
+      },
+      "BookingDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Booking"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "trackingUrl": {
+                "type": "string"
+              },
+              "history": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "stationId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Event": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "evt_3f2a…"
+          },
+          "type": {
+            "type": "string",
+            "example": "parcel.arrived",
+            "description": "booking.created, booking.cancelled, booking.expired, parcel.deposited, parcel.in_transit, parcel.arrived, parcel.picked_up, parcel.cancelled, parcel.stored, parcel.released, parcel.auctioned (and ping for tests)"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string"
+              },
+              "stationId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "booking": {
+                "$ref": "#/components/schemas/Booking"
+              }
+            }
+          }
+        }
+      },
+      "Webhook": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secret": {
+            "type": "string",
+            "example": "whsec_…"
+          }
+        }
+      }
+    }
+  }
+}

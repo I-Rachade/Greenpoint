@@ -72,6 +72,10 @@ npm run db:migrate
 
 Vor dem Deploy des Workers mit der Fahrer-Funktion `npm run db:migrate` ausführen, damit `0007_drivers.sql` läuft. Die Migration legt nur Tabellen und Spalten an und ist auch mit dem alten Worker sicher. Danach im Backoffice unter **Chauffeurs** die eigenen Fahrzeuge mit Kennzeichen anlegen und die Preise prüfen (Start: 500 FCFA + 100 FCFA/km, Express +1 000 FCFA, Fahrer 55 %). Kein neuer Secret, kein neuer Cron: offene Fahrten werden bei jedem Aufruf der Fahrer- und Stationsseiten neu verteilt.
 
+## 5c. Minuten-Cron (Partner-Webhooks)
+
+Der zweite Cron-Trigger `* * * * *` schickt fällige Webhooks an Partner-Apps und wiederholt fehlgeschlagene (`runPartnerEvents` in `worker/partners.ts`). Vorher muss Migration `0008_partner_api.sql` ausgeführt sein. Siehe [PARTNER-API.md](PARTNER-API.md).
+
 ## 6. Lokal entwickeln
 
 - Nur Oberfläche, mit Beispieldaten im Browser: `npm run dev`.

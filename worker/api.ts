@@ -45,7 +45,7 @@ import {
   stopOutlet,
 } from "./devices";
 import type { DeviceInput } from "../src/lib/iot/devices";
-import type { ParcelDepotInput, ParcelInput } from "../src/lib/parcels";
+import type { ParcelDepotInput, ParcelInput, ParcelMeasures } from "../src/lib/parcels";
 import {
   adminParcels,
   cancelParcel,
@@ -91,7 +91,19 @@ import {
   uploadProof,
 } from "./drivers";
 import type { DriverApplication, DriverDecision, FleetVehicleInput, PickupBooking } from "../src/lib/drivers";
-import type { ParcelMeasures } from "../src/lib/parcels";
+import type { PartnerInput } from "../src/lib/partners";
+import { PARTNER_API_BASE } from "../src/lib/partners";
+import {
+  acceptBooking,
+  adminPartners,
+  createPartnerKey,
+  handlePartnerApi,
+  retryPartnerEvent,
+  revokePartnerKey,
+  rotatePartnerSecret,
+  savePartner,
+  stationBookings,
+} from "./partners";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
@@ -963,6 +975,30 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/stations\/([\w-]+)\/parcels\/pickup$/,
     async (c, [id]) => pickUpParcel(c, id, (await readJson<{ code: string }>(c.request)).code),
   ],
+  // Partner API bookings waiting for drop-off (worker/partners.ts)
+  ["GET", /^\/api\/stations\/([\w-]+)\/bookings$/, (c, [id]) => stationBookings(c, id)],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/bookings\/([\w-]+)\/accept$/,
+    async (c, [id, booking]) => acceptBooking(c, id, booking, (await readJson<{ measures: ParcelMeasures }>(c.request)).measures),
+  ],
+  ["GET", /^\/api\/admin\/partners$/, (c) => adminPartners(c)],
+  [
+    "POST",
+    /^\/api\/admin\/partners$/,
+    async (c) => {
+      const { id, input } = await readJson<{ id: string | null; input: PartnerInput }>(c.request);
+      return savePartner(c, id ? String(id) : null, input);
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/admin\/partners\/([\w-]+)\/keys$/,
+    async (c, [id]) => createPartnerKey(c, id, (await readJson<{ label?: string }>(c.request)).label ?? ""),
+  ],
+  ["POST", /^\/api\/admin\/partners\/([\w-]+)\/keys\/([\w-]+)\/revoke$/, (c, [id, key]) => revokePartnerKey(c, id, key)],
+  ["POST", /^\/api\/admin\/partners\/([\w-]+)\/secret$/, (c, [id]) => rotatePartnerSecret(c, id)],
+  ["POST", /^\/api\/admin\/partner-events\/([\w-]+)\/retry$/, (c, [id]) => retryPartnerEvent(c, id)],
   [
     "POST",
     /^\/api\/admin\/parcels\/([\w-]+)\/(released|auctioned)$/,
@@ -1146,6 +1182,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     // Private photos of drivers and door handovers: admins only, read as a file.
     const fileMatch = /^\/api\/admin\/driver-files\/((?:drivers|proofs)\/[\w/.-]+)$/.exec(url.pathname);
     if (fileMatch && request.method === "GET") return await driverFile(c, fileMatch[1]);
+
+    // Other apps authenticate with their API key (worker/partners.ts).
+    if (url.pathname.startsWith(`${PARTNER_API_BASE}/`) || url.pathname === PARTNER_API_BASE) return await handlePartnerApi(request, env);
     for (const [method, pattern, handler] of ROUTES) {
       const m = pattern.exec(url.pathname);
       if (!m) continue;

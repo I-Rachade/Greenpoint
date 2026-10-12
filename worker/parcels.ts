@@ -18,6 +18,7 @@ import {
   type ParcelDepotInput,
   type ParcelInfo,
   type ParcelInput,
+  type ParcelMeasures,
   type ParcelSize,
   type ParcelSizeTier,
   type ParcelStatus,
@@ -230,8 +231,8 @@ export function party(name: string | null, phone: string) {
   return name ? `${name} (${phone})` : phone;
 }
 
-/** What a new parcel needs; shared by the counter (createParcel) and drivers collecting at home (worker/drivers.ts). */
-export interface NewParcel {
+/** What a new parcel row needs; shared by the counter (storeParcel) and drivers collecting at home (worker/drivers.ts). */
+export interface ParcelInsert {
   fromStationId: string;
   toStationId: string;
   senderId: string;
@@ -244,27 +245,30 @@ export interface NewParcel {
   declared: number | null;
   measures: { lengthCm: number; widthCm: number; heightCm: number; weightKg: number };
   tier: ParcelSizeTier;
-  paymentMethod: "cash" | "cash_driver";
+  paymentMethod: "cash" | "cash_driver" | "partner";
   status: "deposited" | "in_transit";
   express: boolean;
   jobId?: string;
+  /** Booked through the partner API: keeps the booking's tracking number, billed to the partner. */
+  partner?: { id: string; bookingId: string; trackingNo: string };
   actor: string;
 }
 
 /** Inserts a parcel with a fresh tracking number, its first history entry and the log entry. */
-export async function insertParcel(c: ParcelCtx, p: NewParcel): Promise<{ id: string; trackingNo: string }> {
+export async function insertParcel(c: ParcelCtx, p: ParcelInsert): Promise<{ id: string; trackingNo: string }> {
   const now = nowIso();
   const id = uuid();
   let trackingNo = "";
   for (let attempt = 0; attempt < 5 && !trackingNo; attempt++) {
-    const candidate = newTrackingNo();
+    const candidate = attempt === 0 && p.partner ? p.partner.trackingNo : newTrackingNo();
     try {
       await c.db
         .prepare(
           `insert into parcels (id, tracking_no, from_station_id, to_station_id, sender_user_id, sender_phone, sender_name,
            recipient_user_id, recipient_phone, recipient_name, content, declared_value, length_cm, width_cm, height_cm,
-           weight_kg, size, price_fcfa, payment_method, paid_at, status, created_by, created_at, in_transit_at, express, job_id)
-           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           weight_kg, size, price_fcfa, payment_method, paid_at, status, created_by, created_at, in_transit_at, express, job_id,
+           partner_id, partner_booking_id)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           id,
@@ -286,13 +290,16 @@ export async function insertParcel(c: ParcelCtx, p: NewParcel): Promise<{ id: st
           p.tier.size,
           p.tier.priceFcfa,
           p.paymentMethod,
-          now,
+          // Partner parcels are billed to the partner, not paid at the counter.
+          p.partner ? null : now,
           p.status,
           p.actor,
           now,
           p.status === "in_transit" ? now : null,
           p.express ? 1 : 0,
           p.jobId ?? null,
+          p.partner?.id ?? null,
+          p.partner?.bookingId ?? null,
         )
         .run();
       trackingNo = candidate;
@@ -308,7 +315,14 @@ export async function insertParcel(c: ParcelCtx, p: NewParcel): Promise<{ id: st
       "parcels",
       "insert",
       id,
-      { tracking_no: trackingNo, to_station_id: p.toStationId, size: p.tier.size, price_fcfa: p.tier.priceFcfa, ...(p.express ? { express: true } : {}) },
+      {
+        tracking_no: trackingNo,
+        to_station_id: p.toStationId,
+        size: p.tier.size,
+        price_fcfa: p.tier.priceFcfa,
+        ...(p.express ? { express: true } : {}),
+        ...(p.partner ? { partner_id: p.partner.id } : {}),
+      },
       { stationId: p.fromStationId, userId: p.senderId },
     ),
   ]);
@@ -331,24 +345,69 @@ export async function createParcel(c: ParcelCtx, fromStationId: string, input: P
   if (declared !== null && !(Number.isInteger(declared) && declared >= 0 && declared <= 100_000_000)) {
     throw new ApiError("bad_request");
   }
+  const measures = cleanMeasures(input.measures);
+  await requireDepot(c.db, fromStationId);
+  await requireDepot(c.db, toStationId);
+  return storeParcel(c, staff.id, {
+    fromStationId,
+    toStationId,
+    sender: { phone: senderPhone, name: cleanName(input.senderName) },
+    recipient: { phone: recipientPhone, name: cleanName(input.recipientName) },
+    content,
+    declaredValue: declared,
+    measures,
+    express: !!input.express,
+  });
+}
+
+/** Measures from a request, or a bad_request error. */
+export function cleanMeasures(input: Partial<ParcelMeasures> | undefined): ParcelMeasures {
   const measures = {
-    lengthCm: Number(input.measures?.lengthCm),
-    widthCm: Number(input.measures?.widthCm),
-    heightCm: Number(input.measures?.heightCm),
-    weightKg: Number(input.measures?.weightKg),
+    lengthCm: Number(input?.lengthCm),
+    widthCm: Number(input?.widthCm),
+    heightCm: Number(input?.heightCm),
+    weightKg: Number(input?.weightKg),
   };
   if (![measures.lengthCm, measures.widthCm, measures.heightCm, measures.weightKg].every((v) => Number.isFinite(v) && v > 0)) {
     throw new ApiError("bad_request");
   }
-  await requireDepot(c.db, fromStationId);
-  await requireDepot(c.db, toStationId);
-  const tier = validMeasures(measures) ? sizeFor(measures, await sizes(c.db)) : null;
-  if (!tier) throw new ApiError("parcel_too_large");
+  return measures;
+}
 
-  const senderName = cleanName(input.senderName);
-  const recipientName = cleanName(input.recipientName);
-  const sender = await accountFor(c, senderPhone, senderName, staff.id);
-  const recipient = await accountFor(c, recipientPhone, recipientName, staff.id);
+/** The size tier and price for these measures, or parcel_too_large. */
+export async function tierFor(db: D1Database, measures: ParcelMeasures): Promise<ParcelSizeTier> {
+  const tier = validMeasures(measures) ? sizeFor(measures, await sizes(db)) : null;
+  if (!tier) throw new ApiError("parcel_too_large");
+  return tier;
+}
+
+export interface NewParcel {
+  fromStationId: string;
+  toStationId: string;
+  sender: { phone: string; name: string | null };
+  recipient: { phone: string; name: string | null };
+  content: string;
+  declaredValue: number | null;
+  measures: ParcelMeasures;
+  /** Booked through the partner API (worker/partners.ts): billed to the partner, keeps the booking's tracking number. */
+  partner?: { id: string; bookingId: string; trackingNo: string };
+  /** A driver carries it straight to station B; the fare is paid at the counter too. */
+  express?: boolean;
+}
+
+/**
+ * Stores a parcel handed in at the counter (status deposited), creates accounts
+ * for unknown phone numbers and tells sender and recipient. Inputs are checked.
+ */
+export async function storeParcel(c: ParcelCtx, actor: string, p: NewParcel): Promise<Parcel> {
+  const tier = await tierFor(c.db, p.measures);
+  const { fromStationId, toStationId, measures } = p;
+  const senderPhone = p.sender.phone;
+  const senderName = p.sender.name;
+  const recipientPhone = p.recipient.phone;
+  const recipientName = p.recipient.name;
+  const sender = await accountFor(c, senderPhone, senderName, actor);
+  const recipient = await accountFor(c, recipientPhone, recipientName, actor);
 
   const { id, trackingNo } = await insertParcel(c, {
     fromStationId,
@@ -359,22 +418,23 @@ export async function createParcel(c: ParcelCtx, fromStationId: string, input: P
     recipientId: recipient.id,
     recipientPhone,
     recipientName,
-    content,
-    declared,
+    content: p.content,
+    declared: p.declaredValue,
     measures,
     tier,
-    paymentMethod: "cash",
+    paymentMethod: p.partner ? "partner" : "cash",
     status: "deposited",
-    express: !!input.express,
-    actor: staff.id,
+    express: !!p.express,
+    partner: p.partner,
+    actor,
   });
-  const fare = input.express ? await createExpressJob(c, id, staff.id) : 0;
+  const fare = p.express ? await createExpressJob(c, id, actor) : 0;
 
   const [from, to] = await Promise.all([station(c.db, fromStationId), station(c.db, toStationId)]);
   await Promise.all([
     notifyPerson(c.env, id, "deposited", sender.id, {
       subject: `Colis ${trackingNo} déposé`,
-      text: `poinderecharge : colis ${trackingNo} déposé à ${from?.name} pour ${to?.name}${fare ? " en express" : ""}. ${tier.priceFcfa + fare} FCFA payés. Suivi : ${APP_URL}`,
+      text: `poinderecharge : colis ${trackingNo} déposé à ${from?.name} pour ${to?.name}${fare ? " en express" : ""}. ${p.partner ? "" : `${tier.priceFcfa + fare} FCFA payés. `}Suivi : ${APP_URL}`,
     }),
     notifyPerson(c.env, id, "deposited", recipient.id, {
       subject: `Un colis est en route pour vous (${trackingNo})`,

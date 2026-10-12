@@ -6,7 +6,8 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { sizeFor, type Parcel, type ParcelInfo, type ParcelInput } from "@/lib/parcels";
+import { PARCEL_SIZES, sizeFor, type Parcel, type ParcelInfo, type ParcelInput } from "@/lib/parcels";
+import type { StationBooking } from "@/lib/partners";
 import type { StationView } from "@/lib/types";
 import { fareFor } from "@/lib/drivers";
 import { distanceMeters } from "@/lib/geo";
@@ -264,6 +265,111 @@ function NewParcelForm({
   );
 }
 
+/** One parcel booked by a partner app: staff measure it, check the content and take it in. */
+function BookedParcel({
+  booking,
+  station,
+  stations,
+  info,
+  onAccepted,
+  onError,
+}: {
+  booking: StationBooking;
+  station: StationView;
+  stations: StationView[];
+  info: ParcelInfo;
+  onAccepted: (parcel: Parcel) => void;
+  onError: (msg: string) => void;
+}) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const errorMessage = useErrorMessage();
+  const [open, setOpen] = useState(false);
+  const [checked, setChecked] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const m = booking.measures;
+  const [form, setForm] = useState({ lengthCm: String(m.lengthCm), widthCm: String(m.widthCm), heightCm: String(m.heightCm), weightKg: String(m.weightKg) });
+  const num = (v: string) => Number(v.replace(",", "."));
+  const measures = { lengthCm: num(form.lengthCm), widthCm: num(form.widthCm), heightCm: num(form.heightCm), weightKg: num(form.weightKg) };
+  const tier = sizeFor(measures, info.sizes);
+  const bigger = tier && PARCEL_SIZES.indexOf(tier.size) > PARCEL_SIZES.indexOf(booking.size);
+  const to = stations.find((s) => s.id === booking.toStationId)?.name ?? "?";
+
+  async function accept(e: FormEvent) {
+    e.preventDefault();
+    onError("");
+    setBusy(true);
+    try {
+      onAccepted(await backend.acceptBooking(station.id, booking.id, measures));
+    } catch (err) {
+      onError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <li className="space-y-2 rounded-lg bg-zinc-100 p-2 text-sm dark:bg-zinc-900">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono">{booking.trackingNo}</span>
+        <span>
+          {booking.size} · → {to} · {booking.recipient.name ? `${booking.recipient.name} · ` : ""}
+          {booking.recipient.phone}
+        </span>
+        <span className="flex-1" />
+        {!open && (
+          <button type="button" className={primary} onClick={() => setOpen(true)}>
+            {t.parcels.staff.accept}
+          </button>
+        )}
+      </div>
+      <p className="text-xs text-zinc-500">
+        {format(t.parcels.staff.bookedRef, { partner: booking.partnerName, ref: booking.reference })} · {booking.content}
+      </p>
+      {open && (
+        <form onSubmit={accept} className="space-y-2">
+          <p className="text-xs font-medium">{t.parcels.staff.bookedMeasured}</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {(["lengthCm", "widthCm", "heightCm", "weightKg"] as const).map((key) => (
+              <label key={key} className="space-y-1 text-xs">
+                <span>{t.parcels.staff[key === "lengthCm" ? "length" : key === "widthCm" ? "width" : key === "heightCm" ? "height" : "weight"]}</span>
+                <input
+                  className={input}
+                  inputMode="decimal"
+                  required
+                  value={form[key]}
+                  onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                />
+              </label>
+            ))}
+          </div>
+          <p className="text-xs font-semibold" aria-live="polite">
+            {!tier ? (
+              <span className="text-red-600">{t.parcels.staff.tooLarge}</span>
+            ) : bigger ? (
+              <span className="text-amber-700 dark:text-amber-300">{format(t.parcels.staff.bookedBigger, { size: tier.size, price: tier.priceFcfa })}</span>
+            ) : (
+              format(t.parcels.staff.computed, { size: tier.size, price: tier.priceFcfa })
+            )}
+          </p>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" required checked={checked} onChange={(e) => setChecked(e.target.checked)} />
+            {t.parcels.staff.checkedContent}
+          </label>
+          <div className="flex gap-2">
+            <button type="submit" className={primary} disabled={busy || !tier}>
+              {t.parcels.staff.accept}
+            </button>
+            <button type="button" className="rounded-full border border-black/15 px-4 py-2 text-sm dark:border-white/20" onClick={() => setOpen(false)}>
+              {t.partners.cancel}
+            </button>
+          </div>
+        </form>
+      )}
+    </li>
+  );
+}
+
 /** A list of parcels with tick boxes and one action for the ticked ones. */
 function BatchList({
   parcels,
@@ -336,6 +442,7 @@ function StationParcels({ station, stations, info }: { station: StationView; sta
   const errorMessage = useErrorMessage();
   const when = useDateTime();
   const { data: parcels, reload } = useLiveQuery(() => backend.stationParcels(station.id), station.id);
+  const { data: bookings, reload: reloadBookings } = useLiveQuery(() => backend.stationBookings(station.id), station.id);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [slip, setSlip] = useState<Parcel | null>(null);
@@ -384,6 +491,28 @@ function StationParcels({ station, stations, info }: { station: StationView; sta
           reload();
         }}
       />
+      {(bookings?.length ?? 0) > 0 && (
+        <Section title={t.parcels.staff.bookedTitle} hint={t.parcels.staff.bookedHint}>
+          <ul className="space-y-2">
+            {bookings!.map((b) => (
+              <BookedParcel
+                key={b.id}
+                booking={b}
+                station={station}
+                stations={stations}
+                info={info}
+                onError={setError}
+                onAccepted={(parcel) => {
+                  setNotice(format(t.parcels.staff.accepted, { no: parcel.trackingNo }));
+                  setSlip(parcel);
+                  reload();
+                  reloadBookings();
+                }}
+              />
+            ))}
+          </ul>
+        </Section>
+      )}
       <NewParcelForm
         station={station}
         stations={stations}

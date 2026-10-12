@@ -56,7 +56,10 @@ export type AuditTable =
   | "fleet_vehicles"
   | "delivery_jobs"
   | "driver_ledger"
-  | "driver_settings";
+  | "driver_settings"
+  | "partners"
+  | "partner_api_keys"
+  | "partner_bookings";
 
 export const AUDIT_TABLES: AuditTable[] = [
   "reservations",
@@ -76,6 +79,9 @@ export const AUDIT_TABLES: AuditTable[] = [
   "delivery_jobs",
   "driver_ledger",
   "driver_settings",
+  "partners",
+  "partner_api_keys",
+  "partner_bookings",
 ];
 
 export type AuditAction = "insert" | "update" | "delete";

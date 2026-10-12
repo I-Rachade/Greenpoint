@@ -9,6 +9,7 @@ Erreichbar unter `/admin`, nur für Nutzer mit Rolle `admin`. Alle Seiten aktual
 | **Réservations** `/admin/reservations` | Reservierungen der letzten 30 Tage, filterbar nach Status, Station und Telefon/Name; laufende Reservierungen stornieren |
 | **Utilisateurs** `/admin/users` | Alle Nutzer mit Rolle (änderbar, außer der eigenen), zugeordneten Stationen (zuordnen/entfernen), Reservierungen und Nichterscheinen in 30 Tagen, letzter Login |
 | **Activité** `/admin/activity` | Aktivitätsprotokoll: wer hat wann was geändert, filterbar nach Bereich, Station und Person |
+| **Partenaires API** `/admin/partners` | Partner-Apps anlegen, API-Schlüssel erstellen und sperren, Webhook-Adresse und Secret, Pakete und Summe der letzten 30 Tage, letzte Webhooks mit Zustellstatus; siehe [PARTNER-API.md](PARTNER-API.md) |
 | **Publicité** `/admin/promotions` | Werbung, die beim Öffnen der App als Fenster erscheint: Titel, Text, Bild, optionaler Button mit Link, aktiv/inaktiv, Zeitraum; mit Vorschau |
 | **Chauffeurs** `/admin/drivers` | Fahrer-Bewerbungen mit Ausweis-, Führerschein- und Porträtfoto; Freigabe mit Zuteilung eines unserer Fahrzeuge, Ablehnen, Sperren; Kassenstand je Fahrer; alle Fahrten (manuell zuteilen, stornieren, Foto an der Tür); Fahrzeuge (Typ, Kennzeichen, in Betrieb); Preise und Regeln |
 
