@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   DEFAULT_FILTER,
@@ -12,6 +13,7 @@ import {
   stationAvailability,
   type StationFilter,
 } from "@/lib/availability";
+import { CONTACT_EMAIL } from "@/lib/config";
 import { formatDistance } from "@/lib/geo";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
@@ -153,6 +155,9 @@ export function StationFinder() {
                 </li>
               ))}
             </ul>
+            <Link href="/contact" className="border-t border-black/10 px-3 py-2 text-center text-xs text-zinc-500 hover:underline dark:border-white/10">
+              {t.contact.link} · {CONTACT_EMAIL}
+            </Link>
           </>
         )}
       </aside>

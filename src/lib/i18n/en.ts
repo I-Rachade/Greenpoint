@@ -133,6 +133,12 @@ export const en: Dictionary = {
     phone: "Phone",
     operator: "Operator",
   },
+  contact: {
+    title: "Contact",
+    intro: "A question, a station to report or interested in partnering? Write to us.",
+    email: "Email",
+    link: "Contact",
+  },
   errors: {
     not_authenticated: "Please log in.",
     already_reserved: "You already have an active reservation.",

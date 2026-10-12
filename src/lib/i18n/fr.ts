@@ -132,6 +132,12 @@ export const fr = {
     phone: "Téléphone",
     operator: "Opérateur",
   },
+  contact: {
+    title: "Contact",
+    intro: "Une question, une station à signaler ou envie de devenir partenaire ? Écrivez-nous.",
+    email: "E-mail",
+    link: "Contact",
+  },
   errors: {
     not_authenticated: "Veuillez vous connecter.",
     already_reserved: "Vous avez déjà une réservation active.",
