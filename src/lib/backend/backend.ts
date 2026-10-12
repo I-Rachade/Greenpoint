@@ -29,6 +29,7 @@ export type BackendErrorCode =
   | "phone_not_allowed"
   | "invalid_code"
   | "image_too_large"
+  | "rate_limited"
   | "forbidden"
   | "unknown";
 
@@ -40,10 +41,10 @@ export class BackendError extends Error {
 
 /**
  * Everything the app needs from its data source. Two implementations exist:
- * `DemoBackend` (browser storage, no setup) and `SupabaseBackend` (production).
+ * `DemoBackend` (browser storage, no setup) and `CloudflareBackend` (production, see worker/).
  */
 export interface Backend {
-  readonly mode: "demo" | "supabase";
+  readonly mode: "demo" | "cloudflare";
 
   // Stations (public)
   listStations(): Promise<StationView[]>;

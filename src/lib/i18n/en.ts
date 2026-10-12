@@ -103,6 +103,7 @@ export const en: Dictionary = {
     pickupHint: "Show this code to the station staff.",
     cancelReasons: {
       station_closed: "The station closed.",
+      admin: "Cancelled by the poinderecharge team.",
     } as Record<string, string>,
     status: {
       active: "Active",
@@ -343,6 +344,7 @@ export const en: Dictionary = {
     phone_not_allowed: "Only Togolese numbers (+228) are accepted.",
     invalid_code: "Wrong or expired code.",
     image_too_large: "Image too large (2 MB max, 500 KB in demo mode).",
+    rate_limited: "Too many code requests. Try again in an hour.",
     forbidden: "Not allowed.",
     unknown: "Something went wrong. Please try again.",
   },

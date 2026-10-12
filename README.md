@@ -54,10 +54,11 @@ src/
     geo.ts             Entfernungen, Navigation-Link
     phone.ts           Telefonnummern (+228) prüfen
     i18n/              Texte Französisch (fr.ts) und Englisch (en.ts)
-    backend/           Datenzugriff: Demo (Browser) und Supabase (Produktion)
-supabase/
-  migrations/          Datenbank-Schema (SQL), in Reihenfolge ausführen
-  seed.sql             Beispielstationen, nur für Test-Projekte
+    backend/           Datenzugriff: Demo (Browser) und Cloudflare-API (Produktion)
+worker/
+  index.ts, api.ts     API unter /api/* (Cloudflare Worker)
+  auth.ts              Login per SMS-Code, Sitzungen
+  migrations/          Datenbank-Schema für D1 (SQL), in Reihenfolge
 assets/logo/, design/  Logo, Farben und Schriften
 docs/                  Architektur und Deployment
 ```
@@ -69,4 +70,5 @@ Mehr zum Aufbau: [docs/ARCHITEKTUR.md](docs/ARCHITEKTUR.md).
 - Texte ändern: `src/lib/i18n/fr.ts` und `src/lib/i18n/en.ts`. Jeder Text muss in beiden Dateien stehen (ein Test prüft das).
 - Farben: `src/app/globals.css` (Werte aus `design/tokens.css`). Auf Grün `#1DB954` nie weiße Schrift.
 - Vor jedem Commit `npm run check` ausführen. GitHub prüft dasselbe automatisch bei jedem Pull Request.
-- Änderungen am Datenbank-Schema immer als neue Datei in `supabase/migrations/` (nie alte Dateien ändern, die schon in Supabase ausgeführt wurden).
+- Änderungen am Datenbank-Schema immer als neue Datei in `worker/migrations/` (nie alte Dateien ändern, die schon ausgeführt wurden), dann `npm run db:migrate`.
+- Lokal mit echter API und Datenbank: `npx wrangler d1 migrations apply DB --local`, Testnummern in `.dev.vars` (siehe `docs/DEPLOYMENT.md`), dann `NEXT_PUBLIC_BACKEND=cloudflare npm run dev:worker`.

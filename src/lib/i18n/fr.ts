@@ -102,6 +102,7 @@ export const fr = {
     pickupHint: "Montrez ce code au personnel de la station.",
     cancelReasons: {
       station_closed: "La station a fermé.",
+      admin: "Annulée par l'équipe poinderecharge.",
     } as Record<string, string>,
     status: {
       active: "Active",
@@ -342,6 +343,7 @@ export const fr = {
     phone_not_allowed: "Seuls les numéros du Togo (+228) sont acceptés.",
     invalid_code: "Code incorrect ou expiré.",
     image_too_large: "Image trop lourde (2 Mo maximum, 500 Ko en mode démo).",
+    rate_limited: "Trop de demandes de code. Réessayez dans une heure.",
     forbidden: "Action non autorisée.",
     unknown: "Une erreur est survenue. Réessayez.",
   },

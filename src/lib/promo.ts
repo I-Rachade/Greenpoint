@@ -6,7 +6,7 @@ export interface Promotion {
   id: string;
   title: string;
   body: string;
-  /** Public image URL (Supabase Storage, any https URL, or a data URL in the demo). */
+  /** Public image URL (Cloudflare R2 via /api/media, any https URL, or a data URL in the demo). */
   imageUrl: string | null;
   /** Optional button: where it leads and what it says. */
   linkUrl: string | null;

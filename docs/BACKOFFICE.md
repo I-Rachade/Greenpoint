@@ -33,14 +33,11 @@ Die Schwellen stehen als Konstanten oben in `insights.ts`.
 
 ## Aktivitätsprotokoll (Audit-Log)
 
-Migration `supabase/migrations/20261012000400_backoffice.sql`:
+- Tabelle `audit_log` in D1: Zeitpunkt, wer (`actor`, leer = System, z. B. neuer Nutzer beim ersten Login), Tabelle, Aktion, betroffene Station und betroffener Nutzer, und die Änderung (`{Spalte: [alt, neu]}` bzw. die ganze Zeile beim Anlegen/Löschen).
+- Der Worker (`worker/api.ts`) schreibt bei jeder Änderung an Nutzern/Rollen, Stationen, Status, Personal, Reservierungen und Werbung einen Eintrag, in derselben Datenbank-Transaktion wie die Änderung.
+- Lesen dürfen nur Admins. Über die API kann niemand Einträge schreiben, ändern oder löschen.
 
-- Tabelle `audit_log`: Zeitpunkt, wer (`actor` = `auth.uid()`, leer = System, z. B. Steckdosen-Webhook oder SQL-Editor), Tabelle, Aktion, betroffene Station und betroffener Nutzer, und die Änderung (`{Spalte: [alt, neu]}` bzw. die ganze Zeile beim Anlegen/Löschen).
-- Ein Trigger `audit_row()` schreibt bei jeder Änderung an `profiles`, `operators`, `stations`, `station_status`, `station_staff`, `reservations` und `charging_points`. Spalten, die sich von selbst ändern (`updated_at`, `last_seen_at`, `power_watts`, `energy_wh` …), zählen nicht; ein Herzschlag einer Steckdose ohne echte Änderung schreibt also nichts.
-- Lesen dürfen nur Admins (RLS). Schreiben, Ändern und Löschen über die API ist für alle gesperrt, auch für Admins; nur der Trigger schreibt.
-- Funktion `admin_list_users()` liefert die Profile mit letztem Login aus `auth.users` (nur für Admins).
-
-Das Protokoll wächst mit jeder Reservierung und Statusmeldung. Ältere Einträge lassen sich im SQL-Editor löschen, z. B. `delete from audit_log where at < now() - interval '1 year';`.
+Das Protokoll wächst mit jeder Reservierung und Statusmeldung. Ältere Einträge lassen sich in der Cloudflare-Konsole (D1 > poinderecharge-db > Console) löschen, z. B. `delete from audit_log where at < '2025-10-12';`.
 
 ## Werbe-Popup („Publicité“)
 
@@ -48,9 +45,9 @@ Das Protokoll wächst mit jeder Reservierung und Statusmeldung. Ältere Einträg
 - Höchstens einmal pro Tag und Gerät. Wird die Werbung im Backoffice geändert oder eine andere aktiv, erscheint sie am selben Tag noch einmal.
 - Läuft keine Werbung (keine aktiv oder außerhalb des Zeitraums), erscheint nichts. Sind mehrere aktiv, zeigt die App die zuletzt geänderte.
 - Schließen per ×, Tippen neben das Fenster oder Zurück/Escape. Der Button öffnet den Link in einem neuen Tab; nur `https://`- und `http://`-Links werden angenommen.
-- Migration `supabase/migrations/20261012000600_promotions.sql`: Tabelle `promotions` (lesen darf jeder nur laufende Werbung, ändern nur Admins), Bilder im öffentlichen Storage-Bucket `promotions` (max. 2 MB, PNG/JPG/WebP/GIF, hochladen nur Admins). Änderungen stehen im Aktivitätsprotokoll.
+- Tabelle `promotions` in D1 (lesen darf jeder nur die laufende Werbung, ändern nur Admins). Bilder liegen im R2-Bucket `poinderecharge-media` und werden unter `/api/media/…` ausgeliefert (max. 2 MB, PNG/JPG/WebP/GIF, hochladen nur Admins). Änderungen stehen im Aktivitätsprotokoll.
 - Logik in `src/lib/promo.ts` (Tests in `src/lib/__tests__/promo.test.ts`), Fenster in `src/components/promo-popup.tsx`.
 
 ## Demo-Modus
 
-Ohne Supabase-Schlüssel zeigt das Backoffice Beispielnutzer, eine Reservierungshistorie der letzten zwei Wochen (inkl. eines Fahrers, der dreimal nicht erschienen ist) und protokolliert eigene Änderungen im Browser. Anmeldung als Admin: Code `123456`, Rolle „Administrateur“. Eine Beispiel-Werbung („1ère recharge offerte“) ist angelegt, aber ausgeschaltet; Bilder bleiben im Demo-Modus im Browser (max. 500 KB).
+Im Demo-Modus (`npm run dev`) zeigt das Backoffice Beispielnutzer, eine Reservierungshistorie der letzten zwei Wochen (inkl. eines Fahrers, der dreimal nicht erschienen ist) und protokolliert eigene Änderungen im Browser. Anmeldung als Admin: Code `123456`, Rolle „Administrateur“. Eine Beispiel-Werbung („1ère recharge offerte“) ist angelegt, aber ausgeschaltet; Bilder bleiben im Demo-Modus im Browser (max. 500 KB).

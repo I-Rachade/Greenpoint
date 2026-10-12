@@ -31,10 +31,10 @@ const STORAGE_KEY = "poinderecharge-demo-v3";
 /** Every demo login accepts this code. */
 export const DEMO_CODE = "123456";
 /**
- * True when this build was made by Cloudflare (see next.config.ts) and still has
- * no Supabase keys. Visitors then see a clear notice and can only try the rider view.
+ * True when this build was made by Cloudflare (see next.config.ts) but set to the
+ * demo backend. Visitors then see a clear notice and can only try the rider view.
  */
-export const HOSTED_DEMO = process.env.NEXT_PUBLIC_HOSTED_BUILD === "1";
+export const HOSTED_DEMO = process.env.NEXT_PUBLIC_HOSTED_BUILD === "1" && process.env.NEXT_PUBLIC_BACKEND === "demo";
 
 function pickupCode(): string {
   return String(Math.floor(Math.random() * 10_000)).padStart(4, "0");
@@ -114,7 +114,7 @@ function readAsDataUrl(file: File): Promise<string> {
 type AuditInput = Pick<AuditEntry, "table" | "action" | "rowId" | "changes"> &
   Partial<Pick<AuditEntry, "stationId" | "userId">>;
 
-/** Appends an activity log entry, like the audit trigger does in Supabase. */
+/** Appends an activity log entry, like the Worker does on Cloudflare. */
 function withAudit(state: DemoState, entry: AuditInput): DemoState {
   const audit = state.audit ?? [];
   const row: AuditEntry = {
@@ -133,7 +133,7 @@ function diff<T extends object>(before: T, after: T): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(after) as (keyof T)[]) {
     if (key === "updatedAt") continue;
-    // Column names as in Supabase (freeSlots -> free_slots), so the log reads the same.
+    // Column names as in the database (freeSlots -> free_slots), so the log reads the same.
     const column = (key as string).replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
     if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) out[column] = [before[key], after[key]];
   }
@@ -142,7 +142,7 @@ function diff<T extends object>(before: T, after: T): Record<string, unknown> {
 
 /**
  * Runs the whole app inside the browser with example data, so it can be tried
- * before Supabase is set up. Changes sync live between tabs of the same browser
+ * without the Cloudflare API. Changes sync live between tabs of the same browser
  * (open the operator view in one tab and the map in another).
  */
 export class DemoBackend implements Backend {
