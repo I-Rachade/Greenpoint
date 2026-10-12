@@ -43,20 +43,6 @@ export function pickPromotion(list: Promotion[], now: Date): Promotion | null {
   return running[0] ?? null;
 }
 
-/** Local calendar day ("2026-10-12"), so "once a day" follows the rider's clock. */
-export function localDay(now: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-}
-
-/**
- * Marker stored on the device once an ad was shown. The ad comes back the next
- * day, or straight away when the admin publishes a different or edited ad.
- */
-export function seenMarker(p: Pick<Promotion, "id" | "updatedAt">, now: Date): string {
-  return `${p.id}|${p.updatedAt}|${localDay(now)}`;
-}
-
 /** Only http(s) links are followed, so an ad can never run script. */
 export function safeLink(url: string | null): string | null {
   if (!url) return null;

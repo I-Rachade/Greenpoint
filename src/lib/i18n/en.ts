@@ -290,7 +290,7 @@ export const en: Dictionary = {
     },
     promotions: {
       title: "Ad on app opening",
-      intro: "A window shows when the app opens, at most once a day per device. If several are active, the one changed last is shown.",
+      intro: "A window shows every time the map is opened or revisited. If several are active, the one changed last is shown.",
       add: "New ad",
       empty: "No ads yet.",
       edit: "Edit",

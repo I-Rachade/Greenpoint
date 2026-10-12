@@ -289,7 +289,7 @@ export const fr = {
     },
     promotions: {
       title: "Publicité à l'ouverture",
-      intro: "Une fenêtre s'affiche à l'ouverture de l'app, au plus une fois par jour et par appareil. Si plusieurs sont actives, c'est la dernière modifiée qui s'affiche.",
+      intro: "Une fenêtre s'affiche chaque fois que l'on ouvre la carte ou que l'on y revient. Si plusieurs sont actives, c'est la dernière modifiée qui s'affiche.",
       add: "Nouvelle publicité",
       empty: "Aucune publicité pour le moment.",
       edit: "Modifier",

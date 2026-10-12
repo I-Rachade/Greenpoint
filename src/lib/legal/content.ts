@@ -160,7 +160,7 @@ const fr: Record<LegalDocId, LegalDoc> = {
       {
         heading: "9. Publicité",
         body: [
-          "L'application peut afficher des messages publicitaires, au plus une fois par jour, identifiés par la mention « Publicité ». Ils peuvent être fermés à tout moment.",
+          "L'application peut afficher des messages publicitaires sur la carte, identifiés par la mention « Publicité ». Ils peuvent être fermés à tout moment.",
         ],
       },
       {
@@ -416,7 +416,7 @@ const en: Record<LegalDocId, LegalDoc> = {
       {
         heading: "9. Advertising",
         body: [
-          "The app may show advertising messages, at most once a day, labelled \"Ad\". You can close them at any time.",
+          "The app may show advertising messages on the map, labelled \"Ad\". You can close them at any time.",
         ],
       },
       {
