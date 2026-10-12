@@ -1,4 +1,5 @@
 import { distanceMeters, type LatLng } from "./geo";
+import { freeConnectedPoints, isConnected } from "./iot/charging-points";
 import { STALE_STATUS_HOURS, type Reservation, type StationView, type VehicleType, type StationKind } from "./types";
 
 export function offersCharging(kind: StationKind): boolean {
@@ -34,10 +35,16 @@ export function isStale(station: StationView, now: Date = new Date()): boolean {
   return now.getTime() - new Date(station.status.updatedAt).getTime() > STALE_STATUS_HOURS * 3_600_000;
 }
 
-/** Charging slots a new rider can still get: free slots minus slots already held by reservations. */
-export function availableSlots(station: StationView): number {
-  if (!isOpenNow(station) || !offersCharging(station.kind)) return 0;
-  return Math.max(0, station.status.freeSlots - station.reservedSlots);
+/**
+ * Charging slots a new rider can still get: free slots minus slots already held by reservations.
+ * Stations with connected sockets count their reporting free outlets instead, so a socket
+ * that went silent is not offered.
+ */
+export function availableSlots(station: StationView, now: Date = new Date()): number {
+  if (!isOpenNow(station, now) || !offersCharging(station.kind)) return 0;
+  const points = station.chargingPoints ?? [];
+  const free = points.some(isConnected) ? freeConnectedPoints(points, now) : station.status.freeSlots;
+  return Math.max(0, free - station.reservedSlots);
 }
 
 /** Full swap batteries a new rider can still get. */

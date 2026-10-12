@@ -41,3 +41,20 @@ describe("DemoBackend PIN login", () => {
     await backend.signIn(phone, "9081");
   });
 });
+
+describe("DemoBackend e-mail login", () => {
+  const email = "awa@exemple.tg";
+
+  it("registers with an e-mail address and adds a phone number later", async () => {
+    const backend = new DemoBackend();
+    const profile = await backend.register(email, DEMO_CODE, "2580");
+    expect(profile).toMatchObject({ email, phone: null });
+    const updated = await backend.addContact("+22890123456", DEMO_CODE);
+    expect(updated).toMatchObject({ email, phone: "+22890123456" });
+    await backend.signOut();
+    // The same PIN works with either one.
+    await backend.signIn(email, "2580");
+    await backend.signOut();
+    await backend.signIn("+22890123456", "2580");
+  });
+});

@@ -15,6 +15,7 @@ export function Header() {
   const links: { href: string; label: string; show: boolean }[] = [
     { href: "/", label: t.nav.map, show: true },
     { href: "/reservations", label: t.nav.reservations, show: !!profile },
+    { href: "/compte", label: t.nav.account, show: !!profile },
     { href: "/operator", label: t.nav.operator, show: profile?.role === "operator" || profile?.role === "admin" },
     { href: "/admin", label: t.nav.admin, show: profile?.role === "admin" },
   ];

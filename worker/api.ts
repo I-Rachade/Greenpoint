@@ -6,6 +6,7 @@ import {
   type AuditTable,
   type ChargingPointInfo,
 } from "../src/lib/admin/types";
+import type { CodeChannel } from "../src/lib/backend/backend";
 import { MAX_PROMO_IMAGE_BYTES, pickPromotion, safeImage, safeLink, type Promotion, type PromotionInput } from "../src/lib/promo";
 import {
   MAX_UNUSED_RESERVATIONS_PER_DAY,
@@ -19,7 +20,31 @@ import {
   type StationView,
   type UserRole,
 } from "../src/lib/types";
-import { currentUser, register, sendCode, signIn, signOut } from "./auth";
+import {
+  addContact,
+  currentUser,
+  deleteAccount,
+  register,
+  sendCode,
+  sendContactCode,
+  sendDeleteCode,
+  signIn,
+  signOut,
+} from "./auth";
+import {
+  chargingPointsByStation,
+  createDevice,
+  deleteDevice,
+  handleDeviceCommands,
+  handleDeviceEvents,
+  hasConnectedPointsSql,
+  listDevices,
+  liveFreePointsSql,
+  onlineSince,
+  startOutlet,
+  stopOutlet,
+} from "./devices";
+import type { DeviceInput } from "../src/lib/iot/devices";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
@@ -210,7 +235,12 @@ class Ctx {
       .prepare(`${STATION_SELECT} ${where} order by s.name`)
       .bind(nowIso(), ...params)
       .all<StationRow>();
-    return results.map(toStationView);
+    const points = await chargingPointsByStation(this.db);
+    return results.map((r) => {
+      const station = toStationView(r);
+      const chargingPoints = points.get(r.id);
+      return chargingPoints ? { ...station, chargingPoints } : station;
+    });
   }
 }
 
@@ -269,15 +299,19 @@ async function reserve(c: Ctx, stationId: string, type: ReservationType): Promis
   let inserted: D1Result;
   try {
     // The availability check and the insert are one statement, so two riders
-    // cannot take the last battery at once.
+    // cannot take the last battery at once. Stations with connected sockets count
+    // their outlets that reported in the last minutes instead of the staff counter.
     inserted = await c.db
       .prepare(
         `insert into reservations (id, user_id, station_id, type, status, created_at, expires_at, pickup_code)
          select ?1, ?2, ?3, ?4, 'active', ?5, ?6, ?7
-         where (select case when ?4 = 'slot' then free_slots else full_batteries end from station_status where station_id = ?3)
+         where (select case when ?4 = 'battery' then full_batteries
+                            when ${hasConnectedPointsSql("?3")} then ${liveFreePointsSql("?3", "?8")}
+                            else free_slots end
+                from station_status where station_id = ?3)
              - (select count(*) from reservations where station_id = ?3 and type = ?4 and status = 'active' and expires_at > ?5) > 0`,
       )
-      .bind(id, user.id, stationId, type, now, expires, code)
+      .bind(id, user.id, stationId, type, now, expires, code, onlineSince())
       .run();
   } catch (err) {
     if (/UNIQUE/i.test(String(err))) throw new ApiError("already_reserved");
@@ -497,8 +531,16 @@ async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
   const [stations, users, staff, reservations, points] = await Promise.all([
     c.stations(""),
     c.db
-      .prepare("select id, phone, full_name, role, created_at, last_sign_in_at from users order by created_at desc")
-      .all<{ id: string; phone: string; full_name: string | null; role: UserRole; created_at: string; last_sign_in_at: string | null }>(),
+      .prepare("select id, phone, email, full_name, role, created_at, last_sign_in_at from users order by created_at desc")
+      .all<{
+        id: string;
+        phone: string | null;
+        email: string | null;
+        full_name: string | null;
+        role: UserRole;
+        created_at: string;
+        last_sign_in_at: string | null;
+      }>(),
     c.db.prepare("select station_id, user_id from station_staff").all<{ station_id: string; user_id: string }>(),
     c.db
       .prepare("select * from reservations where created_at >= ? order by created_at desc limit 5000")
@@ -513,6 +555,7 @@ async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
     users: users.results.map((u) => ({
       id: u.id,
       phone: u.phone,
+      email: u.email,
       fullName: u.full_name,
       role: u.role,
       createdAt: u.created_at,
@@ -752,12 +795,14 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/stations$/, (c) => c.stations("where s.is_active = 1")],
   ["GET", /^\/api\/operators$/, (c) => listOperators(c)],
   ["GET", /^\/api\/me$/, (c) => c.user()],
+  // Auth bodies name the phone number or e-mail address "contact"; "phone" is the
+  // older name, still sent by app versions released before e-mail login.
   [
     "POST",
     /^\/api\/auth\/send$/,
     async (c) => {
-      const { phone } = await readJson<{ phone: string }>(c.request);
-      await sendCode(c.env, phone);
+      const body = await readJson<{ contact?: string; phone?: string }>(c.request);
+      await sendCode(c.env, body.contact ?? body.phone ?? "");
       return { ok: true };
     },
   ],
@@ -765,16 +810,16 @@ const ROUTES: [string, RegExp, Handler][] = [
     "POST",
     /^\/api\/auth\/register$/,
     async (c) => {
-      const { phone, code, pin } = await readJson<{ phone: string; code: string; pin: string }>(c.request);
-      return register(c.env, phone, code, pin);
+      const body = await readJson<{ contact?: string; phone?: string; code: string; pin: string }>(c.request);
+      return register(c.env, body.contact ?? body.phone ?? "", body.code, body.pin);
     },
   ],
   [
     "POST",
     /^\/api\/auth\/login$/,
     async (c) => {
-      const { phone, pin } = await readJson<{ phone: string; pin: string }>(c.request);
-      return signIn(c.env, phone, pin);
+      const body = await readJson<{ contact?: string; phone?: string; pin: string }>(c.request);
+      return signIn(c.env, body.contact ?? body.phone ?? "", body.pin);
     },
   ],
   [
@@ -782,6 +827,41 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/auth\/logout$/,
     async (c) => {
       await signOut(c.env, c.request);
+      return { ok: true };
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/auth\/contact\/send$/,
+    async (c) => {
+      const { contact } = await readJson<{ contact: string }>(c.request);
+      await sendContactCode(c.env, c.request, contact);
+      return { ok: true };
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/auth\/contact$/,
+    async (c) => {
+      const { contact, code } = await readJson<{ contact: string; code: string }>(c.request);
+      return addContact(c.env, c.request, contact, code);
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/auth\/delete-account\/send$/,
+    async (c) => {
+      const { channel } = await readJson<{ channel: CodeChannel }>(c.request);
+      await sendDeleteCode(c.env, c.request, channel === "email" ? "email" : "sms");
+      return { ok: true };
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/auth\/delete-account$/,
+    async (c) => {
+      const body = await readJson<{ channel?: CodeChannel; code?: string; pin?: string }>(c.request);
+      await deleteAccount(c.env, c.request, body);
       return { ok: true };
     },
   ],
@@ -861,6 +941,41 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
   ["DELETE", /^\/api\/admin\/promotions\/([\w-]+)$/, (c, [id]) => deletePromotion(c, id)],
   ["POST", /^\/api\/admin\/media$/, (c) => uploadImage(c)],
+  [
+    "POST",
+    /^\/api\/admin\/devices$/,
+    async (c) => {
+      const admin = await c.requireAdmin();
+      return createDevice(c.db, await readJson<DeviceInput>(c.request), admin.id);
+    },
+  ],
+  [
+    "GET",
+    /^\/api\/admin\/devices$/,
+    async (c) => {
+      await c.requireAdmin();
+      return listDevices(c.db);
+    },
+  ],
+  [
+    "DELETE",
+    /^\/api\/admin\/devices\/([\w:%-]+)$/,
+    async (c, [device]) => {
+      const admin = await c.requireAdmin();
+      return deleteDevice(c.db, decodeURIComponent(device), admin.id);
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/admin\/devices\/([\w:%-]+)\/outlets\/(\d+)\/(start|stop)$/,
+    async (c, [encoded, outlet, action]) => {
+      const admin = await c.requireAdmin();
+      const device = decodeURIComponent(encoded);
+      if (action === "stop") return stopOutlet(c.db, device, Number(outlet), admin.id);
+      const { minutes } = await readJson<{ minutes?: number }>(c.request).catch(() => ({ minutes: undefined }));
+      return startOutlet(c.db, device, Number(outlet), admin.id, minutes);
+    },
+  ],
 ];
 
 export async function handleApi(request: Request, env: Env): Promise<Response> {
@@ -871,6 +986,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (mediaMatch && (request.method === "GET" || request.method === "HEAD")) return await media(c, mediaMatch[1]);
     // Called by the payment provider, answers in plain text (see worker/payments.ts).
     if (url.pathname === "/api/payments/callback" && request.method === "POST") return await paymentCallback(env, request);
+    // Sockets authenticate with their own key, not a user session.
+    if (url.pathname === "/api/devices/events") return await handleDeviceEvents(request, env);
+    if (url.pathname === "/api/devices/commands") return await handleDeviceCommands(request, env);
     for (const [method, pattern, handler] of ROUTES) {
       const m = pattern.exec(url.pathname);
       if (!m) continue;

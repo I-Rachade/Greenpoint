@@ -45,7 +45,7 @@ function reservation(id: string, userId: string, stationId: string, createdMinut
 }
 
 function user(id: string, role: AdminUser["role"], patch: Partial<AdminUser> = {}): AdminUser {
-  return { id, phone: "+228", fullName: null, role, createdAt: ago(60 * 24 * 30), lastSignInAt: null, ...patch };
+  return { id, phone: "+228", email: null, fullName: null, role, createdAt: ago(60 * 24 * 30), lastSignInAt: null, ...patch };
 }
 
 function snapshot(patch: Partial<AdminSnapshot> = {}): AdminSnapshot {

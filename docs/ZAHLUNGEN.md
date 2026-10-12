@@ -33,7 +33,7 @@ App ──(1) POST /api/payments──► Worker ──(2)──► PayGate Glob
 
 | Datei | Inhalt |
 |---|---|
-| `worker/migrations/0003_payments.sql` | Tabelle `payments`, Preise an `stations` |
+| `worker/migrations/0006_payments.sql` | Tabelle `payments`, Preise an `stations` |
 | `worker/payment-providers.ts` | Anbieter (PayGate Global, Simulation), ohne Abhängigkeiten |
 | `worker/payments.ts` | Routen: Zahlung starten, nachfragen, eigene Zahlungen, Rückruf |
 | `worker/payments.test.ts` | Tests, laufen auf SQLite mit den echten Migrationen |
