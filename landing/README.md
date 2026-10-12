@@ -8,4 +8,4 @@ Liegt bewusst in einem eigenen Ordner, damit sie die Next.js-Webapp nicht berüh
 - Farben und Schrift folgen `design/tokens.css`, Logos sind Kopien aus `assets/logo/`.
 
 Lokal ansehen: `python3 -m http.server -d landing 8000` und http://localhost:8000 öffnen.
-Veröffentlichen: den Ordner `landing/` auf einen beliebigen statischen Host legen (GitHub Pages, Netlify, Vercel).
+Veröffentlichen: den Ordner `landing/` auf https://pointderecharge.com legen (beliebiger statischer Host, z. B. GitHub Pages, Netlify, Vercel). Die Webapp läuft unter https://app.pointderecharge.com.
