@@ -23,7 +23,8 @@ Browser (Next.js, statisch)  ──►  Supabase
 | `station_status` | live: offen, freie Plätze, volle Akkus, wann und von wem gemeldet |
 | `station_staff` | welcher Nutzer welche Station melden darf |
 | `reservations` | Akku oder Ladeplatz, gültig 20 Minuten |
-| `charging_points` | einzelne Ladeplätze pro Station (Vorbereitung für vernetzte Steckdosen) |
+| `charging_points` | einzelne Ladeplätze pro Station; bei vernetzten Steckdosen meldet das Gerät den Status |
+| `devices`, `device_messages` | vernetzte Steckdosen (LoRa) und ihre Rohmeldungen, siehe [steckdosen-lora.md](steckdosen-lora.md) |
 | `station_holds` (View) | Anzahl aktiver Reservierungen pro Station, ohne zu zeigen, wer reserviert hat |
 
 Verfügbar = gemeldete freie Plätze bzw. volle Akkus minus aktive Reservierungen (`src/lib/availability.ts` und `reserve()` rechnen gleich).
@@ -41,6 +42,6 @@ So kann jeder die App sofort ausprobieren, und die Oberfläche hängt nicht an d
 
 - Bezahlung mit Flooz und T-Money über einen Zahlungsanbieter (Supabase Edge Function für die Rückmeldung des Anbieters)
 - GreenPlus-Treuepunkte (Regeln, Prämien, Punktebuchungen; siehe Projektplan)
-- Vernetzte Steckdosen (LoRa): Geräte melden den Status von `charging_points` selbst
+- Vernetzte Steckdosen (LoRa): Statusmeldung ist eingebaut ([steckdosen-lora.md](steckdosen-lora.md)); Fernsteuerung und Abrechnung pro Ladevorgang folgen mit der Bezahlung
 - Flottenbereich für Lieferdienste
 - Mobile App mit Expo, gleiche Supabase-Datenbank
