@@ -1,4 +1,4 @@
-# pointderecharge
+# poinderecharge
 
 Adresse: https://app.poinderecharge.com (Landingpage: https://poinderecharge.com) · Repository: `Greenpoint` · Treueprogramm: greenpoint · Kontakt: contact@poinderecharge.com
 

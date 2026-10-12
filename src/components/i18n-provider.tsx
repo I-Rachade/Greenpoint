@@ -6,7 +6,7 @@ import { fr, type Dictionary } from "@/lib/i18n/fr";
 
 export type Locale = "fr" | "en";
 const dictionaries: Record<Locale, Dictionary> = { fr, en };
-const STORAGE_KEY = "pointderecharge-locale";
+const STORAGE_KEY = "poinderecharge-locale";
 
 interface I18nContextValue {
   locale: Locale;

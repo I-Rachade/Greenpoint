@@ -2,17 +2,17 @@ import type { Operator, Station, StationStatus } from "../types";
 
 // Example stations in Lomé (approximate positions). Mirrors supabase/seed.sql.
 export const DEMO_OPERATORS: Operator[] = [
-  { id: "op-pointderecharge", name: "pointderecharge", isOwn: true },
+  { id: "op-poinderecharge", name: "poinderecharge", isOwn: true },
   { id: "op-example", name: "Exemple Opérateur", isOwn: false },
 ];
 
 export const DEMO_STATIONS: Station[] = [
   {
     id: "st-grand-marche",
-    operatorId: "op-pointderecharge",
-    operatorName: "pointderecharge",
+    operatorId: "op-poinderecharge",
+    operatorName: "poinderecharge",
     isOwn: true,
-    name: "pointderecharge Grand Marché",
+    name: "poinderecharge Grand Marché",
     address: "Boulevard du 13 Janvier",
     lat: 6.1262,
     lng: 1.2236,
@@ -25,10 +25,10 @@ export const DEMO_STATIONS: Station[] = [
   },
   {
     id: "st-tokoin",
-    operatorId: "op-pointderecharge",
-    operatorName: "pointderecharge",
+    operatorId: "op-poinderecharge",
+    operatorName: "poinderecharge",
     isOwn: true,
-    name: "pointderecharge Tokoin",
+    name: "poinderecharge Tokoin",
     address: "Avenue de la Libération",
     lat: 6.1496,
     lng: 1.2187,
@@ -41,10 +41,10 @@ export const DEMO_STATIONS: Station[] = [
   },
   {
     id: "st-universite",
-    operatorId: "op-pointderecharge",
-    operatorName: "pointderecharge",
+    operatorId: "op-poinderecharge",
+    operatorName: "poinderecharge",
     isOwn: true,
-    name: "pointderecharge Université",
+    name: "poinderecharge Université",
     address: "Université de Lomé",
     lat: 6.1735,
     lng: 1.2115,
@@ -57,10 +57,10 @@ export const DEMO_STATIONS: Station[] = [
   },
   {
     id: "st-be",
-    operatorId: "op-pointderecharge",
-    operatorName: "pointderecharge",
+    operatorId: "op-poinderecharge",
+    operatorName: "poinderecharge",
     isOwn: true,
-    name: "pointderecharge Bè",
+    name: "poinderecharge Bè",
     address: "Bè Kpota",
     lat: 6.137,
     lng: 1.242,
@@ -73,10 +73,10 @@ export const DEMO_STATIONS: Station[] = [
   },
   {
     id: "st-agoe",
-    operatorId: "op-pointderecharge",
-    operatorName: "pointderecharge",
+    operatorId: "op-poinderecharge",
+    operatorName: "poinderecharge",
     isOwn: true,
-    name: "pointderecharge Agoè",
+    name: "poinderecharge Agoè",
     address: "Agoè Assiyéyé",
     lat: 6.2245,
     lng: 1.208,
