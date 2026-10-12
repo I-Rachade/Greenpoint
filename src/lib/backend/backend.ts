@@ -19,6 +19,12 @@ export type BackendErrorCode =
   | "station_closed"
   | "service_not_offered"
   | "none_available"
+  | "daily_limit"
+  | "cooldown"
+  | "wrong_pickup_code"
+  | "own_reservation"
+  | "reservation_not_active"
+  | "phone_not_allowed"
   | "invalid_code"
   | "forbidden"
   | "unknown";
@@ -58,7 +64,8 @@ export interface Backend {
   staffStations(): Promise<StationView[]>;
   updateStatus(stationId: string, patch: StatusPatch): Promise<void>;
   stationReservations(stationId: string): Promise<Reservation[]>;
-  completeReservation(id: string): Promise<void>;
+  /** Needs the rider's pickup code; also takes the battery or slot off the station's counter. */
+  completeReservation(id: string, pickupCode: string): Promise<void>;
 
   // Admin
   listOperators(): Promise<Operator[]>;

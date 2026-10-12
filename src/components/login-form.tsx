@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { HOSTED_DEMO } from "@/lib/backend";
 import { CONTACT_EMAIL } from "@/lib/config";
 import { useErrorMessage } from "@/lib/hooks";
 import { normalizeTogoPhone } from "@/lib/phone";
@@ -9,7 +10,8 @@ import type { UserRole } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
 
-const DEMO_ROLES: UserRole[] = ["rider", "operator", "admin"];
+// On the public site the demo only offers the rider view (anyone could otherwise "log in" as admin).
+const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["rider"] : ["rider", "operator", "admin"];
 
 export function LoginForm() {
   const { t } = useI18n();
@@ -107,7 +109,7 @@ export function LoginForm() {
               required
             />
           </label>
-          {backend.mode === "demo" && (
+          {backend.mode === "demo" && DEMO_ROLES.length > 1 && (
             <label className="block space-y-1">
               <span className="text-sm font-medium">{t.demo.role}</span>
               <select className={input} value={demoRole} onChange={(e) => setDemoRole(e.target.value as UserRole)}>

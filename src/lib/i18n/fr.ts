@@ -12,6 +12,7 @@ export const fr = {
   },
   demo: {
     banner: "Mode démo : données d'exemple, aucun SMS n'est envoyé.",
+    hostedBanner: "Version de démonstration : les stations et disponibilités affichées sont fictives.",
     reset: "Réinitialiser",
     codeHint: "Code démo : {code}",
     role: "Tester en tant que",
@@ -54,6 +55,7 @@ export const fr = {
     limited: "Presque complet",
     full: "Complet",
     closed: "Fermé",
+    unknown: "Non mis à jour",
   },
   station: {
     freeSlots: "Places libres",
@@ -65,7 +67,9 @@ export const fr = {
     reserveBattery: "Réserver une batterie",
     reserveSlot: "Réserver une place",
     loginToReserve: "Connectez-vous pour réserver",
-    reserved: "Réservé ! Valable {minutes} minutes.",
+    reserved: "Réservé ! Votre code de retrait : {code}. Valable {minutes} minutes.",
+    stale: "Pas de mise à jour depuis plus de 2 heures : les chiffres peuvent être faux.",
+    outsideHours: "Fermée selon les horaires d'ouverture.",
     close: "Fermer",
     call: "Appeler",
   },
@@ -94,6 +98,11 @@ export const fr = {
     battery: "Batterie",
     slot: "Place de recharge",
     cancel: "Annuler",
+    pickupCode: "Code de retrait",
+    pickupHint: "Montrez ce code au personnel de la station.",
+    cancelReasons: {
+      station_closed: "La station a fermé.",
+    } as Record<string, string>,
     status: {
       active: "Active",
       completed: "Terminée",
@@ -110,6 +119,7 @@ export const fr = {
     reservations: "Réservations actives",
     noReservations: "Aucune réservation active.",
     complete: "Terminer",
+    pickupCode: "Code du conducteur",
     capacity: "sur {n}",
   },
   admin: {
@@ -129,6 +139,8 @@ export const fr = {
     chargingSlots: "Places de recharge",
     batteryCapacity: "Batteries d'échange",
     openingHours: "Horaires",
+    openingHoursHint:
+      "Format 07:00-21:00 (heure de Lomé). En dehors de ces heures, la station apparaît fermée et ne prend pas de réservations. 00:00-24:00 = toujours ouverte.",
     phone: "Téléphone",
     operator: "Opérateur",
   },
@@ -145,6 +157,12 @@ export const fr = {
     station_closed: "Cette station est fermée.",
     service_not_offered: "Ce service n'est pas proposé ici.",
     none_available: "Plus rien de disponible dans cette station.",
+    daily_limit: "Trop de réservations non utilisées ces dernières 24 heures. Réessayez plus tard.",
+    cooldown: "Vous avez annulé ou manqué une réservation ici. Réessayez dans une heure.",
+    wrong_pickup_code: "Code de retrait incorrect.",
+    own_reservation: "Vous ne pouvez pas terminer votre propre réservation.",
+    reservation_not_active: "Cette réservation n'est plus active.",
+    phone_not_allowed: "Seuls les numéros du Togo (+228) sont acceptés.",
     invalid_code: "Code incorrect ou expiré.",
     forbidden: "Action non autorisée.",
     unknown: "Une erreur est survenue. Réessayez.",

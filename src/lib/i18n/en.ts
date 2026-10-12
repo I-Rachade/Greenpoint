@@ -13,6 +13,7 @@ export const en: Dictionary = {
   },
   demo: {
     banner: "Demo mode: example data, no SMS is sent.",
+    hostedBanner: "Demo version: the stations and availability shown are not real.",
     reset: "Reset",
     codeHint: "Demo code: {code}",
     role: "Try as",
@@ -55,6 +56,7 @@ export const en: Dictionary = {
     limited: "Almost full",
     full: "Full",
     closed: "Closed",
+    unknown: "Not updated",
   },
   station: {
     freeSlots: "Free slots",
@@ -66,7 +68,9 @@ export const en: Dictionary = {
     reserveBattery: "Reserve a battery",
     reserveSlot: "Reserve a slot",
     loginToReserve: "Log in to reserve",
-    reserved: "Reserved! Valid for {minutes} minutes.",
+    reserved: "Reserved! Your pickup code: {code}. Valid for {minutes} minutes.",
+    stale: "Not updated for more than 2 hours: the numbers may be wrong.",
+    outsideHours: "Closed according to the opening hours.",
     close: "Close",
     call: "Call",
   },
@@ -95,6 +99,11 @@ export const en: Dictionary = {
     battery: "Battery",
     slot: "Charging slot",
     cancel: "Cancel",
+    pickupCode: "Pickup code",
+    pickupHint: "Show this code to the station staff.",
+    cancelReasons: {
+      station_closed: "The station closed.",
+    } as Record<string, string>,
     status: {
       active: "Active",
       completed: "Completed",
@@ -111,6 +120,7 @@ export const en: Dictionary = {
     reservations: "Active reservations",
     noReservations: "No active reservations.",
     complete: "Complete",
+    pickupCode: "Rider's code",
     capacity: "of {n}",
   },
   admin: {
@@ -130,6 +140,8 @@ export const en: Dictionary = {
     chargingSlots: "Charging slots",
     batteryCapacity: "Swap batteries",
     openingHours: "Opening hours",
+    openingHoursHint:
+      "Format 07:00-21:00 (Lomé time). Outside these hours the station shows as closed and takes no reservations. 00:00-24:00 = always open.",
     phone: "Phone",
     operator: "Operator",
   },
@@ -146,6 +158,12 @@ export const en: Dictionary = {
     station_closed: "This station is closed.",
     service_not_offered: "This service is not offered here.",
     none_available: "Nothing left at this station.",
+    daily_limit: "Too many unused reservations in the last 24 hours. Please try again later.",
+    cooldown: "You cancelled or missed a reservation here. Please try again in an hour.",
+    wrong_pickup_code: "Wrong pickup code.",
+    own_reservation: "You cannot complete your own reservation.",
+    reservation_not_active: "This reservation is no longer active.",
+    phone_not_allowed: "Only Togolese numbers (+228) are accepted.",
     invalid_code: "Wrong or expired code.",
     forbidden: "Not allowed.",
     unknown: "Something went wrong. Please try again.",

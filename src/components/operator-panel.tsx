@@ -4,7 +4,7 @@ import { useState } from "react";
 import { offersCharging, offersSwap } from "@/lib/availability";
 import { useErrorMessage, useLiveQuery, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { StationView } from "@/lib/types";
+import type { Reservation, StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
 import { effectiveStatus, minutesLeft } from "./reservation-list";
@@ -42,6 +42,50 @@ function Counter({
   );
 }
 
+/** One active reservation: staff type the rider's pickup code to complete it. */
+function ReservationRow({
+  reservation: r,
+  now,
+  onComplete,
+}: {
+  reservation: Reservation;
+  now: Date;
+  onComplete: (code: string) => Promise<boolean>;
+}) {
+  const { t } = useI18n();
+  const [code, setCode] = useState("");
+  return (
+    <li className="flex flex-wrap items-center gap-3 rounded-lg bg-zinc-100 p-3 text-sm dark:bg-zinc-900">
+      <span className="flex-1">
+        {r.type === "battery" ? t.reservations.battery : t.reservations.slot} ·{" "}
+        {format(t.time.minutesLeft, { n: minutesLeft(r, now) })}
+      </span>
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void onComplete(code).then((ok) => ok && setCode(""));
+        }}
+      >
+        <input
+          inputMode="numeric"
+          pattern="[0-9]{4}"
+          maxLength={4}
+          required
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+          placeholder="0000"
+          aria-label={t.operator.pickupCode}
+          className="w-20 rounded-lg border border-black/20 bg-white px-2 py-1 text-center font-mono tracking-widest dark:border-white/20 dark:bg-zinc-950"
+        />
+        <button type="submit" className="rounded-full bg-gp-green-dark px-3 py-1 text-white">
+          {t.operator.complete}
+        </button>
+      </form>
+    </li>
+  );
+}
+
 function StationControls({ station, onError }: { station: StationView; onError: (msg: string) => void }) {
   const { t } = useI18n();
   const { backend } = useApp();
@@ -53,12 +97,15 @@ function StationControls({ station, onError }: { station: StationView; onError: 
     station.id,
   );
 
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<void>): Promise<boolean> {
+    onError("");
     try {
       await action();
       reload();
+      return true;
     } catch (err) {
       onError(errorMessage(err));
+      return false;
     }
   }
 
@@ -111,20 +158,12 @@ function StationControls({ station, onError }: { station: StationView; onError: 
         ) : (
           <ul className="space-y-2">
             {active.map((r) => (
-              <li key={r.id} className="flex items-center gap-3 rounded-lg bg-zinc-100 p-3 text-sm dark:bg-zinc-900">
-                <span className="flex-1">
-                  {r.type === "battery" ? t.reservations.battery : t.reservations.slot} ·{" "}
-                  {format(t.time.minutesLeft, { n: minutesLeft(r, now) })}
-                  <span className="ml-2 font-mono text-xs text-zinc-500">#{r.id.slice(0, 6)}</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => run(() => backend.completeReservation(r.id))}
-                  className="rounded-full bg-gp-green-dark px-3 py-1 text-white"
-                >
-                  {t.operator.complete}
-                </button>
-              </li>
+              <ReservationRow
+                key={r.id}
+                reservation={r}
+                now={now}
+                onComplete={(code) => run(() => backend.completeReservation(r.id, code))}
+              />
             ))}
           </ul>
         )}
