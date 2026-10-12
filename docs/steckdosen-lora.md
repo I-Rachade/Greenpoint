@@ -56,6 +56,9 @@ Alle Formate liefern am Ende dieselbe Liste `outlets`:
 - `status`: `free`, `charging`, `done`, `fault` (auch `idle`, `on`, `full`, `error` u. ä. werden verstanden). Fehlt er, entscheidet die Leistung: über 5 W = lädt.
 - Ohne `outlets` gilt die Meldung als Lebenszeichen.
 - Ein reservierter Ausgang bleibt reserviert, auch wenn das Gerät "frei" meldet.
+- Geht ein Ausgang auf `charging`, gilt die älteste aktive Platz-Reservierung der Station als eingelöst (`completed`). Sonst würde sie bis zum Ablauf einen zweiten Ausgang blockieren.
+- Freie Plätze zählen nur Ausgänge, die in den letzten 15 Minuten gemeldet haben. Eine stumme Steckdose lässt sich weder in der App noch über die API reservieren; ein neu angelegtes Gerät bietet nichts an, bis es sich meldet.
+- Die Geräte-ID wird immer groß geschrieben gespeichert und verglichen (ChirpStack zeigt DevEUIs klein).
 
 | `format` | Gerätekennung | Ausgänge |
 |---|---|---|
