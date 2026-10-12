@@ -19,7 +19,7 @@ import {
   type StationView,
   type UserRole,
 } from "../src/lib/types";
-import { currentUser, register, sendCode, signIn, signOut } from "./auth";
+import { currentUser, deleteAccount, register, sendCode, signIn, signOut } from "./auth";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 
@@ -781,6 +781,15 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/auth\/logout$/,
     async (c) => {
       await signOut(c.env, c.request);
+      return { ok: true };
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/auth\/delete-account$/,
+    async (c) => {
+      const { pin } = await readJson<{ pin: string }>(c.request);
+      await deleteAccount(c.env, c.request, pin);
       return { ok: true };
     },
   ],

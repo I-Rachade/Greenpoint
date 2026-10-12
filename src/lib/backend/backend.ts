@@ -68,6 +68,8 @@ export interface Backend {
   /** Everyday login with phone number and PIN. */
   signIn(phone: string, pin: string, demoRole?: UserRole): Promise<Profile>;
   signOut(): Promise<void>;
+  /** Deletes the signed-in user's account for good, after checking the PIN. */
+  deleteAccount(pin: string): Promise<void>;
 
   // Rider
   myReservations(): Promise<Reservation[]>;

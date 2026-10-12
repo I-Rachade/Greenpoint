@@ -10,6 +10,7 @@ export const en: Dictionary = {
     admin: "Admin",
     login: "Log in",
     logout: "Log out",
+    account: "My account",
   },
   demo: {
     banner: "Demo mode: example data, no SMS is sent.",
@@ -103,6 +104,18 @@ export const en: Dictionary = {
     backToLogin: "I already have a PIN",
     changeNumber: "Change number",
     invalidPhone: "Invalid number. Example: 90 12 34 56",
+  },
+  account: {
+    title: "My account",
+    phone: "Phone number",
+    deleteTitle: "Delete my account",
+    deleteText:
+      "Your account, phone number, PIN and reservations are deleted for good. You can create a new account with the same number later.",
+    deletePin: "Confirm with your PIN",
+    deleteButton: "Delete for good",
+    deleted: "Your account has been deleted.",
+    loggedOutText:
+      "To delete your account, log in and come back to this page. If you can no longer log in, write to {email} from any address with your phone number: we delete the account within 30 days.",
   },
   reservations: {
     title: "My reservations",

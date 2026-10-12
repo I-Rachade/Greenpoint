@@ -288,6 +288,35 @@ export async function currentUser(env: Env, request: Request): Promise<Profile |
   return row ? toProfile(row) : null;
 }
 
+/**
+ * Deletes the signed-in user's account after checking the PIN (Google Play and
+ * Loi 2019-014 require self-service deletion). Sessions, staff assignments and
+ * reservations go with it, and the phone number is removed from the activity log.
+ * Paid transactions, once they exist, must be kept 5 years without the person.
+ */
+export async function deleteAccount(env: Env, request: Request, rawPin: string) {
+  const profile = await currentUser(env, request);
+  if (!profile) throw new ApiError("not_authenticated", 401);
+  const row = await env.DB.prepare("select pin_hash from users where id = ?")
+    .bind(profile.id)
+    .first<{ pin_hash: string | null }>();
+  const pin = String(rawPin ?? "").trim();
+  if (!row?.pin_hash || !validPinFormat(pin) || !(await pinMatches(pin, row.pin_hash))) {
+    throw new ApiError("invalid_pin");
+  }
+  await env.DB.batch([
+    env.DB.prepare("update audit_log set changes = json_remove(changes, '$.phone') where user_id = ? or row_id = ?").bind(
+      profile.id,
+      profile.id,
+    ),
+    env.DB.prepare("delete from sessions where user_id = ?").bind(profile.id),
+    env.DB.prepare("delete from station_staff where user_id = ?").bind(profile.id),
+    env.DB.prepare("delete from reservations where user_id = ?").bind(profile.id),
+    env.DB.prepare("delete from otp_codes where phone = ?").bind(profile.phone),
+    env.DB.prepare("delete from users where id = ?").bind(profile.id),
+  ]);
+}
+
 export async function signOut(env: Env, request: Request) {
   const token = bearer(request);
   if (token) await env.DB.prepare("delete from sessions where token_hash = ?").bind(await sha256(token)).run();

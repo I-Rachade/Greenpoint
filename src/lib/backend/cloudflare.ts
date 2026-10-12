@@ -166,6 +166,12 @@ export class CloudflareBackend implements Backend {
     this.changed();
   }
 
+  async deleteAccount(pin: string) {
+    await this.call("POST", "/api/auth/delete-account", { pin });
+    this.dropSession();
+    this.changed();
+  }
+
   // Rider -----------------------------------------------------------------------
 
   async myReservations() {

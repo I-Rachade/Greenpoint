@@ -72,3 +72,21 @@ describe("DemoBackend reservations", () => {
     await expect(backend.reserve(STATION, "battery")).rejects.toMatchObject({ code: "daily_limit" });
   });
 });
+
+describe("DemoBackend account deletion", () => {
+  it("needs the PIN, then removes the login and the reservations", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-12T12:00:00Z"));
+    const backend = new DemoBackend();
+    await asRole(backend, "rider");
+    await backend.reserve(STATION, "battery");
+
+    await expect(backend.deleteAccount("1111")).rejects.toMatchObject({ code: "invalid_pin" });
+    await backend.deleteAccount("2580");
+
+    expect(await backend.getProfile()).toBeNull();
+    await expect(backend.signIn("+22890123456", "2580")).rejects.toMatchObject({ code: "invalid_pin" });
+    expect((await backend.listStations()).find((s) => s.id === STATION)!.reservedBatteries).toBe(0);
+    vi.useRealTimers();
+  });
+});

@@ -261,6 +261,21 @@ export class DemoBackend implements Backend {
     this.save({ ...this.load(), profile: null });
   }
 
+  async deleteAccount(pin: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    if (state.pins?.[profile.phone] !== pin) throw new BackendError("invalid_pin");
+    const pins = { ...state.pins };
+    delete pins[profile.phone];
+    this.save({
+      ...state,
+      profile: null,
+      pins,
+      users: (state.users ?? []).filter((u) => u.id !== profile.id),
+      reservations: state.reservations.filter((r) => r.userId !== profile.id),
+    });
+  }
+
   async myReservations() {
     const state = this.load();
     if (!state.profile) return [];

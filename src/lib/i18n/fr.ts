@@ -9,6 +9,7 @@ export const fr = {
     admin: "Admin",
     login: "Connexion",
     logout: "Déconnexion",
+    account: "Mon compte",
   },
   demo: {
     banner: "Mode démo : données d'exemple, aucun SMS n'est envoyé.",
@@ -102,6 +103,18 @@ export const fr = {
     backToLogin: "J'ai déjà un code PIN",
     changeNumber: "Changer de numéro",
     invalidPhone: "Numéro invalide. Exemple : 90 12 34 56",
+  },
+  account: {
+    title: "Mon compte",
+    phone: "Numéro de téléphone",
+    deleteTitle: "Supprimer mon compte",
+    deleteText:
+      "Votre compte, votre numéro, votre code PIN et vos réservations sont supprimés définitivement. Vous pourrez créer un nouveau compte plus tard avec le même numéro.",
+    deletePin: "Confirmez avec votre code PIN",
+    deleteButton: "Supprimer définitivement",
+    deleted: "Votre compte a été supprimé.",
+    loggedOutText:
+      "Pour supprimer votre compte, connectez-vous puis revenez sur cette page. Si vous ne pouvez plus vous connecter, écrivez à {email} depuis n'importe quelle adresse en indiquant votre numéro : nous supprimons le compte sous 30 jours.",
   },
   reservations: {
     title: "Mes réservations",
