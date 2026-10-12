@@ -1,0 +1,50 @@
+name: Store screenshots
+
+# Phone screenshots for the Google Play listing, taken from the demo build
+# (sample stations, no real accounts). Run again from Actions after UI changes.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/store-screenshots.mjs
+      - .github/workflows/store-assets.yml
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # publish the images as release downloads
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
+      - name: Take screenshots (FR, EN)
+        run: |
+          python3 -m http.server 4173 --directory out >/dev/null 2>&1 &
+          sleep 2
+          node scripts/store-screenshots.mjs http://localhost:4173 store-assets/fr fr
+          node scripts/store-screenshots.mjs http://localhost:4173 store-assets/en en
+      - uses: actions/upload-artifact@v4
+        with:
+          name: play-store-screenshots
+          path: store-assets
+      # Direct downloads: https://github.com/I-Rachade/Greenpoint/releases/tag/play-store-assets
+      - name: Publish screenshots
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p upload
+          for lang in fr en; do
+            for f in store-assets/$lang/*.png; do cp "$f" "upload/$lang-$(basename "$f")"; done
+          done
+          if ! gh release view play-store-assets --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create play-store-assets --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+              --title "Google Play Screenshots" --notes "Handy-Screenshots (1080 × 1920) für den Store-Eintrag, aus der Demo-Version. Werden bei jedem Lauf ersetzt."
+          fi
+          gh release upload play-store-assets upload/*.png --repo "$GITHUB_REPOSITORY" --clobber
