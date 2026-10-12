@@ -1,6 +1,6 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
-// Mobile app (Android now, iOS later): wraps the static export in `out/`.
+// Mobile app (Android and iOS): wraps the static export in `out/`.
 // See docs/MOBILE.md.
 const config: CapacitorConfig = {
   appId: "com.poinderecharge.app",
