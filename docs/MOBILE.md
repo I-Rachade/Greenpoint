@@ -46,8 +46,9 @@ NEXT_PUBLIC_BACKEND=cloudflare NEXT_PUBLIC_API_URL=https://app.poinderecharge.co
 
 ## Google Play
 
-- Upload-Schlüssel (Keystore) als GitHub-Secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Dann erzeugt der Workflow zusätzlich `poinderecharge-release-aab` für die Play Console.
+- Upload-Schlüssel (Keystore) als GitHub-Secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Dann erzeugt der Workflow zusätzlich das signierte App Bundle und legt es im Release-Entwurf „Google Play Upload“ ab (nur für Mitglieder sichtbar).
 - Versionsnummer = Nummer des Workflow-Laufs, so ist jeder Upload eindeutig.
+- Store-Screenshots (FR, EN, 1080 × 1920): `scripts/store-screenshots.mjs`, der Workflow *Store screenshots* legt sie im Release `play-store-assets` ab.
 - Push-Benachrichtigungen brauchen `android/app/google-services.json` aus Firebase; ohne die Datei baut die App trotzdem, nur ohne Push.
 
 ## Noch offen

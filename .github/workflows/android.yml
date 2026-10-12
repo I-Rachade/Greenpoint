@@ -80,3 +80,17 @@ jobs:
         with:
           name: poinderecharge-release-aab
           path: android/app/build/outputs/bundle/release/app-release.aab
+      # The same bundle in a draft release, visible only to repository members:
+      # Releases > "Google Play Upload" > poinderecharge-<version>.aab, then upload it in the Play Console.
+      - name: Publish app bundle (draft release)
+        if: ${{ hashFiles('android/app/build/outputs/bundle/release/app-release.aab') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          AAB="$RUNNER_TEMP/poinderecharge-$ANDROID_VERSION_NAME.aab"
+          cp android/app/build/outputs/bundle/release/app-release.aab "$AAB"
+          if ! gh release view play-upload --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create play-upload --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+              --title "Google Play Upload" --notes "Signiertes App Bundle für die Play Console (nur für Mitglieder sichtbar)."
+          fi
+          gh release upload play-upload "$AAB" --repo "$GITHUB_REPOSITORY" --clobber
