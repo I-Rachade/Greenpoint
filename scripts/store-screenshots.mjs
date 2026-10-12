@@ -72,6 +72,8 @@ await shot("2-station");
 await page.getByRole("link", { name: T.login, exact: true }).click();
 await page.getByRole("button", { name: T.register }).click();
 await page.getByPlaceholder("90 12 34 56").fill("90 12 34 56");
+// Sign-up needs the terms and privacy policy accepted before the code is sent.
+await page.getByRole("checkbox").check();
 await shot("3-inscription");
 await page.getByRole("button", { name: T.sendCode }).click();
 await page.waitForTimeout(800);
