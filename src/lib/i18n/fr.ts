@@ -25,7 +25,7 @@ export const fr = {
   vehicles: {
     all: "Tous les véhicules",
     scooter: "Trottinette",
-    tuktuk: "Tuk-tuk",
+    tricycle: "Tricycle",
     ebike: "Vélo électrique",
     moped: "Scooter",
   },

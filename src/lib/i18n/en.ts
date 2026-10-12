@@ -26,7 +26,7 @@ export const en: Dictionary = {
   vehicles: {
     all: "All vehicles",
     scooter: "E-scooter",
-    tuktuk: "Tuk-tuk",
+    tricycle: "Tricycle",
     ebike: "E-bike",
     moped: "E-moped",
   },

@@ -105,9 +105,9 @@ describe("rankStations", () => {
   });
 
   it("filters by vehicle, service and availability", () => {
-    const swapOnly = station({ id: "swap", kind: "swap", vehicleTypes: ["tuktuk"] });
+    const swapOnly = station({ id: "swap", kind: "swap", vehicleTypes: ["tricycle"] });
     const all = [near, swapOnly];
-    expect(rankStations(all, null, { ...DEFAULT_FILTER, vehicle: "tuktuk" }).map((r) => r.station.id)).toEqual(["swap"]);
+    expect(rankStations(all, null, { ...DEFAULT_FILTER, vehicle: "tricycle" }).map((r) => r.station.id)).toEqual(["swap"]);
     expect(rankStations(all, null, { ...DEFAULT_FILTER, service: "charging" }).map((r) => r.station.id)).toEqual(["near"]);
     const emptySwap = station({ id: "empty", kind: "swap", reservedBatteries: 5 });
     expect(rankStations([emptySwap], null, { ...DEFAULT_FILTER, onlyAvailable: true })).toEqual([]);
