@@ -10,6 +10,7 @@ import type {
 } from "../types";
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { Device, DeviceInput } from "../iot/devices";
+import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelSizeTier } from "../parcels";
 import type { Promotion, PromotionInput } from "../promo";
 
 /** Where a code goes: by SMS to the phone number or by e-mail. */
@@ -41,6 +42,12 @@ export type BackendErrorCode =
   | "image_too_large"
   | "invalid_device"
   | "device_exists"
+  | "depot_inactive"
+  | "same_station"
+  | "parcel_too_large"
+  | "parcel_not_found"
+  | "parcel_wrong_status"
+  | "code_locked"
   | "rate_limited"
   | "forbidden"
   | "unknown";
@@ -120,6 +127,32 @@ export interface Backend {
   deleteDevice(externalId: string): Promise<void>;
   /** Switches an outlet on (until full) or off; only where `canSwitch`. */
   switchOutlet(externalId: string, outlet: number, on: boolean): Promise<void>;
+
+  // Parcel depot (see src/lib/parcels.ts)
+  /** Stations that take parcels, and the prices. Public. */
+  parcelInfo(): Promise<ParcelInfo>;
+  /** Parcels the signed-in customer sent or is to receive; the pickup code only for the recipient. */
+  myParcels(): Promise<Parcel[]>;
+  /** Parcels handed in at or coming to this station (its staff; never with pickup codes). */
+  stationParcels(stationId: string): Promise<Parcel[]>;
+  /** Staff at the sending station register a parcel paid in cash; creates accounts for unknown phone numbers. */
+  createParcel(stationId: string, input: ParcelInput): Promise<Parcel>;
+  /** Staff at the sending station load parcels for the collection run. */
+  markParcelsInTransit(stationId: string, ids: string[]): Promise<void>;
+  /** Staff at the destination confirm arrival; each parcel gets its pickup code and the recipient is told. */
+  markParcelsArrived(stationId: string, ids: string[]): Promise<void>;
+  /** Staff at the destination hand out a parcel for its code or scanned QR code. */
+  pickUpParcel(stationId: string, codeOrQr: string): Promise<Parcel>;
+  /** Cancels a parcel that has not left the sending station. */
+  cancelParcel(id: string): Promise<void>;
+  /** Tells the recipient again that the parcel is waiting. */
+  resendPickupCode(id: string): Promise<void>;
+  /** Backoffice: all parcels, depots and prices (admins only). */
+  adminParcels(): Promise<AdminParcels>;
+  saveParcelDepot(stationId: string, input: ParcelDepotInput): Promise<void>;
+  saveParcelSizes(sizes: ParcelSizeTier[]): Promise<void>;
+  /** A parcel in storage was handed out after all, or auctioned. */
+  closeStoredParcel(id: string, outcome: "released" | "auctioned"): Promise<void>;
 
   // Advertising popup (see src/lib/promo.ts)
   /** The ad to show when the app opens, or null. Public. */

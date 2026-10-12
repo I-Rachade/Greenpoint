@@ -454,6 +454,9 @@ export async function deleteAccount(
     env.DB.prepare("delete from sessions where user_id = ?").bind(profile.id),
     env.DB.prepare("delete from station_staff where user_id = ?").bind(profile.id),
     env.DB.prepare("delete from reservations where user_id = ?").bind(profile.id),
+    // Parcels stay on record (phone numbers included) but lose the link to the account.
+    env.DB.prepare("update parcels set sender_user_id = null where sender_user_id = ?").bind(profile.id),
+    env.DB.prepare("update parcels set recipient_user_id = null where recipient_user_id = ?").bind(profile.id),
     env.DB.prepare("delete from otp_codes where phone in (?, ?)").bind(profile.phone ?? "", profile.email ?? ""),
     env.DB.prepare("delete from users where id = ?").bind(profile.id),
   ]);

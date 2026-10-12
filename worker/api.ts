@@ -45,6 +45,22 @@ import {
   stopOutlet,
 } from "./devices";
 import type { DeviceInput } from "../src/lib/iot/devices";
+import type { ParcelDepotInput, ParcelInput } from "../src/lib/parcels";
+import {
+  adminParcels,
+  cancelParcel,
+  createParcel,
+  markArrived,
+  markInTransit,
+  closeStoredParcel,
+  myParcels,
+  parcelInfo,
+  pickUpParcel,
+  resendPickupCode,
+  saveDepot,
+  saveSizes,
+  stationParcels,
+} from "./parcels";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 
@@ -890,6 +906,43 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
   ["GET", /^\/api\/stations\/([\w-]+)\/reservations$/, (c, [id]) => stationReservations(c, id)],
   ["GET", /^\/api\/promotions\/current$/, (c) => currentPromotion(c)],
+  // Parcel depot (worker/parcels.ts)
+  ["GET", /^\/api\/parcels\/info$/, (c) => parcelInfo(c)],
+  ["GET", /^\/api\/parcels\/mine$/, (c) => myParcels(c)],
+  ["POST", /^\/api\/parcels\/([\w-]+)\/cancel$/, (c, [id]) => cancelParcel(c, id)],
+  ["POST", /^\/api\/parcels\/([\w-]+)\/resend$/, (c, [id]) => resendPickupCode(c, id)],
+  ["GET", /^\/api\/stations\/([\w-]+)\/parcels$/, (c, [id]) => stationParcels(c, id)],
+  ["POST", /^\/api\/stations\/([\w-]+)\/parcels$/, async (c, [id]) => createParcel(c, id, await readJson<ParcelInput>(c.request))],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/parcels\/transit$/,
+    async (c, [id]) => markInTransit(c, id, (await readJson<{ ids: string[] }>(c.request)).ids),
+  ],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/parcels\/arrived$/,
+    async (c, [id]) => markArrived(c, id, (await readJson<{ ids: string[] }>(c.request)).ids),
+  ],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/parcels\/pickup$/,
+    async (c, [id]) => pickUpParcel(c, id, (await readJson<{ code: string }>(c.request)).code),
+  ],
+  [
+    "POST",
+    /^\/api\/admin\/parcels\/([\w-]+)\/(released|auctioned)$/,
+    (c, [id, outcome]) => closeStoredParcel(c, id, outcome as "released" | "auctioned"),
+  ],
+  ["GET", /^\/api\/admin\/parcels$/, (c) => adminParcels(c)],
+  [
+    "POST",
+    /^\/api\/admin\/parcel-depots$/,
+    async (c) => {
+      const { stationId, input } = await readJson<{ stationId: string; input: ParcelDepotInput }>(c.request);
+      return saveDepot(c, String(stationId), input);
+    },
+  ],
+  ["POST", /^\/api\/admin\/parcel-sizes$/, async (c) => saveSizes(c, (await readJson<{ sizes: unknown }>(c.request)).sizes)],
   [
     "POST",
     /^\/api\/admin\/stations$/,

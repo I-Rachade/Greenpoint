@@ -1,6 +1,7 @@
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { corsHeaders } from "./http";
+import { runParcelDeadlines } from "./parcels";
 
 /**
  * The whole app on Cloudflare: /api/* is answered here (D1 database, R2 images,
@@ -16,5 +17,9 @@ export default {
     const response = await handleApi(request, env);
     for (const [key, value] of Object.entries(cors)) response.headers.set(key, value);
     return response;
+  },
+  /** Daily job (cron in wrangler.jsonc): parcel reminders and returns. */
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(runParcelDeadlines(env));
   },
 } satisfies ExportedHandler<Env>;
