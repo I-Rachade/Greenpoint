@@ -26,7 +26,10 @@
     }
   ],
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "poinderecharge-media" }],
-  // Settings and secrets (ADMIN_PHONES, TEST_OTP, TWILIO_…) are set in the
+  // Login codes by e-mail through Cloudflare Email Service. The domain must be
+  // onboarded under Email Service > Email Sending (see docs/DEPLOYMENT.md).
+  "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["noreply@poinderecharge.com"] }],
+  // Settings and secrets (ADMIN_PHONES, ADMIN_EMAILS, TEST_OTP, DIDIT_API_KEY, …) are set in the
   // dashboard; keep them on deploy. See worker/env.ts.
   "keep_vars": true,
   "observability": { "enabled": true },

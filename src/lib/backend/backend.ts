@@ -11,6 +11,9 @@ import type {
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { Promotion, PromotionInput } from "../promo";
 
+/** Where a code goes: by SMS to the phone number or by e-mail. */
+export type CodeChannel = "sms" | "email";
+
 export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots" | "fullBatteries">>;
 
 /** Error codes shared by both backends, translated in the UI (see i18n `errors`). */
@@ -27,6 +30,8 @@ export type BackendErrorCode =
   | "own_reservation"
   | "reservation_not_active"
   | "phone_not_allowed"
+  | "invalid_contact"
+  | "contact_taken"
   | "invalid_code"
   | "invalid_pin"
   | "pin_locked"
@@ -58,18 +63,27 @@ export interface Backend {
   // Auth
   getProfile(): Promise<Profile | null>;
   onAuthChange(callback: (profile: Profile | null) => void): () => void;
-  /** Texts a code, needed to register and to set a new PIN when it is forgotten. */
-  sendCode(phone: string): Promise<void>;
   /**
-   * Checks the SMS code, sets the 4-digit PIN and signs in (new account or new PIN).
+   * Sends a code by SMS (phone number) or by e-mail (address), needed to register
+   * and to set a new PIN when it is forgotten. `contact` is normalised (see lib/contact.ts).
+   */
+  sendCode(contact: string): Promise<void>;
+  /**
+   * Checks the code, sets the 4-digit PIN and signs in (new account or new PIN).
    * `demoRole` is only honoured by the demo backend, so testers can try every view.
    */
-  register(phone: string, code: string, pin: string, demoRole?: UserRole): Promise<Profile>;
-  /** Everyday login with phone number and PIN. */
-  signIn(phone: string, pin: string, demoRole?: UserRole): Promise<Profile>;
+  register(contact: string, code: string, pin: string, demoRole?: UserRole): Promise<Profile>;
+  /** Everyday login with phone number or e-mail address, and PIN. */
+  signIn(contact: string, pin: string, demoRole?: UserRole): Promise<Profile>;
   signOut(): Promise<void>;
-  /** Deletes the signed-in user's account for good, after checking the PIN. */
-  deleteAccount(pin: string): Promise<void>;
+  /** Sends a code to a phone number or e-mail address the signed-in user wants to add. */
+  sendContactCode(contact: string): Promise<void>;
+  /** Adds that phone number or e-mail address to the account once its code is right. */
+  addContact(contact: string, code: string): Promise<Profile>;
+  /** Sends the code that confirms account deletion, by SMS or e-mail to the account's own contact. */
+  sendDeleteCode(channel: CodeChannel): Promise<void>;
+  /** Deletes the signed-in user's account for good, after checking the code. */
+  deleteAccount(channel: CodeChannel, code: string): Promise<void>;
 
   // Rider
   myReservations(): Promise<Reservation[]>;

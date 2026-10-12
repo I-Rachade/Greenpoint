@@ -9,7 +9,7 @@ import type {
   StationView,
   UserRole,
 } from "../types";
-import { BackendError, type Backend, type BackendErrorCode, type StatusPatch } from "./backend";
+import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StatusPatch } from "./backend";
 
 const TOKEN_KEY = "poinderecharge-session";
 /** How often open pages reload station data (other riders' holds, staff updates). */
@@ -140,16 +140,16 @@ export class CloudflareBackend implements Backend {
     };
   }
 
-  async sendCode(phone: string) {
-    await this.call("POST", "/api/auth/send", { phone });
+  async sendCode(contact: string) {
+    await this.call("POST", "/api/auth/send", { contact });
   }
 
-  register(phone: string, code: string, pin: string) {
-    return this.startSession("/api/auth/register", { phone, code: code.trim(), pin });
+  register(contact: string, code: string, pin: string) {
+    return this.startSession("/api/auth/register", { contact, code: code.trim(), pin });
   }
 
-  signIn(phone: string, pin: string) {
-    return this.startSession("/api/auth/login", { phone, pin });
+  signIn(contact: string, pin: string) {
+    return this.startSession("/api/auth/login", { contact, pin });
   }
 
   private async startSession(path: string, body: unknown) {
@@ -166,8 +166,22 @@ export class CloudflareBackend implements Backend {
     this.changed();
   }
 
-  async deleteAccount(pin: string) {
-    await this.call("POST", "/api/auth/delete-account", { pin });
+  async sendContactCode(contact: string) {
+    await this.call("POST", "/api/auth/contact/send", { contact });
+  }
+
+  async addContact(contact: string, code: string) {
+    const profile = await this.call<Profile>("POST", "/api/auth/contact", { contact, code: code.trim() });
+    this.authListeners.forEach((fn) => fn(profile));
+    return profile;
+  }
+
+  async sendDeleteCode(channel: CodeChannel) {
+    await this.call("POST", "/api/auth/delete-account/send", { channel });
+  }
+
+  async deleteAccount(channel: CodeChannel, code: string) {
+    await this.call("POST", "/api/auth/delete-account", { channel, code: code.trim() });
     this.dropSession();
     this.changed();
   }

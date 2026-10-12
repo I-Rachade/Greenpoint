@@ -6,6 +6,7 @@ import {
   type AuditTable,
   type ChargingPointInfo,
 } from "../src/lib/admin/types";
+import type { CodeChannel } from "../src/lib/backend/backend";
 import { MAX_PROMO_IMAGE_BYTES, pickPromotion, safeImage, safeLink, type Promotion, type PromotionInput } from "../src/lib/promo";
 import {
   MAX_UNUSED_RESERVATIONS_PER_DAY,
@@ -19,7 +20,17 @@ import {
   type StationView,
   type UserRole,
 } from "../src/lib/types";
-import { currentUser, deleteAccount, register, sendCode, signIn, signOut } from "./auth";
+import {
+  addContact,
+  currentUser,
+  deleteAccount,
+  register,
+  sendCode,
+  sendContactCode,
+  sendDeleteCode,
+  signIn,
+  signOut,
+} from "./auth";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 
@@ -496,8 +507,16 @@ async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
   const [stations, users, staff, reservations, points] = await Promise.all([
     c.stations(""),
     c.db
-      .prepare("select id, phone, full_name, role, created_at, last_sign_in_at from users order by created_at desc")
-      .all<{ id: string; phone: string; full_name: string | null; role: UserRole; created_at: string; last_sign_in_at: string | null }>(),
+      .prepare("select id, phone, email, full_name, role, created_at, last_sign_in_at from users order by created_at desc")
+      .all<{
+        id: string;
+        phone: string | null;
+        email: string | null;
+        full_name: string | null;
+        role: UserRole;
+        created_at: string;
+        last_sign_in_at: string | null;
+      }>(),
     c.db.prepare("select station_id, user_id from station_staff").all<{ station_id: string; user_id: string }>(),
     c.db
       .prepare("select * from reservations where created_at >= ? order by created_at desc limit 5000")
@@ -512,6 +531,7 @@ async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
     users: users.results.map((u) => ({
       id: u.id,
       phone: u.phone,
+      email: u.email,
       fullName: u.full_name,
       role: u.role,
       createdAt: u.created_at,
@@ -751,12 +771,14 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/stations$/, (c) => c.stations("where s.is_active = 1")],
   ["GET", /^\/api\/operators$/, (c) => listOperators(c)],
   ["GET", /^\/api\/me$/, (c) => c.user()],
+  // Auth bodies name the phone number or e-mail address "contact"; "phone" is the
+  // older name, still sent by app versions released before e-mail login.
   [
     "POST",
     /^\/api\/auth\/send$/,
     async (c) => {
-      const { phone } = await readJson<{ phone: string }>(c.request);
-      await sendCode(c.env, phone);
+      const body = await readJson<{ contact?: string; phone?: string }>(c.request);
+      await sendCode(c.env, body.contact ?? body.phone ?? "");
       return { ok: true };
     },
   ],
@@ -764,16 +786,16 @@ const ROUTES: [string, RegExp, Handler][] = [
     "POST",
     /^\/api\/auth\/register$/,
     async (c) => {
-      const { phone, code, pin } = await readJson<{ phone: string; code: string; pin: string }>(c.request);
-      return register(c.env, phone, code, pin);
+      const body = await readJson<{ contact?: string; phone?: string; code: string; pin: string }>(c.request);
+      return register(c.env, body.contact ?? body.phone ?? "", body.code, body.pin);
     },
   ],
   [
     "POST",
     /^\/api\/auth\/login$/,
     async (c) => {
-      const { phone, pin } = await readJson<{ phone: string; pin: string }>(c.request);
-      return signIn(c.env, phone, pin);
+      const body = await readJson<{ contact?: string; phone?: string; pin: string }>(c.request);
+      return signIn(c.env, body.contact ?? body.phone ?? "", body.pin);
     },
   ],
   [
@@ -786,10 +808,36 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
   [
     "POST",
+    /^\/api\/auth\/contact\/send$/,
+    async (c) => {
+      const { contact } = await readJson<{ contact: string }>(c.request);
+      await sendContactCode(c.env, c.request, contact);
+      return { ok: true };
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/auth\/contact$/,
+    async (c) => {
+      const { contact, code } = await readJson<{ contact: string; code: string }>(c.request);
+      return addContact(c.env, c.request, contact, code);
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/auth\/delete-account\/send$/,
+    async (c) => {
+      const { channel } = await readJson<{ channel: CodeChannel }>(c.request);
+      await sendDeleteCode(c.env, c.request, channel === "email" ? "email" : "sms");
+      return { ok: true };
+    },
+  ],
+  [
+    "POST",
     /^\/api\/auth\/delete-account$/,
     async (c) => {
-      const { pin } = await readJson<{ pin: string }>(c.request);
-      await deleteAccount(c.env, c.request, pin);
+      const body = await readJson<{ channel?: CodeChannel; code?: string; pin?: string }>(c.request);
+      await deleteAccount(c.env, c.request, body);
       return { ok: true };
     },
   ],

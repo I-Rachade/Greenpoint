@@ -54,7 +54,10 @@ export interface Reservation {
 
 export interface Profile {
   id: string;
-  phone: string;
+  /** Togolese number (+228…); null for accounts made with an e-mail address only. */
+  phone: string | null;
+  /** Lower-case e-mail address; null for accounts made with a phone number only. */
+  email: string | null;
   fullName: string | null;
   role: UserRole;
 }

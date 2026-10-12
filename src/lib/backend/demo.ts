@@ -14,7 +14,7 @@ import {
   type StationView,
   type UserRole,
 } from "../types";
-import { BackendError, type Backend, type StatusPatch } from "./backend";
+import { BackendError, type Backend, type CodeChannel, type StatusPatch } from "./backend";
 import { DEMO_OPERATORS, DEMO_STATIONS, initialDemoStatus } from "./demo-data";
 import { DEMO_STAFF, demoHistory, demoUsers } from "../admin/demo-seed";
 import {
@@ -53,7 +53,7 @@ interface DemoState {
   inactive?: string[];
   audit?: AuditEntry[];
   promotions?: Promotion[];
-  /** Demo PINs by phone number (stored in clear: demo only). */
+  /** Demo PINs by phone number or e-mail address (stored in clear: demo only). */
   pins?: Record<string, string>;
 }
 
@@ -228,26 +228,33 @@ export class DemoBackend implements Backend {
     // Nothing is sent in demo mode; the code is always DEMO_CODE.
   }
 
-  async register(phone: string, code: string, pin: string, demoRole: UserRole = "rider") {
+  async register(contact: string, code: string, pin: string, demoRole: UserRole = "rider") {
     if (!validPinFormat(pin)) throw new BackendError("bad_pin");
     if (weakPin(pin)) throw new BackendError("weak_pin");
     if (code.trim() !== DEMO_CODE) throw new BackendError("invalid_code");
     const state = this.load();
-    this.save({ ...state, pins: { ...state.pins, [phone]: pin } });
-    return this.signInAs(phone, demoRole);
+    this.save({ ...state, pins: { ...state.pins, [contact]: pin } });
+    return this.signInAs(contact, demoRole);
   }
 
-  async signIn(phone: string, pin: string, demoRole: UserRole = "rider") {
-    if (!validPinFormat(pin) || this.load().pins?.[phone] !== pin) throw new BackendError("invalid_pin");
-    return this.signInAs(phone, demoRole);
+  async signIn(contact: string, pin: string, demoRole: UserRole = "rider") {
+    if (!validPinFormat(pin) || this.load().pins?.[contact] !== pin) throw new BackendError("invalid_pin");
+    return this.signInAs(contact, demoRole);
   }
 
-  private signInAs(phone: string, demoRole: UserRole) {
+  private signInAs(contact: string, demoRole: UserRole) {
     if (HOSTED_DEMO && demoRole !== "rider") throw new BackendError("forbidden");
     const state = this.load();
     const users = state.users ?? demoUsers(new Date());
     const known = users.find((u) => u.id === `demo-${demoRole}`);
-    const profile: Profile = { id: `demo-${demoRole}`, phone, fullName: known?.fullName ?? null, role: demoRole };
+    const isEmail = contact.includes("@");
+    const profile: Profile = {
+      id: `demo-${demoRole}`,
+      phone: isEmail ? null : contact,
+      email: isEmail ? contact : null,
+      fullName: known?.fullName ?? null,
+      role: demoRole,
+    };
     const signedIn: AdminUser = {
       ...profile,
       createdAt: known?.createdAt ?? new Date().toISOString(),
@@ -261,12 +268,40 @@ export class DemoBackend implements Backend {
     this.save({ ...this.load(), profile: null });
   }
 
-  async deleteAccount(pin: string) {
+  async sendContactCode() {
+    this.requireProfile(this.load());
+  }
+
+  async addContact(contact: string, code: string) {
     const state = this.load();
     const profile = this.requireProfile(state);
-    if (state.pins?.[profile.phone] !== pin) throw new BackendError("invalid_pin");
+    if (code.trim() !== DEMO_CODE) throw new BackendError("invalid_code");
+    const field = contact.includes("@") ? "email" : "phone";
+    const updated: Profile = { ...profile, [field]: contact };
+    // The same PIN works with every contact of the account.
+    const pin = state.pins?.[profile.phone ?? ""] ?? state.pins?.[profile.email ?? ""];
+    this.save({
+      ...state,
+      profile: updated,
+      pins: pin ? { ...state.pins, [contact]: pin } : state.pins,
+      users: (state.users ?? []).map((u) => (u.id === profile.id ? { ...u, [field]: contact } : u)),
+    });
+    return updated;
+  }
+
+  async sendDeleteCode(channel: CodeChannel) {
+    const profile = this.requireProfile(this.load());
+    if (!(channel === "email" ? profile.email : profile.phone)) throw new BackendError("unknown");
+  }
+
+  async deleteAccount(channel: CodeChannel, code: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    if (!(channel === "email" ? profile.email : profile.phone)) throw new BackendError("unknown");
+    if (code.trim() !== DEMO_CODE) throw new BackendError("invalid_code");
     const pins = { ...state.pins };
-    delete pins[profile.phone];
+    if (profile.phone) delete pins[profile.phone];
+    if (profile.email) delete pins[profile.email];
     this.save({
       ...state,
       profile: null,
