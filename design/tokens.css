@@ -1,0 +1,42 @@
+/* Greenpoint Design-Tokens */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&family=Inter:wght@400;600&display=swap');
+
+:root {
+  --font-heading: Poppins, 'Segoe UI', Roboto, sans-serif;
+  --font-body: Inter, 'Segoe UI', Roboto, sans-serif;
+
+  --gp-green: #1DB954;        /* Hauptfarbe, Buttons, Pins */
+  --gp-green-dark: #12823B;   /* Links, grüner Text, Buttons mit weißer Schrift */
+  --gp-forest: #0B3B2E;       /* Text, Kopfzeile, Icons */
+  --gp-yellow: #FFC93C;       /* Blitz, GreenPlus */
+
+  --gp-bg: #F4F6F3;
+  --gp-surface: #FFFFFF;
+  --gp-border: #DDE3DE;
+  --gp-text: #0B3B2E;
+  --gp-text-muted: #5B6B63;
+
+  --gp-available: #1DB954;
+  --gp-low: #F59E0B;
+  --gp-closed: #D93B3B;
+  --gp-info: #2F80ED;
+
+  /* Schrift auf Farbflächen */
+  --gp-on-green: #0B3B2E;     /* nie Weiß auf --gp-green */
+  --gp-on-green-dark: #FFFFFF;
+  --gp-on-yellow: #0B3B2E;
+
+  --gp-radius-sm: 8px;
+  --gp-radius-md: 14px;
+  --gp-radius-lg: 20px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --gp-bg: #071F18;
+    --gp-surface: #0B3B2E;
+    --gp-border: #1E4D3F;
+    --gp-text: #E6F0EA;
+    --gp-text-muted: #9DB5AA;
+  }
+}
