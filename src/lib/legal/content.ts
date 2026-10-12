@@ -170,7 +170,7 @@ const fr: Record<LegalDocId, LegalDoc> = {
       {
         heading: "11. Fermeture du compte",
         body: [
-          "L'utilisateur peut demander la suppression de son compte à tout moment en écrivant à {email} et en indiquant son numéro de téléphone. Le compte est supprimé dans un délai d'un mois, sous réserve des données que la loi oblige à conserver (voir la politique de confidentialité).",
+          "L'utilisateur peut supprimer son compte à tout moment dans « Mon compte » (app.poinderecharge.com/compte), après confirmation avec son code PIN ; la suppression est immédiate. Il peut aussi la demander en écrivant à {email} avec son numéro de téléphone ; elle est alors effectuée dans un délai de 30 jours. Les données que la loi oblige à conserver sont gardées pour la durée requise (voir la politique de confidentialité).",
         ],
       },
       {
@@ -254,7 +254,7 @@ const fr: Record<LegalDocId, LegalDoc> = {
           [
             "Codes SMS : 24 heures au plus.",
             "Sessions de connexion : 60 jours, ou jusqu'à la déconnexion.",
-            "Compte : tant que le compte existe ; supprimé dans un délai d'un mois après votre demande.",
+            "Compte : tant que le compte existe. À la suppression du compte, le compte, les sessions et les réservations sont effacés et le numéro de téléphone est retiré du journal des actions.",
             "Réservations et journal des actions : [À COMPLÉTER : durée, proposition 12 mois].",
             "Journaux techniques du serveur : quelques jours, selon notre hébergeur.",
             "Paiements, le cas échéant : 5 ans, durée imposée par la réglementation des transactions électroniques.",
@@ -271,7 +271,7 @@ const fr: Record<LegalDocId, LegalDoc> = {
         heading: "8. Vos droits",
         body: [
           "Vous disposez d'un droit d'accès, de rectification, d'opposition et de suppression de vos données. Pour les exercer gratuitement, écrivez à {email} en indiquant votre numéro de téléphone. Nous répondons dans un délai d'un mois au plus. Nous pourrons vous demander de confirmer votre identité, par exemple par un code SMS.",
-          "Vous pouvez à tout moment retirer votre consentement en demandant la suppression de votre compte.",
+          "Vous pouvez à tout moment retirer votre consentement en supprimant votre compte dans « Mon compte » ou en le demandant par e-mail.",
           "Vous pouvez aussi adresser une réclamation à l'IPDCP (Instance de Protection des Données à Caractère Personnel), Lomé, Togo.",
         ],
       },
@@ -426,7 +426,7 @@ const en: Record<LegalDocId, LegalDoc> = {
       {
         heading: "11. Closing your account",
         body: [
-          "You can ask for your account to be deleted at any time by writing to {email} and stating your phone number. The account is deleted within one month, except for data the law requires us to keep (see the privacy policy).",
+          "You can delete your account at any time in “My account” (app.poinderecharge.com/compte) after confirming with your PIN; deletion is immediate. You can also ask for it by writing to {email} with your phone number; it is then done within 30 days. Data the law requires us to keep is kept for the required period (see the privacy policy).",
         ],
       },
       {
@@ -510,7 +510,7 @@ const en: Record<LegalDocId, LegalDoc> = {
           [
             "SMS codes: 24 hours at most.",
             "Login sessions: 60 days, or until you log out.",
-            "Account: as long as it exists; deleted within one month of your request.",
+            "Account: as long as it exists. When the account is deleted, the account, sessions and reservations are erased and the phone number is removed from the activity log.",
             "Reservations and activity log: [TO BE COMPLETED: period, suggested 12 months].",
             "Server logs: a few days, per our host.",
             "Payments, if any: 5 years, as required by the rules on electronic transactions.",
@@ -527,7 +527,7 @@ const en: Record<LegalDocId, LegalDoc> = {
         heading: "8. Your rights",
         body: [
           "You have the right to access, correct, object to and delete your data. To exercise these rights free of charge, write to {email} stating your phone number. We reply within one month at most and may ask you to confirm your identity, for example with an SMS code.",
-          "You can withdraw your consent at any time by asking for your account to be deleted.",
+          "You can withdraw your consent at any time by deleting your account in “My account” or asking for it by email.",
           "You can also complain to the IPDCP (Instance de Protection des Données à Caractère Personnel), Lomé, Togo.",
         ],
       },
