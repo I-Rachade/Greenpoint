@@ -9,9 +9,17 @@ const inter = Inter({ variable: "--font-inter", subsets: ["latin"], weight: ["40
 const poppins = Poppins({ variable: "--font-poppins", subsets: ["latin"], weight: ["600", "700"] });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://pointderecharge.com"),
   title: "pointderecharge",
   description: "Trouvez la station de recharge ou d'échange de batterie la plus proche à Lomé.",
   manifest: "/manifest.webmanifest",
+  openGraph: {
+    type: "website",
+    url: "https://pointderecharge.com",
+    siteName: "pointderecharge",
+    locale: "fr_TG",
+    images: ["/icon-512.png"],
+  },
   appleWebApp: { capable: true, title: "pointderecharge", statusBarStyle: "default" },
 };
 
