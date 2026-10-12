@@ -23,10 +23,13 @@ import { currentUser, register, sendCode, signIn, signOut } from "./auth";
 import {
   chargingPointsByStation,
   createDevice,
+  handleDeviceCommands,
   handleDeviceEvents,
   hasConnectedPointsSql,
   liveFreePointsSql,
   onlineSince,
+  startOutlet,
+  stopOutlet,
   type DeviceInput,
 } from "./devices";
 import type { Env } from "./env";
@@ -883,6 +886,16 @@ const ROUTES: [string, RegExp, Handler][] = [
       return createDevice(c.db, await readJson<DeviceInput>(c.request));
     },
   ],
+  [
+    "POST",
+    /^\/api\/admin\/devices\/([\w:-]+)\/outlets\/(\d+)\/(start|stop)$/,
+    async (c, [device, outlet, action]) => {
+      const admin = await c.requireAdmin();
+      if (action === "stop") return stopOutlet(c.db, device, Number(outlet), admin.id);
+      const { minutes } = await readJson<{ minutes?: number }>(c.request).catch(() => ({ minutes: undefined }));
+      return startOutlet(c.db, device, Number(outlet), admin.id, minutes);
+    },
+  ],
 ];
 
 export async function handleApi(request: Request, env: Env): Promise<Response> {
@@ -893,6 +906,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (mediaMatch && (request.method === "GET" || request.method === "HEAD")) return await media(c, mediaMatch[1]);
     // Sockets authenticate with their own key, not a user session.
     if (url.pathname === "/api/devices/events") return await handleDeviceEvents(request, env);
+    if (url.pathname === "/api/devices/commands") return await handleDeviceCommands(request, env);
     for (const [method, pattern, handler] of ROUTES) {
       const m = pattern.exec(url.pathname);
       if (!m) continue;

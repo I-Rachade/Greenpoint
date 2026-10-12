@@ -27,7 +27,7 @@ Browser / Android-App (Next.js, statisch)  ──►  Cloudflare Worker "pointde
 | `station_staff` | welcher Nutzer welche Station melden darf |
 | `reservations` | Akku oder Ladeplatz, gültig 20 Minuten, mit 4-stelligem Abholcode (sieht nur der Fahrer) |
 | `charging_points` | einzelne Ladeplätze pro Station; bei vernetzten Steckdosen meldet das Gerät den Status |
-| `devices`, `device_messages` | vernetzte Steckdosen (LoRa) und ihre Rohmeldungen, siehe [steckdosen-lora.md](steckdosen-lora.md) |
+| `devices`, `device_messages`, `device_commands` | vernetzte Steckdosen (LoRa), ihre Rohmeldungen und Schaltbefehle, siehe [steckdosen-lora.md](steckdosen-lora.md) |
 | `promotions` | Werbung für das Fenster beim Öffnen der App |
 | `audit_log` | Aktivitätsprotokoll: wer hat wann Status, Reservierungen, Rollen, Personal oder Stationen geändert (nur Admins lesen, siehe [BACKOFFICE.md](BACKOFFICE.md)) |
 

@@ -1,5 +1,6 @@
 import { DEVICE_OFFLINE_MINUTES } from "../src/lib/iot/charging-points";
-import { handleDeviceRequest, type Ingest } from "../src/lib/iot/device-events";
+import { deviceKeyError, handleDeviceRequest, type Ingest } from "../src/lib/iot/device-events";
+import { xingkeOrderNumber, xingkeStartCommand, xingkeStopCommand } from "../src/lib/iot/xingke-commands";
 import type { ChargingPoint, ChargingPointStatus } from "../src/lib/types";
 import type { Env } from "./env";
 import { ApiError, nowIso, uuid } from "./http";
@@ -61,7 +62,7 @@ export async function chargingPointsByStation(db: D1Database): Promise<Map<strin
 
 /** Applies one normalized message from a device. */
 export function ingest(db: D1Database): Ingest {
-  return async (rawId, outlets, payload) => {
+  return async (rawId, outlets, payload, extra = {}) => {
     const externalId = rawId.toUpperCase();
     const now = nowIso();
     await db
@@ -120,6 +121,22 @@ export function ingest(db: D1Database): Ingest {
             .bind(now, r.id, device.station_id, r.user_id, JSON.stringify({ status: ["active", "completed"], device: externalId })),
         );
       }
+    }
+
+    // A fault of the whole device takes every outlet out until it reports again.
+    if (extra.allOutlets) {
+      statements.push(db.prepare("update charging_points set status = ? where device_id = ?").bind(extra.allOutlets, externalId));
+    }
+    // The answer to a command we queued closes it.
+    if (extra.ack) {
+      statements.push(
+        db
+          .prepare(
+            `update device_commands set status = ?, result = ?, done_at = ?
+             where external_id = ? and order_no = ? and kind = ? and status in ('pending', 'sent')`,
+          )
+          .bind(extra.ack.ok ? "done" : "failed", extra.ack.code ?? null, now, externalId, extra.ack.order, extra.ack.kind),
+      );
     }
 
     // A message without outlet data is a heartbeat: the device is alive.
@@ -185,4 +202,78 @@ export async function createDevice(db: D1Database, input: DeviceInput) {
     throw err;
   }
   return { externalId, outlets };
+}
+
+// Commands -------------------------------------------------------------------
+
+/** A command not fetched by the bridge within this time is dropped, so an outlet never switches on late. */
+const COMMAND_TTL_SECONDS = 120;
+
+async function commandTarget(db: D1Database, rawId: string, outlet: number) {
+  const externalId = rawId.toUpperCase();
+  const point = await db
+    .prepare("select id from charging_points where device_id = ? and outlet = ?")
+    .bind(externalId, outlet)
+    .first();
+  if (!point) throw new ApiError("not_found", 404);
+  if (!/^\d{6}$/.test(externalId)) throw new ApiError("bad_request"); // only Xingke sockets take commands so far
+  return externalId;
+}
+
+/** Queues "switch outlet on", until full or for `minutes`. */
+export async function startOutlet(db: D1Database, rawId: string, outlet: number, actor: string, minutes?: number) {
+  const externalId = await commandTarget(db, rawId, outlet);
+  if (minutes !== undefined && !(Number.isInteger(minutes) && minutes >= 1 && minutes <= 998)) throw new ApiError("bad_request");
+  const order = xingkeOrderNumber();
+  const line = xingkeStartCommand(externalId, outlet, order, minutes);
+  await db
+    .prepare(
+      "insert into device_commands (external_id, outlet, kind, order_no, line, created_by, created_at) values (?, ?, 'start', ?, ?, ?, ?)",
+    )
+    .bind(externalId, outlet, order, line, actor, nowIso())
+    .run();
+  return { order };
+}
+
+/** Queues "switch outlet off" for the outlet's last started order. */
+export async function stopOutlet(db: D1Database, rawId: string, outlet: number, actor: string) {
+  const externalId = await commandTarget(db, rawId, outlet);
+  const last = await db
+    .prepare(
+      `select order_no from device_commands where external_id = ? and outlet = ? and kind = 'start' and status in ('sent', 'done')
+       order by id desc limit 1`,
+    )
+    .bind(externalId, outlet)
+    .first<{ order_no: string }>();
+  const order = last?.order_no ?? xingkeOrderNumber();
+  await db
+    .prepare(
+      "insert into device_commands (external_id, outlet, kind, order_no, line, created_by, created_at) values (?, ?, 'stop', ?, ?, ?, ?)",
+    )
+    .bind(externalId, outlet, order, xingkeStopCommand(externalId, outlet, order), actor, nowIso())
+    .run();
+  return { order };
+}
+
+/**
+ * GET /api/devices/commands[?device=123456]: pending command lines as plain text,
+ * oldest first. Each is handed out once; stale ones expire instead.
+ */
+export async function handleDeviceCommands(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") return Response.json({ error: "method_not_allowed" }, { status: 405 });
+  const denied = deviceKeyError(request, env.DEVICE_WEBHOOK_SECRET);
+  if (denied) return denied;
+  const device = new URL(request.url).searchParams.get("device")?.toUpperCase() ?? null;
+  const now = nowIso();
+  const cutoff = new Date(Date.now() - COMMAND_TTL_SECONDS * 1000).toISOString();
+  await env.DB.prepare("update device_commands set status = 'expired' where status = 'pending' and created_at < ?").bind(cutoff).run();
+  const { results } = await env.DB.prepare(
+    `update device_commands set status = 'sent', sent_at = ?1
+     where status = 'pending' and (?2 is null or external_id = ?2)
+     returning id, line`,
+  )
+    .bind(now, device)
+    .all<{ id: number; line: string }>();
+  const lines = results.sort((a, b) => a.id - b.id).map((r) => r.line);
+  return new Response(lines.join(""), { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
 }
