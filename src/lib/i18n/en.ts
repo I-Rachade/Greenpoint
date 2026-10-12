@@ -366,7 +366,7 @@ export const en: Dictionary = {
     },
     promotions: {
       title: "Ad on app opening",
-      intro: "A window shows when the app opens, at most once a day per device. If several are active, the one changed last is shown.",
+      intro: "A window shows every time the map is opened or revisited. If several are active, the one changed last is shown.",
       add: "New ad",
       empty: "No ads yet.",
       edit: "Edit",
@@ -415,6 +415,17 @@ export const en: Dictionary = {
     intro: "A question, a station to report or interested in partnering? Write to us.",
     email: "Email",
     link: "Contact",
+  },
+  legal: {
+    notice: "Legal notice",
+    terms: "Terms",
+    privacy: "Privacy",
+    updated: "Last updated: {date}",
+    back: "Back to the map",
+    accept: "I accept the {terms} and the {privacy}.",
+    acceptTerms: "terms of use",
+    acceptPrivacy: "privacy policy",
+    mustAccept: "Please accept the terms of use and the privacy policy.",
   },
   parcels: {
     title: "My parcels",
