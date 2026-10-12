@@ -30,8 +30,6 @@
    - `NEXT_PUBLIC_SUPABASE_URL` = Project URL
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY` = anon public Key
 4. "Save and Deploy". Jeder Push auf `main` veröffentlicht automatisch; jeder Pull Request bekommt eine Vorschau-Adresse.
-5. Domain **pointderecharge.com** verbinden:
-   - Am einfachsten: In Cloudflare **Add a domain** > `pointderecharge.com` (Plan Free). Cloudflare zeigt zwei Nameserver; diese beim Anbieter, bei dem die Domain gekauft wurde, als Nameserver eintragen. Das kann einige Stunden dauern.
-   - Danach im Pages-Projekt **Custom domains** > `pointderecharge.com` und `www.pointderecharge.com` hinzufügen. Cloudflare legt die DNS-Einträge und das HTTPS-Zertifikat selbst an.
+5. Domain: Die Webapp läuft unter **app.pointderecharge.com**, die Landingpage unter **pointderecharge.com**. Die Domain liegt bereits bei Cloudflare. Im Pages-Projekt **Custom domains** > **Set up a custom domain** > `app.pointderecharge.com` > **Activate domain**. Cloudflare legt den DNS-Eintrag und das HTTPS-Zertifikat selbst an.
 
-In Supabase unter **Authentication > URL Configuration** als Site URL `https://pointderecharge.com` eintragen.
+In Supabase unter **Authentication > URL Configuration** als Site URL `https://app.pointderecharge.com` eintragen.
