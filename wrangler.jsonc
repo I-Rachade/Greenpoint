@@ -1,0 +1,12 @@
+// Cloudflare Workers config: serves the static export (`out/`) as assets.
+// The Worker name must match the project name in the Cloudflare dashboard.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "greenpoint",
+  "compatibility_date": "2025-10-01",
+  "build": { "command": "npm run build" },
+  "assets": {
+    "directory": "./out",
+    "not_found_handling": "404-page"
+  }
+}

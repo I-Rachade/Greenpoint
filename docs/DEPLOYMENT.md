@@ -32,4 +32,13 @@
 4. "Save and Deploy". Jeder Push auf `main` veröffentlicht automatisch; jeder Pull Request bekommt eine Vorschau-Adresse.
 5. Domain: Die Webapp läuft unter **app.pointderecharge.com**, die Landingpage unter **pointderecharge.com**. Die Domain liegt bereits bei Cloudflare. Im Pages-Projekt **Custom domains** > **Set up a custom domain** > `app.pointderecharge.com` > **Activate domain**. Cloudflare legt den DNS-Eintrag und das HTTPS-Zertifikat selbst an.
 
+### Variante: Cloudflare Worker statt Pages
+
+Wurde das Projekt als **Worker** angelegt (Workers & Pages > Create > Import a repository), liest Cloudflare die Datei `wrangler.jsonc` im Repo. Sie baut die App mit `npm run build` und veröffentlicht den Ordner `out` als statische Dateien. Im Dashboard reicht dann:
+
+- Deploy command: `npx wrangler deploy` (Standard)
+- Die zwei `NEXT_PUBLIC_…`-Werte und `NODE_VERSION` unter **Settings > Build > Variables and secrets** eintragen (Build-Variablen, nicht Laufzeit-Variablen), weil sie beim Bauen in die App geschrieben werden.
+- Domain: **Settings > Domains & Routes > Add > Custom domain** > `app.pointderecharge.com`.
+- Der Worker-Name im Dashboard muss mit `name` in `wrangler.jsonc` übereinstimmen (`greenpoint`).
+
 In Supabase unter **Authentication > URL Configuration** als Site URL `https://app.pointderecharge.com` eintragen.
