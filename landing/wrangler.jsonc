@@ -1,0 +1,14 @@
+// Cloudflare Worker that serves the landing page as static files.
+// Workers Builds: root directory "landing", deploy command "npx wrangler deploy".
+{
+  "name": "greenpoint",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "poinderecharge.com", "custom_domain": true },
+    { "pattern": "www.poinderecharge.com", "custom_domain": true }
+  ],
+  "assets": {
+    "directory": "."
+  }
+}

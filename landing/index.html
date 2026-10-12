@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>poinderecharge – Recharge et échange de batterie à Lomé</title>
+  <meta name="description" content="poinderecharge montre en direct la station de recharge ou d'échange de batterie la plus proche pour votre scooter, tricycle, vélo ou trottinette électrique à Lomé.">
+  <meta name="theme-color" content="#0B3B2E">
+  <meta property="og:title" content="poinderecharge">
+  <meta property="og:description" content="Trouvez la station de recharge la plus proche à Lomé, en direct.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://poinderecharge.com/">
+  <meta property="og:image" content="https://poinderecharge.com/assets/app-icon-512.png">
+  <link rel="canonical" href="https://poinderecharge.com/">
+  <link rel="icon" href="assets/favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/app-icon-512.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&family=Inter:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a href="#" class="brand" aria-label="poinderecharge">
+        <img src="assets/schriftzug.svg" alt="poinderecharge" width="185" height="38">
+      </a>
+      <nav class="nav" aria-label="Navigation">
+        <a href="#how" data-i18n="nav.how">Comment ça marche</a>
+        <a href="#who" data-i18n="nav.who">Pour qui</a>
+        <a href="#loyalty">greenpoint</a>
+        <a href="#operators" data-i18n="nav.operators">Stations</a>
+      </nav>
+      <div class="topbar-actions">
+        <div class="lang" role="group" aria-label="Langue" data-i18n-aria="aria.lang">
+          <button type="button" data-lang="fr" aria-pressed="true">FR</button>
+          <button type="button" data-lang="en" aria-pressed="false">EN</button>
+        </div>
+        <a class="btn btn-primary btn-sm js-webapp" href="#" data-i18n="cta.openShort">Ouvrir l'app</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <section class="hero">
+      <div class="wrap hero-inner">
+        <div class="hero-copy">
+          <span class="eyebrow" data-i18n="hero.eyebrow">Lomé, Togo</span>
+          <h1 data-i18n="hero.title">La station de recharge la plus proche, en direct.</h1>
+          <p class="lead" data-i18n="hero.lead">poinderecharge vous montre sur la carte où recharger ou échanger la batterie de votre scooter, tricycle, vélo ou trottinette électrique, avec les places libres et les batteries pleines en temps réel.</p>
+          <div class="hero-ctas">
+            <a class="btn btn-primary js-webapp" href="#" data-i18n="cta.open">Ouvrir l'app web</a>
+            <a class="btn btn-ghost" href="#download" data-i18n="cta.mobile">Applis mobiles</a>
+          </div>
+          <ul class="hero-points">
+            <li data-i18n="hero.p1">App gratuite</li>
+            <li data-i18n="hero.p2">Sans installation</li>
+            <li data-i18n="hero.p3">Français et anglais</li>
+          </ul>
+        </div>
+
+        <!-- Phone mockup -->
+        <div class="hero-visual" aria-hidden="true">
+          <div class="phone">
+            <div class="phone-screen">
+              <div class="ph-top">
+                <img src="assets/schriftzug.svg" alt="" width="117" height="24">
+                <span class="ph-chip" data-i18n="mock.near">À proximité</span>
+              </div>
+              <svg class="ph-map" viewBox="0 0 300 360" preserveAspectRatio="xMidYMid slice">
+                <rect width="300" height="360" fill="#E8EFE9"/>
+                <path d="M0 250 C70 230 120 280 190 250 S300 220 300 220 V360 H0Z" fill="#CFE6F4"/>
+                <g stroke="#FFFFFF" stroke-width="9" fill="none" stroke-linecap="round">
+                  <path d="M-10 90 L310 140"/>
+                  <path d="M60 -10 L120 380"/>
+                  <path d="M210 -10 L180 240"/>
+                  <path d="M-10 200 L300 180"/>
+                </g>
+                <g stroke="#FFFFFF" stroke-width="4" fill="none" opacity=".8">
+                  <path d="M0 40 L300 60"/><path d="M160 0 L150 240"/><path d="M260 0 L250 230"/>
+                </g>
+                <rect x="140" y="20" width="50" height="40" rx="6" fill="#D6E9D5"/>
+                <rect x="18" y="120" width="34" height="50" rx="6" fill="#D6E9D5"/>
+                <!-- user -->
+                <circle cx="132" cy="165" r="22" fill="#2F80ED" opacity=".15"/>
+                <circle cx="132" cy="165" r="8" fill="#2F80ED" stroke="#fff" stroke-width="3"/>
+                <!-- stations -->
+                <g class="pin pin-pulse"><path d="M200 112c-11 0-19 8-19 18 0 13 19 30 19 30s19-17 19-30c0-10-8-18-19-18z" fill="#1DB954"/><circle cx="200" cy="130" r="7" fill="#0B3B2E"/></g>
+                <g><path d="M80 52c-9 0-15 6-15 14 0 10 15 24 15 24s15-14 15-24c0-8-6-14-15-14z" fill="#1DB954"/><circle cx="80" cy="66" r="5" fill="#0B3B2E"/></g>
+                <g><path d="M245 172c-9 0-15 6-15 14 0 10 15 24 15 24s15-14 15-24c0-8-6-14-15-14z" fill="#F59E0B"/><circle cx="245" cy="186" r="5" fill="#0B3B2E"/></g>
+                <g><path d="M40 210c-9 0-15 6-15 14 0 10 15 24 15 24s15-14 15-24c0-8-6-14-15-14z" fill="#D93B3B"/><circle cx="40" cy="224" r="5" fill="#fff"/></g>
+                <path d="M132 165 L170 150 L200 152" stroke="#12823B" stroke-width="3" stroke-dasharray="5 5" fill="none"/>
+              </svg>
+              <div class="ph-card">
+                <div class="ph-card-head">
+                  <div>
+                    <strong>Station Bè Kpota</strong>
+                    <span class="ph-sub" data-i18n="mock.dist">650 m · 3 min</span>
+                  </div>
+                  <span class="badge badge-ok" data-i18n="mock.avail">Disponible</span>
+                </div>
+                <div class="ph-stats">
+                  <div><b>4</b><span data-i18n="mock.slots">places libres</span></div>
+                  <div><b>9</b><span data-i18n="mock.batteries">batteries pleines</span></div>
+                </div>
+                <span class="ph-btn" data-i18n="mock.go">Y aller</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section id="how" class="section">
+      <div class="wrap">
+        <h2 data-i18n="how.title">Comment ça marche</h2>
+        <p class="section-lead" data-i18n="how.lead">Trois étapes, et vous repartez avec une batterie pleine.</p>
+        <ol class="steps">
+          <li class="card">
+            <span class="step-no">1</span>
+            <h3 data-i18n="how.s1t">Ouvrez la carte</h3>
+            <p data-i18n="how.s1">poinderecharge trouve votre position et affiche les stations autour de vous, la plus proche en premier.</p>
+          </li>
+          <li class="card">
+            <span class="step-no">2</span>
+            <h3 data-i18n="how.s2t">Voyez la disponibilité en direct</h3>
+            <p data-i18n="how.s2">Places de recharge libres, batteries pleines pour l'échange, et heures d'ouverture, mis à jour en temps réel.</p>
+          </li>
+          <li class="card">
+            <span class="step-no">3</span>
+            <h3 data-i18n="how.s3t">Réservez et roulez</h3>
+            <p data-i18n="how.s3">Réservez une place ou une batterie et laissez-vous guider jusqu'à la station.</p>
+          </li>
+        </ol>
+
+        <div class="services">
+          <div class="service card">
+            <div class="service-icon">
+              <svg viewBox="0 0 24 24" width="28" height="28"><path d="M13 2 4 14h7l-1 8 9-12h-7z" fill="currentColor"/></svg>
+            </div>
+            <div>
+              <h3 data-i18n="svc.chargeT">Recharge</h3>
+              <p data-i18n="svc.charge">Branchez votre véhicule sur une prise et rechargez pendant une pause.</p>
+            </div>
+          </div>
+          <div class="service card">
+            <div class="service-icon">
+              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9a8 8 0 0 1 14-3l2 2"/><path d="M20 4v4h-4"/><path d="M20 15a8 8 0 0 1-14 3l-2-2"/><path d="M4 20v-4h4"/></svg>
+            </div>
+            <div>
+              <h3 data-i18n="svc.swapT">Échange de batterie</h3>
+              <p data-i18n="svc.swap">Déposez la batterie vide, prenez une batterie pleine et repartez en deux minutes.</p>
+            </div>
+          </div>
+        </div>
+
+        <ul class="vehicles" aria-label="Véhicules" data-i18n-aria="aria.vehicles">
+          <li data-i18n="veh.moped">Scooter électrique</li>
+          <li data-i18n="veh.tricycle">Tricycle électrique</li>
+          <li data-i18n="veh.ebike">Vélo électrique</li>
+          <li data-i18n="veh.scooter">Trottinette électrique</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Audiences -->
+    <section id="who" class="section section-alt">
+      <div class="wrap">
+        <h2 data-i18n="who.title">Pour qui ?</h2>
+        <div class="grid-4">
+          <article class="card audience">
+            <h3 data-i18n="who.privateT">Conducteurs privés</h3>
+            <p data-i18n="who.private">Ne tombez plus en panne : la prochaine station et ses batteries disponibles, toujours sous la main.</p>
+          </article>
+          <article class="card audience">
+            <h3 data-i18n="who.sharingT">Conducteurs en partage</h3>
+            <p data-i18n="who.sharing">Moto-taxi ou location : trouvez vite une batterie pleine et perdez moins de courses.</p>
+          </article>
+          <article class="card audience">
+            <h3 data-i18n="who.deliveryT">Livreurs et flottes</h3>
+            <p data-i18n="who.delivery">Gardez vos livreurs sur la route et suivez la recharge de toute la flotte.</p>
+          </article>
+          <article class="card audience">
+            <h3 data-i18n="who.operatorT">Exploitants de stations</h3>
+            <p data-i18n="who.operator">Rendez votre station visible, gérez les batteries et les réservations depuis votre téléphone.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- greenpoint -->
+    <section id="loyalty" class="section">
+      <div class="wrap greenplus">
+        <img src="assets/greenpoint-treue-icon.svg" alt="" width="132" height="132" class="gp-icon">
+        <div>
+          <span class="eyebrow eyebrow-yellow" data-i18n="gp.eyebrow">Programme de fidélité · bientôt</span>
+          <h2><span class="green">green</span>point</h2>
+          <p class="section-lead" data-i18n="gp.lead">Bientôt, vos recharges et échanges de batterie vous rapporteront des points, à échanger contre des recharges gratuites et des réductions chez nos partenaires.</p>
+          <ul class="checks">
+            <li data-i18n="gp.p1">Des points pour vos recharges et échanges</li>
+            <li data-i18n="gp.p2">Des recharges offertes avec vos points</li>
+            <li data-i18n="gp.p3">Des bonus pour les conducteurs réguliers</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- Operators -->
+    <section id="operators" class="section section-dark">
+      <div class="wrap operators">
+        <div>
+          <h2 data-i18n="op.title">Vous exploitez une station ?</h2>
+          <p class="section-lead" data-i18n="op.lead">Inscrivez votre station de recharge ou d'échange sur poinderecharge. Les conducteurs vous trouvent sur la carte, et vous mettez à jour vos batteries disponibles en un geste.</p>
+        </div>
+        <a class="btn btn-primary" href="#" data-i18n="op.cta" id="operator-cta" hidden>Nous contacter</a>
+      </div>
+    </section>
+
+    <!-- Download -->
+    <section id="download" class="section">
+      <div class="wrap download">
+        <img src="assets/logo-farbe.svg" alt="" width="88" height="88">
+        <h2 data-i18n="dl.title">poinderecharge sur votre téléphone</h2>
+        <p class="section-lead" data-i18n="dl.lead">Les applis Android et iPhone arrivent bientôt. En attendant, l'app web fonctionne déjà dans votre navigateur et peut être ajoutée à l'écran d'accueil.</p>
+        <div class="stores">
+          <a class="store js-store" data-store="android" href="#" aria-disabled="true">
+            <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M4 2.5v19l10-9.5z" fill="#1DB954"/><path d="M14 12 4 2.5l13 7.2z" fill="#2F80ED"/><path d="M14 12 4 21.5l13-7.2z" fill="#D93B3B"/><path d="m17 9.7 3.4 1.9c.6.3.6 1.1 0 1.4L17 14.3 14 12z" fill="#FFC93C"/></svg>
+            <span><small class="js-store-label" data-i18n="dl.soon">Bientôt sur</small><b>Google Play</b></span>
+          </a>
+          <a class="store js-store" data-store="ios" href="#" aria-disabled="true">
+            <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M16.4 12.6c0-2.4 2-3.5 2-3.6-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.2-2.8.8-3.5.8s-1.8-.8-3-.8C7 7.2 5.5 8.1 4.7 9.6c-1.7 2.9-.4 7.2 1.2 9.5.8 1.1 1.7 2.4 2.9 2.4 1.2-.1 1.6-.8 3-.8s1.8.8 3 .8c1.3 0 2.1-1.2 2.8-2.3.9-1.3 1.3-2.6 1.3-2.7 0 0-2.5-1-2.5-3.9zM14.1 5.6c.6-.8 1.1-1.8 1-2.9-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.8 1 .1 2.1-.5 2.7-1.3z"/></svg>
+            <span><small class="js-store-label" data-i18n="dl.soon">Bientôt sur</small><b>App Store</b></span>
+          </a>
+        </div>
+        <a class="btn btn-primary js-webapp" href="#" data-i18n="cta.open">Ouvrir l'app web</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <a href="#" class="brand"><img src="assets/schriftzug-dunkel.svg" alt="poinderecharge" width="156" height="32"></a>
+      <p data-i18n="footer.text">Recharge et échange de batterie pour la mobilité électrique à Lomé.</p>
+      <p class="muted">© <span id="year">2026</span> poinderecharge</p>
+    </div>
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
