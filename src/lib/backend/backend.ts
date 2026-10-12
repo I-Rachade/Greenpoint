@@ -9,6 +9,7 @@ import type {
   UserRole,
 } from "../types";
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { Device, DeviceInput } from "../iot/devices";
 import type { Promotion, PromotionInput } from "../promo";
 
 export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots" | "fullBatteries">>;
@@ -33,6 +34,8 @@ export type BackendErrorCode =
   | "bad_pin"
   | "weak_pin"
   | "image_too_large"
+  | "invalid_device"
+  | "device_exists"
   | "rate_limited"
   | "forbidden"
   | "unknown";
@@ -92,6 +95,15 @@ export interface Backend {
   assignStaff(stationId: string, userId: string): Promise<void>;
   unassignStaff(stationId: string, userId: string): Promise<void>;
   setStationActive(stationId: string, active: boolean): Promise<void>;
+
+  // Connected sockets (admins only; see src/lib/iot/devices.ts)
+  listDevices(): Promise<Device[]>;
+  /** Registers a socket and creates one charging point per outlet. */
+  createDevice(input: DeviceInput): Promise<void>;
+  /** Removes a socket and its charging points. */
+  deleteDevice(externalId: string): Promise<void>;
+  /** Switches an outlet on (until full) or off; only where `canSwitch`. */
+  switchOutlet(externalId: string, outlet: number, on: boolean): Promise<void>;
 
   // Advertising popup (see src/lib/promo.ts)
   /** The ad to show when the app opens, or null. Public. */

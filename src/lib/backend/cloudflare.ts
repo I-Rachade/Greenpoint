@@ -1,4 +1,5 @@
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { Device, DeviceInput } from "../iot/devices";
 import type { Promotion, PromotionInput } from "../promo";
 import type {
   Operator,
@@ -34,6 +35,8 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "bad_pin",
   "weak_pin",
   "image_too_large",
+  "invalid_device",
+  "device_exists",
   "rate_limited",
   "forbidden",
 ];
@@ -242,6 +245,27 @@ export class CloudflareBackend implements Backend {
 
   async setStationActive(stationId: string, active: boolean) {
     await this.call("POST", `/api/admin/stations/${encodeURIComponent(stationId)}/active`, { active });
+    this.changed();
+  }
+
+  // Connected sockets ---------------------------------------------------------------
+
+  listDevices() {
+    return this.call<Device[]>("GET", "/api/admin/devices");
+  }
+
+  async createDevice(input: DeviceInput) {
+    await this.call("POST", "/api/admin/devices", input);
+    this.changed();
+  }
+
+  async deleteDevice(externalId: string) {
+    await this.call("DELETE", `/api/admin/devices/${encodeURIComponent(externalId)}`);
+    this.changed();
+  }
+
+  async switchOutlet(externalId: string, outlet: number, on: boolean) {
+    await this.call("POST", `/api/admin/devices/${encodeURIComponent(externalId)}/outlets/${outlet}/${on ? "start" : "stop"}`, {});
     this.changed();
   }
 

@@ -1,6 +1,15 @@
 import { DEVICE_OFFLINE_MINUTES } from "../src/lib/iot/charging-points";
 import { deviceKeyError, handleDeviceRequest, type Ingest } from "../src/lib/iot/device-events";
 import { xingkeOrderNumber, xingkeStartCommand, xingkeStopCommand } from "../src/lib/iot/xingke-commands";
+import {
+  canSwitch,
+  normalizeDeviceId,
+  outletLabel,
+  validDeviceInput,
+  type Device,
+  type DeviceInput,
+  type DeviceLink,
+} from "../src/lib/iot/devices";
 import type { ChargingPoint, ChargingPointStatus } from "../src/lib/types";
 import type { Env } from "./env";
 import { ApiError, nowIso, uuid } from "./http";
@@ -157,51 +166,108 @@ export function handleDeviceEvents(request: Request, env: Env): Promise<Response
   return handleDeviceRequest(request, env.DEVICE_WEBHOOK_SECRET, ingest(env.DB));
 }
 
-export interface DeviceInput {
-  externalId: string;
-  stationId: string;
-  vendor?: string;
-  model?: string;
-  link?: "lorawan" | "vendor_cloud" | "own_server";
-  outlets?: number;
+function auditDevice(db: D1Database, actor: string, action: "insert" | "delete", device: string, stationId: string, changes: object) {
+  return db
+    .prepare(
+      "insert into audit_log (at, actor, table_name, action, row_id, station_id, user_id, changes) values (?, ?, 'charging_points', ?, ?, ?, null, ?)",
+    )
+    .bind(nowIso(), actor, action, device, stationId, JSON.stringify(changes));
+}
+
+/** Recounts a station's free slots from its live outlets, if it still has any. */
+function recountFreeSlots(db: D1Database, stationId: string) {
+  return db
+    .prepare(
+      `update station_status set free_slots = ${liveFreePointsSql("?1", "?2")}, updated_at = ?3
+       where station_id = ?1 and ${hasConnectedPointsSql("?1")}`,
+    )
+    .bind(stationId, onlineSince(), nowIso());
 }
 
 /** Registers a socket and creates one charging point per outlet, labelled "<last 4 of id>-<outlet>". */
-export async function createDevice(db: D1Database, input: DeviceInput) {
-  const externalId = String(input.externalId ?? "").trim().toUpperCase();
-  const outlets = Math.floor(Number(input.outlets ?? 2));
+export async function createDevice(db: D1Database, input: DeviceInput, actor: string) {
+  if (!validDeviceInput(input)) throw new ApiError("invalid_device");
+  const externalId = normalizeDeviceId(input.externalId);
+  const outlets = input.outlets ?? 2;
   const link = input.link ?? "lorawan";
-  if (!/^[0-9A-Z:_-]{4,64}$/.test(externalId) || !(outlets >= 1 && outlets <= 16)) throw new ApiError("bad_request");
-  if (!["lorawan", "vendor_cloud", "own_server"].includes(link)) throw new ApiError("bad_request");
-  const station = await db.prepare("select id from stations where id = ?").bind(String(input.stationId)).first();
+  const stationId = String(input.stationId);
+  const station = await db.prepare("select id from stations where id = ?").bind(stationId).first();
   if (!station) throw new ApiError("station_not_found", 404);
 
   const now = nowIso();
+  const vendor = String(input.vendor ?? "").trim().slice(0, 80);
+  const model = String(input.model ?? "").trim().slice(0, 80);
   const statements = [
     db
       .prepare("insert into devices (external_id, station_id, vendor, model, link, outlets, created_at) values (?, ?, ?, ?, ?, ?, ?)")
-      .bind(externalId, input.stationId, String(input.vendor ?? ""), String(input.model ?? ""), link, outlets, now),
+      .bind(externalId, stationId, vendor, model, link, outlets, now),
   ];
   for (let n = 1; n <= outlets; n++) {
     statements.push(
       db
         .prepare("insert into charging_points (id, station_id, label, status, device_id, outlet, created_at) values (?, ?, ?, 'free', ?, ?, ?)")
-        .bind(uuid(), input.stationId, `${externalId.slice(-4)}-${n}`, externalId, n, now),
+        .bind(uuid(), stationId, outletLabel(externalId, n), externalId, n, now),
     );
   }
   // Nothing is offered until the device reports.
-  statements.push(
-    db
-      .prepare(`update station_status set free_slots = ${liveFreePointsSql("?1", "?2")} where station_id = ?1`)
-      .bind(input.stationId, onlineSince()),
-  );
+  statements.push(recountFreeSlots(db, stationId));
+  statements.push(auditDevice(db, actor, "insert", externalId, stationId, { device: externalId, outlets, vendor, model, link }));
   try {
     await db.batch(statements);
   } catch (err) {
-    if (/UNIQUE|PRIMARY KEY/i.test(String(err))) throw new ApiError("bad_request", 409);
+    if (/UNIQUE|PRIMARY KEY/i.test(String(err))) throw new ApiError("device_exists", 409);
     throw err;
   }
   return { externalId, outlets };
+}
+
+interface DeviceRow {
+  external_id: string;
+  station_id: string;
+  vendor: string;
+  model: string;
+  link: DeviceLink;
+  outlets: number;
+  last_seen_at: string | null;
+  created_at: string;
+}
+
+/** All sockets with their outlets, newest first. */
+export async function listDevices(db: D1Database): Promise<Device[]> {
+  const [{ results }, points] = await Promise.all([
+    db.prepare("select * from devices order by created_at desc").all<DeviceRow>(),
+    chargingPointsByStation(db),
+  ]);
+  const all = [...points.values()].flat();
+  return results.map((d) => ({
+    externalId: d.external_id,
+    stationId: d.station_id,
+    vendor: d.vendor,
+    model: d.model,
+    link: d.link,
+    outlets: d.outlets,
+    lastSeenAt: d.last_seen_at,
+    createdAt: d.created_at,
+    points: all.filter((p) => p.deviceId === d.external_id).sort((a, b) => (a.outlet ?? 0) - (b.outlet ?? 0)),
+  }));
+}
+
+/** Removes a socket, its charging points and queued commands. */
+export async function deleteDevice(db: D1Database, rawId: string, actor: string) {
+  const externalId = normalizeDeviceId(rawId);
+  const device = await db
+    .prepare("select station_id, outlets from devices where external_id = ?")
+    .bind(externalId)
+    .first<{ station_id: string; outlets: number }>();
+  if (!device) throw new ApiError("not_found", 404);
+  await db.batch([
+    db.prepare("delete from device_commands where external_id = ?").bind(externalId),
+    db.prepare("delete from charging_points where device_id = ?").bind(externalId),
+    db.prepare("delete from devices where external_id = ?").bind(externalId),
+    recountFreeSlots(db, device.station_id),
+    auditDevice(db, actor, "delete", externalId, device.station_id, { device: externalId, outlets: device.outlets }),
+  ]);
+  return { ok: true };
 }
 
 // Commands -------------------------------------------------------------------
@@ -210,13 +276,13 @@ export async function createDevice(db: D1Database, input: DeviceInput) {
 const COMMAND_TTL_SECONDS = 120;
 
 async function commandTarget(db: D1Database, rawId: string, outlet: number) {
-  const externalId = rawId.toUpperCase();
+  const externalId = normalizeDeviceId(rawId);
   const point = await db
     .prepare("select id from charging_points where device_id = ? and outlet = ?")
     .bind(externalId, outlet)
     .first();
   if (!point) throw new ApiError("not_found", 404);
-  if (!/^\d{6}$/.test(externalId)) throw new ApiError("bad_request"); // only Xingke sockets take commands so far
+  if (!canSwitch(externalId)) throw new ApiError("bad_request"); // only Xingke sockets take commands so far
   return externalId;
 }
 

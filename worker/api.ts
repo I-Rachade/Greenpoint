@@ -23,15 +23,17 @@ import { currentUser, register, sendCode, signIn, signOut } from "./auth";
 import {
   chargingPointsByStation,
   createDevice,
+  deleteDevice,
   handleDeviceCommands,
   handleDeviceEvents,
   hasConnectedPointsSql,
+  listDevices,
   liveFreePointsSql,
   onlineSince,
   startOutlet,
   stopOutlet,
-  type DeviceInput,
 } from "./devices";
+import type { DeviceInput } from "../src/lib/iot/devices";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 
@@ -882,15 +884,32 @@ const ROUTES: [string, RegExp, Handler][] = [
     "POST",
     /^\/api\/admin\/devices$/,
     async (c) => {
+      const admin = await c.requireAdmin();
+      return createDevice(c.db, await readJson<DeviceInput>(c.request), admin.id);
+    },
+  ],
+  [
+    "GET",
+    /^\/api\/admin\/devices$/,
+    async (c) => {
       await c.requireAdmin();
-      return createDevice(c.db, await readJson<DeviceInput>(c.request));
+      return listDevices(c.db);
+    },
+  ],
+  [
+    "DELETE",
+    /^\/api\/admin\/devices\/([\w:%-]+)$/,
+    async (c, [device]) => {
+      const admin = await c.requireAdmin();
+      return deleteDevice(c.db, decodeURIComponent(device), admin.id);
     },
   ],
   [
     "POST",
-    /^\/api\/admin\/devices\/([\w:-]+)\/outlets\/(\d+)\/(start|stop)$/,
-    async (c, [device, outlet, action]) => {
+    /^\/api\/admin\/devices\/([\w:%-]+)\/outlets\/(\d+)\/(start|stop)$/,
+    async (c, [encoded, outlet, action]) => {
       const admin = await c.requireAdmin();
+      const device = decodeURIComponent(encoded);
       if (action === "stop") return stopOutlet(c.db, device, Number(outlet), admin.id);
       const { minutes } = await readJson<{ minutes?: number }>(c.request).catch(() => ({ minutes: undefined }));
       return startOutlet(c.db, device, Number(outlet), admin.id, minutes);

@@ -31,13 +31,13 @@ Steckdose --LoRa--> Gateway --4G--> Netzwerkserver (TTN / ChirpStack)
 
 1. Migration einspielen: `npx wrangler d1 migrations apply DB --remote`.
 2. Schlüssel setzen: im Cloudflare-Dashboard unter **Workers > pointderecharge-app > Settings > Variables and secrets** ein Secret `DEVICE_WEBHOOK_SECRET` mit einem langen zufälligen Wert anlegen. Ohne Schlüssel lehnt der Worker alle Meldungen ab (503).
-3. Gerät anlegen (als Admin angemeldet, Token aus dem Login). Das legt pro Ausgang einen Ladeplatz an, bezeichnet `<letzte 4 Zeichen>-<Ausgang>`:
+3. Gerät anlegen: im Backoffice unter **Admin > Prises connectées > Ajouter une prise** Geräte-ID, Station, Anzahl der Ausgänge, Verbindung und Hersteller eintragen. Das legt pro Ausgang einen Ladeplatz an, bezeichnet `<letzte 4 Zeichen>-<Ausgang>`. Auf derselben Seite lässt sich eine Steckdose wieder löschen (samt Ladeplätzen) und bei Xingke-Steckdosen jeder Ausgang ein- und ausschalten. Ohne App geht es auch per API:
    ```bash
    curl -X POST https://app.poinderecharge.com/api/admin/devices \
      -H "Authorization: Bearer <admin-token>" -H "Content-Type: application/json" \
      -d '{"externalId":"A84041000181F0A1","stationId":"<station-id>","vendor":"Hersteller","model":"Modell","link":"lorawan","outlets":2}'
    ```
-   Danach die Bezeichnungen der Ladeplätze an die Aufkleber neben dem QR-Code anpassen (D1-Konsole: `update charging_points set label = 'A1' where device_id = '…' and outlet = 1;`) und `charging_slots` der Station auf die Anzahl der Ausgänge setzen.
+   (`GET /api/admin/devices` listet die Geräte, `DELETE /api/admin/devices/<id>` löscht eins.) Danach bei Bedarf die Bezeichnungen der Ladeplätze an die Aufkleber neben dem QR-Code anpassen (D1-Konsole: `update charging_points set label = 'A1' where device_id = '…' and outlet = 1;`) und `charging_slots` der Station auf die Anzahl der Ausgänge setzen.
 4. Netzwerkserver oder Hersteller-Cloud auf den Worker zeigen lassen:
    - URL: `https://app.poinderecharge.com/api/devices/events?format=ttn` (oder `chirpstack`, `generic`)
    - Header: `X-Device-Key: <DEVICE_WEBHOOK_SECRET>`
@@ -101,7 +101,7 @@ Was der Worker aus den Meldungen macht:
 | `01` / `02` | Antwort auf Ein/Aus | schließt den Befehl (`done` oder `failed`, `MSG` in `result`); Ein erfolgreich = lädt, Aus erfolgreich = frei |
 | `53`, `90`, `91`, `99` | Karte, Parameter, Neustart | nur Lebenszeichen |
 
-Ausgang schalten (als Admin):
+Ausgang schalten: im Backoffice unter **Prises connectées** mit „Allumer“ (bis voll) und „Éteindre“, oder per API:
 
 ```bash
 # ein, bis voll (oder mit {"minutes":60} für 60 Minuten)
