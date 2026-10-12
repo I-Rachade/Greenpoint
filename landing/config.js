@@ -8,5 +8,5 @@ window.POINTDERECHARGE_LINKS = {
   // App Store page, e.g. "https://apps.apple.com/app/id..."
   ios: null,
   // Contact address for station operators. While empty, the button is hidden.
-  contactEmail: "",
+  contactEmail: "contact@pointderecharge.com",
 };
