@@ -29,7 +29,7 @@
     "how.s2t": "See availability live",
     "how.s2": "Free charging spots, full batteries for swapping, opening hours and prices, updated in real time.",
     "how.s3t": "Book and ride",
-    "how.s3": "Reserve a spot or a battery, get directions to the station and earn GreenPlus points.",
+    "how.s3": "Reserve a spot or a battery, get directions to the station and earn greenpoint points.",
     "svc.chargeT": "Charging",
     "svc.charge": "Plug your vehicle into a socket and charge during a break.",
     "svc.swapT": "Battery swap",
