@@ -25,16 +25,17 @@ import {
   type AuditFilter,
   type StaffAssignment,
 } from "../admin/types";
+import { validPinFormat, weakPin } from "../pin";
 import { MAX_PROMO_IMAGE_BYTES, pickPromotion, type Promotion, type PromotionInput } from "../promo";
 
 const STORAGE_KEY = "poinderecharge-demo-v3";
-/** Every demo login accepts this code. */
+/** Every demo registration accepts this SMS code. */
 export const DEMO_CODE = "123456";
 /**
- * True when this build was made by Cloudflare (see next.config.ts) and still has
- * no Supabase keys. Visitors then see a clear notice and can only try the rider view.
+ * True when this build was made by Cloudflare (see next.config.ts) but set to the
+ * demo backend. Visitors then see a clear notice and can only try the rider view.
  */
-export const HOSTED_DEMO = process.env.NEXT_PUBLIC_HOSTED_BUILD === "1";
+export const HOSTED_DEMO = process.env.NEXT_PUBLIC_HOSTED_BUILD === "1" && process.env.NEXT_PUBLIC_BACKEND === "demo";
 
 function pickupCode(): string {
   return String(Math.floor(Math.random() * 10_000)).padStart(4, "0");
@@ -52,6 +53,8 @@ interface DemoState {
   inactive?: string[];
   audit?: AuditEntry[];
   promotions?: Promotion[];
+  /** Demo PINs by phone number (stored in clear: demo only). */
+  pins?: Record<string, string>;
 }
 
 function freshState(): DemoState {
@@ -114,7 +117,7 @@ function readAsDataUrl(file: File): Promise<string> {
 type AuditInput = Pick<AuditEntry, "table" | "action" | "rowId" | "changes"> &
   Partial<Pick<AuditEntry, "stationId" | "userId">>;
 
-/** Appends an activity log entry, like the audit trigger does in Supabase. */
+/** Appends an activity log entry, like the Worker does on Cloudflare. */
 function withAudit(state: DemoState, entry: AuditInput): DemoState {
   const audit = state.audit ?? [];
   const row: AuditEntry = {
@@ -133,7 +136,7 @@ function diff<T extends object>(before: T, after: T): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(after) as (keyof T)[]) {
     if (key === "updatedAt") continue;
-    // Column names as in Supabase (freeSlots -> free_slots), so the log reads the same.
+    // Column names as in the database (freeSlots -> free_slots), so the log reads the same.
     const column = (key as string).replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
     if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) out[column] = [before[key], after[key]];
   }
@@ -142,7 +145,7 @@ function diff<T extends object>(before: T, after: T): Record<string, unknown> {
 
 /**
  * Runs the whole app inside the browser with example data, so it can be tried
- * before Supabase is set up. Changes sync live between tabs of the same browser
+ * without the Cloudflare API. Changes sync live between tabs of the same browser
  * (open the operator view in one tab and the map in another).
  */
 export class DemoBackend implements Backend {
@@ -225,8 +228,21 @@ export class DemoBackend implements Backend {
     // Nothing is sent in demo mode; the code is always DEMO_CODE.
   }
 
-  async verifyCode(phone: string, code: string, demoRole: UserRole = "rider") {
+  async register(phone: string, code: string, pin: string, demoRole: UserRole = "rider") {
+    if (!validPinFormat(pin)) throw new BackendError("bad_pin");
+    if (weakPin(pin)) throw new BackendError("weak_pin");
     if (code.trim() !== DEMO_CODE) throw new BackendError("invalid_code");
+    const state = this.load();
+    this.save({ ...state, pins: { ...state.pins, [phone]: pin } });
+    return this.signInAs(phone, demoRole);
+  }
+
+  async signIn(phone: string, pin: string, demoRole: UserRole = "rider") {
+    if (!validPinFormat(pin) || this.load().pins?.[phone] !== pin) throw new BackendError("invalid_pin");
+    return this.signInAs(phone, demoRole);
+  }
+
+  private signInAs(phone: string, demoRole: UserRole) {
     if (HOSTED_DEMO && demoRole !== "rider") throw new BackendError("forbidden");
     const state = this.load();
     const users = state.users ?? demoUsers(new Date());

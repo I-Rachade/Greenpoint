@@ -28,7 +28,12 @@ export type BackendErrorCode =
   | "reservation_not_active"
   | "phone_not_allowed"
   | "invalid_code"
+  | "invalid_pin"
+  | "pin_locked"
+  | "bad_pin"
+  | "weak_pin"
   | "image_too_large"
+  | "rate_limited"
   | "forbidden"
   | "unknown";
 
@@ -40,10 +45,10 @@ export class BackendError extends Error {
 
 /**
  * Everything the app needs from its data source. Two implementations exist:
- * `DemoBackend` (browser storage, no setup) and `SupabaseBackend` (production).
+ * `DemoBackend` (browser storage, no setup) and `CloudflareBackend` (production, see worker/).
  */
 export interface Backend {
-  readonly mode: "demo" | "supabase";
+  readonly mode: "demo" | "cloudflare";
 
   // Stations (public)
   listStations(): Promise<StationView[]>;
@@ -53,9 +58,15 @@ export interface Backend {
   // Auth
   getProfile(): Promise<Profile | null>;
   onAuthChange(callback: (profile: Profile | null) => void): () => void;
+  /** Texts a code, needed to register and to set a new PIN when it is forgotten. */
   sendCode(phone: string): Promise<void>;
-  /** `demoRole` is only honoured by the demo backend, so testers can try every view. */
-  verifyCode(phone: string, code: string, demoRole?: UserRole): Promise<Profile>;
+  /**
+   * Checks the SMS code, sets the 4-digit PIN and signs in (new account or new PIN).
+   * `demoRole` is only honoured by the demo backend, so testers can try every view.
+   */
+  register(phone: string, code: string, pin: string, demoRole?: UserRole): Promise<Profile>;
+  /** Everyday login with phone number and PIN. */
+  signIn(phone: string, pin: string, demoRole?: UserRole): Promise<Profile>;
   signOut(): Promise<void>;
 
   // Rider

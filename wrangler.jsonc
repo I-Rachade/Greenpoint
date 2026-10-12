@@ -1,18 +1,36 @@
-// Cloudflare Workers config: serves the static export (`out/`) as assets.
+// Cloudflare Worker: the static web app (`out/`) plus the API in `worker/`
+// (D1 database, R2 images, SMS login). See docs/DEPLOYMENT.md.
 // The Worker name must match the project name in the Cloudflare dashboard.
 // The "greenpoint" Worker belongs to the landing page; this is a separate one.
 // The Worker keeps its original name although the app is now called poinderecharge.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "pointderecharge-app",
+  "main": "worker/index.ts",
   "compatibility_date": "2025-10-01",
   "build": { "command": "npm run build" },
   "routes": [{ "pattern": "app.poinderecharge.com", "custom_domain": true }],
   "assets": {
     "directory": "./out",
-    "not_found_handling": "404-page"
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    // Only /api/* runs the Worker code; pages and files are served directly.
+    "run_worker_first": ["/api/*"]
   },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "poinderecharge-db",
+      "database_id": "fb6b9f3a-e01b-4391-9237-dced6151602a",
+      "migrations_dir": "worker/migrations"
+    }
+  ],
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "poinderecharge-media" }],
+  // Settings and secrets (ADMIN_PHONES, TEST_OTP, TWILIO_…) are set in the
+  // dashboard; keep them on deploy. See worker/env.ts.
+  "keep_vars": true,
+  "observability": { "enabled": true },
   // Branches other than production build a Preview (`npx wrangler preview`),
-  // which needs this block. Empty: Previews use the top-level assets and settings.
+  // which needs this block. Empty: Previews use the top-level settings.
   "previews": {}
 }
