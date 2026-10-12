@@ -232,14 +232,11 @@ p { margin: 0 0 1em; }
 
 [hidden] { display: none !important; }
 
-/* Text wordmark until the new pointderecharge logo lettering is ready */
-.brand { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
-.brand img { height: 36px; width: auto; }
-.wordmark { font: 700 1.35rem/1 var(--font-heading); color: var(--gp-forest); letter-spacing: -.02em; }
-.wordmark-sm { font-size: .95rem; }
-.wordmark-light { color: #fff; font-size: 1.15rem; }
-.footer .brand img { height: 30px; }
+/* pointderecharge lettering (assets/schriftzug.svg, 656 x 130) */
+.brand { display: inline-flex; align-items: center; text-decoration: none; }
+.brand img { height: 38px; width: auto; }
+.ph-top img { height: 24px; width: auto; }
+.footer .brand img { height: 32px; }
 @media (max-width: 600px) {
   .brand img { height: 30px; }
-  .wordmark { font-size: 1.1rem; }
 }
