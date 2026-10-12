@@ -1,13 +1,12 @@
 // Cloudflare Worker that serves the landing page as static files.
 // Workers Builds: root directory "landing", deploy command "npx wrangler deploy".
+// Custom domain: add pointderecharge.com as a website (zone) in Cloudflare first, then
+// attach it under Worker greenpoint > Settings > Domains & Routes (or re-add a "routes" entry here).
 {
   "name": "greenpoint",
   "compatibility_date": "2026-10-01",
+  "workers_dev": true,
   "assets": {
     "directory": "."
-  },
-  "routes": [
-    { "pattern": "pointderecharge.com", "custom_domain": true },
-    { "pattern": "www.pointderecharge.com", "custom_domain": true }
-  ]
+  }
 }
