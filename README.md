@@ -17,7 +17,7 @@ npm run dev
 
 Dann http://localhost:3000 öffnen.
 
-Ohne weitere Einrichtung läuft die App im **Demo-Modus**: Beispielstationen in Lomé, gespeichert nur im Browser, Login mit jeder Telefonnummer und dem Code `123456`. Beim Login kann man die Rolle wählen (Fahrer, Personal, Admin), um alle Ansichten auszuprobieren. Tipp: Karte in einem Tab, Personal-Ansicht in einem zweiten Tab öffnen; Änderungen erscheinen sofort im anderen Tab.
+Ohne weitere Einrichtung läuft die App im **Demo-Modus**: Beispielstationen in Lomé, gespeichert nur im Browser, Registrierung mit jeder Telefonnummer und dem SMS-Code `123456`, danach Login mit der gewählten PIN. Dabei kann man die Rolle wählen (Fahrer, Personal, Admin), um alle Ansichten auszuprobieren. Tipp: Karte in einem Tab, Personal-Ansicht in einem zweiten Tab öffnen; Änderungen erscheinen sofort im anderen Tab.
 
 Für den echten Betrieb mit Datenbank und SMS-Login: siehe [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
@@ -37,7 +37,7 @@ Für den echten Betrieb mit Datenbank und SMS-Login: siehe [docs/DEPLOYMENT.md](
 | Pfad | Für wen | Inhalt |
 |---|---|---|
 | `/` | alle | Karte, Liste nach Entfernung, Filter, Stationsdetails, Reservieren |
-| `/login` | alle | Login per Telefonnummer und SMS-Code |
+| `/login` | alle | Login mit Telefonnummer und PIN; Registrierung und neue PIN per SMS-Code |
 | `/reservations` | angemeldete Nutzer | eigene Reservierungen mit Restzeit, stornieren |
 | `/operator` | Personal, Admin | Station öffnen/schließen, volle Akkus und freie Plätze melden, Reservierungen abschließen |
 | `/admin` | Admin | Stationen anlegen und bearbeiten |
@@ -57,7 +57,7 @@ src/
     backend/           Datenzugriff: Demo (Browser) und Cloudflare-API (Produktion)
 worker/
   index.ts, api.ts     API unter /api/* (Cloudflare Worker)
-  auth.ts              Login per SMS-Code, Sitzungen
+  auth.ts              Registrierung per SMS-Code, Login mit PIN, Sitzungen
   migrations/          Datenbank-Schema für D1 (SQL), in Reihenfolge
 assets/logo/, design/  Logo, Farben und Schriften
 docs/                  Architektur und Deployment

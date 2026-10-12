@@ -72,10 +72,10 @@ describe("DemoBackend promotions", () => {
     expect(await backend.currentPromotion()).toBeNull();
     await expect(backend.listPromotions()).rejects.toMatchObject({ code: "not_authenticated" });
 
-    await backend.verifyCode("+22890123456", DEMO_CODE, "rider");
+    await backend.register("+22890123456", DEMO_CODE, "2580", "rider");
     await expect(backend.listPromotions()).rejects.toMatchObject({ code: "forbidden" });
 
-    await backend.verifyCode("+22890000001", DEMO_CODE, "admin");
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
     const [example] = await backend.listPromotions();
     await backend.savePromotion(example.id, { ...example, isActive: true });
     expect((await backend.currentPromotion())?.id).toBe(example.id);

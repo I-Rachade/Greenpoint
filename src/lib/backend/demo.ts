@@ -25,10 +25,11 @@ import {
   type AuditFilter,
   type StaffAssignment,
 } from "../admin/types";
+import { validPinFormat, weakPin } from "../pin";
 import { MAX_PROMO_IMAGE_BYTES, pickPromotion, type Promotion, type PromotionInput } from "../promo";
 
 const STORAGE_KEY = "poinderecharge-demo-v3";
-/** Every demo login accepts this code. */
+/** Every demo registration accepts this SMS code. */
 export const DEMO_CODE = "123456";
 /**
  * True when this build was made by Cloudflare (see next.config.ts) but set to the
@@ -52,6 +53,8 @@ interface DemoState {
   inactive?: string[];
   audit?: AuditEntry[];
   promotions?: Promotion[];
+  /** Demo PINs by phone number (stored in clear: demo only). */
+  pins?: Record<string, string>;
 }
 
 function freshState(): DemoState {
@@ -225,8 +228,21 @@ export class DemoBackend implements Backend {
     // Nothing is sent in demo mode; the code is always DEMO_CODE.
   }
 
-  async verifyCode(phone: string, code: string, demoRole: UserRole = "rider") {
+  async register(phone: string, code: string, pin: string, demoRole: UserRole = "rider") {
+    if (!validPinFormat(pin)) throw new BackendError("bad_pin");
+    if (weakPin(pin)) throw new BackendError("weak_pin");
     if (code.trim() !== DEMO_CODE) throw new BackendError("invalid_code");
+    const state = this.load();
+    this.save({ ...state, pins: { ...state.pins, [phone]: pin } });
+    return this.signInAs(phone, demoRole);
+  }
+
+  async signIn(phone: string, pin: string, demoRole: UserRole = "rider") {
+    if (!validPinFormat(pin) || this.load().pins?.[phone] !== pin) throw new BackendError("invalid_pin");
+    return this.signInAs(phone, demoRole);
+  }
+
+  private signInAs(phone: string, demoRole: UserRole) {
     if (HOSTED_DEMO && demoRole !== "rider") throw new BackendError("forbidden");
     const state = this.load();
     const users = state.users ?? demoUsers(new Date());

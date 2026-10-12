@@ -29,6 +29,10 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "reservation_not_active",
   "phone_not_allowed",
   "invalid_code",
+  "invalid_pin",
+  "pin_locked",
+  "bad_pin",
+  "weak_pin",
   "image_too_large",
   "rate_limited",
   "forbidden",
@@ -140,11 +144,16 @@ export class CloudflareBackend implements Backend {
     await this.call("POST", "/api/auth/send", { phone });
   }
 
-  async verifyCode(phone: string, code: string) {
-    const { token, profile } = await this.call<{ token: string; profile: Profile }>("POST", "/api/auth/verify", {
-      phone,
-      code: code.trim(),
-    });
+  register(phone: string, code: string, pin: string) {
+    return this.startSession("/api/auth/register", { phone, code: code.trim(), pin });
+  }
+
+  signIn(phone: string, pin: string) {
+    return this.startSession("/api/auth/login", { phone, pin });
+  }
+
+  private async startSession(path: string, body: unknown) {
+    const { token, profile } = await this.call<{ token: string; profile: Profile }>("POST", path, body);
     this.token = token;
     this.authListeners.forEach((fn) => fn(profile));
     this.changed();

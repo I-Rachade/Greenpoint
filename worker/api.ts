@@ -19,7 +19,7 @@ import {
   type StationView,
   type UserRole,
 } from "../src/lib/types";
-import { currentUser, sendCode, signOut, verifyCode } from "./auth";
+import { currentUser, register, sendCode, signIn, signOut } from "./auth";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 
@@ -762,10 +762,18 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
   [
     "POST",
-    /^\/api\/auth\/verify$/,
+    /^\/api\/auth\/register$/,
     async (c) => {
-      const { phone, code } = await readJson<{ phone: string; code: string }>(c.request);
-      return verifyCode(c.env, phone, code);
+      const { phone, code, pin } = await readJson<{ phone: string; code: string; pin: string }>(c.request);
+      return register(c.env, phone, code, pin);
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/auth\/login$/,
+    async (c) => {
+      const { phone, pin } = await readJson<{ phone: string; pin: string }>(c.request);
+      return signIn(c.env, phone, pin);
     },
   ],
   [
