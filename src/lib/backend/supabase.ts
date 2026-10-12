@@ -19,6 +19,7 @@ import {
   type AuditFilter,
   type ChargingPointInfo,
 } from "../admin/types";
+import { MAX_PROMO_IMAGE_BYTES, pickPromotion, type Promotion, type PromotionInput } from "../promo";
 
 // Row shapes as returned by Supabase (snake_case).
 interface StationRow {
@@ -77,6 +78,36 @@ interface AuditRow {
   station_id: string | null;
   user_id: string | null;
   changes: Record<string, unknown>;
+}
+
+interface PromotionRow {
+  id: string;
+  title: string;
+  body: string;
+  image_url: string | null;
+  link_url: string | null;
+  link_label: string | null;
+  is_active: boolean;
+  starts_at: string | null;
+  ends_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function toPromotion(r: PromotionRow): Promotion {
+  return {
+    id: r.id,
+    title: r.title,
+    body: r.body,
+    imageUrl: r.image_url,
+    linkUrl: r.link_url,
+    linkLabel: r.link_label,
+    isActive: r.is_active,
+    startsAt: r.starts_at,
+    endsAt: r.ends_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
 }
 
 interface HoldRow {
@@ -457,5 +488,61 @@ export class SupabaseBackend implements Backend {
       .select("id");
     if (error) fail(error);
     if (!data?.length) throw new BackendError("forbidden");
+  }
+
+  // Advertising popup ---------------------------------------------------------
+
+  async currentPromotion(): Promise<Promotion | null> {
+    // RLS only returns running ads to riders; admins see all, so filter here too.
+    const now = new Date().toISOString();
+    const { data, error } = await this.client
+      .from("promotions")
+      .select("*")
+      .eq("is_active", true)
+      .or(`starts_at.is.null,starts_at.lte.${now}`)
+      .or(`ends_at.is.null,ends_at.gt.${now}`)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    if (error) fail(error);
+    return pickPromotion((data as PromotionRow[]).map(toPromotion), new Date());
+  }
+
+  async listPromotions(): Promise<Promotion[]> {
+    const { data, error } = await this.client.from("promotions").select("*").order("created_at", { ascending: false });
+    if (error) fail(error);
+    return (data as PromotionRow[]).map(toPromotion);
+  }
+
+  async savePromotion(id: string | null, input: PromotionInput) {
+    const row = {
+      title: input.title,
+      body: input.body,
+      image_url: input.imageUrl,
+      link_url: input.linkUrl,
+      link_label: input.linkLabel,
+      is_active: input.isActive,
+      starts_at: input.startsAt,
+      ends_at: input.endsAt,
+    };
+    const { data, error } = id
+      ? await this.client.from("promotions").update(row).eq("id", id).select("id")
+      : await this.client.from("promotions").insert(row).select("id");
+    if (error) fail(error);
+    if (!data?.length) throw new BackendError("forbidden");
+  }
+
+  async deletePromotion(id: string) {
+    const { error } = await this.client.from("promotions").delete().eq("id", id);
+    if (error) fail(error);
+  }
+
+  async uploadPromotionImage(file: File): Promise<string> {
+    if (file.size > MAX_PROMO_IMAGE_BYTES) throw new BackendError("image_too_large");
+    const ext = (file.name.split(".").pop() ?? "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+    const path = `${crypto.randomUUID()}.${ext}`;
+    const bucket = this.client.storage.from("promotions");
+    const { error } = await bucket.upload(path, file, { contentType: file.type, upsert: false });
+    if (error) fail(error);
+    return bucket.getPublicUrl(path).data.publicUrl;
   }
 }

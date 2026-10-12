@@ -25,6 +25,7 @@ import {
   type AuditFilter,
   type StaffAssignment,
 } from "../admin/types";
+import { MAX_PROMO_IMAGE_BYTES, pickPromotion, type Promotion, type PromotionInput } from "../promo";
 
 const STORAGE_KEY = "poinderecharge-demo-v3";
 /** Every demo login accepts this code. */
@@ -50,6 +51,7 @@ interface DemoState {
   staff?: StaffAssignment[];
   inactive?: string[];
   audit?: AuditEntry[];
+  promotions?: Promotion[];
 }
 
 function freshState(): DemoState {
@@ -64,7 +66,49 @@ function freshState(): DemoState {
     staff: DEMO_STAFF,
     inactive: [],
     audit: [],
+    promotions: [demoPromotion(now)],
   };
+}
+
+/** An example ad, switched off, so testers can try the popup from the backoffice. */
+function demoPromotion(now: Date): Promotion {
+  const at = now.toISOString();
+  return {
+    id: "promo-demo",
+    title: "1ère recharge offerte",
+    body: "Réservez votre première batterie avec poinderecharge : la recharge est offerte dans toutes nos stations à Lomé.",
+    imageUrl: null,
+    linkUrl: null,
+    linkLabel: null,
+    isActive: false,
+    startsAt: null,
+    endsAt: null,
+    createdAt: at,
+    updatedAt: at,
+  };
+}
+
+const EMPTY_PROMOTION: Promotion = {
+  id: "",
+  title: "",
+  body: "",
+  imageUrl: null,
+  linkUrl: null,
+  linkLabel: null,
+  isActive: false,
+  startsAt: null,
+  endsAt: null,
+  createdAt: "",
+  updatedAt: "",
+};
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new BackendError("unknown", "image unreadable"));
+    reader.readAsDataURL(file);
+  });
 }
 
 type AuditInput = Pick<AuditEntry, "table" | "action" | "rowId" | "changes"> &
@@ -505,5 +549,67 @@ export class DemoBackend implements Backend {
         { table: "stations", action: "update", rowId: stationId, stationId, changes: { is_active: [!active, active] } },
       ),
     );
+  }
+
+  // Advertising popup ---------------------------------------------------------
+
+  async currentPromotion(): Promise<Promotion | null> {
+    return pickPromotion(this.load().promotions ?? [], new Date());
+  }
+
+  async listPromotions(): Promise<Promotion[]> {
+    const state = this.load();
+    this.requireAdmin(state);
+    return [...(state.promotions ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async savePromotion(id: string | null, input: PromotionInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const list = state.promotions ?? [];
+    const at = new Date().toISOString();
+    const before = id ? list.find((p) => p.id === id) : undefined;
+    if (id && !before) throw new BackendError("unknown", "promotion not found");
+    const saved: Promotion = before
+      ? { ...before, ...input, updatedAt: at }
+      : { id: `promo-${Date.now().toString(36)}`, ...input, createdAt: at, updatedAt: at };
+    // Inline demo images would fill browser storage; the log only notes that the image changed.
+    const short = (v: unknown) => (typeof v === "string" && v.startsWith("data:") ? "(image)" : v);
+    const changes = diff(before ?? EMPTY_PROMOTION, saved);
+    if (Array.isArray(changes.image_url)) changes.image_url = changes.image_url.map(short);
+    delete changes.created_at;
+    // Insert: the new row, as the audit trigger records it.
+    if (!before) for (const [key, value] of Object.entries(changes)) changes[key] = (value as unknown[])[1];
+    this.save(
+      withAudit(
+        { ...state, promotions: before ? list.map((p) => (p.id === id ? saved : p)) : [saved, ...list] },
+        {
+          table: "promotions",
+          action: before ? "update" : "insert",
+          rowId: saved.id,
+          changes,
+        },
+      ),
+    );
+  }
+
+  async deletePromotion(id: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const before = (state.promotions ?? []).find((p) => p.id === id);
+    if (!before) return;
+    this.save(
+      withAudit(
+        { ...state, promotions: (state.promotions ?? []).filter((p) => p.id !== id) },
+        { table: "promotions", action: "delete", rowId: id, changes: { title: before.title } },
+      ),
+    );
+  }
+
+  /** The demo keeps images inline in browser storage, so they stay small. */
+  async uploadPromotionImage(file: File): Promise<string> {
+    this.requireAdmin(this.load());
+    if (file.size > MAX_PROMO_IMAGE_BYTES / 4) throw new BackendError("image_too_large");
+    return readAsDataUrl(file);
   }
 }

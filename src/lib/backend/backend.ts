@@ -9,6 +9,7 @@ import type {
   UserRole,
 } from "../types";
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { Promotion, PromotionInput } from "../promo";
 
 export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots" | "fullBatteries">>;
 
@@ -27,6 +28,7 @@ export type BackendErrorCode =
   | "reservation_not_active"
   | "phone_not_allowed"
   | "invalid_code"
+  | "image_too_large"
   | "forbidden"
   | "unknown";
 
@@ -79,4 +81,14 @@ export interface Backend {
   assignStaff(stationId: string, userId: string): Promise<void>;
   unassignStaff(stationId: string, userId: string): Promise<void>;
   setStationActive(stationId: string, active: boolean): Promise<void>;
+
+  // Advertising popup (see src/lib/promo.ts)
+  /** The ad to show when the app opens, or null. Public. */
+  currentPromotion(): Promise<Promotion | null>;
+  /** All ads, newest first (admins only). */
+  listPromotions(): Promise<Promotion[]>;
+  savePromotion(id: string | null, input: PromotionInput): Promise<void>;
+  deletePromotion(id: string): Promise<void>;
+  /** Stores an image and returns its public URL (admins only). */
+  uploadPromotionImage(file: File): Promise<string>;
 }

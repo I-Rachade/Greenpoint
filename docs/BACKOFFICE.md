@@ -9,6 +9,7 @@ Erreichbar unter `/admin`, nur für Nutzer mit Rolle `admin`. Alle Seiten aktual
 | **Réservations** `/admin/reservations` | Reservierungen der letzten 30 Tage, filterbar nach Status, Station und Telefon/Name; laufende Reservierungen stornieren |
 | **Utilisateurs** `/admin/users` | Alle Nutzer mit Rolle (änderbar, außer der eigenen), zugeordneten Stationen (zuordnen/entfernen), Reservierungen und Nichterscheinen in 30 Tagen, letzter Login |
 | **Activité** `/admin/activity` | Aktivitätsprotokoll: wer hat wann was geändert, filterbar nach Bereich, Station und Person |
+| **Publicité** `/admin/promotions` | Werbung, die beim Öffnen der App als Fenster erscheint: Titel, Text, Bild, optionaler Button mit Link, aktiv/inaktiv, Zeitraum; mit Vorschau |
 
 ## Auffälligkeiten („À vérifier“)
 
@@ -41,6 +42,15 @@ Migration `supabase/migrations/20261012000400_backoffice.sql`:
 
 Das Protokoll wächst mit jeder Reservierung und Statusmeldung. Ältere Einträge lassen sich im SQL-Editor löschen, z. B. `delete from audit_log where at < now() - interval '1 year';`.
 
+## Werbe-Popup („Publicité“)
+
+- Erscheint beim Öffnen der App (Karte, Reservierungen, Kontakt), nie im Backoffice, in der Stationsansicht oder beim Login.
+- Höchstens einmal pro Tag und Gerät. Wird die Werbung im Backoffice geändert oder eine andere aktiv, erscheint sie am selben Tag noch einmal.
+- Läuft keine Werbung (keine aktiv oder außerhalb des Zeitraums), erscheint nichts. Sind mehrere aktiv, zeigt die App die zuletzt geänderte.
+- Schließen per ×, Tippen neben das Fenster oder Zurück/Escape. Der Button öffnet den Link in einem neuen Tab; nur `https://`- und `http://`-Links werden angenommen.
+- Migration `supabase/migrations/20261012000600_promotions.sql`: Tabelle `promotions` (lesen darf jeder nur laufende Werbung, ändern nur Admins), Bilder im öffentlichen Storage-Bucket `promotions` (max. 2 MB, PNG/JPG/WebP/GIF, hochladen nur Admins). Änderungen stehen im Aktivitätsprotokoll.
+- Logik in `src/lib/promo.ts` (Tests in `src/lib/__tests__/promo.test.ts`), Fenster in `src/components/promo-popup.tsx`.
+
 ## Demo-Modus
 
-Ohne Supabase-Schlüssel zeigt das Backoffice Beispielnutzer, eine Reservierungshistorie der letzten zwei Wochen (inkl. eines Fahrers, der dreimal nicht erschienen ist) und protokolliert eigene Änderungen im Browser. Anmeldung als Admin: Code `123456`, Rolle „Administrateur“.
+Ohne Supabase-Schlüssel zeigt das Backoffice Beispielnutzer, eine Reservierungshistorie der letzten zwei Wochen (inkl. eines Fahrers, der dreimal nicht erschienen ist) und protokolliert eigene Änderungen im Browser. Anmeldung als Admin: Code `123456`, Rolle „Administrateur“. Eine Beispiel-Werbung („1ère recharge offerte“) ist angelegt, aber ausgeschaltet; Bilder bleiben im Demo-Modus im Browser (max. 500 KB).
