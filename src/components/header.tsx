@@ -35,7 +35,7 @@ export function Header() {
         </div>
       )}
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2 px-3 py-2 sm:flex-nowrap sm:gap-3 sm:px-4">
-        <Link href="/" className="flex items-center gap-2 font-semibold text-green-700 dark:text-green-400">
+        <Link href="/" className="flex items-center gap-2 font-semibold text-gp-green-dark dark:text-gp-green">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-mini.svg" alt="" width={28} height={28} className="h-7 w-7" />
           {t.appName}
@@ -50,7 +50,7 @@ export function Header() {
                 href={l.href}
                 className={`whitespace-nowrap rounded-full px-3 py-1 ${
                   pathname === l.href
-                    ? "bg-green-600 text-white"
+                    ? "bg-gp-green-dark text-white"
                     : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
                 }`}
               >
@@ -75,7 +75,7 @@ export function Header() {
             {t.nav.logout}
           </button>
         ) : (
-          <Link href="/login" className="whitespace-nowrap rounded-full bg-green-600 px-3 py-1 text-sm text-white">
+          <Link href="/login" className="whitespace-nowrap rounded-full bg-gp-green-dark px-3 py-1 text-sm text-white">
             {t.nav.login}
           </Link>
         )}

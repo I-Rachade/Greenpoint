@@ -22,7 +22,7 @@ function Counter({
 }) {
   const { t } = useI18n();
   const button =
-    "grid h-14 w-14 place-items-center rounded-full bg-green-600 text-3xl font-bold text-white active:scale-95 disabled:opacity-30";
+    "grid h-14 w-14 place-items-center rounded-full bg-gp-green-dark text-3xl font-bold text-white active:scale-95 disabled:opacity-30";
   return (
     <div className="rounded-xl border border-black/10 p-4 dark:border-white/10">
       <div className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">{label}</div>
@@ -77,7 +77,7 @@ function StationControls({ station, onError }: { station: StationView; onError: 
           type="button"
           onClick={() => run(() => backend.updateStatus(station.id, { isOpen: !station.status.isOpen }))}
           className={`rounded-full px-4 py-2 text-sm font-semibold text-white ${
-            station.status.isOpen ? "bg-green-600" : "bg-zinc-500"
+            station.status.isOpen ? "bg-gp-green-dark" : "bg-zinc-500"
           }`}
           aria-pressed={station.status.isOpen}
         >
@@ -120,7 +120,7 @@ function StationControls({ station, onError }: { station: StationView; onError: 
                 <button
                   type="button"
                   onClick={() => run(() => backend.completeReservation(r.id))}
-                  className="rounded-full bg-green-600 px-3 py-1 text-white"
+                  className="rounded-full bg-gp-green-dark px-3 py-1 text-white"
                 >
                   {t.operator.complete}
                 </button>

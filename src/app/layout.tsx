@@ -1,14 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import { Geist } from "next/font/google";
+import { Inter, Poppins } from "next/font/google";
 import { AppProvider } from "@/components/app-provider";
 import { Header } from "@/components/header";
 import { I18nProvider } from "@/components/i18n-provider";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
+const inter = Inter({ variable: "--font-inter", subsets: ["latin"], weight: ["400", "600"] });
+const poppins = Poppins({ variable: "--font-poppins", subsets: ["latin"], weight: ["600", "700"] });
 
 export const metadata: Metadata = {
   title: "Greenpoint",
@@ -25,7 +23,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="fr" className={`${geistSans.variable} h-full antialiased`}>
+    <html lang="fr" className={`${inter.variable} ${poppins.variable} h-full antialiased`}>
       <body className="flex h-full flex-col">
         <I18nProvider>
           <AppProvider>

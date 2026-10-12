@@ -94,9 +94,9 @@ export function StationMap({ stations, position, selectedId, onSelect }: Props) 
       width: "16px",
       height: "16px",
       borderRadius: "9999px",
-      background: "#2563eb",
+      background: "#2F80ED",
       border: "3px solid white",
-      boxShadow: "0 0 0 6px rgba(37,99,235,.25)",
+      boxShadow: "0 0 0 6px rgba(47,128,237,.25)",
     });
     userMarkerRef.current = new maplibregl.Marker({ element: el }).setLngLat([position.lng, position.lat]).addTo(map);
   }, [position]);

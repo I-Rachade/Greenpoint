@@ -15,7 +15,7 @@ export function RequireLogin({ roles, children }: { roles?: UserRole[]; children
   if (!profile) {
     return (
       <div className="p-6">
-        <Link href="/login" className="rounded-full bg-green-600 px-4 py-2 text-sm font-medium text-white">
+        <Link href="/login" className="rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white">
           {t.nav.login}
         </Link>
       </div>

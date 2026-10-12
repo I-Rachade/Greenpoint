@@ -59,7 +59,7 @@ export function ReservationList() {
                 </div>
               </div>
               <div className="text-right text-sm">
-                <div className={status === "active" ? "font-semibold text-green-700 dark:text-green-400" : "text-zinc-500"}>
+                <div className={status === "active" ? "font-semibold text-gp-green-dark dark:text-gp-green" : "text-zinc-500"}>
                   {t.reservations.status[status]}
                 </div>
                 {status === "active" && (
