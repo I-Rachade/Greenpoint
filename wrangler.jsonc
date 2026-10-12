@@ -11,5 +11,8 @@
   "assets": {
     "directory": "./out",
     "not_found_handling": "404-page"
-  }
+  },
+  // Branches other than production build a Preview (`npx wrangler preview`),
+  // which needs this block. Empty: Previews use the top-level assets and settings.
+  "previews": {}
 }
