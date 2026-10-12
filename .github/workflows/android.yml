@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # publish the test APK as a release download
     env:
       # Without these the app runs in demo mode (sample stations, code 123456).
       NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
@@ -38,6 +40,20 @@ jobs:
         with:
           name: poinderecharge-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      # Same APK as a direct link for phones (no zip, no GitHub login):
+      # https://github.com/I-Rachade/Greenpoint/releases/download/android-test/poinderecharge-test.apk
+      - name: Publish test APK
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/poinderecharge-test.apk"
+          if ! gh release view android-test --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create android-test --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+              --title "Android Test-APK" --notes "Neueste Test-Version der Android-App (Demo-Modus, Code 123456). Wird bei jedem Build ersetzt."
+          fi
+          gh release upload android-test "$RUNNER_TEMP/poinderecharge-test.apk" --repo "$GITHUB_REPOSITORY" --clobber
 
       # Signed bundle for Google Play, only once the upload key is stored as GitHub secrets.
       - name: Build signed app bundle

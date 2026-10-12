@@ -32,7 +32,7 @@ npx @capacitor/assets@3 generate --android --assetPath resources
 
 ## Test-APK aus GitHub
 
-Jeder Lauf von **Actions > Android** hängt `poinderecharge-debug-apk` an. Herunterladen, entpacken, die APK aufs Handy kopieren und öffnen (Installation aus unbekannten Quellen erlauben). Ohne die Repository-Variablen `NEXT_PUBLIC_SUPABASE_URL` und `NEXT_PUBLIC_SUPABASE_ANON_KEY` (Settings > Secrets and variables > Actions > Variables) läuft sie im Demo-Modus.
+Direkter Link fürs Handy: https://github.com/I-Rachade/Greenpoint/releases/download/android-test/poinderecharge-test.apk (Release `android-test`, wird bei jedem Build ersetzt). Außerdem hängt jeder Lauf von **Actions > Android** `poinderecharge-debug-apk` an. Herunterladen, entpacken, die APK aufs Handy kopieren und öffnen (Installation aus unbekannten Quellen erlauben). Ohne die Repository-Variablen `NEXT_PUBLIC_SUPABASE_URL` und `NEXT_PUBLIC_SUPABASE_ANON_KEY` (Settings > Secrets and variables > Actions > Variables) läuft sie im Demo-Modus.
 
 ## Google Play
 
