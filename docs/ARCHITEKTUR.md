@@ -26,7 +26,8 @@ Browser / Android-App (Next.js, statisch)  ──►  Cloudflare Worker "pointde
 | `station_status` | live: offen, freie Plätze, volle Akkus, wann und von wem gemeldet |
 | `station_staff` | welcher Nutzer welche Station melden darf |
 | `reservations` | Akku oder Ladeplatz, gültig 20 Minuten, mit 4-stelligem Abholcode (sieht nur der Fahrer) |
-| `charging_points` | einzelne Ladeplätze pro Station (Vorbereitung für vernetzte Steckdosen) |
+| `charging_points` | einzelne Ladeplätze pro Station; bei vernetzten Steckdosen meldet das Gerät den Status |
+| `devices`, `device_messages`, `device_commands` | vernetzte Steckdosen (LoRa), ihre Rohmeldungen und Schaltbefehle, siehe [steckdosen-lora.md](steckdosen-lora.md) |
 | `promotions` | Werbung für das Fenster beim Öffnen der App |
 | `audit_log` | Aktivitätsprotokoll: wer hat wann Status, Reservierungen, Rollen, Personal oder Stationen geändert (nur Admins lesen, siehe [BACKOFFICE.md](BACKOFFICE.md)) |
 
@@ -45,6 +46,6 @@ So kann jeder die App sofort ausprobieren, und die Oberfläche hängt nicht an d
 
 - Bezahlung mit Flooz und T-Money über einen Zahlungsanbieter (Rückmeldung des Anbieters an eine Route im Worker)
 - greenpoint-Treuepunkte (Regeln, Prämien, Punktebuchungen; siehe Projektplan)
-- Vernetzte Steckdosen (LoRa): Geräte melden den Status von `charging_points` selbst
+- Vernetzte Steckdosen (LoRa): Statusmeldung ist eingebaut ([steckdosen-lora.md](steckdosen-lora.md)); Fernsteuerung und Abrechnung pro Ladevorgang folgen mit der Bezahlung
 - Flottenbereich für Lieferdienste
 - Mobile App (Capacitor), gleiche API

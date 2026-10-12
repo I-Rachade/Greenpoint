@@ -13,4 +13,6 @@ export interface Env {
   ADMIN_PHONES?: string;
   /** Most login SMS sent per hour across all numbers (cost protection). Default 30. */
   OTP_HOURLY_LIMIT?: string;
+  /** Shared key of the connected sockets (secret), see docs/steckdosen-lora.md. */
+  DEVICE_WEBHOOK_SECRET?: string;
 }
