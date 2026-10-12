@@ -27,6 +27,22 @@ import {
 } from "../admin/types";
 import { validPinFormat, weakPin } from "../pin";
 import { MAX_PROMO_IMAGE_BYTES, pickPromotion, type Promotion, type PromotionInput } from "../promo";
+import {
+  DEFAULT_PARCEL_SIZES,
+  newTrackingNo,
+  PARCEL_CODE_LOCK_MINUTES,
+  PARCEL_MAX_CODE_FAILURES,
+  PARCEL_PICKUP_DAYS,
+  parsePickupInput,
+  sizeFor,
+  type AdminParcels,
+  type Parcel,
+  type ParcelDepot,
+  type ParcelDepotInput,
+  type ParcelInput,
+  type ParcelSizeTier,
+} from "../parcels";
+import { normalizeTogoPhone } from "../phone";
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 
 const STORAGE_KEY = "poinderecharge-demo-v3";
@@ -55,6 +71,11 @@ interface DemoState {
   audit?: AuditEntry[];
   promotions?: Promotion[];
   devices?: Device[];
+  /** Parcel depot; parcels keep their pickup code here (demo only). */
+  parcels?: Parcel[];
+  parcelDepots?: ParcelDepot[];
+  parcelSizes?: ParcelSizeTier[];
+  parcelCodeFailures?: { stationId: string; at: string }[];
   /** Demo PINs by phone number or e-mail address (stored in clear: demo only). */
   pins?: Record<string, string>;
 }
@@ -91,6 +112,16 @@ function seedDevices(): Device[] {
       points: DEMO_CHARGING_POINTS,
     },
   ];
+}
+
+/** Depots at four own stations, so parcels can be tried right away. */
+function seedDepots(): ParcelDepot[] {
+  return ["st-grand-marche", "st-tokoin", "st-universite", "st-be"].map((stationId) => ({
+    stationId,
+    isActive: true,
+    note: "au comptoir",
+    lockers: 0,
+  }));
 }
 
 /** An example ad, switched off, so testers can try the popup from the backoffice. */
@@ -724,6 +755,291 @@ export class DemoBackend implements Backend {
           },
     );
     this.save({ ...state, devices });
+  }
+
+  // Parcel depot --------------------------------------------------------------
+
+  /** Parcels past their pickup deadline go into storage (the Worker does this in a daily job). */
+  private parcelsOf(state: DemoState): Parcel[] {
+    const now = new Date().toISOString();
+    return (state.parcels ?? []).map((p) =>
+      p.status === "arrived" && p.pickupDeadline && p.pickupDeadline <= now
+        ? { ...p, status: "stored" as const, pickupCode: undefined }
+        : p,
+    );
+  }
+
+  private saveParcels(state: DemoState, parcels: Parcel[], audit?: AuditInput) {
+    const next = { ...state, parcels };
+    this.save(audit ? withAudit(next, audit) : next);
+  }
+
+  private requireStaff(state: DemoState): Profile {
+    const profile = this.requireProfile(state);
+    if (profile.role !== "operator" && profile.role !== "admin") throw new BackendError("forbidden");
+    return profile;
+  }
+
+  private activeDepot(state: DemoState, stationId: string): boolean {
+    const inactive = new Set(state.inactive ?? []);
+    return (state.parcelDepots ?? seedDepots()).some((d) => d.stationId === stationId && d.isActive) && !inactive.has(stationId);
+  }
+
+  async parcelInfo() {
+    const state = this.load();
+    return {
+      depots: (state.parcelDepots ?? seedDepots()).filter((d) => this.activeDepot(state, d.stationId)),
+      sizes: state.parcelSizes ?? DEFAULT_PARCEL_SIZES,
+    };
+  }
+
+  async myParcels(): Promise<Parcel[]> {
+    const state = this.load();
+    const profile = state.profile;
+    if (!profile) return [];
+    const mine = (party: Parcel["sender"]) => party.userId === profile.id || (!!profile.phone && party.phone === profile.phone);
+    return this.parcelsOf(state)
+      .filter((p) => mine(p.sender) || mine(p.recipient))
+      .map((p) => {
+        const received = mine(p.recipient);
+        return { ...p, pickupCode: received && p.status === "arrived" ? p.pickupCode : undefined, direction: received ? "received" : "sent" } as Parcel;
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async stationParcels(stationId: string): Promise<Parcel[]> {
+    const state = this.load();
+    this.requireStaff(state);
+    return this.parcelsOf(state)
+      .filter((p) => p.fromStationId === stationId || p.toStationId === stationId)
+      .map((p) => ({ ...p, pickupCode: undefined }))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /** The demo account of this phone number; adds one (without PIN) when there is none. */
+  private demoAccount(state: DemoState, phone: string, name: string | null): { state: DemoState; userId: string } {
+    const users = state.users ?? demoUsers(new Date());
+    const known = users.find((u) => u.phone === phone);
+    if (known) return { state, userId: known.id };
+    const user: AdminUser = {
+      id: `demo-parcel-${phone.slice(-8)}`,
+      phone,
+      email: null,
+      fullName: name,
+      role: "rider",
+      createdAt: new Date().toISOString(),
+      lastSignInAt: null,
+    };
+    return { state: { ...state, users: [user, ...users] }, userId: user.id };
+  }
+
+  async createParcel(stationId: string, input: ParcelInput): Promise<Parcel> {
+    let state = this.load();
+    const staff = this.requireStaff(state);
+    const senderPhone = normalizeTogoPhone(input.senderPhone ?? "");
+    const recipientPhone = normalizeTogoPhone(input.recipientPhone ?? "");
+    if (!senderPhone || !recipientPhone) throw new BackendError("phone_not_allowed");
+    if (input.toStationId === stationId) throw new BackendError("same_station");
+    if (!this.activeDepot(state, stationId) || !this.activeDepot(state, input.toStationId)) throw new BackendError("depot_inactive");
+    const content = (input.content ?? "").trim();
+    if (!content) throw new BackendError("unknown", "content missing");
+    const tier = sizeFor(input.measures, state.parcelSizes ?? DEFAULT_PARCEL_SIZES);
+    if (!tier) throw new BackendError("parcel_too_large");
+    const senderName = input.senderName?.trim() || null;
+    const recipientName = input.recipientName?.trim() || null;
+    const sender = this.demoAccount(state, senderPhone, senderName);
+    const recipient = this.demoAccount(sender.state, recipientPhone, recipientName);
+    state = recipient.state;
+    const now = new Date().toISOString();
+    const parcel: Parcel = {
+      id: crypto.randomUUID(),
+      trackingNo: newTrackingNo(),
+      fromStationId: stationId,
+      toStationId: input.toStationId,
+      sender: { userId: sender.userId, phone: senderPhone, name: senderName },
+      recipient: { userId: recipient.userId, phone: recipientPhone, name: recipientName },
+      content: content.slice(0, 300),
+      declaredValue: input.declaredValue ?? null,
+      measures: input.measures,
+      size: tier.size,
+      priceFcfa: tier.priceFcfa,
+      paymentMethod: "cash",
+      paidAt: now,
+      status: "deposited",
+      createdAt: now,
+      inTransitAt: null,
+      arrivedAt: null,
+      pickedUpAt: null,
+      pickupDeadline: null,
+      lockerNo: null,
+    };
+    this.saveParcels(state, [parcel, ...this.parcelsOf(state)], {
+      table: "parcels",
+      action: "insert",
+      rowId: parcel.id,
+      stationId,
+      userId: sender.userId,
+      changes: { tracking_no: parcel.trackingNo, to_station_id: parcel.toStationId, size: tier.size, price_fcfa: tier.priceFcfa, created_by: staff.id },
+    });
+    return parcel;
+  }
+
+  async markParcelsInTransit(stationId: string, ids: string[]) {
+    const state = this.load();
+    this.requireStaff(state);
+    const parcels = this.parcelsOf(state);
+    const chosen = parcels.filter((p) => ids.includes(p.id));
+    if (chosen.length !== ids.length || chosen.some((p) => p.fromStationId !== stationId || p.status !== "deposited")) {
+      throw new BackendError("parcel_wrong_status");
+    }
+    const now = new Date().toISOString();
+    this.saveParcels(
+      state,
+      parcels.map((p) => (ids.includes(p.id) ? { ...p, status: "in_transit" as const, inTransitAt: now } : p)),
+      { table: "parcels", action: "update", rowId: ids.join(","), stationId, changes: { status: ["deposited", "in_transit"] } },
+    );
+  }
+
+  async markParcelsArrived(stationId: string, ids: string[]) {
+    const state = this.load();
+    this.requireStaff(state);
+    const parcels = this.parcelsOf(state);
+    const chosen = parcels.filter((p) => ids.includes(p.id));
+    if (chosen.length !== ids.length || chosen.some((p) => p.toStationId !== stationId || p.status !== "in_transit")) {
+      throw new BackendError("parcel_wrong_status");
+    }
+    const now = new Date();
+    const deadline = new Date(now.getTime() + PARCEL_PICKUP_DAYS * 86_400_000).toISOString();
+    const taken = new Set(parcels.filter((p) => p.toStationId === stationId && p.status === "arrived").map((p) => p.pickupCode));
+    const newCode = () => {
+      let code: string;
+      do code = String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0");
+      while (taken.has(code));
+      taken.add(code);
+      return code;
+    };
+    this.saveParcels(
+      state,
+      parcels.map((p) =>
+        ids.includes(p.id)
+          ? { ...p, status: "arrived" as const, arrivedAt: now.toISOString(), pickupDeadline: deadline, pickupCode: newCode() }
+          : p,
+      ),
+      { table: "parcels", action: "update", rowId: ids.join(","), stationId, changes: { status: ["in_transit", "arrived"] } },
+    );
+  }
+
+  async pickUpParcel(stationId: string, codeOrQr: string): Promise<Parcel> {
+    const state = this.load();
+    this.requireStaff(state);
+    const since = Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000;
+    const failures = (state.parcelCodeFailures ?? []).filter((f) => f.stationId === stationId && new Date(f.at).getTime() > since);
+    if (failures.length >= PARCEL_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    const input = parsePickupInput(codeOrQr);
+    const parcels = this.parcelsOf(state);
+    const parcel = input
+      ? parcels.find(
+          (p) =>
+            p.toStationId === stationId &&
+            p.status === "arrived" &&
+            p.pickupCode === input.code &&
+            (!input.trackingNo || p.trackingNo === input.trackingNo),
+        )
+      : undefined;
+    if (!parcel) {
+      this.save({ ...state, parcelCodeFailures: [...failures, { stationId, at: new Date().toISOString() }] });
+      throw new BackendError("wrong_pickup_code");
+    }
+    const done: Parcel = { ...parcel, status: "picked_up", pickedUpAt: new Date().toISOString(), pickupCode: undefined };
+    this.saveParcels(
+      state,
+      parcels.map((p) => (p.id === parcel.id ? done : p)),
+      { table: "parcels", action: "update", rowId: parcel.id, stationId, changes: { status: ["arrived", "picked_up"] } },
+    );
+    return done;
+  }
+
+  async cancelParcel(id: string) {
+    const state = this.load();
+    this.requireStaff(state);
+    const parcels = this.parcelsOf(state);
+    const parcel = parcels.find((p) => p.id === id);
+    if (!parcel) throw new BackendError("parcel_not_found");
+    if (parcel.status !== "deposited") throw new BackendError("parcel_wrong_status");
+    this.saveParcels(
+      state,
+      parcels.map((p) => (p.id === id ? { ...p, status: "cancelled" as const } : p)),
+      { table: "parcels", action: "update", rowId: id, stationId: parcel.fromStationId, changes: { status: ["deposited", "cancelled"] } },
+    );
+  }
+
+  async resendPickupCode(id: string) {
+    const state = this.load();
+    this.requireStaff(state);
+    const parcel = this.parcelsOf(state).find((p) => p.id === id);
+    if (!parcel) throw new BackendError("parcel_not_found");
+    if (parcel.status !== "arrived") throw new BackendError("parcel_wrong_status");
+    // Nothing is sent in demo mode.
+  }
+
+  async adminParcels(): Promise<AdminParcels> {
+    const state = this.load();
+    this.requireAdmin(state);
+    return {
+      parcels: this.parcelsOf(state).map((p) => ({ ...p, pickupCode: undefined })),
+      depots: state.parcelDepots ?? seedDepots(),
+      sizes: state.parcelSizes ?? DEFAULT_PARCEL_SIZES,
+    };
+  }
+
+  async saveParcelDepot(stationId: string, input: ParcelDepotInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!state.stations.some((s) => s.id === stationId)) throw new BackendError("station_not_found");
+    const depots = state.parcelDepots ?? seedDepots();
+    const before = depots.find((d) => d.stationId === stationId);
+    const depot: ParcelDepot = { stationId, isActive: input.isActive, note: input.note.trim().slice(0, 200), lockers: Math.max(0, Math.floor(input.lockers)) };
+    this.save(
+      withAudit(
+        { ...state, parcelDepots: [...depots.filter((d) => d.stationId !== stationId), depot] },
+        {
+          table: "parcel_depots",
+          action: before ? "update" : "insert",
+          rowId: stationId,
+          stationId,
+          changes: before ? diff(before, depot) : { is_active: depot.isActive, note: depot.note, lockers: depot.lockers },
+        },
+      ),
+    );
+  }
+
+  async saveParcelSizes(sizes: ParcelSizeTier[]) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const before = state.parcelSizes ?? DEFAULT_PARCEL_SIZES;
+    const changes: Record<string, unknown> = {};
+    for (const tier of sizes) {
+      const old = before.find((b) => b.size === tier.size);
+      if (old) {
+        const d = diff(old, tier);
+        if (Object.keys(d).length) changes[tier.size] = d;
+      }
+    }
+    this.save(withAudit({ ...state, parcelSizes: sizes }, { table: "parcel_sizes", action: "update", rowId: "sizes", changes }));
+  }
+
+  async closeStoredParcel(id: string, outcome: "released" | "auctioned") {
+    const state = this.load();
+    this.requireAdmin(state);
+    const parcels = this.parcelsOf(state);
+    const parcel = parcels.find((p) => p.id === id);
+    if (!parcel) throw new BackendError("parcel_not_found");
+    if (parcel.status !== "stored") throw new BackendError("parcel_wrong_status");
+    this.saveParcels(
+      state,
+      parcels.map((p) => (p.id === id ? { ...p, status: outcome } : p)),
+      { table: "parcels", action: "update", rowId: id, stationId: parcel.toStationId, changes: { status: ["stored", outcome] } },
+    );
   }
 
   async currentPromotion(): Promise<Promotion | null> {

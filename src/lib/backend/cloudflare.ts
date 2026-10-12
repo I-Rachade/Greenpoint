@@ -1,5 +1,6 @@
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { Device, DeviceInput } from "../iot/devices";
+import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelSizeTier } from "../parcels";
 import type { Promotion, PromotionInput } from "../promo";
 import type {
   Operator,
@@ -37,6 +38,14 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "image_too_large",
   "invalid_device",
   "device_exists",
+  "depot_inactive",
+  "same_station",
+  "parcel_too_large",
+  "parcel_not_found",
+  "parcel_wrong_status",
+  "code_locked",
+  "invalid_contact",
+  "contact_taken",
   "rate_limited",
   "forbidden",
 ];
@@ -286,6 +295,71 @@ export class CloudflareBackend implements Backend {
 
   async switchOutlet(externalId: string, outlet: number, on: boolean) {
     await this.call("POST", `/api/admin/devices/${encodeURIComponent(externalId)}/outlets/${outlet}/${on ? "start" : "stop"}`, {});
+    this.changed();
+  }
+
+  // Parcel depot ---------------------------------------------------------------------
+
+  parcelInfo() {
+    return this.call<ParcelInfo>("GET", "/api/parcels/info");
+  }
+
+  async myParcels() {
+    if (!this.token) return [];
+    return this.call<Parcel[]>("GET", "/api/parcels/mine");
+  }
+
+  stationParcels(stationId: string) {
+    return this.call<Parcel[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/parcels`);
+  }
+
+  async createParcel(stationId: string, input: ParcelInput) {
+    const parcel = await this.call<Parcel>("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels`, input);
+    this.changed();
+    return parcel;
+  }
+
+  async markParcelsInTransit(stationId: string, ids: string[]) {
+    await this.call("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels/transit`, { ids });
+    this.changed();
+  }
+
+  async markParcelsArrived(stationId: string, ids: string[]) {
+    await this.call("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels/arrived`, { ids });
+    this.changed();
+  }
+
+  async pickUpParcel(stationId: string, codeOrQr: string) {
+    const parcel = await this.call<Parcel>("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels/pickup`, { code: codeOrQr });
+    this.changed();
+    return parcel;
+  }
+
+  async cancelParcel(id: string) {
+    await this.call("POST", `/api/parcels/${encodeURIComponent(id)}/cancel`);
+    this.changed();
+  }
+
+  async resendPickupCode(id: string) {
+    await this.call("POST", `/api/parcels/${encodeURIComponent(id)}/resend`);
+  }
+
+  adminParcels() {
+    return this.call<AdminParcels>("GET", "/api/admin/parcels");
+  }
+
+  async saveParcelDepot(stationId: string, input: ParcelDepotInput) {
+    await this.call("POST", "/api/admin/parcel-depots", { stationId, input });
+    this.changed();
+  }
+
+  async saveParcelSizes(sizes: ParcelSizeTier[]) {
+    await this.call("POST", "/api/admin/parcel-sizes", { sizes });
+    this.changed();
+  }
+
+  async closeStoredParcel(id: string, outcome: "released" | "auctioned") {
+    await this.call("POST", `/api/admin/parcels/${encodeURIComponent(id)}/${outcome}`);
     this.changed();
   }
 
