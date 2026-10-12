@@ -1,7 +1,7 @@
 import type { Dictionary } from "./fr";
 
 export const en: Dictionary = {
-  appName: "Greenpoint",
+  appName: "pointderecharge",
   tagline: "Find the nearest charging station in Lomé",
   nav: {
     map: "Map",

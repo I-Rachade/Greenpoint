@@ -1,6 +1,6 @@
 {
-  "name": "Greenpoint",
-  "short_name": "Greenpoint",
+  "name": "pointderecharge",
+  "short_name": "pointderecharge",
   "description": "Stations de recharge et d'échange de batterie à Lomé",
   "start_url": "/",
   "display": "standalone",
