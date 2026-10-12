@@ -49,6 +49,9 @@ export type BackendErrorCode =
   | "parcel_wrong_status"
   | "code_locked"
   | "rate_limited"
+  | "payment_not_offered"
+  | "payment_exists"
+  | "provider_unavailable"
   | "forbidden"
   | "unknown";
 
