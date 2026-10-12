@@ -1,12 +1,18 @@
-// Phone screenshots for the Google Play listing (1080 x 1920, 9:16), taken from the
-// demo build so no real accounts or numbers appear.
+// Phone screenshots for the store listings, taken from the demo build so no real
+// accounts or numbers appear. Google Play: 1080 x 1920 (9:16). App Store (`ios`):
+// 1320 x 2868, the 6.9" iPhone size Apple requires.
 //
 //   npm run build && npx serve out -l 4173   (or any static server on out/)
-//   node scripts/store-screenshots.mjs http://localhost:4173 store-assets fr
+//   node scripts/store-screenshots.mjs http://localhost:4173 store-assets fr [ios]
 //
-// The Android workflow runs this and publishes the images to the `play-store-assets` release.
+// The Store screenshots workflow runs this and publishes the images to the
+// `play-store-assets` and `app-store-assets` releases.
 
-const [base = "http://localhost:4173", outDir = "store-assets", lang = "fr"] = process.argv.slice(2);
+const [base = "http://localhost:4173", outDir = "store-assets", lang = "fr", device = "android"] = process.argv.slice(2);
+const SCREEN =
+  device === "ios"
+    ? { viewport: { width: 440, height: 956 }, deviceScaleFactor: 3 }
+    : { viewport: { width: 400, height: 711 }, deviceScaleFactor: 2.7 };
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? "playwright");
 const { mkdirSync } = await import("node:fs");
 mkdirSync(outDir, { recursive: true });
@@ -14,8 +20,7 @@ mkdirSync(outDir, { recursive: true });
 // Software WebGL so the map renders on machines without a GPU (CI).
 const browser = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
 const context = await browser.newContext({
-  viewport: { width: 400, height: 711 },
-  deviceScaleFactor: 2.7,
+  ...SCREEN,
   // Central Lomé, near the demo stations.
   geolocation: { latitude: 6.1319, longitude: 1.2228 },
   permissions: ["geolocation"],

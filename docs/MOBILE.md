@@ -1,6 +1,6 @@
-# Mobile App (Android, später iOS)
+# Mobile App (Android und iOS)
 
-Die App ist die Webapp in einer nativen Hülle ([Capacitor](https://capacitorjs.com)). Es gibt nur eine Codebasis: `next build` erzeugt den statischen Export in `out/`, `cap sync` kopiert ihn in das Android-Projekt unter `android/`.
+Die App ist die Webapp in einer nativen Hülle ([Capacitor](https://capacitorjs.com)). Es gibt nur eine Codebasis: `next build` erzeugt den statischen Export in `out/`, `cap sync` kopiert ihn in das Android-Projekt unter `android/` und das iOS-Projekt unter `ios/`.
 
 ## Aufbau
 
@@ -8,11 +8,13 @@ Die App ist die Webapp in einer nativen Hülle ([Capacitor](https://capacitorjs.
 |---|---|
 | `capacitor.config.ts` | App-ID `com.poinderecharge.app`, Name, Startbildschirm |
 | `android/` | natives Android-Projekt (wird eingecheckt; die kopierte Webapp darin nicht) |
+| `ios/` | natives iOS-Projekt (Xcode, Swift Package Manager; nur iPhone, Texte für die Standortabfrage in `ios/App/App/Info.plist`) |
 | `resources/` | Quellbilder für App-Icon und Startbildschirm |
 | `src/lib/native.ts` | `isNativeApp()`: läuft der Code in der App oder im Browser? |
 | `src/lib/use-position.ts` | Standort: in der App über das native Plugin, im Browser über die Web-API |
 | `src/components/native-shell.tsx` | Zurück-Taste (Android) und Links auf app.poinderecharge.com, die die App öffnen |
 | `.github/workflows/android.yml` | baut bei jedem PR eine installierbare Test-APK, mit Upload-Schlüssel auch das App Bundle für Google Play |
+| `.github/workflows/ios.yml` | baut die iOS-App bei jedem PR auf einem Mac von GitHub (Simulator, ohne Signatur); mit App-Store-Connect-Schlüssel signiert und lädt sie zu TestFlight hoch |
 
 ## Lokal bauen
 
@@ -24,10 +26,19 @@ npm run android:sync   # next build + cap sync android
 npm run android:open   # öffnet das Projekt in Android Studio, dort ▶ Run
 ```
 
+iOS (nur auf einem Mac mit Xcode):
+
+```bash
+npm run ios:sync       # next build + cap sync ios
+npm run ios:open       # öffnet das Projekt in Xcode, dort ▶ Run
+```
+
+Ohne Mac reicht GitHub: *Actions > iOS* baut die App, mit den Secrets unten landet sie in TestFlight.
+
 Icons und Startbildschirm neu erzeugen, nachdem `resources/` geändert wurde:
 
 ```bash
-npx @capacitor/assets@3 generate --android --assetPath resources
+npx @capacitor/assets@3 generate --android --ios --assetPath resources
 ```
 
 ## Test-APK aus GitHub
@@ -51,9 +62,16 @@ NEXT_PUBLIC_BACKEND=cloudflare NEXT_PUBLIC_API_URL=https://app.poinderecharge.co
 - Store-Screenshots (FR, EN, 1080 × 1920): `scripts/store-screenshots.mjs`, der Workflow *Store screenshots* legt sie im Release `play-store-assets` ab.
 - Push-Benachrichtigungen brauchen `android/app/google-services.json` aus Firebase; ohne die Datei baut die App trotzdem, nur ohne Push.
 
+## App Store (iOS)
+
+- Secrets für *Actions > iOS*: `APPLE_TEAM_ID` (Team-ID aus dem Apple-Developer-Konto), `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID` und `APP_STORE_CONNECT_KEY_BASE64` (die `.p8`-Datei des API-Schlüssels, base64). Der Schlüssel braucht die Rolle *Admin*, weil Xcode Zertifikat und Provisioning-Profil selbst anlegt (Cloud-Signierung).
+- Mit den Secrets signiert jeder Lauf die App und lädt sie zu App Store Connect hoch; sie erscheint nach der Verarbeitung in TestFlight. Build-Nummer = Nummer des Workflow-Laufs, Version `1.0.<Nummer>`.
+- Die App muss vorher in App Store Connect angelegt sein (Bundle-ID `com.poinderecharge.app`), sonst schlägt der Upload fehl.
+- iPhone-Screenshots (1320 × 2868): `node scripts/store-screenshots.mjs <url> <ordner> fr ios`, der Workflow *Store screenshots* legt sie im Release `app-store-assets` ab.
+
 ## Noch offen
 
 - Push-Benachrichtigungen (Firebase, D1-Tabelle für Geräte-Tokens, Versand aus dem Worker)
 - App-Links mit Verifizierung (`.well-known/assetlinks.json`, braucht den Signatur-Fingerabdruck aus der Play Console)
 - Konto löschen in der App, Seite `/privacy`
-- iOS (`npx cap add ios`, Build über Codemagic), sobald das Apple-Konto da ist
+- iOS: Push (APNs-Schlüssel, Push-Fähigkeit im Projekt) und Universal Links (`apple-app-site-association`, braucht die Team-ID)
