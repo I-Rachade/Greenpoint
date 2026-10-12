@@ -142,7 +142,7 @@ function StationForm({
             <label key={v} className="flex items-center gap-1">
               <input
                 type="checkbox"
-                className="accent-green-600"
+                className="accent-gp-green-dark"
                 checked={form.vehicleTypes.includes(v)}
                 onChange={(e) =>
                   set(
@@ -166,7 +166,7 @@ function StationForm({
         />
       </label>
       <div className="flex items-end gap-2 sm:col-span-2">
-        <button type="submit" disabled={busy} className="rounded-full bg-green-600 px-4 py-2 text-sm font-medium text-white">
+        <button type="submit" disabled={busy} className="rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white">
           {t.admin.save}
         </button>
         <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm underline">
@@ -221,13 +221,13 @@ export function AdminStations() {
           <button
             type="button"
             onClick={() => setEditing("new")}
-            className="rounded-full bg-green-600 px-4 py-2 text-sm font-medium text-white"
+            className="rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white"
           >
             {t.admin.add}
           </button>
         )}
       </div>
-      {message && <p className={`text-sm ${message.ok ? "text-green-700" : "text-red-600"}`}>{message.text}</p>}
+      {message && <p className={`text-sm ${message.ok ? "text-gp-green-dark" : "text-red-600"}`}>{message.text}</p>}
       {editing === "new" && (
         <StationForm initial={blank} operators={operators} onSave={(i) => save(null, i)} onCancel={() => setEditing(null)} />
       )}
@@ -250,7 +250,7 @@ export function AdminStations() {
                   {s.operatorName} · {t.kinds[s.kind]} · {s.lat.toFixed(4)}, {s.lng.toFixed(4)}
                 </div>
               </div>
-              <button type="button" onClick={() => setEditing(s.id)} className="text-sm text-green-700 hover:underline">
+              <button type="button" onClick={() => setEditing(s.id)} className="text-sm text-gp-green-dark hover:underline">
                 {t.admin.edit}
               </button>
             </li>

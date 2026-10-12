@@ -83,8 +83,8 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
 
       <div className="grid grid-cols-2 gap-2">
         {offersCharging(station.kind) && (
-          <div className="rounded-lg bg-green-50 p-3 dark:bg-green-950/40">
-            <div className="text-2xl font-bold text-green-700 dark:text-green-400">
+          <div className="rounded-lg bg-gp-green/10 p-3 dark:bg-gp-green/15">
+            <div className="text-2xl font-bold text-gp-green-dark dark:text-gp-green">
               {slots}
               <span className="text-sm font-normal text-zinc-500"> / {station.chargingSlots}</span>
             </div>
@@ -92,8 +92,8 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
           </div>
         )}
         {offersSwap(station.kind) && (
-          <div className="rounded-lg bg-green-50 p-3 dark:bg-green-950/40">
-            <div className="text-2xl font-bold text-green-700 dark:text-green-400">
+          <div className="rounded-lg bg-gp-green/10 p-3 dark:bg-gp-green/15">
+            <div className="text-2xl font-bold text-gp-green-dark dark:text-gp-green">
               {batteries}
               <span className="text-sm font-normal text-zinc-500"> / {station.batteryCapacity}</span>
             </div>
@@ -140,7 +140,7 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
           href={directionsUrl(station)}
           target="_blank"
           rel="noopener noreferrer"
-          className="rounded-full border border-green-600 px-4 py-2 text-sm font-medium text-green-700 dark:text-green-400"
+          className="rounded-full border border-gp-green-dark px-4 py-2 text-sm font-medium text-gp-green-dark dark:text-gp-green"
         >
           {t.station.directions}
         </a>
@@ -158,7 +158,7 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
               type="button"
               disabled={busy || batteries === 0}
               onClick={() => reserve("battery")}
-              className="rounded-full bg-green-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+              className="rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
             >
               {t.station.reserveBattery}
             </button>
@@ -168,20 +168,20 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
               type="button"
               disabled={busy || slots === 0}
               onClick={() => reserve("slot")}
-              className="rounded-full bg-green-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+              className="rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
             >
               {t.station.reserveSlot}
             </button>
           )}
         </div>
       ) : (
-        <Link href="/login" className="inline-block rounded-full bg-green-600 px-4 py-2 text-sm font-medium text-white">
+        <Link href="/login" className="inline-block rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white">
           {t.station.loginToReserve}
         </Link>
       )}
 
       {message && (
-        <p role="status" className={`text-sm ${message.ok ? "text-green-700 dark:text-green-400" : "text-red-600"}`}>
+        <p role="status" className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>
           {message.text}
         </p>
       )}

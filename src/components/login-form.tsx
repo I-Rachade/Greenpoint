@@ -62,7 +62,7 @@ export function LoginForm() {
 
   const input =
     "w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-base dark:border-white/20 dark:bg-zinc-900";
-  const button = "w-full rounded-full bg-green-600 px-4 py-2 font-medium text-white disabled:opacity-50";
+  const button = "w-full rounded-full bg-gp-green-dark px-4 py-2 font-medium text-white disabled:opacity-50";
 
   return (
     <div className="mx-auto w-full max-w-sm space-y-4 p-6">

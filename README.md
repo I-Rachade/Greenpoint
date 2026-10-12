@@ -1,36 +1,69 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Greenpoint
 
-## Getting Started
+Webapp für Fahrer von E-Scootern, E-Tuktuks, E-Bikes und E-Rollern in Lomé (Togo): Sie zeigt live die nächste Ladestation oder Akkutausch-Station, ob dort Ladeplätze frei oder volle Akkus da sind, und erlaubt Reservierungen. Stationspersonal meldet den Status mit einem Tipp vom Handy.
 
-First, run the development server:
+Die App ist auf Französisch (Standard) und Englisch und lässt sich auf Android als App installieren (PWA).
+
+## Schnellstart
+
+Voraussetzung: [Node.js 22](https://nodejs.org) (LTS).
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Dann http://localhost:3000 öffnen.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Ohne weitere Einrichtung läuft die App im **Demo-Modus**: Beispielstationen in Lomé, gespeichert nur im Browser, Login mit jeder Telefonnummer und dem Code `123456`. Beim Login kann man die Rolle wählen (Fahrer, Personal, Admin), um alle Ansichten auszuprobieren. Tipp: Karte in einem Tab, Personal-Ansicht in einem zweiten Tab öffnen; Änderungen erscheinen sofort im anderen Tab.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Für den echten Betrieb mit Datenbank und SMS-Login: siehe [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-## Learn More
+## Befehle
 
-To learn more about Next.js, take a look at the following resources:
+| Befehl | Was er tut |
+|---|---|
+| `npm run dev` | Entwicklungsserver mit Live-Neuladen |
+| `npm run build` | Fertige, statische Webseite nach `out/` bauen |
+| `npm test` | Unit-Tests (Vitest) |
+| `npm run lint` | Code-Stil prüfen (ESLint) |
+| `npm run typecheck` | TypeScript-Typen prüfen |
+| `npm run check` | Lint, Typen und Tests zusammen |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Seiten
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Pfad | Für wen | Inhalt |
+|---|---|---|
+| `/` | alle | Karte, Liste nach Entfernung, Filter, Stationsdetails, Reservieren |
+| `/login` | alle | Login per Telefonnummer und SMS-Code |
+| `/reservations` | angemeldete Nutzer | eigene Reservierungen mit Restzeit, stornieren |
+| `/operator` | Personal, Admin | Station öffnen/schließen, volle Akkus und freie Plätze melden, Reservierungen abschließen |
+| `/admin` | Admin | Stationen anlegen und bearbeiten |
 
-## Deploy on Vercel
+## Projektstruktur
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+src/
+  app/                 Seiten (Next.js App Router), Layout, Icons
+  components/          Oberfläche (Karte, Listen, Formulare, Provider)
+  lib/
+    availability.ts    Verfügbarkeit, Filter, Sortierung nach Entfernung
+    geo.ts             Entfernungen, Navigation-Link
+    phone.ts           Telefonnummern (+228) prüfen
+    i18n/              Texte Französisch (fr.ts) und Englisch (en.ts)
+    backend/           Datenzugriff: Demo (Browser) und Supabase (Produktion)
+supabase/
+  migrations/          Datenbank-Schema (SQL), in Reihenfolge ausführen
+  seed.sql             Beispielstationen
+assets/logo/, design/  Logo, Farben und Schriften
+docs/                  Architektur und Deployment
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Mehr zum Aufbau: [docs/ARCHITEKTUR.md](docs/ARCHITEKTUR.md).
+
+## Mitarbeiten
+
+- Texte ändern: `src/lib/i18n/fr.ts` und `src/lib/i18n/en.ts`. Jeder Text muss in beiden Dateien stehen (ein Test prüft das).
+- Farben: `src/app/globals.css` (Werte aus `design/tokens.css`). Auf Grün `#1DB954` nie weiße Schrift.
+- Vor jedem Commit `npm run check` ausführen. GitHub prüft dasselbe automatisch bei jedem Pull Request.
+- Änderungen am Datenbank-Schema immer als neue Datei in `supabase/migrations/` (nie alte Dateien ändern, die schon in Supabase ausgeführt wurden).

@@ -96,7 +96,7 @@ export function StationFinder() {
                   type="checkbox"
                   checked={filter.onlyAvailable}
                   onChange={(e) => setFilter({ ...filter, onlyAvailable: e.target.checked })}
-                  className="accent-green-600"
+                  className="accent-gp-green-dark"
                 />
                 {t.filter.onlyAvailable}
               </label>
@@ -125,7 +125,7 @@ export function StationFinder() {
                       <div className="flex items-center gap-2">
                         <span className="truncate font-medium">{station.name}</span>
                         {index === 0 && position && (
-                          <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
+                          <span className="rounded-full bg-gp-info px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
                             {t.map.nearest}
                           </span>
                         )}
