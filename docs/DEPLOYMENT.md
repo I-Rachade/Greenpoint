@@ -37,6 +37,7 @@
 Wurde das Projekt als **Worker** angelegt (Workers & Pages > Create > Import a repository), liest Cloudflare die Datei `wrangler.jsonc` im Repo. Sie baut die App mit `npm run build` und veröffentlicht den Ordner `out` als statische Dateien. Im Dashboard reicht dann:
 
 - Deploy command: `npx wrangler deploy` (Standard)
+- **Settings > Build > Branch control**: Production branch ist der Branch mit der App (`claude/project-thread-r72vlu`, später `main`). Der Standard-Branch des Repos enthält die App nicht; baut Cloudflare ihn, meldet wrangler "Could not detect a directory containing static files". "Retry build" baut denselben alten Commit noch einmal, erst ein neuer Push nimmt den umgestellten Branch.
 - Die zwei `NEXT_PUBLIC_…`-Werte und `NODE_VERSION` unter **Settings > Build > Variables and secrets** eintragen (Build-Variablen, nicht Laufzeit-Variablen), weil sie beim Bauen in die App geschrieben werden.
 - Domain: nach dem ersten Deploy im Worker **Settings > Domains & Routes > Add > Custom domain** > `app.pointderecharge.com`. (Über `wrangler.jsonc` klappt das im Cloudflare-Build nicht.)
 - Der Worker-Name im Dashboard muss mit `name` in `wrangler.jsonc` übereinstimmen: `pointderecharge-app`. Der Worker `greenpoint` gehört der Landingpage und bleibt unverändert.
