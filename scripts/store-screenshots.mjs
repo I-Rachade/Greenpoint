@@ -11,7 +11,8 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? "playwright")
 const { mkdirSync } = await import("node:fs");
 mkdirSync(outDir, { recursive: true });
 
-const browser = await chromium.launch();
+// Software WebGL so the map renders on machines without a GPU (CI).
+const browser = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
 const context = await browser.newContext({
   viewport: { width: 400, height: 711 },
   deviceScaleFactor: 2.7,
@@ -50,7 +51,7 @@ async function open(path) {
   await page.evaluate((l) => localStorage.setItem("poinderecharge-locale", l), lang);
   await page.reload({ waitUntil: "load" });
   // Map tiles and stations.
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(8000);
 }
 
 // 1. Map and the nearest stations.
