@@ -1,4 +1,5 @@
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { Device, DeviceInput } from "../iot/devices";
 import type { Promotion, PromotionInput } from "../promo";
 import type {
   Operator,
@@ -9,7 +10,7 @@ import type {
   StationView,
   UserRole,
 } from "../types";
-import { BackendError, type Backend, type BackendErrorCode, type StatusPatch } from "./backend";
+import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StatusPatch } from "./backend";
 
 const TOKEN_KEY = "poinderecharge-session";
 /** How often open pages reload station data (other riders' holds, staff updates). */
@@ -34,6 +35,8 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "bad_pin",
   "weak_pin",
   "image_too_large",
+  "invalid_device",
+  "device_exists",
   "rate_limited",
   "forbidden",
 ];
@@ -140,16 +143,16 @@ export class CloudflareBackend implements Backend {
     };
   }
 
-  async sendCode(phone: string) {
-    await this.call("POST", "/api/auth/send", { phone });
+  async sendCode(contact: string) {
+    await this.call("POST", "/api/auth/send", { contact });
   }
 
-  register(phone: string, code: string, pin: string) {
-    return this.startSession("/api/auth/register", { phone, code: code.trim(), pin });
+  register(contact: string, code: string, pin: string) {
+    return this.startSession("/api/auth/register", { contact, code: code.trim(), pin });
   }
 
-  signIn(phone: string, pin: string) {
-    return this.startSession("/api/auth/login", { phone, pin });
+  signIn(contact: string, pin: string) {
+    return this.startSession("/api/auth/login", { contact, pin });
   }
 
   private async startSession(path: string, body: unknown) {
@@ -162,6 +165,26 @@ export class CloudflareBackend implements Backend {
 
   async signOut() {
     await this.call("POST", "/api/auth/logout").catch(() => undefined);
+    this.dropSession();
+    this.changed();
+  }
+
+  async sendContactCode(contact: string) {
+    await this.call("POST", "/api/auth/contact/send", { contact });
+  }
+
+  async addContact(contact: string, code: string) {
+    const profile = await this.call<Profile>("POST", "/api/auth/contact", { contact, code: code.trim() });
+    this.authListeners.forEach((fn) => fn(profile));
+    return profile;
+  }
+
+  async sendDeleteCode(channel: CodeChannel) {
+    await this.call("POST", "/api/auth/delete-account/send", { channel });
+  }
+
+  async deleteAccount(channel: CodeChannel, code: string) {
+    await this.call("POST", "/api/auth/delete-account", { channel, code: code.trim() });
     this.dropSession();
     this.changed();
   }
@@ -242,6 +265,27 @@ export class CloudflareBackend implements Backend {
 
   async setStationActive(stationId: string, active: boolean) {
     await this.call("POST", `/api/admin/stations/${encodeURIComponent(stationId)}/active`, { active });
+    this.changed();
+  }
+
+  // Connected sockets ---------------------------------------------------------------
+
+  listDevices() {
+    return this.call<Device[]>("GET", "/api/admin/devices");
+  }
+
+  async createDevice(input: DeviceInput) {
+    await this.call("POST", "/api/admin/devices", input);
+    this.changed();
+  }
+
+  async deleteDevice(externalId: string) {
+    await this.call("DELETE", `/api/admin/devices/${encodeURIComponent(externalId)}`);
+    this.changed();
+  }
+
+  async switchOutlet(externalId: string, outlet: number, on: boolean) {
+    await this.call("POST", `/api/admin/devices/${encodeURIComponent(externalId)}/outlets/${outlet}/${on ? "start" : "stop"}`, {});
     this.changed();
   }
 

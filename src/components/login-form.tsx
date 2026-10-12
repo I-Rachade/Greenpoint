@@ -6,7 +6,8 @@ import { HOSTED_DEMO } from "@/lib/backend";
 import { CONTACT_EMAIL } from "@/lib/config";
 import { useErrorMessage } from "@/lib/hooks";
 import { LEGAL_PATHS } from "@/lib/legal/content";
-import { normalizeTogoPhone } from "@/lib/phone";
+import { parseContact, type Contact } from "@/lib/contact";
+import { format } from "@/lib/i18n/format";
 import { PIN_LENGTH } from "@/lib/pin";
 import type { Profile, UserRole } from "@/lib/types";
 import { useApp } from "./app-provider";
@@ -17,9 +18,10 @@ import { LegalLinks } from "./legal-links";
 const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["rider"] : ["rider", "operator", "admin"];
 
 /**
- * "pin": everyday login with number and PIN.
- * "register" / "reset": the number is confirmed by SMS code and a PIN is chosen
- * (same steps for a new account and a forgotten PIN; only the title differs).
+ * "pin": everyday login with phone number or e-mail address, and PIN.
+ * "register" / "reset": the number or address is confirmed by a code (SMS or
+ * e-mail) and a PIN is chosen (same steps for a new account and a forgotten PIN;
+ * only the title differs).
  */
 type Mode = "pin" | "register" | "reset";
 
@@ -31,9 +33,9 @@ export function LoginForm() {
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const [mode, setMode] = useState<Mode>("pin");
-  const [phoneInput, setPhoneInput] = useState("");
-  /** Number the SMS code was sent to; set once the code is on its way. */
-  const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
+  const [contactInput, setContactInput] = useState("");
+  /** Number or address the code was sent to; set once the code is on its way. */
+  const [codeSentTo, setCodeSentTo] = useState<Contact | null>(null);
   const [code, setCode] = useState("");
   const [pin, setPin] = useState("");
   const [pinConfirm, setPinConfirm] = useState("");
@@ -53,10 +55,10 @@ export function LoginForm() {
     setError(null);
   }
 
-  function phoneOrError(): string | null {
-    const normalized = normalizeTogoPhone(phoneInput);
-    if (!normalized) setError(t.login.invalidPhone);
-    return normalized;
+  function contactOrError(): Contact | null {
+    const contact = parseContact(contactInput);
+    if (!contact) setError(t.login.invalidContact);
+    return contact;
   }
 
   async function run(action: () => Promise<void>) {
@@ -73,16 +75,16 @@ export function LoginForm() {
 
   function done(profile: Profile) {
     // Next.js keeps this page's state for back navigation, so start fresh next time.
-    setPhoneInput("");
+    setContactInput("");
     switchMode("pin");
     router.push(profile.role === "operator" ? "/operator" : profile.role === "admin" ? "/admin" : "/");
   }
 
   function signIn(e: FormEvent) {
     e.preventDefault();
-    const phone = phoneOrError();
-    if (!phone) return;
-    void run(async () => done(await backend.signIn(phone, pin, demoRole)));
+    const contact = contactOrError();
+    if (!contact) return;
+    void run(async () => done(await backend.signIn(contact.value, pin, demoRole)));
   }
 
   function sendCode(e: FormEvent) {
@@ -91,11 +93,11 @@ export function LoginForm() {
       setError(t.legal.mustAccept);
       return;
     }
-    const phone = phoneOrError();
-    if (!phone) return;
+    const contact = contactOrError();
+    if (!contact) return;
     void run(async () => {
-      await backend.sendCode(phone);
-      setCodeSentTo(phone);
+      await backend.sendCode(contact.value);
+      setCodeSentTo(contact);
     });
   }
 
@@ -106,7 +108,7 @@ export function LoginForm() {
       setError(t.login.pinMismatch);
       return;
     }
-    void run(async () => done(await backend.register(codeSentTo, code, pin, demoRole)));
+    void run(async () => done(await backend.register(codeSentTo.value, code, pin, demoRole)));
   }
 
   const input =
@@ -114,22 +116,22 @@ export function LoginForm() {
   const button = "w-full rounded-full bg-gp-green-dark px-4 py-2 font-medium text-white disabled:opacity-50";
   const link = "w-full text-sm text-zinc-600 underline dark:text-zinc-400";
 
-  const phoneField = (
+  // One field for both: anything with "@" is an e-mail address (see lib/contact.ts).
+  const contactField = (
     <label className="block space-y-1">
-      <span className="text-sm font-medium">{t.login.phone}</span>
-      <div className="flex items-center gap-2">
-        <span className="rounded-lg bg-zinc-100 px-3 py-2 dark:bg-zinc-800">+228</span>
-        <input
-          className={input}
-          type="tel"
-          inputMode="tel"
-          autoComplete="tel-national"
-          placeholder={t.login.phonePlaceholder}
-          value={phoneInput}
-          onChange={(e) => setPhoneInput(e.target.value)}
-          required
-        />
-      </div>
+      <span className="text-sm font-medium">{t.login.contact}</span>
+      <input
+        className={input}
+        type="text"
+        inputMode="email"
+        autoComplete="username"
+        autoCapitalize="none"
+        spellCheck={false}
+        placeholder={t.login.contactPlaceholder}
+        value={contactInput}
+        onChange={(e) => setContactInput(e.target.value)}
+        required
+      />
     </label>
   );
 
@@ -187,7 +189,7 @@ export function LoginForm() {
       {mode === "pin" ? (
         <form onSubmit={signIn} className="space-y-3">
           <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.login.intro}</p>
-          {phoneField}
+          {contactField}
           {pinField(t.login.pin, pin, setPin, "current-password")}
           {roleField}
           <button type="submit" className={button} disabled={busy || pin.length < PIN_LENGTH}>
@@ -202,8 +204,8 @@ export function LoginForm() {
         </form>
       ) : !codeSentTo ? (
         <form onSubmit={sendCode} className="space-y-3">
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.login.smsIntro}</p>
-          {phoneField}
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.login.codeIntro}</p>
+          {contactField}
           {mode === "register" && (
             <label className="flex items-start gap-2 text-sm">
               <input
@@ -225,7 +227,11 @@ export function LoginForm() {
         </form>
       ) : (
         <form onSubmit={register} className="space-y-3">
-          <p className="text-sm font-medium">{codeSentTo}</p>
+          <p className="text-sm font-medium">
+            {format(codeSentTo.kind === "email" ? t.login.codeSentEmail : t.login.codeSentSms, {
+              contact: codeSentTo.value,
+            })}
+          </p>
           <label className="block space-y-1">
             <span className="text-sm font-medium">{t.login.code}</span>
             <input
@@ -257,7 +263,7 @@ export function LoginForm() {
               setCode("");
             }}
           >
-            {t.login.changeNumber}
+            {t.login.changeContact}
           </button>
         </form>
       )}
