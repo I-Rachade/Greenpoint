@@ -30,6 +30,8 @@ Unter **Workers & Pages > pointderecharge-app > Settings > Variables and secrets
 | `ADMIN_PHONES` | Text | Nummern, die bei der **Registrierung** Admin werden, z. B. `+22890123456` (mehrere mit Komma) |
 | `TEST_OTP` | Text, optional | Testnummern mit festem Code ohne SMS, z. B. `+22890000001=123456`. In Produktion leer lassen oder nur für eigene Nummern. |
 | `OTP_HOURLY_LIMIT` | Text, optional | höchstens so viele SMS-Codes pro Stunde insgesamt (Standard 30) |
+| `PAYMENT_CALLBACK_SECRET` | Secret | langer Zufallswert für die Rückruf-Adresse des Zahlungsanbieters (siehe [ZAHLUNGEN.md](ZAHLUNGEN.md)) |
+| `PAYMENTS_PROVIDER`, `PAYGATE_AUTH_TOKEN` | Text, Secret | erst setzen, wenn das PayGate-Konto freigeschaltet ist; ohne beide läuft die Bezahlung als Simulation |
 
 Didit: Konto auf https://business.didit.me anlegen, Guthaben aufladen (Telefon-Verifizierung ist erst nach der ersten Aufladung aktiv), unter der Anwendung den API-Schlüssel kopieren. Kosten: 0,04 $ pro verschickten Code plus Gebühr des Netzes je nach Land und Kanal (https://docs.didit.me/getting-started/phone-verification-pricing); die Prüfung des Codes ist kostenlos. Die App nimmt nur +228-Nummern an, damit keine teuren Codes ins Ausland gehen. Didit lehnt Wegwerf- und Internet-Nummern bei der Registrierung ab. SMS kosten nur bei Registrierung und vergessener PIN; der tägliche Login mit PIN ist kostenlos.
 

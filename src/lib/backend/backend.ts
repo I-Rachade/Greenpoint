@@ -34,6 +34,9 @@ export type BackendErrorCode =
   | "weak_pin"
   | "image_too_large"
   | "rate_limited"
+  | "payment_not_offered"
+  | "payment_exists"
+  | "provider_unavailable"
   | "forbidden"
   | "unknown";
 

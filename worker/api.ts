@@ -22,6 +22,7 @@ import {
 import { currentUser, register, sendCode, signIn, signOut } from "./auth";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
+import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
 
 // Rows as stored in D1 (snake_case, booleans as 0/1, JSON as text).
 
@@ -810,6 +811,9 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
   ["GET", /^\/api\/stations\/([\w-]+)\/reservations$/, (c, [id]) => stationReservations(c, id)],
   ["GET", /^\/api\/promotions\/current$/, (c) => currentPromotion(c)],
+  ["GET", /^\/api\/payments\/mine$/, async (c) => myPayments(c.env, await c.requireUser())],
+  ["POST", /^\/api\/payments$/, async (c) => startPayment(c.env, await c.requireUser(), c.request)],
+  ["POST", /^\/api\/payments\/([\w-]+)\/refresh$/, async (c, [id]) => refreshPayment(c.env, await c.requireUser(), id)],
   [
     "POST",
     /^\/api\/admin\/stations$/,
@@ -865,6 +869,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   try {
     const mediaMatch = /^\/api\/media\/(promotions\/[\w-]+\.(?:png|jpg|webp|gif))$/.exec(url.pathname);
     if (mediaMatch && (request.method === "GET" || request.method === "HEAD")) return await media(c, mediaMatch[1]);
+    // Called by the payment provider, answers in plain text (see worker/payments.ts).
+    if (url.pathname === "/api/payments/callback" && request.method === "POST") return await paymentCallback(env, request);
     for (const [method, pattern, handler] of ROUTES) {
       const m = pattern.exec(url.pathname);
       if (!m) continue;

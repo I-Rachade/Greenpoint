@@ -27,6 +27,7 @@ Browser / Android-App (Next.js, statisch)  ──►  Cloudflare Worker "pointde
 | `station_staff` | welcher Nutzer welche Station melden darf |
 | `reservations` | Akku oder Ladeplatz, gültig 20 Minuten, mit 4-stelligem Abholcode (sieht nur der Fahrer) |
 | `charging_points` | einzelne Ladeplätze pro Station (Vorbereitung für vernetzte Steckdosen) |
+| `payments` | Flooz/T-Money-Zahlungen pro Reservierung; Preise stehen an der Station (siehe [ZAHLUNGEN.md](ZAHLUNGEN.md)) |
 | `promotions` | Werbung für das Fenster beim Öffnen der App |
 | `audit_log` | Aktivitätsprotokoll: wer hat wann Status, Reservierungen, Rollen, Personal oder Stationen geändert (nur Admins lesen, siehe [BACKOFFICE.md](BACKOFFICE.md)) |
 
@@ -43,7 +44,7 @@ So kann jeder die App sofort ausprobieren, und die Oberfläche hängt nicht an d
 
 ## Später (Phase 2 und 3)
 
-- Bezahlung mit Flooz und T-Money über einen Zahlungsanbieter (Rückmeldung des Anbieters an eine Route im Worker)
+- Bezahlung mit Flooz und T-Money: API und Datenbank sind vorbereitet, die App-Oberfläche fehlt noch (siehe [ZAHLUNGEN.md](ZAHLUNGEN.md))
 - greenpoint-Treuepunkte (Regeln, Prämien, Punktebuchungen; siehe Projektplan)
 - Vernetzte Steckdosen (LoRa): Geräte melden den Status von `charging_points` selbst
 - Flottenbereich für Lieferdienste

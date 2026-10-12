@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "next typegen && tsc --noEmit && tsc --noEmit -p worker",
+    "typecheck": "next typegen && tsc --noEmit && tsc --noEmit -p worker && tsc --noEmit -p worker/tsconfig.test.json",
     "test": "vitest run",
     "check": "npm run lint && npm run typecheck && npm test",
     "dev:worker": "npm run build && wrangler dev",

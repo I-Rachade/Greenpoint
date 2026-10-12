@@ -13,4 +13,10 @@ export interface Env {
   ADMIN_PHONES?: string;
   /** Most login SMS sent per hour across all numbers (cost protection). Default 30. */
   OTP_HOURLY_LIMIT?: string;
+  /** "paygate" switches from the simulated payment provider to real payments (needs PAYGATE_AUTH_TOKEN). */
+  PAYMENTS_PROVIDER?: string;
+  /** PayGate Global API key (secret). */
+  PAYGATE_AUTH_TOKEN?: string;
+  /** Secret in the callback URL the provider calls, see docs/ZAHLUNGEN.md. */
+  PAYMENT_CALLBACK_SECRET?: string;
 }
