@@ -32,6 +32,7 @@
 }
 
 body {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-inter), "Segoe UI", Roboto, sans-serif;
@@ -42,4 +43,19 @@ h2,
 h3,
 button {
   font-family: var(--font-poppins), "Segoe UI", Roboto, sans-serif;
+}
+
+/* Printing a parcel drop-off slip prints only the slip image, at receipt width. */
+@media print {
+  body:has(.print-slip) * {
+    visibility: hidden;
+  }
+  body:has(.print-slip) .print-slip {
+    visibility: visible;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 72mm;
+    border: 0;
+  }
 }

@@ -15,6 +15,7 @@ export function Header() {
   const links: { href: string; label: string; show: boolean }[] = [
     { href: "/", label: t.nav.map, show: true },
     { href: "/reservations", label: t.nav.reservations, show: !!profile },
+    { href: "/colis", label: t.nav.parcels, show: !!profile },
     { href: "/compte", label: t.nav.account, show: !!profile },
     { href: "/operator", label: t.nav.operator, show: profile?.role === "operator" || profile?.role === "admin" },
     { href: "/admin", label: t.nav.admin, show: profile?.role === "admin" },
@@ -52,7 +53,7 @@ export function Header() {
                 key={l.href}
                 href={l.href}
                 className={`whitespace-nowrap rounded-full px-3 py-1 ${
-                  pathname === l.href || (l.href === "/admin" && pathname.startsWith("/admin/"))
+                  pathname === l.href || (l.href === "/admin" && pathname.startsWith("/admin/")) || (l.href === "/operator" && pathname.startsWith("/operator/"))
                     ? "bg-gp-green-dark text-white"
                     : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
                 }`}
