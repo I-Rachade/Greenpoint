@@ -38,7 +38,7 @@ Wurde das Projekt als **Worker** angelegt (Workers & Pages > Create > Import a r
 
 - Deploy command: `npx wrangler deploy` (Standard)
 - Die zwei `NEXT_PUBLIC_…`-Werte und `NODE_VERSION` unter **Settings > Build > Variables and secrets** eintragen (Build-Variablen, nicht Laufzeit-Variablen), weil sie beim Bauen in die App geschrieben werden.
-- Domain: **Settings > Domains & Routes > Add > Custom domain** > `app.pointderecharge.com`.
-- Der Worker-Name im Dashboard muss mit `name` in `wrangler.jsonc` übereinstimmen (`greenpoint`).
+- Domain: `wrangler.jsonc` verknüpft `app.pointderecharge.com` beim Deploy selbst.
+- Der Worker-Name im Dashboard muss mit `name` in `wrangler.jsonc` übereinstimmen: `pointderecharge-app`. Der Worker `greenpoint` gehört der Landingpage und bleibt unverändert.
 
 In Supabase unter **Authentication > URL Configuration** als Site URL `https://app.pointderecharge.com` eintragen.
