@@ -1,6 +1,6 @@
 # Verbundene Steckdosen (LoRa)
 
-pointderecharge kann den Status von vernetzten Ladesteckdosen live anzeigen, z. B. LoRa-Doppelsteckdosen zum Selbstladen von E-Scootern. Jeder Ausgang ist ein Ladeplatz (`charging_points`). Die Steckdose meldet, ob ein Ausgang frei ist, lädt, fertig ist oder gestört ist; die App zeigt das sofort auf der Stationsseite und zählt die freien Plätze automatisch.
+poinderecharge kann den Status von vernetzten Ladesteckdosen live anzeigen, z. B. LoRa-Doppelsteckdosen zum Selbstladen von E-Scootern. Jeder Ausgang ist ein Ladeplatz (`charging_points`). Die Steckdose meldet, ob ein Ausgang frei ist, lädt, fertig ist oder gestört ist; die App zeigt das sofort auf der Stationsseite und zählt die freien Plätze automatisch.
 
 Fernsteuerung (Ausgang ein/aus) und Abrechnung pro Ladevorgang kommen in Phase 2 mit der Bezahlung, sobald die API des Herstellers bekannt ist. Hintergrund und Fragen an den Hersteller: `planung/lora-ladesteckdose.md` im Projektordner.
 

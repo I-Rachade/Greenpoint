@@ -108,7 +108,7 @@ export const DEMO_STATIONS: Station[] = [
     operatorId: "op-pointderecharge",
     operatorName: "pointderecharge",
     isOwn: true,
-    name: "pointderecharge Déckon (prises connectées)",
+    name: "poinderecharge Déckon (prises connectées)",
     address: "Carrefour Déckon",
     lat: 6.1318,
     lng: 1.2296,
