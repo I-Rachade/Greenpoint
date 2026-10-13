@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { DEFAULT_FILTER, rankStations, type StationFilter } from "@/lib/availability";
+import { allBrands } from "@/lib/battery-types";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { useFavorites } from "@/lib/prefs";
@@ -27,13 +28,16 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
   const { data: stations } = useLiveQuery(() => backend.listStations());
   const [query, setQuery] = useState("");
   const [chip, setChip] = useState<Chip>("all");
+  const [brand, setBrand] = useState("all");
+  const brands = useMemo(() => allBrands(stations ?? []), [stations]);
 
   const filter: StationFilter = {
     ...DEFAULT_FILTER,
     service: chip === "charging" || chip === "swap" || chip === "parcel" ? chip : "all",
     onlyAvailable: chip === "available",
+    brand,
   };
-  const ranked = useMemo(() => rankStations(stations ?? [], position, filter), [stations, position, filter.service, filter.onlyAvailable]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ranked = useMemo(() => rankStations(stations ?? [], position, filter), [stations, position, filter.service, filter.onlyAvailable, filter.brand]); // eslint-disable-line react-hooks/exhaustive-deps
   const q = fold(query.trim());
   const shown = ranked.filter(
     ({ station }) =>
@@ -84,6 +88,22 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
             </button>
           ))}
         </div>
+      )}
+
+      {!favoritesOnly && brands.length > 0 && (
+        <select
+          value={brand}
+          onChange={(e) => setBrand(e.target.value)}
+          aria-label={t.filter.brand}
+          className="mt-2 rounded-full border border-gp-border bg-gp-surface px-4 py-1.5 text-sm dark:border-white/15"
+        >
+          <option value="all">{t.filter.allBrands}</option>
+          {brands.map((b) => (
+            <option key={b} value={b}>
+              🔋 {b}
+            </option>
+          ))}
+        </select>
       )}
 
       <p className="mt-3 text-xs text-gp-muted">

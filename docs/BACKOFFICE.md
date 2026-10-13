@@ -20,12 +20,16 @@ Jede Station bietet einen oder mehrere dieser Punkte an, frei kombinierbar (`src
 
 | Punkt | Gespeichert in | Hinweis |
 |---|---|---|
-| Point d'échange de batterie | `stations.kind` `swap`/`both`, `battery_capacity` | Personal meldet volle Akkus |
+| Point d'échange de batterie | `stations.kind` `swap`/`both`, `battery_capacity`, `station_battery_types` | Personal meldet volle Akkus. Dazu die Akku-Typen, die getauscht werden (siehe unten) |
 | Point de recharge de batterie | `stations.kind` `charging`/`both` | Die Ladeplätze sind die vernetzten Steckdosen der Station (eine pro Ausgang); `charging_slots` zählt der Worker selbst. Eine neue Steckdose macht die Station automatisch zum Ladepunkt. |
 | Point de dépôt de colis | `parcel_depots.is_active`, `has_counter` | Personal nimmt Pakete am Schalter an und gibt sie aus |
 | Casiers colis | `parcel_depots.is_active`, `lockers` | Fächer, die der Empfänger mit seinem Code öffnet |
 
 Eine Station ohne Tausch und Laden ist ein reiner Paketpunkt (`has_battery = 0`, in der App `kind = "parcel"`). Sie hat keine Zähler, erscheint in der App mit dem Filter „Colis“ und verschwindet aus der App, solange das Paketmodul aus ist. Eine Station ohne jeden Punkt lässt sich nicht speichern.
+
+### Akku-Typen (Types de batterie)
+
+Jede Motorrad-Marke (Akku-Betreiber, z. B. Spiro oder Omnivoltaic) hat eigene Tausch-Akkus. Oben im Stations-Editor pflegt der Admin die Liste (Marke und Modell, abschaltbar), im Tauschpunkt jeder Station hakt er an, welche Typen dort getauscht werden (Tabellen `battery_types`, `station_battery_types`, Migration `0016_battery_types.sql`). Laden braucht keinen Typ: die Steckdosen laden jeden Akku. Die App zeigt die getauschten Typen in der Stationsansicht und filtert nach Marke; abgeschaltete Typen erscheinen dort nicht.
 
 ## Auffälligkeiten („À vérifier“)
 

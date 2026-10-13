@@ -1,5 +1,6 @@
 import { distanceMeters, type LatLng } from "./geo";
 import { freeConnectedPoints, isConnected } from "./iot/charging-points";
+import { stationBrands } from "./battery-types";
 import { offersParcels } from "./station-points";
 import { STALE_STATUS_HOURS, type Reservation, type StationView, type VehicleType, type StationKind } from "./types";
 
@@ -90,12 +91,20 @@ export function countHolding(
 export interface StationFilter {
   vehicle: VehicleType | "all";
   service: "all" | "charging" | "swap" | "parcel";
+  /** Brand of swap battery the rider needs; "all" = any. */
+  brand?: string;
   onlyAvailable: boolean;
 }
 
 export const DEFAULT_FILTER: StationFilter = { vehicle: "all", service: "all", onlyAvailable: false };
 
 export function matchesFilter(station: StationView, filter: StationFilter): boolean {
+  // A brand only concerns battery swap: the station must swap that brand's batteries.
+  if (filter.brand && filter.brand !== "all") {
+    if (!stationBrands(station).includes(filter.brand)) return false;
+    if (filter.onlyAvailable) return availableBatteries(station) > 0;
+    return true;
+  }
   if (filter.vehicle !== "all" && !station.vehicleTypes.includes(filter.vehicle)) return false;
   if (filter.service === "charging" && !offersCharging(station.kind)) return false;
   if (filter.service === "swap" && !offersSwap(station.kind)) return false;

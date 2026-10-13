@@ -170,3 +170,21 @@ describe("parcel points", () => {
     expect(rankStations([parcel], null, { ...DEFAULT_FILTER, onlyAvailable: true })).toHaveLength(1);
   });
 });
+
+describe("battery brand filter", () => {
+  const now = new Date().toISOString();
+  const spiro = { id: "t1", brand: "Spiro", name: "72 V", isActive: true };
+  const ovt = { id: "t2", brand: "Omnivoltaic", name: "60 V", isActive: true };
+  const a = station({ id: "a", status: { stationId: "a", isOpen: true, freeSlots: 2, fullBatteries: 5, updatedAt: now }, batteryTypes: [spiro] });
+  const b = station({ id: "b", status: { stationId: "b", isOpen: true, freeSlots: 2, fullBatteries: 0, updatedAt: now }, batteryTypes: [ovt, spiro] });
+  const c = station({ id: "c", status: { stationId: "c", isOpen: true, freeSlots: 2, fullBatteries: 5, updatedAt: now } });
+  const ids = (brand: string, onlyAvailable = false) =>
+    rankStations([a, b, c], null, { ...DEFAULT_FILTER, brand, onlyAvailable }).map((r) => r.station.id).sort();
+
+  it("keeps stations that swap the brand's batteries", () => {
+    expect(ids("all")).toEqual(["a", "b", "c"]);
+    expect(ids("Spiro")).toEqual(["a", "b"]);
+    expect(ids("Omnivoltaic")).toEqual(["b"]);
+    expect(ids("Spiro", true)).toEqual(["a"]);
+  });
+});

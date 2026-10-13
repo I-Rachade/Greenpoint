@@ -15,8 +15,9 @@ import {
   type UserRole,
 } from "../types";
 import { BackendError, type Backend, type CodeChannel, type StatusPatch } from "./backend";
-import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, demoSocketPoints, initialDemoStatus } from "./demo-data";
+import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, demoSocketPoints, initialDemoStatus, DEMO_BATTERY_TYPES, DEMO_STATION_BATTERY_TYPES } from "./demo-data";
 import { depotPoints, hasAnyPoint, kindFor } from "../station-points";
+import { validBatteryType, type BatteryType, type BatteryTypeInput } from "../battery-types";
 import { DEMO_STAFF, demoHistory, demoUsers } from "../admin/demo-seed";
 import {
   ADMIN_HISTORY_DAYS,
@@ -150,6 +151,9 @@ interface DemoState {
   /** Parcel depot; parcels keep their pickup code here (demo only). */
   parcels?: Parcel[];
   parcelDepots?: ParcelDepot[];
+  batteryTypes?: BatteryType[];
+  /** Battery types each station swaps, by station id. */
+  stationBatteryTypes?: Record<string, string[]>;
   parcelSizes?: ParcelSizeTier[];
   parcelCodeFailures?: { stationId: string; at: string }[];
   /** Drivers (see src/lib/drivers.ts). */
@@ -484,6 +488,11 @@ export class DemoBackend implements Backend {
       const chargingSlots = chargingPoints.filter((p) => p.deviceId).length;
       const depot = (state.parcelDepots ?? seedDepots()).find((d) => d.stationId === s.id);
       const parcelPoint = depot?.isActive ? { counter: depot.counter ?? true, lockers: depot.lockers } : null;
+      const types = state.batteryTypes ?? DEMO_BATTERY_TYPES;
+      const swapped = (state.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES)[s.id] ?? [];
+      const batteryTypes = types
+        .filter((t) => swapped.includes(t.id))
+        .sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name));
       return {
         ...s,
         chargingSlots,
@@ -492,6 +501,7 @@ export class DemoBackend implements Backend {
         reservedBatteries: held.batteries,
         chargingPoints,
         parcelPoint,
+        batteryTypes,
       };
     });
   }
@@ -503,7 +513,10 @@ export class DemoBackend implements Backend {
 
   async listStations() {
     const state = this.load();
-    const views = this.views(state, this.activeStations(state));
+    const views = this.views(state, this.activeStations(state)).map((s) => ({
+      ...s,
+      batteryTypes: (s.batteryTypes ?? []).filter((t) => t.isActive),
+    }));
     if (state.parcelsEnabled !== false) return views;
     return views.filter((s) => s.kind !== "parcel").map((s) => ({ ...s, parcelPoint: null }));
   }
@@ -789,7 +802,9 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const operator = state.operators.find((o) => o.id === input.operatorId);
     if (!operator) throw new BackendError("unknown", "operator not found");
-    const { parcelDepot, ...fields } = input;
+    const { parcelDepot, batteryTypeIds, ...fields } = input;
+    const allTypes = state.batteryTypes ?? DEMO_BATTERY_TYPES;
+    if (batteryTypeIds?.some((t) => !allTypes.some((x) => x.id === t))) throw new BackendError("unknown", "unknown battery type");
     const existing = id ? (state.parcelDepots ?? seedDepots()).find((d) => d.stationId === id) : undefined;
     const depot = depotPoints(parcelDepot ?? existing);
     if (!hasAnyPoint({ swap: offersSwap(input.kind), charging: offersCharging(input.kind), ...depot })) {
@@ -824,7 +839,44 @@ export class DemoBackend implements Backend {
         ),
       );
     }
+    if (batteryTypeIds) {
+      const after = this.load();
+      this.save({
+        ...after,
+        stationBatteryTypes: {
+          ...(after.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES),
+          [station.id]: offersSwap(input.kind) ? [...new Set(batteryTypeIds)] : [],
+        },
+      });
+    }
     if (parcelDepot) await this.writeDepot(station.id, parcelDepot);
+  }
+
+  async listBatteryTypes() {
+    const state = this.load();
+    this.requireAdmin(state);
+    return [...(state.batteryTypes ?? DEMO_BATTERY_TYPES)].sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name));
+  }
+
+  async saveBatteryType(id: string | null, input: BatteryTypeInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!validBatteryType(input)) throw new BackendError("unknown", "invalid battery type");
+    const types = state.batteryTypes ?? DEMO_BATTERY_TYPES;
+    const type: BatteryType = { id: id ?? crypto.randomUUID(), brand: input.brand.trim(), name: input.name.trim(), isActive: input.isActive };
+    if (types.some((t) => t.id !== type.id && t.brand === type.brand && t.name === type.name)) throw new BackendError("battery_type_exists");
+    const before = types.find((t) => t.id === id);
+    this.save(
+      withAudit(
+        { ...state, batteryTypes: before ? types.map((t) => (t.id === id ? type : t)) : [...types, type] },
+        {
+          table: "battery_types",
+          action: before ? "update" : "insert",
+          rowId: type.id,
+          changes: before ? diff(before, type) : { brand: type.brand, name: type.name },
+        },
+      ),
+    );
   }
 
   /** Restores the example data (used by the "reset demo" button). */

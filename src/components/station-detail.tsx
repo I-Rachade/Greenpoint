@@ -11,6 +11,7 @@ import {
   stationAvailability,
   withinOpeningHours,
 } from "@/lib/availability";
+import { batteryTypeLabel } from "@/lib/battery-types";
 import { directionsUrl, formatDistance } from "@/lib/geo";
 import { displayStatus, type ChargingPointDisplay } from "@/lib/iot/charging-points";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
@@ -136,6 +137,21 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
         <div className="grid grid-cols-2 gap-3">
           {offersCharging(station.kind) && tile(slots, station.chargingSlots, t.station.freeSlots, BoltIcon)}
           {offersSwap(station.kind) && tile(batteries, station.batteryCapacity, t.station.fullBatteries, BatteryIcon)}
+        </div>
+      )}
+
+      {offersSwap(station.kind) && (station.batteryTypes ?? []).length > 0 && (
+        <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 dark:border-white/10">
+          <h3 className="flex items-center gap-2 text-sm font-semibold">
+            <BatteryIcon size={16} /> {t.station.batteryTypes}
+          </h3>
+          <ul className="mt-1 flex flex-wrap gap-1 text-xs">
+            {(station.batteryTypes ?? []).map((bt) => (
+              <li key={bt.id} className="rounded-full bg-gp-green/10 px-2 py-0.5 text-gp-green-dark">
+                {batteryTypeLabel(bt)}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

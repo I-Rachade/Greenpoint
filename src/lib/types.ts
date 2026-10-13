@@ -1,3 +1,4 @@
+import type { BatteryType } from "./battery-types";
 import type { ParcelDepotInput } from "./parcels";
 
 export type VehicleType = "scooter" | "tricycle" | "ebike" | "moped";
@@ -56,6 +57,8 @@ export interface StationView extends Station {
   chargingPoints?: ChargingPoint[];
   /** Parcel counter and lockers, when the station has an active parcel depot (and the parcel module is on). */
   parcelPoint?: ParcelPoint | null;
+  /** Battery types the swap point swaps (active types only in the app). */
+  batteryTypes?: BatteryType[];
 }
 
 export interface ParcelPoint {
@@ -108,6 +111,8 @@ export interface StationInput {
   phone: string | null;
   /** Parcel counter and lockers, saved with the station. Left out: unchanged. */
   parcelDepot?: ParcelDepotInput;
+  /** Ids of the battery types the swap point swaps, saved with the station. Left out: unchanged. */
+  batteryTypeIds?: string[];
 }
 
 export interface Operator {

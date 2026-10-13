@@ -1,3 +1,4 @@
+import type { BatteryType } from "../battery-types";
 import type { ChargingPoint, Operator, Station, StationStatus } from "../types";
 
 // Example stations in Lomé (approximate positions).
@@ -196,3 +197,18 @@ export function initialDemoStatus(now: string): StationStatus[] {
     updatedAt: now,
   }));
 }
+
+/** Example swap batteries of two motorbike brands. */
+export const DEMO_BATTERY_TYPES: BatteryType[] = [
+  { id: "bt-spiro-72", brand: "Spiro", name: "72 V", isActive: true },
+  { id: "bt-ovt-60", brand: "Omnivoltaic", name: "60 V", isActive: true },
+  { id: "bt-ovt-72", brand: "Omnivoltaic", name: "72 V", isActive: true },
+];
+
+/** Battery types each demo swap station swaps. */
+export const DEMO_STATION_BATTERY_TYPES: Record<string, string[]> = {
+  "st-grand-marche": ["bt-spiro-72", "bt-ovt-60", "bt-ovt-72"],
+  "st-tokoin": ["bt-spiro-72"],
+  "st-be": ["bt-ovt-60"],
+  "st-agoe": ["bt-ovt-60", "bt-ovt-72"],
+};

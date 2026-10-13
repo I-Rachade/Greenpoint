@@ -1,3 +1,4 @@
+import type { BatteryType, BatteryTypeInput } from "../battery-types";
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
@@ -314,6 +315,15 @@ export class CloudflareBackend implements Backend {
 
   listOperators() {
     return this.call<Operator[]>("GET", "/api/operators");
+  }
+
+  listBatteryTypes() {
+    return this.call<BatteryType[]>("GET", "/api/admin/battery-types");
+  }
+
+  async saveBatteryType(id: string | null, input: BatteryTypeInput) {
+    await this.call("POST", "/api/admin/battery-types", { id, input });
+    this.changed();
   }
 
   async saveStation(id: string | null, input: StationInput) {

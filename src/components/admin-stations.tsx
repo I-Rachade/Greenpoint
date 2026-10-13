@@ -7,6 +7,7 @@ import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { Device } from "@/lib/iot/devices";
 import type { Parcel, ParcelDepot } from "@/lib/parcels";
+import { batteryTypeLabel, groupByBrand, type BatteryType } from "@/lib/battery-types";
 import { hasAnyPoint, kindFor } from "@/lib/station-points";
 import { VEHICLE_TYPES, type StationInput, type StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
@@ -22,9 +23,11 @@ interface FormState {
   parcelLockers: boolean;
   lockers: number;
   note: string;
+  /** Battery types the swap point swaps. */
+  batteryTypeIds: string[];
 }
 
-function toForm(input: StationInput, depot: ParcelDepot | undefined): FormState {
+function toForm(input: StationInput, depot: ParcelDepot | undefined, batteryTypeIds: string[] = []): FormState {
   const active = !!depot?.isActive;
   return {
     input,
@@ -34,6 +37,7 @@ function toForm(input: StationInput, depot: ParcelDepot | undefined): FormState 
     parcelLockers: active && depot!.lockers > 0,
     lockers: depot?.lockers || 0,
     note: depot?.note ?? "",
+    batteryTypeIds,
   };
 }
 
@@ -105,11 +109,14 @@ function StationForm({
   operators,
   sockets,
   parcelCount,
+  batteryTypes,
   onSave,
   onCancel,
 }: {
   initial: FormState;
   operators: { id: string; name: string }[];
+  /** All battery types; switched-off ones only show while still ticked. */
+  batteryTypes: BatteryType[];
   /** Connected sockets registered at this station. */
   sockets: Device[];
   parcelCount: number;
@@ -125,6 +132,7 @@ function StationForm({
   const toggle = (key: "swap" | "charging" | "parcelCounter" | "parcelLockers", on: boolean) =>
     setForm({ ...form, [key]: on, ...(key === "parcelLockers" && on && form.lockers < 1 ? { lockers: 1 } : {}) });
   const outlets = sockets.reduce((n, d) => n + d.outlets, 0);
+  const shownTypes = batteryTypes.filter((bt) => bt.isActive || initial.batteryTypeIds.includes(bt.id));
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -141,6 +149,7 @@ function StationForm({
         ...form.input,
         kind: kindFor(form.swap, form.charging),
         batteryCapacity: form.swap ? form.input.batteryCapacity : 0,
+        batteryTypeIds: form.swap ? form.batteryTypeIds : [],
         // Only touch the depot when the station has or gets one.
         ...(parcels || hadDepot
           ? {
@@ -238,6 +247,37 @@ function StationForm({
               onChange={(e) => set("batteryCapacity", Number(e.target.value))}
             />
           </label>
+          <fieldset className="space-y-1 text-sm">
+            <legend>{p.batteryTypes}</legend>
+            <p className="text-xs text-zinc-500">{p.batteryTypesHint}</p>
+            {shownTypes.length === 0 ? (
+              <p className="text-xs text-amber-700 dark:text-amber-500">{p.noBatteryTypes}</p>
+            ) : (
+              groupByBrand(shownTypes).map(([brand, types]) => (
+                <div key={brand} className="flex flex-wrap items-center gap-3">
+                  <span className="w-28 shrink-0 font-medium">{brand}</span>
+                  {types.map((bt) => (
+                    <label key={bt.id} className={`flex items-center gap-1 ${bt.isActive ? "" : "opacity-60"}`}>
+                      <input
+                        type="checkbox"
+                        className="accent-gp-green-dark"
+                        checked={form.batteryTypeIds.includes(bt.id)}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            batteryTypeIds: e.target.checked
+                              ? [...form.batteryTypeIds, bt.id]
+                              : form.batteryTypeIds.filter((x) => x !== bt.id),
+                          })
+                        }
+                      />
+                      {bt.name}
+                    </label>
+                  ))}
+                </div>
+              ))
+            )}
+          </fieldset>
         </PointSection>
 
         <PointSection
@@ -354,6 +394,7 @@ function PointBadges({ station, sockets }: { station: StationView; sockets: Devi
       {offersSwap(station.kind) && (
         <span className={pill}>
           <BatteryIcon size={12} /> {p.swap} · {station.batteryCapacity}
+          {(station.batteryTypes ?? []).length > 0 && ` · ${(station.batteryTypes ?? []).map(batteryTypeLabel).join(", ")}`}
         </span>
       )}
       {offersCharging(station.kind) && (
@@ -375,18 +416,122 @@ function PointBadges({ station, sockets }: { station: StationView; sockets: Devi
   );
 }
 
+/** The battery types of the motorbike brands: add, rename, switch off. */
+function BatteryTypesManager({
+  types,
+  usage,
+  onChanged,
+}: {
+  types: BatteryType[];
+  usage: (id: string) => number;
+  onChanged: () => void;
+}) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const errorMessage = useErrorMessage();
+  const b = t.admin.batteryTypes;
+  const [brand, setBrand] = useState("");
+  const [name, setName] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+
+  async function run(action: () => Promise<void>) {
+    try {
+      await action();
+      setProblem(null);
+      onChanged();
+    } catch (err) {
+      setProblem(errorMessage(err));
+    }
+  }
+
+  async function add(e: FormEvent) {
+    e.preventDefault();
+    await run(async () => {
+      await backend.saveBatteryType(null, { brand, name, isActive: true });
+      setName("");
+    });
+  }
+
+  return (
+    <section className="space-y-3 rounded-xl border border-black/10 p-4 dark:border-white/10">
+      <div>
+        <h2 className="flex items-center gap-2 font-semibold">
+          <BatteryIcon size={18} /> {b.title}
+        </h2>
+        <p className="text-xs text-zinc-500">{b.hint}</p>
+      </div>
+      {types.length === 0 ? (
+        <p className="text-sm text-zinc-500">{b.none}</p>
+      ) : (
+        <ul className="space-y-1 text-sm">
+          {groupByBrand(types).map(([group, list]) => (
+            <li key={group} className="flex flex-wrap items-center gap-2">
+              <span className="w-28 shrink-0 font-medium">{group}</span>
+              {list.map((bt) => (
+                <span
+                  key={bt.id}
+                  className={`inline-flex items-center gap-2 rounded-full border px-2 py-0.5 ${bt.isActive ? "border-gp-green-dark/30" : "border-black/10 opacity-60 dark:border-white/10"}`}
+                >
+                  {bt.name}
+                  <span className="text-xs text-zinc-500">{format(b.stations, { n: usage(bt.id) })}</span>
+                  <button
+                    type="button"
+                    className="text-xs text-gp-green-dark hover:underline"
+                    onClick={() => run(() => backend.saveBatteryType(bt.id, { brand: bt.brand, name: bt.name, isActive: !bt.isActive }))}
+                  >
+                    {bt.isActive ? b.deactivate : b.activate}
+                  </button>
+                </span>
+              ))}
+            </li>
+          ))}
+        </ul>
+      )}
+      <form onSubmit={add} className="flex flex-wrap items-end gap-2">
+        <label className={label}>
+          <span>{b.brand}</span>
+          <input className={`${input} w-40`} list="battery-brands" value={brand} maxLength={60} placeholder={b.brandPlaceholder} onChange={(e) => setBrand(e.target.value)} required />
+          <datalist id="battery-brands">
+            {[...new Set(types.map((bt) => bt.brand))].map((x) => (
+              <option key={x} value={x} />
+            ))}
+          </datalist>
+        </label>
+        <label className={label}>
+          <span>{b.name}</span>
+          <input className={`${input} w-40`} value={name} maxLength={80} placeholder={b.namePlaceholder} onChange={(e) => setName(e.target.value)} required />
+        </label>
+        <button type="submit" className="rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white">
+          {b.add}
+        </button>
+      </form>
+      {problem && (
+        <p role="alert" className="text-sm text-red-600">
+          {problem}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function AdminStations() {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
   const { data, reload } = useLiveQuery(() =>
-    Promise.all([backend.adminSnapshot(), backend.listOperators(), backend.listDevices(), backend.adminParcels()]),
+    Promise.all([
+      backend.adminSnapshot(),
+      backend.listOperators(),
+      backend.listDevices(),
+      backend.adminParcels(),
+      backend.listBatteryTypes(),
+    ]),
   );
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
-  const [snap, operators, devices, { parcels, depots }] = data;
+  const [snap, operators, devices, { parcels, depots }, batteryTypes] = data;
   const stations = [...snap.stations].sort((a, b) => a.name.localeCompare(b.name));
   const socketsOf = (id: string) => devices.filter((d) => d.stationId === id);
   const depotOf = (id: string) => depots.find((d) => d.stationId === id);
@@ -431,12 +576,18 @@ export function AdminStations() {
         )}
       </div>
       {message && <p className={`text-sm ${message.ok ? "text-gp-green-dark" : "text-red-600"}`}>{message.text}</p>}
+      <BatteryTypesManager
+        types={batteryTypes}
+        usage={(id) => stations.filter((s) => (s.batteryTypes ?? []).some((bt) => bt.id === id)).length}
+        onChanged={reload}
+      />
       {editing === "new" && (
         <StationForm
           initial={toForm(blank, undefined)}
           operators={operators}
           sockets={[]}
           parcelCount={0}
+          batteryTypes={batteryTypes}
           onSave={(i) => save(null, i)}
           onCancel={() => setEditing(null)}
         />
@@ -446,10 +597,15 @@ export function AdminStations() {
           editing === s.id ? (
             <li key={s.id}>
               <StationForm
-                initial={toForm(toInput(s), depotOf(s.id))}
+                initial={toForm(
+                  toInput(s),
+                  depotOf(s.id),
+                  (s.batteryTypes ?? []).map((bt) => bt.id),
+                )}
                 operators={operators}
                 sockets={socketsOf(s.id)}
                 parcelCount={parcelsAt(parcels, s.id)}
+                batteryTypes={batteryTypes}
                 onSave={(i) => save(s.id, i)}
                 onCancel={() => setEditing(null)}
               />

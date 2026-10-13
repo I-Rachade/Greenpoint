@@ -1,3 +1,4 @@
+import type { BatteryType, BatteryTypeInput } from "../battery-types";
 import type {
   Operator,
   Profile,
@@ -67,6 +68,7 @@ export type BackendErrorCode =
   | "device_not_configured"
   | "depot_inactive"
   | "station_without_point"
+  | "battery_type_exists"
   | "same_station"
   | "parcel_too_large"
   | "parcel_not_found"
@@ -177,6 +179,9 @@ export interface Backend {
   // Admin
   listOperators(): Promise<Operator[]>;
   saveStation(id: string | null, input: StationInput): Promise<void>;
+  /** Battery types of the motorbike brands, including switched-off ones (admins only). */
+  listBatteryTypes(): Promise<BatteryType[]>;
+  saveBatteryType(id: string | null, input: BatteryTypeInput): Promise<void>;
 
   // Backoffice (admins only; see src/lib/admin)
   adminSnapshot(): Promise<AdminSnapshot>;
