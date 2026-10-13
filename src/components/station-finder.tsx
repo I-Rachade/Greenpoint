@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 import {
   DEFAULT_FILTER,
-  availableBatteries,
+  stockBatteries,
   availableSlots,
   offersCharging,
   offersSwap,
@@ -153,7 +153,7 @@ export function StationFinder() {
                         <AvailabilityBadge value={stationAvailability(station)} />
                         {offersSwap(station.kind) && (
                           <span>
-                            🔋 {availableBatteries(station)} {t.station.fullBatteries.toLowerCase()}
+                            🔋 {stockBatteries(station)} {t.station.fullBatteries.toLowerCase()}
                           </span>
                         )}
                         {offersCharging(station.kind) && (
