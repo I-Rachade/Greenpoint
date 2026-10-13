@@ -76,6 +76,7 @@ import {
 } from "./partners";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
+import { refreshTopup, startTopup } from "./wallet-topups";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
 import { adjustBalance, adminWallet, findRecipient, getWallet, saveFeeSetting, sendMoney, setWalletEnabled, setWalletFrozen } from "./wallet";
 import type { WalletFeeSetting } from "../src/lib/wallet";
@@ -926,6 +927,8 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/wallet$/, async (c) => getWallet(c.env, await c.requireUser())],
   ["GET", /^\/api\/wallet\/recipient$/, async (c) => findRecipient(c.env, await c.requireUser(), c.url.searchParams.get("contact"))],
   ["POST", /^\/api\/wallet\/send$/, async (c) => sendMoney(c.env, await c.requireUser(), c.request)],
+  ["POST", /^\/api\/wallet\/topups$/, async (c) => startTopup(c.env, await c.requireUser(), c.request)],
+  ["POST", /^\/api\/wallet\/topups\/([\w-]+)\/refresh$/, async (c, [id]) => refreshTopup(c.env, await c.requireUser(), id)],
   ["GET", /^\/api\/admin\/wallet$/, async (c) => {
     await c.requireAdmin();
     return adminWallet(c.env, c.url);

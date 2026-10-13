@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
 import { canScanQr, QrScanner } from "@/components/parcels/qr-scanner";
 import { QrImage } from "@/components/parcels/qr-image";
@@ -9,10 +9,16 @@ import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
 import {
   checkLimits,
+  guessTopupNetwork,
   parseAmount,
   parseReceivePayload,
   quoteFee,
   remaining,
+  TOPUP_MAX_XOF,
+  TOPUP_MIN_XOF,
+  TOPUP_NETWORK_LABEL,
+  type TopupNetwork,
+  type WalletTopup,
   type WalletTransaction,
   type WalletView,
 } from "@/lib/wallet";
@@ -22,15 +28,20 @@ import { useI18n } from "../i18n-provider";
 const input = "w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-base dark:border-white/20 dark:bg-zinc-900";
 const button = "rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-50";
 
-type Tab = "send" | "receive" | "history";
+type Tab = "topup" | "send" | "receive" | "history";
 
-/** "Portefeuille": balance, send money with the PIN, receive by QR code, history. Same page in the web app and the mobile apps. */
+/** "Portefeuille": balance, top up with Flooz/T-Money, send money with the PIN, receive by QR code, history. Same page in the web app and the mobile apps. */
 export function WalletPanel() {
   const { t, locale } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
-  const { data, error } = useLiveQuery(() => backend.myWallet());
-  const [tab, setTab] = useState<Tab>("send");
+  const { data, error, reload } = useLiveQuery(() => backend.myWallet());
+  const [tab, setTab] = useState<Tab | null>(null);
+  // Back from the card provider's page: /portefeuille?topup=<id>.
+  const [returnedTopup] = useState(() => (typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("topup")));
+  useEffect(() => {
+    if (returnedTopup) window.history.replaceState(null, "", window.location.pathname);
+  }, [returnedTopup]);
 
   if (error) {
     const disabled = error instanceof BackendError && error.code === "wallet_disabled";
@@ -38,7 +49,10 @@ export function WalletPanel() {
   }
   if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
 
+  // An empty wallet opens on "Recharger", so the first thing people see is how to put money in.
+  const current = tab ?? (returnedTopup || data.balanceXof === 0 ? "topup" : "send");
   const tabs: { id: Tab; label: string }[] = [
+    { id: "topup", label: t.wallet.topup },
     { id: "send", label: t.wallet.send },
     { id: "receive", label: t.wallet.receive },
     { id: "history", label: t.wallet.history },
@@ -52,6 +66,11 @@ export function WalletPanel() {
         <div className="text-xs uppercase tracking-wide opacity-80">{t.wallet.balance}</div>
         <div className="mt-1 text-3xl font-bold">{formatXof(data.balanceXof, locale)}</div>
         {data.frozen && <div className="mt-2 text-sm font-medium text-amber-200">{t.wallet.frozen}</div>}
+        {data.balanceXof === 0 && current !== "topup" && (
+          <button type="button" onClick={() => setTab("topup")} className="mt-3 rounded-full bg-white px-4 py-1.5 text-sm font-medium text-gp-forest">
+            {t.wallet.topup}
+          </button>
+        )}
       </section>
       <div role="tablist" className="flex gap-1 rounded-full bg-zinc-100 p-1 text-sm dark:bg-zinc-800">
         {tabs.map((x) => (
@@ -59,18 +78,175 @@ export function WalletPanel() {
             key={x.id}
             type="button"
             role="tab"
-            aria-selected={tab === x.id}
+            aria-selected={current === x.id}
             onClick={() => setTab(x.id)}
-            className={`flex-1 rounded-full px-3 py-1.5 ${tab === x.id ? "bg-white font-medium shadow dark:bg-zinc-950" : "text-zinc-600 dark:text-zinc-400"}`}
+            className={`flex-1 rounded-full px-3 py-1.5 ${current === x.id ? "bg-white font-medium shadow dark:bg-zinc-950" : "text-zinc-600 dark:text-zinc-400"}`}
           >
             {x.label}
           </button>
         ))}
       </div>
-      {tab === "send" && <SendForm wallet={data} onDone={() => setTab("history")} />}
-      {tab === "receive" && <Receive code={data.receiveCode} />}
-      {tab === "history" && <History items={data.transactions} />}
+      {current === "topup" && <TopupForm wallet={data} onDone={reload} returnedTopup={returnedTopup} />}
+      {current === "send" && <SendForm wallet={data} onDone={() => setTab("history")} />}
+      {current === "receive" && <Receive code={data.receiveCode} />}
+      {current === "history" && <History items={data.transactions} />}
     </div>
+  );
+}
+
+const TOPUP_PRESETS = [1_000, 2_000, 5_000, 10_000];
+const POLL_MS = 4_000;
+const POLL_MAX = 45; // three minutes, about how long a Flooz/T-Money request stays open on the phone
+
+function TopupForm({ wallet, onDone, returnedTopup }: { wallet: WalletView; onDone: () => void; returnedTopup: string | null }) {
+  const { t, locale } = useI18n();
+  const { backend, profile } = useApp();
+  const errorMessage = useErrorMessage();
+  const [amountText, setAmountText] = useState("");
+  const [phone, setPhone] = useState(profile?.phone ?? "");
+  const methods: TopupNetwork[] = [...(wallet.topupAvailable ? (["tmoney", "flooz"] as const) : []), ...(wallet.cardTopupAvailable ? (["card"] as const) : [])];
+  const [network, setNetwork] = useState<TopupNetwork>(wallet.topupAvailable ? guessTopupNetwork(profile?.phone) : "card");
+  const [busy, setBusy] = useState(false);
+  const [topup, setTopup] = useState<WalletTopup | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const xof = (n: number) => formatXof(n, locale);
+  const amount = parseAmount(amountText);
+  const card = network === "card";
+  const notMultipleOf5 = card && amount !== null && amount % 5 !== 0;
+  const inRange = amount !== null && amount >= TOPUP_MIN_XOF && amount <= TOPUP_MAX_XOF && !notMultipleOf5;
+
+  // Back from the card page: show where that payment stands (and keep asking below while it is pending).
+  useEffect(() => {
+    if (!returnedTopup) return;
+    backend.refreshTopup(returnedTopup).then(
+      (next) => {
+        setTopup(next);
+        if (next.status === "succeeded") onDone();
+      },
+      () => {},
+    );
+  }, [backend, returnedTopup, onDone]);
+
+  // While the person confirms on the phone, ask for the status every few seconds.
+  const pendingId = topup?.status === "pending" ? topup.id : null;
+  useEffect(() => {
+    if (!pendingId) return;
+    let tries = 0;
+    const timer = window.setInterval(() => {
+      tries++;
+      backend.refreshTopup(pendingId).then(
+        (next) => {
+          if (next.status !== "pending" || tries >= POLL_MAX) window.clearInterval(timer);
+          if (next.status !== "pending") {
+            setTopup(next);
+            if (next.status === "succeeded") onDone();
+          }
+        },
+        () => tries >= POLL_MAX && window.clearInterval(timer),
+      );
+    }, POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [backend, pendingId, onDone]);
+
+  if (methods.length === 0) return <p className="rounded-lg border border-black/10 p-3 text-sm dark:border-white/10">{t.wallet.topupUnavailable}</p>;
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!amount || !inRange) return;
+    setBusy(true);
+    setError(null);
+    setTopup(null);
+    try {
+      const started = await backend.startTopup({ amountXof: amount, network, phone: card ? undefined : phone.trim() });
+      setTopup(started);
+      // Cards are paid on the provider's page, which sends the person back to /portefeuille?topup=<id>.
+      if (started.checkoutUrl) window.location.assign(started.checkoutUrl);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function checkNow() {
+    if (!topup) return;
+    const next = await backend.refreshTopup(topup.id).catch(() => topup);
+    setTopup(next);
+    if (next.status === "succeeded") onDone();
+  }
+
+  const label = (n: TopupNetwork) => TOPUP_NETWORK_LABEL[n];
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <h2 className="font-semibold">{t.wallet.topupTitle}</h2>
+      {wallet.balanceXof === 0 && !topup && <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.wallet.emptyHint}</p>}
+      <label className="block space-y-1">
+        <span className="text-sm font-medium">{t.wallet.topupAmount}</span>
+        <input className={input} value={amountText} onChange={(e) => setAmountText(e.target.value.replace(/[^\d\s]/g, ""))} inputMode="numeric" required />
+        <span className="block text-xs text-zinc-500">{format(t.wallet.topupLimits, { min: xof(TOPUP_MIN_XOF), max: xof(TOPUP_MAX_XOF) })}</span>
+        {notMultipleOf5 && <span className="block text-xs text-red-600">{t.wallet.topupMultipleOf5}</span>}
+      </label>
+      <div className="flex flex-wrap gap-2">
+        {TOPUP_PRESETS.map((n) => (
+          <button key={n} type="button" onClick={() => setAmountText(String(n))} className="rounded-full border border-black/15 px-3 py-1 text-sm dark:border-white/20">
+            {xof(n)}
+          </button>
+        ))}
+      </div>
+      <fieldset className="space-y-1">
+        <legend className="text-sm font-medium">{t.wallet.topupNetwork}</legend>
+        <div className="flex gap-2">
+          {methods.map((n) => (
+            <button
+              key={n}
+              type="button"
+              aria-pressed={network === n}
+              onClick={() => setNetwork(n)}
+              className={`flex-1 rounded-lg border px-3 py-2 text-sm ${network === n ? "border-gp-green-dark bg-gp-green/10 font-medium" : "border-black/15 dark:border-white/20"}`}
+            >
+              {label(n)}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+      {!wallet.topupAvailable && <p className="text-xs text-zinc-500">{t.wallet.topupUnavailable}</p>}
+      {!wallet.cardTopupAvailable && <p className="text-xs text-zinc-500">{t.wallet.topupCardUnavailable}</p>}
+      {card ? (
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.wallet.topupCardHint}</p>
+      ) : (
+        <label className="block space-y-1">
+          <span className="text-sm font-medium">{t.wallet.topupPhone}</span>
+          <input
+            className={input}
+            value={phone}
+            onChange={(e) => {
+              setPhone(e.target.value);
+              if (/^\+228\d{8}$/.test(e.target.value.replace(/\s/g, ""))) setNetwork(guessTopupNetwork(e.target.value.replace(/\s/g, "")));
+            }}
+            inputMode="tel"
+            autoComplete="tel"
+            placeholder="+228 90 00 00 00"
+            required
+          />
+        </label>
+      )}
+      <button type="submit" className={`${button} w-full`} disabled={busy || !inRange || (!card && !phone.trim()) || topup?.status === "pending"}>
+        {format(t.wallet.topupConfirm, { amount: amount ? xof(amount) : "" })}
+      </button>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      {topup?.status === "pending" && (
+        <div className="space-y-2 rounded-lg bg-amber-100 p-3 text-sm text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">
+          <p>{topup.network === "card" ? t.wallet.topupCardReturn : format(t.wallet.topupWaiting, { amount: xof(topup.amountXof), network: label(topup.network) })}</p>
+          <button type="button" onClick={() => void checkNow()} className="underline">
+            {t.wallet.topupCheck}
+          </button>
+        </div>
+      )}
+      {topup?.status === "succeeded" && <p className="text-sm text-gp-green-dark dark:text-gp-green">{format(t.wallet.topupDone, { amount: xof(topup.amountXof) })}</p>}
+      {topup && topup.status !== "pending" && topup.status !== "succeeded" && (
+        <p className="text-sm text-red-600">{format(t.wallet.topupFailed, { status: t.wallet.topupStatus[topup.status] })}</p>
+      )}
+    </form>
   );
 }
 
@@ -253,7 +429,9 @@ function History({ items }: { items: WalletTransaction[] }) {
         const who =
           x.type === "admin_adjust"
             ? t.wallet.byAdmin
-            : format(incoming ? t.wallet.from : t.wallet.to, { name: x.counterparty ?? "?" });
+            : x.type === "topup"
+              ? format(t.wallet.viaNetwork, { name: x.counterparty ?? "" })
+              : format(incoming ? t.wallet.from : t.wallet.to, { name: x.counterparty ?? "?" });
         return (
           <li key={x.id} className="flex items-start gap-3 p-3 text-sm">
             <div className="min-w-0 flex-1">

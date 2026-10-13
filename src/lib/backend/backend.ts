@@ -13,7 +13,7 @@ import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
 import type { Promotion, PromotionInput } from "../promo";
-import type { AdminWallet, SendMoneyInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTransaction, WalletView } from "../wallet";
+import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
 
 /** Where a code goes: by SMS to the phone number or by e-mail. */
 export type CodeChannel = "sms" | "email";
@@ -67,6 +67,7 @@ export type BackendErrorCode =
   | "daily_limit_exceeded"
   | "monthly_limit_exceeded"
   | "wallet_not_empty"
+  | "topup_unavailable"
   | "unknown";
 
 export class BackendError extends Error {
@@ -204,6 +205,10 @@ export interface Backend {
   findWalletRecipient(contact: string): Promise<WalletRecipient>;
   /** Sends money; the PIN is checked on the server. */
   sendMoney(input: SendMoneyInput): Promise<WalletTransaction>;
+  /** Asks the person's Flooz/T-Money account for the money; the wallet is credited once the provider confirms. */
+  startTopup(input: TopupInput): Promise<WalletTopup>;
+  /** Asks again for the status of a top-up while the person confirms on the phone. */
+  refreshTopup(id: string): Promise<WalletTopup>;
   /** Backoffice: switch, fees, totals and the ledger (admins only). */
   adminWallet(filter?: { type?: string; userId?: string }): Promise<AdminWallet>;
   setWalletEnabled(enabled: boolean): Promise<void>;

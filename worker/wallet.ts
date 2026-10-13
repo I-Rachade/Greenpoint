@@ -23,6 +23,7 @@ import {
   type WalletView,
 } from "../src/lib/wallet";
 import { verifyPin } from "./auth";
+import { cardProviderFromEnv, providerFromEnv } from "./payment-providers";
 import type { Env } from "./env";
 import { ApiError, nowIso, readJson, uuid } from "./http";
 
@@ -105,11 +106,26 @@ async function walletEnabled(env: Env): Promise<boolean> {
 }
 
 /** While the module is off only admins may use it, to test. */
-async function access(env: Env, user: Profile): Promise<{ enabled: boolean; testMode: boolean }> {
+export async function walletAccess(env: Env, user: Profile): Promise<{ enabled: boolean; testMode: boolean }> {
   const enabled = await walletEnabled(env);
   if (enabled) return { enabled, testMode: false };
   if (user.role === "admin") return { enabled, testMode: true };
   throw new ApiError("wallet_disabled", 403);
+}
+
+/**
+ * Without real Flooz/T-Money credentials the simulated provider confirms every
+ * payment, which would hand out free money. Then only admins may top up, to test.
+ */
+export function topupAvailable(env: Env, user: Profile): boolean {
+  const pay = providerFromEnv((key) => env[key as keyof Env] as string | undefined);
+  return pay.name !== "mock" || user.role === "admin";
+}
+
+/** The same for bank cards, which have their own provider. */
+export function cardTopupAvailable(env: Env, user: Profile): boolean {
+  const pay = cardProviderFromEnv((key) => env[key as keyof Env] as string | undefined);
+  return pay.name !== "mock" || user.role === "admin";
 }
 
 async function feeSetting(env: Env, product: WalletProduct): Promise<WalletFeeSetting> {
@@ -173,7 +189,7 @@ const label = (u: UserRow) => personLabel({ fullName: u.full_name, phone: u.phon
 // Users ------------------------------------------------------------------------
 
 export async function getWallet(env: Env, user: Profile): Promise<WalletView> {
-  const { enabled, testMode } = await access(env, user);
+  const { enabled, testMode } = await walletAccess(env, user);
   const [wallet, transfer, used, history] = await Promise.all([
     env.DB.prepare("select balance_xof, status from wallets where user_id = ?")
       .bind(user.id)
@@ -193,13 +209,15 @@ export async function getWallet(env: Env, user: Profile): Promise<WalletView> {
     transfer,
     usage: used,
     receiveCode: contact ? receivePayload(contact) : null,
+    topupAvailable: topupAvailable(env, user),
+    cardTopupAvailable: cardTopupAvailable(env, user),
     transactions: history.results.map(toTransaction),
   };
 }
 
 /** Lets the sender check who will get the money before confirming. */
 export async function findRecipient(env: Env, user: Profile, contact: string | null): Promise<WalletRecipient> {
-  await access(env, user);
+  await walletAccess(env, user);
   const recipient = await findUser(env, contact);
   if (recipient.id === user.id) throw new ApiError("self_transfer");
   return { label: label(recipient) };
@@ -208,7 +226,7 @@ export async function findRecipient(env: Env, user: Profile, contact: string | n
 /** Send Money (spec 1.4.2): PIN, fee, limits and balance checked on the server; two ledger rows. */
 export async function sendMoney(env: Env, user: Profile, request: Request): Promise<WalletTransaction> {
   const input = await readJson<Partial<SendMoneyInput>>(request);
-  await access(env, user);
+  await walletAccess(env, user);
   const amount = parseAmount(input.amountXof);
   if (amount === null) throw new ApiError("invalid_amount");
   const key = String(input.idempotencyKey ?? "");
@@ -290,7 +308,7 @@ export async function adminWallet(env: Env, url: URL): Promise<AdminWallet> {
   const userId = url.searchParams.get("user");
   const where: string[] = [];
   const params: unknown[] = [];
-  if (type === "transfer" || type === "admin_adjust") {
+  if (type === "transfer" || type === "admin_adjust" || type === "topup") {
     where.push("t.type = ?");
     params.push(type);
   }
