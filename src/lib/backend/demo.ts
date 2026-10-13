@@ -311,6 +311,22 @@ function ownedOperators(state: DemoState, userId: string): string[] {
   return (state.operatorOwners ?? []).filter((x) => x.userId === userId).map((x) => x.operatorId);
 }
 
+/** Whoever gets station work becomes "operator" (admins stay admins). */
+function promoted(state: DemoState, userId: string) {
+  return (state.users ?? demoUsers(new Date())).map((u) =>
+    u.id === userId && u.role !== "admin" && u.role !== "operator" ? { ...u, role: "operator" as const } : u,
+  );
+}
+
+/** Whoever has no station and runs no operator any more goes back to customer. */
+function demotedIfIdle(state: DemoState, userId: string) {
+  const busy =
+    (state.staff ?? DEMO_STAFF).some((a) => a.userId === userId) || (state.operatorOwners ?? []).some((x) => x.userId === userId);
+  return (state.users ?? demoUsers(new Date())).map((u) =>
+    u.id === userId && u.role === "operator" && !busy ? { ...u, role: "customer" as const } : u,
+  );
+}
+
 /** Appends an activity log entry, like the Worker does on Cloudflare. */
 function withAudit(state: DemoState, entry: AuditInput): DemoState {
   const audit = state.audit ?? [];
@@ -597,8 +613,9 @@ export class DemoBackend implements Backend {
   async staffStations() {
     const state = this.load();
     const profile = this.requireProfile(state);
+    // Menu and rights follow the role, like on Cloudflare.
+    if (profile.role !== "operator" && profile.role !== "admin") return [];
     const owned = new Set(profile.ownerOf ?? []);
-    if (profile.role !== "operator" && profile.role !== "admin" && !owned.size) throw new BackendError("forbidden");
     // Demo staff run every own station, operator accounts their operator's stations; admins see all.
     const active = this.activeStations(state);
     const stations =
@@ -787,12 +804,27 @@ export class DemoBackend implements Backend {
     const users = state.users ?? demoUsers(new Date());
     const before = users.find((u) => u.id === userId);
     if (!before) throw new BackendError("unknown", "user not found");
-    this.save(
-      withAudit(
-        { ...state, users: users.map((u) => (u.id === userId ? { ...u, role } : u)) },
-        { table: "profiles", action: "update", rowId: userId, userId, changes: { role: [before.role, role] } },
-      ),
+    if (before.role === role) return;
+    let next = withAudit(
+      { ...state, users: users.map((u) => (u.id === userId ? { ...u, role } : u)) },
+      { table: "profiles", action: "update", rowId: userId, userId, changes: { role: [before.role, role] } },
     );
+    // Leaving "operator" ends every station assignment and operator account, like on Cloudflare.
+    if (role !== "operator") {
+      for (const a of (state.staff ?? DEMO_STAFF).filter((x) => x.userId === userId)) {
+        next = withAudit(
+          { ...next, staff: (next.staff ?? DEMO_STAFF).filter((x) => x !== a) },
+          { table: "station_staff", action: "delete", rowId: `${a.stationId}:${userId}`, stationId: a.stationId, userId, changes: {} },
+        );
+      }
+      for (const o of (state.operatorOwners ?? []).filter((x) => x.userId === userId)) {
+        next = withAudit(
+          { ...next, operatorOwners: (next.operatorOwners ?? []).filter((x) => x !== o) },
+          { table: "operator_owners", action: "delete", rowId: `${o.operatorId}:${userId}`, userId, changes: { operator_id: o.operatorId } },
+        );
+      }
+    }
+    this.save(next);
   }
 
   async assignStaff(stationId: string, userId: string) {
@@ -808,10 +840,8 @@ export class DemoBackend implements Backend {
       {
         ...state,
         staff: [...staff, { stationId, userId }],
-        // The role follows the assignment, like sync_staff_role() in SQL.
-        users: (state.users ?? demoUsers(new Date())).map((u) =>
-          u.id === userId && u.role === "customer" ? { ...u, role: "operator" as const } : u,
-        ),
+        // The role follows the assignment, like on Cloudflare.
+        users: promoted(state, userId),
       },
       { table: "station_staff", action: "insert", rowId: `${stationId}:${userId}`, stationId, userId, changes: {} },
     );
@@ -825,12 +855,8 @@ export class DemoBackend implements Backend {
 
   private withoutStaff(state: DemoState, stationId: string, userId: string): DemoState {
     const staff = (state.staff ?? DEMO_STAFF).filter((a) => !(a.stationId === stationId && a.userId === userId));
-    const stillStaff = staff.some((a) => a.userId === userId);
-    const users = (state.users ?? demoUsers(new Date())).map((u) =>
-      u.id === userId && u.role === "operator" && !stillStaff ? { ...u, role: "customer" as const } : u,
-    );
     return withAudit(
-      { ...state, staff, users },
+      { ...state, staff, users: demotedIfIdle({ ...state, staff }, userId) },
       { table: "station_staff", action: "delete", rowId: `${stationId}:${userId}`, stationId, userId, changes: {} },
     );
   }
@@ -841,6 +867,7 @@ export class DemoBackend implements Backend {
   private requireOwnerOf(state: DemoState, stationId: string): Profile {
     const profile = this.requireProfile(state);
     if (profile.role === "admin") return profile;
+    if (profile.role !== "operator") throw new BackendError("forbidden");
     const station = state.stations.find((s) => s.id === stationId);
     if (!station || !ownedOperators(state, profile.id).includes(station.operatorId)) throw new BackendError("forbidden");
     return profile;
@@ -865,7 +892,7 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const profile = this.requireProfile(state);
     const owned = new Set(ownedOperators(state, profile.id));
-    if (!owned.size) throw new BackendError("forbidden");
+    if ((profile.role !== "operator" && profile.role !== "admin") || !owned.size) throw new BackendError("forbidden");
     const stations = this.activeStations(state).filter((s) => owned.has(s.operatorId));
     const ids = new Set(stations.map((s) => s.id));
     return {
@@ -949,7 +976,7 @@ export class DemoBackend implements Backend {
     const owners = state.operatorOwners ?? [];
     if (owners.some((x) => x.operatorId === operatorId && x.userId === user.id)) return;
     this.saveOwners(
-      state,
+      { ...state, users: promoted(state, user.id) },
       [...owners, { operatorId, userId: user.id }],
       { table: "operator_owners", action: "insert", rowId: `${operatorId}:${user.id}`, userId: user.id, changes: { operator_id: operatorId } },
     );
@@ -958,9 +985,10 @@ export class DemoBackend implements Backend {
   async removeOperatorOwner(operatorId: string, userId: string) {
     const state = this.load();
     this.requireAdmin(state);
+    const operatorOwners = (state.operatorOwners ?? []).filter((x) => !(x.operatorId === operatorId && x.userId === userId));
     this.saveOwners(
-      state,
-      (state.operatorOwners ?? []).filter((x) => !(x.operatorId === operatorId && x.userId === userId)),
+      { ...state, users: demotedIfIdle({ ...state, operatorOwners }, userId) },
+      operatorOwners,
       { table: "operator_owners", action: "delete", rowId: `${operatorId}:${userId}`, userId, changes: { operator_id: operatorId } },
     );
   }
@@ -1091,7 +1119,7 @@ export class DemoBackend implements Backend {
 
   private requireStaff(state: DemoState): Profile {
     const profile = this.requireProfile(state);
-    if (profile.role !== "operator" && profile.role !== "admin" && !profile.ownerOf?.length) throw new BackendError("forbidden");
+    if (profile.role !== "operator" && profile.role !== "admin") throw new BackendError("forbidden");
     return profile;
   }
 

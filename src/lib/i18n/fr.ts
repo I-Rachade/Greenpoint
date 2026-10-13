@@ -351,7 +351,7 @@ export const fr = {
       noShows: "Non présentés",
       assign: "Attribuer une station…",
       unassign: "Retirer {station}",
-      confirmRole: "Changer le rôle de {user} en « {role} » ?",
+      confirmRole: "Changer le rôle de {user} en « {role} » ? Le menu et les droits suivent le rôle. Sans le rôle « Personnel de station », ses stations et ses exploitants lui sont retirés.",
       self: "vous",
       never: "jamais",
       count: "{n} utilisateur(s)",

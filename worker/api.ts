@@ -264,6 +264,8 @@ class Ctx {
   /** Station staff, someone who runs the station's operator, or an admin. */
   async isStaffOf(user: Profile, stationId: string): Promise<boolean> {
     if (user.role === "admin") return true;
+    // Station rights come with the role; assignments of anyone else count for nothing.
+    if (user.role !== "operator") return false;
     const row = await this.db
       .prepare(
         `select 1 from stations s where s.id = ?1 and (
@@ -431,6 +433,7 @@ async function cancelReservation(c: Ctx, id: string) {
 async function staffStations(c: Ctx) {
   const user = await c.requireUser();
   if (user.role === "admin") return c.stations("where s.is_active = 1");
+  if (user.role !== "operator") return [];
   return c.stations(
     `where s.is_active = 1 and (s.id in (select station_id from station_staff where user_id = ?2)
        or s.operator_id in (select operator_id from operator_owners where user_id = ?2))`,
@@ -708,11 +711,37 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
   if (!row) throw new ApiError("forbidden", 403);
   const before = roleFromDb(row.role);
   if (before === role) return;
+  // Menu and rights follow the role: leaving "operator" ends every station assignment and operator account.
+  const [staff, owned] =
+    role === "operator"
+      ? [[], []]
+      : await Promise.all([
+          c.db.prepare("select station_id from station_staff where user_id = ?").bind(userId).all<{ station_id: string }>().then((r) => r.results),
+          c.db.prepare("select operator_id from operator_owners where user_id = ?").bind(userId).all<{ operator_id: string }>().then((r) => r.results),
+        ]);
   await c.db.batch([
     c.db.prepare("update users set role = ? where id = ?").bind(roleToDb(role), userId),
     c.audit(admin.id, "profiles", "update", userId, { role: [before, role] }, { userId }),
+    ...(staff.length ? [c.db.prepare("delete from station_staff where user_id = ?").bind(userId)] : []),
+    ...staff.map((s) => c.audit(admin.id, "station_staff", "delete", `${s.station_id}:${userId}`, {}, { stationId: s.station_id, userId })),
+    ...(owned.length ? [c.db.prepare("delete from operator_owners where user_id = ?").bind(userId)] : []),
+    ...owned.map((o) => c.audit(admin.id, "operator_owners", "delete", `${o.operator_id}:${userId}`, { operator_id: o.operator_id }, { userId })),
   ]);
 }
+
+/** Whoever gets station work becomes "operator" (admins stay admins), so the menu and rights match. */
+const promoteToOperator = (c: Ctx, userId: string) =>
+  c.db.prepare("update users set role = 'operator' where id = ? and role not in ('operator', 'admin')").bind(userId);
+
+/** Whoever has no station and runs no operator any more goes back to customer. */
+const demoteIfIdle = (c: Ctx, userId: string) =>
+  c.db
+    .prepare(
+      `update users set role = ?2 where id = ?1 and role = 'operator'
+         and not exists (select 1 from station_staff where user_id = ?1)
+         and not exists (select 1 from operator_owners where user_id = ?1)`,
+    )
+    .bind(userId, DB_CUSTOMER);
 
 async function assignStaff(c: Ctx, stationId: string, userId: string) {
   const admin = await c.requireAdmin();
@@ -733,7 +762,7 @@ async function addStaff(c: Ctx, actorId: string, stationId: string, userId: stri
   // The role follows the assignment.
   await c.db.batch([
     c.audit(actorId, "station_staff", "insert", `${stationId}:${userId}`, {}, { stationId, userId }),
-    c.db.prepare("update users set role = 'operator' where id = ? and role = ?").bind(userId, DB_CUSTOMER),
+    promoteToOperator(c, userId),
   ]);
 }
 
@@ -745,11 +774,7 @@ async function removeStaff(c: Ctx, actorId: string, stationId: string, userId: s
   if (!deleted.meta.changes) return;
   await c.db.batch([
     c.audit(actorId, "station_staff", "delete", `${stationId}:${userId}`, {}, { stationId, userId }),
-    c.db
-      .prepare(
-        "update users set role = ?2 where id = ?1 and role = 'operator' and not exists (select 1 from station_staff where user_id = ?1)",
-      )
-      .bind(userId, DB_CUSTOMER),
+    demoteIfIdle(c, userId),
   ]);
 }
 
@@ -784,6 +809,7 @@ async function findAccount(c: Ctx, rawContact: unknown): Promise<PersonRow> {
 async function requireOwnerOf(c: Ctx, stationId: string): Promise<Profile> {
   const user = await c.requireUser();
   if (user.role === "admin") return user;
+  if (user.role !== "operator") throw new ApiError("forbidden", 403);
   const row = await c.db
     .prepare("select 1 from stations s join operator_owners o on o.operator_id = s.operator_id where s.id = ? and o.user_id = ?")
     .bind(stationId, user.id)
@@ -794,6 +820,7 @@ async function requireOwnerOf(c: Ctx, stationId: string): Promise<Profile> {
 
 async function ownerView(c: Ctx): Promise<OwnerView> {
   const user = await c.requireUser();
+  if (user.role !== "operator" && user.role !== "admin") throw new ApiError("forbidden", 403);
   const mine = "(select operator_id from operator_owners where user_id = ?1)";
   const [operators, staff] = await Promise.all([
     c.db
@@ -920,7 +947,10 @@ async function addOperatorOwner(c: Ctx, operatorId: string, contact: unknown) {
     .bind(operatorId, account.id, nowIso())
     .run();
   if (inserted.meta.changes) {
-    await c.audit(admin.id, "operator_owners", "insert", `${operatorId}:${account.id}`, { operator_id: operatorId }, { userId: account.id }).run();
+    await c.db.batch([
+      c.audit(admin.id, "operator_owners", "insert", `${operatorId}:${account.id}`, { operator_id: operatorId }, { userId: account.id }),
+      promoteToOperator(c, account.id),
+    ]);
   }
 }
 
@@ -931,7 +961,10 @@ async function removeOperatorOwner(c: Ctx, operatorId: string, userId: string) {
     .bind(operatorId, userId)
     .run();
   if (deleted.meta.changes) {
-    await c.audit(admin.id, "operator_owners", "delete", `${operatorId}:${userId}`, { operator_id: operatorId }, { userId }).run();
+    await c.db.batch([
+      c.audit(admin.id, "operator_owners", "delete", `${operatorId}:${userId}`, { operator_id: operatorId }, { userId }),
+      demoteIfIdle(c, userId),
+    ]);
   }
 }
 

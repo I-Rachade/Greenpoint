@@ -44,12 +44,15 @@ export interface OperatorInput {
 
 export const OPERATOR_NAME_MAX = 80;
 
-/** Whether this profile runs at least one operator. */
-export function runsOperator(profile: { ownerOf?: string[] } | null | undefined): boolean {
-  return !!profile?.ownerOf?.length;
+/**
+ * Whether the station pages (status, reservations, parcels) are for this profile.
+ * Menu and rights follow the role: operators and admins; which stations comes from the assignments.
+ */
+export function worksAtStations(profile: { role: string } | null | undefined): boolean {
+  return profile?.role === "operator" || profile?.role === "admin";
 }
 
-/** Whether the station pages (status, reservations, parcels) are for this profile: staff, operator accounts, admins. */
-export function worksAtStations(profile: { role: string; ownerOf?: string[] } | null | undefined): boolean {
-  return profile?.role === "operator" || profile?.role === "admin" || runsOperator(profile);
+/** Whether this profile runs at least one operator ("Mes stations"). */
+export function runsOperator(profile: { role: string; ownerOf?: string[] } | null | undefined): boolean {
+  return worksAtStations(profile) && !!profile?.ownerOf?.length;
 }

@@ -164,6 +164,40 @@ describe("operator accounts", () => {
     expect((await call(env, "afi", "GET", "/api/staff/stations")).body).toEqual([]);
   });
 
+  it("makes a linked account an operator and a customer again once it has nothing left", async () => {
+    const { db, env, operatorId, lome } = await withOperator();
+    const role = (id: string) => (db.prepare("select role from users where id = ?").get(id) as { role: string }).role;
+    expect(role("yao")).toBe("operator");
+    await call(env, "yao", "POST", "/api/owner/staff", { stationId: lome, contact: "90000003" });
+    expect(role("afi")).toBe("operator");
+    await call(env, "yao", "DELETE", "/api/owner/staff", { stationId: lome, userId: "afi" });
+    expect(role("afi")).toBe("rider");
+    await call(env, "admin", "DELETE", `/api/admin/operators/${operatorId}/owners/yao`);
+    expect(role("yao")).toBe("rider");
+  });
+
+  it("gives exactly the rights and menu of the role an admin sets", async () => {
+    const { db, env, lome } = await withOperator();
+    await call(env, "yao", "POST", "/api/owner/staff", { stationId: lome, contact: "90000003" });
+
+    // Back to customer: no station pages, no rights, no assignments or operator account left.
+    expect((await call(env, "admin", "POST", "/api/admin/users/yao/role", { role: "customer" })).status).toBe(200);
+    expect((await call(env, "admin", "POST", "/api/admin/users/afi/role", { role: "customer" })).status).toBe(200);
+    expect(((await call(env, "yao", "GET", "/api/me")).body as { role: string; ownerOf: string[] })).toMatchObject({ role: "customer", ownerOf: [] });
+    expect((await call(env, "yao", "GET", "/api/owner")).status).toBe(403);
+    expect((await call(env, "afi", "GET", "/api/staff/stations")).body).toEqual([]);
+    expect((await call(env, "afi", "PATCH", `/api/stations/${lome}/status`, { isOpen: false })).status).toBe(403);
+    expect(db.prepare("select count(*) as n from station_staff where user_id = 'afi'").get()).toEqual({ n: 0 });
+
+    // An assignment that slipped through (e.g. older data) grants nothing without the role.
+    db.prepare("insert into station_staff (station_id, user_id) values (?, 'kossi')").run(lome);
+    expect((await call(env, "kossi", "PATCH", `/api/stations/${lome}/status`, { isOpen: false })).status).toBe(403);
+
+    // Operator by hand: the station pages, but only the stations it is assigned to.
+    expect((await call(env, "admin", "POST", "/api/admin/users/kossi/role", { role: "operator" })).status).toBe(200);
+    expect((await call(env, "kossi", "PATCH", `/api/stations/${lome}/status`, { isOpen: false })).status).toBe(200);
+  });
+
   it("takes the rights away when the admin removes the owner", async () => {
     const { env, operatorId, lome } = await withOperator();
     await call(env, "admin", "DELETE", `/api/admin/operators/${operatorId}/owners/yao`);

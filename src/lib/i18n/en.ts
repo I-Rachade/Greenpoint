@@ -351,7 +351,7 @@ export const en: Dictionary = {
       noShows: "No-shows",
       assign: "Assign a station…",
       unassign: "Remove {station}",
-      confirmRole: "Change {user}'s role to “{role}”?",
+      confirmRole: "Change {user}'s role to “{role}”? Menu and rights follow the role. Without the “Station staff” role, their stations and operators are taken away.",
       self: "you",
       never: "never",
       count: "{n} user(s)",
