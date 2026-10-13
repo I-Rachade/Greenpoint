@@ -16,8 +16,9 @@ import {
   type VehicleType,
 } from "../types";
 import { BackendError, type Backend, type CodeChannel, type StatusPatch } from "./backend";
-import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, demoSocketPoints, initialDemoStatus } from "./demo-data";
+import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, demoSocketPoints, initialDemoStatus, DEMO_BATTERY_TYPES, DEMO_STATION_BATTERY_TYPES } from "./demo-data";
 import { depotPoints, hasAnyPoint, kindFor } from "../station-points";
+import { validBatteryType, type BatteryType, type BatteryTypeInput } from "../battery-types";
 import { DEMO_STAFF, demoHistory, demoUsers } from "../admin/demo-seed";
 import {
   ADMIN_HISTORY_DAYS,
@@ -173,6 +174,11 @@ interface DemoState {
   /** Parcel depot; parcels keep their pickup code here (demo only). */
   parcels?: Parcel[];
   parcelDepots?: ParcelDepot[];
+  batteryTypes?: BatteryType[];
+  /** Battery types each station swaps, by station id. */
+  stationBatteryTypes?: Record<string, string[]>;
+  /** Full batteries per battery type, by station id then type id (default: the station's total spread over its types). */
+  typeBatteries?: Record<string, Record<string, number>>;
   parcelSizes?: ParcelSizeTier[];
   parcelCodeFailures?: { stationId: string; at: string }[];
   /** Drivers (see src/lib/drivers.ts). */
@@ -537,6 +543,13 @@ export class DemoBackend implements Backend {
       const chargingSlots = chargingPoints.filter((p) => p.deviceId).length;
       const depot = (state.parcelDepots ?? seedDepots()).find((d) => d.stationId === s.id);
       const parcelPoint = depot?.isActive ? { counter: depot.counter ?? true, lockers: depot.lockers } : null;
+      const types = state.batteryTypes ?? DEMO_BATTERY_TYPES;
+      const swapped = (state.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES)[s.id] ?? [];
+      const counts = typeCounts(state, s.id, status.fullBatteries);
+      const batteryTypes = types
+        .filter((t) => swapped.includes(t.id))
+        .sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name))
+        .map((t) => ({ ...t, fullBatteries: counts[t.id] ?? 0 }));
       return {
         ...s,
         chargingSlots,
@@ -545,6 +558,7 @@ export class DemoBackend implements Backend {
         reservedBatteries: held.batteries,
         chargingPoints,
         parcelPoint,
+        batteryTypes,
       };
     });
   }
@@ -556,7 +570,10 @@ export class DemoBackend implements Backend {
 
   async listStations() {
     const state = this.load();
-    const views = this.views(state, this.activeStations(state));
+    const views = this.views(state, this.activeStations(state)).map((s) => ({
+      ...s,
+      batteryTypes: (s.batteryTypes ?? []).filter((t) => t.isActive),
+    }));
     if (state.parcelsEnabled !== false) return views;
     return views.filter((s) => s.kind !== "parcel").map((s) => ({ ...s, parcelPoint: null }));
   }
@@ -779,13 +796,26 @@ export class DemoBackend implements Backend {
             : r,
         )
       : state.reservations;
+    const { typeBatteries: typePatch, ...statusPatch } = patch;
+    let typeBatteries = state.typeBatteries;
+    let typeTotal: number | undefined;
+    if (typePatch) {
+      // Counts per battery type: the station's total becomes their sum.
+      const swapped = (state.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES)[stationId] ?? [];
+      if (Object.keys(typePatch).some((id) => !swapped.includes(id))) throw new BackendError("unknown", "battery type not swapped here");
+      const current = state.statuses.find((s) => s.stationId === stationId)?.fullBatteries ?? 0;
+      const counts = { ...typeCounts(state, stationId, current) };
+      for (const [id, n] of Object.entries(typePatch)) counts[id] = Math.max(0, Math.floor(n));
+      typeBatteries = { ...state.typeBatteries, [stationId]: counts };
+      typeTotal = swapped.reduce((sum, id) => sum + (counts[id] ?? 0), 0);
+    }
     const statuses = state.statuses.map((s) =>
       s.stationId === stationId
         ? {
             ...s,
-            ...patch,
+            ...statusPatch,
             freeSlots: Math.max(0, patch.freeSlots ?? s.freeSlots),
-            fullBatteries: Math.max(0, patch.fullBatteries ?? s.fullBatteries),
+            fullBatteries: Math.max(0, typeTotal ?? patch.fullBatteries ?? s.fullBatteries),
             updatedAt: new Date().toISOString(),
           }
         : s,
@@ -795,8 +825,8 @@ export class DemoBackend implements Backend {
     const changes = before && after ? diff(before, after) : {};
     this.save(
       Object.keys(changes).length
-        ? withAudit({ ...state, statuses, reservations }, { table: "station_status", action: "update", rowId: stationId, stationId, changes })
-        : { ...state, statuses, reservations },
+        ? withAudit({ ...state, statuses, reservations, typeBatteries }, { table: "station_status", action: "update", rowId: stationId, stationId, changes })
+        : { ...state, statuses, reservations, typeBatteries },
     );
   }
 
@@ -842,7 +872,9 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const operator = state.operators.find((o) => o.id === input.operatorId);
     if (!operator) throw new BackendError("unknown", "operator not found");
-    const { parcelDepot, ...fields } = input;
+    const { parcelDepot, batteryTypeIds, ...fields } = input;
+    const allTypes = state.batteryTypes ?? DEMO_BATTERY_TYPES;
+    if (batteryTypeIds?.some((t) => !allTypes.some((x) => x.id === t))) throw new BackendError("unknown", "unknown battery type");
     const existing = id ? (state.parcelDepots ?? seedDepots()).find((d) => d.stationId === id) : undefined;
     const depot = depotPoints(parcelDepot ?? existing);
     if (!hasAnyPoint({ swap: offersSwap(input.kind), charging: offersCharging(input.kind), ...depot })) {
@@ -877,7 +909,44 @@ export class DemoBackend implements Backend {
         ),
       );
     }
+    if (batteryTypeIds) {
+      const after = this.load();
+      this.save({
+        ...after,
+        stationBatteryTypes: {
+          ...(after.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES),
+          [station.id]: offersSwap(input.kind) ? [...new Set(batteryTypeIds)] : [],
+        },
+      });
+    }
     if (parcelDepot) await this.writeDepot(station.id, parcelDepot);
+  }
+
+  async listBatteryTypes() {
+    const state = this.load();
+    this.requireAdmin(state);
+    return [...(state.batteryTypes ?? DEMO_BATTERY_TYPES)].sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name));
+  }
+
+  async saveBatteryType(id: string | null, input: BatteryTypeInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!validBatteryType(input)) throw new BackendError("unknown", "invalid battery type");
+    const types = state.batteryTypes ?? DEMO_BATTERY_TYPES;
+    const type: BatteryType = { id: id ?? crypto.randomUUID(), brand: input.brand.trim(), name: input.name.trim(), isActive: input.isActive };
+    if (types.some((t) => t.id !== type.id && t.brand === type.brand && t.name === type.name)) throw new BackendError("battery_type_exists");
+    const before = types.find((t) => t.id === id);
+    this.save(
+      withAudit(
+        { ...state, batteryTypes: before ? types.map((t) => (t.id === id ? type : t)) : [...types, type] },
+        {
+          table: "battery_types",
+          action: before ? "update" : "insert",
+          rowId: type.id,
+          changes: before ? diff(before, type) : { brand: type.brand, name: type.name },
+        },
+      ),
+    );
   }
 
   /** Restores the example data (used by the "reset demo" button). */
@@ -3202,4 +3271,13 @@ export class DemoBackend implements Backend {
     const rewards = id ? g.rewards.map((r) => (r.id === id ? { ...valid, id } : r)) : [...g.rewards, { ...valid, id: crypto.randomUUID() }];
     this.save({ ...state, greenpoint: { ...g, rewards } });
   }
+}
+
+/** Full batteries per type at a station; until staff count them, the total spread evenly over its types. */
+function typeCounts(state: DemoState, stationId: string, total: number): Record<string, number> {
+  const stored = state.typeBatteries?.[stationId];
+  if (stored) return stored;
+  const swapped = (state.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES)[stationId] ?? [];
+  const share = Math.floor(total / Math.max(1, swapped.length));
+  return Object.fromEntries(swapped.map((id, i) => [id, share + (i === 0 ? total - share * swapped.length : 0)]));
 }

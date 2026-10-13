@@ -1,5 +1,7 @@
 import { offersCharging, offersSwap, withinOpeningHours } from "../src/lib/availability";
 import { depotPoints, hasAnyPoint } from "../src/lib/station-points";
+import type { BatteryTypeInput } from "../src/lib/battery-types";
+import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements, typeBatteryStatements } from "./battery-types";
 import {
   ADMIN_HISTORY_DAYS,
   type AdminSnapshot,
@@ -342,9 +344,9 @@ class Ctx {
       .prepare(`${STATION_SELECT} ${where} order by s.name`)
       .bind(nowIso(), ...params)
       .all<StationRow>();
-    const points = await chargingPointsByStation(this.db);
+    const [points, batteryTypes] = await Promise.all([chargingPointsByStation(this.db), batteryTypesByStation(this.db)]);
     return results.map((r) => {
-      const station = toStationView(r);
+      const station = { ...toStationView(r), batteryTypes: batteryTypes.get(r.id) ?? [] };
       const chargingPoints = points.get(r.id);
       return chargingPoints ? { ...station, chargingPoints } : station;
     });
@@ -485,7 +487,11 @@ async function staffStations(c: Ctx) {
   );
 }
 
-async function updateStatus(c: Ctx, stationId: string, patch: { isOpen?: boolean; freeSlots?: number; fullBatteries?: number }) {
+async function updateStatus(
+  c: Ctx,
+  stationId: string,
+  patch: { isOpen?: boolean; freeSlots?: number; fullBatteries?: number; typeBatteries?: Record<string, number> },
+) {
   const user = await c.requireUser();
   if (!(await c.isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
   const before = await c.db
@@ -493,19 +499,22 @@ async function updateStatus(c: Ctx, stationId: string, patch: { isOpen?: boolean
     .bind(stationId)
     .first<{ is_open: number; free_slots: number; full_batteries: number }>();
   if (!before) throw new ApiError("station_not_found", 404);
+  // Counts per battery type: the station's total becomes their sum.
+  const types = patch.typeBatteries ? await typeBatteryStatements(c.db, stationId, patch.typeBatteries) : null;
   const after = {
     is_open: patch.isOpen === undefined ? before.is_open : patch.isOpen ? 1 : 0,
     free_slots: patch.freeSlots === undefined ? before.free_slots : int(patch.freeSlots),
-    full_batteries: patch.fullBatteries === undefined ? before.full_batteries : int(patch.fullBatteries),
+    full_batteries: types ? types.total : patch.fullBatteries === undefined ? before.full_batteries : int(patch.fullBatteries),
   };
   const statements = [
+    ...(types?.statements ?? []),
     c.db
       .prepare(
         "update station_status set is_open = ?, free_slots = ?, full_batteries = ?, updated_at = ?, updated_by = ? where station_id = ?",
       )
       .bind(after.is_open, after.free_slots, after.full_batteries, nowIso(), user.id, stationId),
   ];
-  const changes = diff(before, after);
+  const changes: Record<string, unknown> = { ...diff(before, after), ...types?.changes };
   if (Object.keys(changes).length) {
     statements.push(c.audit(user.id, "station_status", "update", stationId, changes, { stationId }));
   }
@@ -622,6 +631,10 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
     throw new ApiError("station_without_point");
   }
   const now = nowIso();
+  const stationId = id ?? uuid();
+  const types = input.batteryTypeIds
+    ? await stationBatteryTypeStatements(c.db, stationId, input.batteryTypeIds, offersSwap(input.kind))
+    : null;
   if (id) {
     const before = await c.db
       .prepare(
@@ -637,12 +650,13 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
            battery_capacity = ?, opening_hours = ?, phone = ?, charging_slots = ${CONNECTED_OUTLETS_SQL("stations.id")} where id = ?`,
         )
         .bind(...Object.values(row), id),
-      c.audit(admin.id, "stations", "update", id, diff(before, row), { stationId: id }),
+      c.audit(admin.id, "stations", "update", id, { ...diff(before, row), ...(types ? { battery_types: types.labels } : {}) }, { stationId: id }),
       ...(depotInput ? await depotStatements(c, admin.id, id, depotInput) : []),
+      ...(types?.statements ?? []),
     ]);
     return;
   }
-  const newId = uuid();
+  const newId = stationId;
   await c.db.batch([
     c.db
       .prepare(
@@ -654,14 +668,21 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
     c.db
       .prepare("insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values (?, 1, 0, ?, ?)")
       .bind(newId, row.battery_capacity, now),
-    c.audit(admin.id, "stations", "insert", newId, row, { stationId: newId }),
+    c.audit(admin.id, "stations", "insert", newId, { ...row, ...(types ? { battery_types: types.labels } : {}) }, { stationId: newId }),
     ...(depotInput ? await depotStatements(c, admin.id, newId, depotInput) : []),
+    ...(types?.statements ?? []),
   ]);
 }
 
-/** Active stations for the app. With the parcel module off, parcel points are left out. */
+/**
+ * Active stations for the app, with the active battery types they swap. With the
+ * parcel module off, parcel points are left out.
+ */
 async function publicStations(c: Ctx) {
-  const stations = await c.stations("where s.is_active = 1");
+  const stations = (await c.stations("where s.is_active = 1")).map((s) => ({
+    ...s,
+    batteryTypes: (s.batteryTypes ?? []).filter((t) => t.isActive),
+  }));
   if (await parcelsEnabled(c.env)) return stations;
   return stations.filter((s) => s.kind !== "parcel").map((s) => ({ ...s, parcelPoint: null }));
 }
@@ -1284,6 +1305,16 @@ const ROUTES: [string, RegExp, Handler][] = [
     async (c, [id]) => ownerSaveStation(c, id, await readJson<OwnerStationInput>(c.request)),
   ],
   ["GET", /^\/api\/admin\/operators$/, (c) => adminOperators(c)],
+  ["GET", /^\/api\/admin\/battery-types$/, async (c) => (await c.requireAdmin(), listBatteryTypes(c.db))],
+  [
+    "POST",
+    /^\/api\/admin\/battery-types$/,
+    async (c) => {
+      const admin = await c.requireAdmin();
+      const { id, input } = await readJson<{ id: string | null; input: BatteryTypeInput }>(c.request);
+      return saveBatteryType(c, admin.id, id ?? null, input);
+    },
+  ],
   [
     "POST",
     /^\/api\/admin\/operators$/,

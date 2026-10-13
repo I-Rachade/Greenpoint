@@ -187,3 +187,68 @@ describe("station points", () => {
     expect(list[0].parcelPoint).toBeNull();
   });
 });
+
+describe("battery types", () => {
+  async function addType(env: Env, brand: string, name: string) {
+    const res = await call(env, "POST", "/api/admin/battery-types", { id: null, input: { brand, name, isActive: true } });
+    return (res.body as { id: string }).id;
+  }
+
+  it("lists the types a swap point swaps, and only active ones in the app", async () => {
+    const { env } = await setup();
+    const spiro = await addType(env, "Spiro", "72 V");
+    const ovt = await addType(env, "Omnivoltaic", "60 V");
+    expect((await call(env, "POST", "/api/admin/battery-types", { id: null, input: { brand: "Spiro", name: "72 V", isActive: true } })).body).toEqual({
+      error: "battery_type_exists",
+    });
+
+    await save(env, station("Echange", { kind: "swap", batteryCapacity: 10, batteryTypeIds: [spiro, ovt] }));
+    expect((await byName(env, "Echange")).batteryTypes!.map((t) => t.brand)).toEqual(["Omnivoltaic", "Spiro"]);
+
+    // Switched off: gone from the app, still known to the backoffice.
+    await call(env, "POST", "/api/admin/battery-types", { id: ovt, input: { brand: "Omnivoltaic", name: "60 V", isActive: false } });
+    expect((await byName(env, "Echange")).batteryTypes!.map((t) => t.brand)).toEqual(["Spiro"]);
+    const all = (await call(env, "GET", "/api/admin/battery-types")).body as { id: string; isActive: boolean }[];
+    expect(all.find((t) => t.id === ovt)?.isActive).toBe(false);
+  });
+
+  it("keeps types only for a swap point, and refuses unknown ones", async () => {
+    const { env } = await setup();
+    const spiro = await addType(env, "Spiro", "72 V");
+    await save(env, station("Recharge", { kind: "charging", batteryTypeIds: [spiro] }));
+    expect((await byName(env, "Recharge")).batteryTypes).toEqual([]);
+    expect((await save(env, station("X", { kind: "swap", batteryTypeIds: ["nope"] }))).status).toBe(400);
+
+    // Leaving the list out keeps it.
+    await save(env, station("Mixte", { kind: "both", batteryTypeIds: [spiro] }));
+    const s = await byName(env, "Mixte");
+    await save(env, station("Mixte", { kind: "both" }), s.id);
+    expect((await byName(env, "Mixte")).batteryTypes!.map((t) => t.id)).toEqual([spiro]);
+  });
+
+  it("counts full batteries per type, the station total being their sum", async () => {
+    const { env } = await setup();
+    const spiro = await addType(env, "Spiro", "72 V");
+    const ovt = await addType(env, "Omnivoltaic", "60 V");
+    const other = await addType(env, "Omnivoltaic", "72 V");
+    await save(env, station("Echange", { kind: "swap", batteryCapacity: 10, batteryTypeIds: [spiro, ovt] }));
+    const { id } = await byName(env, "Echange");
+    const status = (body: unknown) => call(env, "PATCH", `/api/stations/${id}/status`, body);
+
+    expect((await status({ typeBatteries: { [spiro]: 4, [ovt]: 2 } })).status).toBe(200);
+    let s = await byName(env, "Echange");
+    expect(s.batteryTypes!.map((t) => [t.brand, t.fullBatteries])).toEqual([["Omnivoltaic", 2], ["Spiro", 4]]);
+    expect(s.status.fullBatteries).toBe(6);
+
+    await status({ typeBatteries: { [ovt]: 0 } });
+    expect((await byName(env, "Echange")).status.fullBatteries).toBe(4);
+
+    // A type the station does not swap is refused.
+    expect((await status({ typeBatteries: { [other]: 1 } })).status).toBe(400);
+
+    // Saving the station keeps the counts of the types it still swaps.
+    await save(env, station("Echange", { kind: "swap", batteryCapacity: 10, batteryTypeIds: [spiro, other] }), id);
+    s = await byName(env, "Echange");
+    expect(s.batteryTypes!.map((t) => [t.name, t.fullBatteries])).toEqual([["72 V", 0], ["72 V", 4]]);
+  });
+});

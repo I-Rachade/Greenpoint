@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { offersCharging, offersSwap } from "@/lib/availability";
+import { batteryTypeLabel } from "@/lib/battery-types";
 import { useErrorMessage, useLiveQuery, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { Reservation, StationView } from "@/lib/types";
@@ -112,6 +113,7 @@ function StationControls({ station, onError }: { station: StationView; onError: 
   }
 
   const active = (reservations ?? []).filter((r) => effectiveStatus(r, now) === "active");
+  const types = offersSwap(station.kind) ? (station.batteryTypes ?? []) : [];
 
   return (
     <section className="space-y-3">
@@ -134,8 +136,13 @@ function StationControls({ station, onError }: { station: StationView; onError: 
         </button>
       </div>
 
+      {types.length > 0 && (
+        <p className="text-xs text-zinc-500">
+          {format(t.operator.byType, { n: station.status.fullBatteries })}
+        </p>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
-        {offersSwap(station.kind) && (
+        {offersSwap(station.kind) && types.length === 0 && (
           <Counter
             label={t.station.fullBatteries}
             value={station.status.fullBatteries}
@@ -143,6 +150,16 @@ function StationControls({ station, onError }: { station: StationView; onError: 
             onChange={(n) => run(() => backend.updateStatus(station.id, { fullBatteries: n }))}
           />
         )}
+        {/* With battery types, staff count each type; the total is their sum. */}
+        {types.map((bt) => (
+          <Counter
+            key={bt.id}
+            label={`${t.station.fullBatteries} · ${batteryTypeLabel(bt)}`}
+            value={bt.fullBatteries}
+            max={Math.max(0, station.batteryCapacity - station.status.fullBatteries + bt.fullBatteries)}
+            onChange={(n) => run(() => backend.updateStatus(station.id, { typeBatteries: { [bt.id]: n } }))}
+          />
+        ))}
         {offersCharging(station.kind) && (
           <Counter
             label={t.station.freeSlots}

@@ -15,6 +15,7 @@ import {
 import { formatDistance } from "@/lib/geo";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
+import { allBrands } from "@/lib/battery-types";
 import { offersParcels } from "@/lib/station-points";
 import { VEHICLE_TYPES, type VehicleType } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
@@ -35,6 +36,7 @@ export function StationFinder() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const ranked = useMemo(() => rankStations(stations ?? [], position, filter), [stations, position, filter]);
+  const brands = useMemo(() => allBrands(stations ?? []), [stations]);
   const selected = ranked.find((r) => r.station.id === selectedId) ?? null;
 
   const selectClass =
@@ -93,6 +95,21 @@ export function StationFinder() {
                 <option value="swap">{t.filter.swap}</option>
                 {features.parcels && <option value="parcel">{t.filter.parcel}</option>}
               </select>
+              {brands.length > 0 && (
+                <select
+                  className={selectClass}
+                  value={filter.brand ?? "all"}
+                  onChange={(e) => setFilter({ ...filter, brand: e.target.value })}
+                  aria-label={t.filter.brand}
+                >
+                  <option value="all">{t.filter.allBrands}</option>
+                  {brands.map((b) => (
+                    <option key={b} value={b}>
+                      🔋 {b}
+                    </option>
+                  ))}
+                </select>
+              )}
               <label className="flex items-center gap-1 text-sm">
                 <input
                   type="checkbox"
