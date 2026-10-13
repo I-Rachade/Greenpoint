@@ -9,7 +9,7 @@ import {
   PARCEL_PICKUP_DAYS,
   PARCEL_REMINDER_DAYS,
   PARCEL_SIZES,
-  parsePickupInput,
+  parseHandoverInput,
   sizeFor,
   validMeasures,
   type AdminParcels,
@@ -563,12 +563,13 @@ export async function resendPickupCode(c: ParcelCtx, parcelId: string) {
 }
 
 /**
- * Hands a parcel to the recipient at station B: the scanned QR code or the typed
- * 6-digit code finds it. Too many wrong codes pause code entry at the station.
+ * Hands a parcel to the recipient at station B: the scanned QR code, the typed
+ * 6-digit code, or the parcel number "GP-…" alone finds it. Too many misses pause
+ * entry at the station.
  */
 export async function pickUpParcel(c: ParcelCtx, stationId: string, rawInput: unknown): Promise<Parcel> {
   const staff = await requireStaff(c, stationId);
-  const input = parsePickupInput(String(rawInput ?? ""));
+  const input = parseHandoverInput(String(rawInput ?? ""));
   if (!input) throw new ApiError("wrong_pickup_code");
   const since = new Date(Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000).toISOString();
   const failures = await c.db
@@ -577,16 +578,25 @@ export async function pickUpParcel(c: ParcelCtx, stationId: string, rawInput: un
     .first<{ n: number }>();
   if ((failures?.n ?? 0) >= PARCEL_MAX_CODE_FAILURES) throw new ApiError("code_locked", 429);
 
-  const row = await c.db
-    .prepare("select * from parcels where to_station_id = ? and status = 'arrived' and pickup_code = ?")
-    .bind(stationId, input.code)
-    .first<ParcelRow>();
+  const row = input.code
+    ? await c.db
+        .prepare("select * from parcels where to_station_id = ? and status = 'arrived' and pickup_code = ?")
+        .bind(stationId, input.code)
+        .first<ParcelRow>()
+    : await c.db
+        .prepare("select * from parcels where to_station_id = ? and status = 'arrived' and tracking_no = ?")
+        .bind(stationId, input.trackingNo)
+        .first<ParcelRow>();
   if (row?.delivery_status === "out_for_delivery") throw new ApiError("parcel_with_driver");
   if (!row || (input.trackingNo && row.tracking_no !== input.trackingNo)) {
     await c.db.batch([
       c.db.prepare("insert into parcel_code_failures (station_id, at) values (?, ?)").bind(stationId, nowIso()),
       c.db.prepare("delete from parcel_code_failures where at < ?").bind(new Date(Date.now() - 86_400_000).toISOString()),
     ]);
+    // A real parcel number that is not waiting here says so, instead of "wrong code".
+    if (!input.code && (await c.db.prepare("select 1 from parcels where tracking_no = ?").bind(input.trackingNo).first())) {
+      throw new ApiError("parcel_not_arrived");
+    }
     throw new ApiError("wrong_pickup_code");
   }
   const now = nowIso();
@@ -599,7 +609,14 @@ export async function pickUpParcel(c: ParcelCtx, stationId: string, rawInput: un
   if (row.delivery_status === "booked") await cancelParcelJob(c, row.id, staff.id);
   await c.db.batch([
     event(c, row.id, staff.id, "picked_up", stationId),
-    c.audit(staff.id, "parcels", "update", row.id, { status: ["arrived", "picked_up"] }, { stationId, userId: row.recipient_user_id }),
+    c.audit(
+      staff.id,
+      "parcels",
+      "update",
+      row.id,
+      { status: ["arrived", "picked_up"], handedOverBy: input.code ? "pickup_code" : "parcel_number" },
+      { stationId, userId: row.recipient_user_id },
+    ),
   ]);
   const to = await station(c.db, stationId);
   await notifyPerson(c.env, row.id, "picked_up", row.sender_user_id, {

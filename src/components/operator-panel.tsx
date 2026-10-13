@@ -9,7 +9,7 @@ import type { Reservation, StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
 import { GreenpointStaff } from "./greenpoint/greenpoint-staff";
-import { OperatorTabs } from "./parcels/staff-parcels";
+import { OperatorBack } from "./parcels/staff-parcels";
 import { effectiveStatus, minutesLeft } from "./reservation-list";
 
 function Counter({
@@ -207,7 +207,7 @@ export function OperatorPanel() {
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
-      <OperatorTabs />
+      <OperatorBack />
       <h1 className="text-2xl font-semibold">{t.operator.title}</h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.operator.intro}</p>
       {stations.length === 0 && <p className="text-sm">{t.operator.noStations}</p>}

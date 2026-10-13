@@ -1,48 +1,34 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { PARCEL_SIZES, sizeFor, type Parcel, type ParcelInfo, type ParcelInput } from "@/lib/parcels";
+import { measuresOf, PARCEL_SIZES, parseHandoverInput, type Parcel, type ParcelInfo, type ParcelInput, type ParcelSize } from "@/lib/parcels";
 import type { StationBooking } from "@/lib/partners";
 import type { StationView } from "@/lib/types";
 import { fareFor } from "@/lib/drivers";
 import { distanceMeters } from "@/lib/geo";
 import { useApp } from "../app-provider";
+import { BackIcon } from "../icons";
 import { StationDriversSection } from "../drivers/station-drivers";
 import { useI18n } from "../i18n-provider";
 import { canScanQr, QrScanner } from "./qr-scanner";
+import { SizePicker } from "./size-picker";
 import { SlipDialog } from "./slip-dialog";
 import { ParcelStatusPill } from "./status";
 
-/** Switches between the station status page and the parcel page. */
-export function OperatorTabs() {
+/** Back to the station home with its two big buttons (status, parcels); only there while the parcel module is on. */
+export function OperatorBack() {
   const { t } = useI18n();
   const { features } = useApp();
-  const pathname = usePathname().replace(/\/$/, "");
   if (!features.parcels) return null;
-  const tabs = [
-    { href: "/operator", label: t.parcels.staff.tabStatus },
-    { href: "/operator/colis", label: t.parcels.staff.tabParcels },
-  ];
   return (
-    <nav className="flex gap-1 text-sm">
-      {tabs.map((tab) => (
-        <Link
-          key={tab.href}
-          href={tab.href}
-          aria-current={pathname === tab.href ? "page" : undefined}
-          className={`rounded-full px-3 py-1 ${
-            pathname === tab.href ? "bg-gp-forest text-white" : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          }`}
-        >
-          {tab.label}
-        </Link>
-      ))}
-    </nav>
+    <Link href="/operator" className="-ml-1 inline-flex items-center gap-1 text-sm text-gp-green-dark dark:text-gp-green">
+      <BackIcon size={18} />
+      {t.operator.back}
+    </Link>
   );
 }
 
@@ -59,12 +45,25 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
   );
 }
 
-function PickupBox({ stationId, onDone, onError }: { stationId: string; onDone: (msg: string) => void; onError: (msg: string) => void }) {
+function PickupBox({
+  stationId,
+  waiting,
+  onDone,
+  onError,
+}: {
+  stationId: string;
+  /** Parcels waiting here, to show who a typed parcel number is for. */
+  waiting: Parcel[];
+  onDone: (msg: string) => void;
+  onError: (msg: string) => void;
+}) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
   const [code, setCode] = useState("");
   const [scanning, setScanning] = useState(false);
+  const typed = parseHandoverInput(code);
+  const match = typed && !typed.code ? waiting.find((p) => p.trackingNo === typed.trackingNo) : undefined;
 
   async function handOver(value: string) {
     onError("");
@@ -87,14 +86,15 @@ function PickupBox({ stationId, onDone, onError }: { stationId: string; onDone: 
         }}
       >
         <input
-          inputMode="numeric"
-          pattern="[0-9 ]{6,7}"
+          autoCapitalize="characters"
+          autoComplete="off"
           required
+          maxLength={20}
           value={code}
-          onChange={(e) => setCode(e.target.value.replace(/[^\d ]/g, ""))}
-          placeholder="000000"
-          aria-label={t.parcels.pickupCode}
-          className="w-36 rounded-lg border border-black/20 bg-white px-3 py-2 text-center font-mono text-lg tracking-widest dark:border-white/20 dark:bg-zinc-950"
+          onChange={(e) => setCode(e.target.value.toUpperCase())}
+          placeholder="GP-… / 000000"
+          aria-label={t.parcels.staff.pickupInput}
+          className="w-48 rounded-lg border border-black/20 bg-white px-3 py-2 text-center font-mono text-lg tracking-widest dark:border-white/20 dark:bg-zinc-950"
         />
         <button type="submit" className={primary}>
           {t.parcels.staff.pickupButton}
@@ -105,6 +105,11 @@ function PickupBox({ stationId, onDone, onError }: { stationId: string; onDone: 
           </button>
         )}
       </form>
+      {match && (
+        <p className="text-sm">
+          {format(t.parcels.staff.pickupFor, { no: match.trackingNo, who: [match.recipient.name, match.recipient.phone].filter(Boolean).join(" · ") })}
+        </p>
+      )}
       {scanning && (
         <QrScanner
           onClose={() => setScanning(false)}
@@ -118,7 +123,7 @@ function PickupBox({ stationId, onDone, onError }: { stationId: string; onDone: 
   );
 }
 
-const empty = { senderPhone: "", senderName: "", recipientPhone: "", recipientName: "", toStationId: "", content: "", declaredValue: "", lengthCm: "", widthCm: "", heightCm: "", weightKg: "" };
+const empty = { senderPhone: "", senderName: "", recipientPhone: "", recipientName: "", toStationId: "", content: "", declaredValue: "" };
 
 function NewParcelForm({
   station,
@@ -141,11 +146,10 @@ function NewParcelForm({
   const [paid, setPaid] = useState(false);
   const [express, setExpress] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [size, setSize] = useState<ParcelSize | null>(null);
   const set = (key: keyof typeof empty) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const num = (v: string) => Number(v.replace(",", "."));
-  const measures = { lengthCm: num(form.lengthCm), widthCm: num(form.widthCm), heightCm: num(form.heightCm), weightKg: num(form.weightKg) };
-  const measured = [form.lengthCm, form.widthCm, form.heightCm, form.weightKg].every(Boolean);
-  const tier = measured ? sizeFor(measures, info.sizes) : null;
+  const tier = info.sizes.find((x) => x.size === size) ?? null;
   const destinations = info.depots
     .filter((d) => d.stationId !== station.id)
     .map((d) => stations.find((s) => s.id === d.stationId))
@@ -167,12 +171,13 @@ function NewParcelForm({
       toStationId: form.toStationId,
       content: form.content,
       declaredValue: form.declaredValue ? Math.round(num(form.declaredValue)) : null,
-      measures,
+      measures: measuresOf(tier),
       express,
     };
     try {
       const created = await backend.createParcel(station.id, parcel);
       setForm(empty);
+      setSize(null);
       setChecked(false);
       setPaid(false);
       setExpress(false);
@@ -219,29 +224,18 @@ function NewParcelForm({
           <span>{t.parcels.staff.content}</span>
           <input className={input} required value={form.content} onChange={set("content")} maxLength={300} />
         </label>
-        <div className="grid grid-cols-2 gap-3 sm:col-span-2 sm:grid-cols-4">
-          {(["lengthCm", "widthCm", "heightCm", "weightKg"] as const).map((key) => (
-            <label key={key} className={label}>
-              <span>{t.parcels.staff[key === "lengthCm" ? "length" : key === "widthCm" ? "width" : key === "heightCm" ? "height" : "weight"]}</span>
-              <input className={input} inputMode="decimal" required value={form[key]} onChange={set(key)} />
-            </label>
-          ))}
+        <div className="sm:col-span-2">
+          <SizePicker tiers={info.sizes} value={size} onChange={setSize} />
         </div>
         <label className={label}>
           <span>{t.parcels.staff.declaredValue}</span>
           <input className={input} inputMode="numeric" value={form.declaredValue} onChange={set("declaredValue")} />
         </label>
         <div className="flex items-end text-sm font-semibold" aria-live="polite">
-          {measured &&
-            (tier ? (
-              fare ? (
-                format(t.drivers.staff.expressPrice, { parcel: tier.priceFcfa, fare, total })
-              ) : (
-                format(t.parcels.staff.computed, { size: tier.size, price: tier.priceFcfa })
-              )
-            ) : (
-              <span className="text-red-600">{t.parcels.staff.tooLarge}</span>
-            ))}
+          {tier &&
+            (fare
+              ? format(t.drivers.staff.expressPrice, { parcel: tier.priceFcfa, fare, total })
+              : format(t.parcels.staff.computed, { size: tier.size, price: tier.priceFcfa }))}
         </div>
         <label className="flex items-center gap-2 text-sm sm:col-span-2">
           <input type="checkbox" checked={express} onChange={(e) => setExpress(e.target.checked)} />
@@ -289,11 +283,8 @@ function BookedParcel({
   const [open, setOpen] = useState(false);
   const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);
-  const m = booking.measures;
-  const [form, setForm] = useState({ lengthCm: String(m.lengthCm), widthCm: String(m.widthCm), heightCm: String(m.heightCm), weightKg: String(m.weightKg) });
-  const num = (v: string) => Number(v.replace(",", "."));
-  const measures = { lengthCm: num(form.lengthCm), widthCm: num(form.widthCm), heightCm: num(form.heightCm), weightKg: num(form.weightKg) };
-  const tier = sizeFor(measures, info.sizes);
+  const [size, setSize] = useState<ParcelSize>(booking.size);
+  const tier = info.sizes.find((x) => x.size === size) ?? null;
   const bigger = tier && PARCEL_SIZES.indexOf(tier.size) > PARCEL_SIZES.indexOf(booking.size);
   const to = stations.find((s) => s.id === booking.toStationId)?.name ?? "?";
 
@@ -302,7 +293,8 @@ function BookedParcel({
     onError("");
     setBusy(true);
     try {
-      onAccepted(await backend.acceptBooking(station.id, booking.id, measures));
+      if (!tier) return;
+      onAccepted(await backend.acceptBooking(station.id, booking.id, measuresOf(tier)));
     } catch (err) {
       onError(errorMessage(err));
     } finally {
@@ -331,20 +323,7 @@ function BookedParcel({
       {open && (
         <form onSubmit={accept} className="space-y-2">
           <p className="text-xs font-medium">{t.parcels.staff.bookedMeasured}</p>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {(["lengthCm", "widthCm", "heightCm", "weightKg"] as const).map((key) => (
-              <label key={key} className="space-y-1 text-xs">
-                <span>{t.parcels.staff[key === "lengthCm" ? "length" : key === "widthCm" ? "width" : key === "heightCm" ? "height" : "weight"]}</span>
-                <input
-                  className={input}
-                  inputMode="decimal"
-                  required
-                  value={form[key]}
-                  onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-                />
-              </label>
-            ))}
-          </div>
+          <SizePicker tiers={info.sizes} value={size} onChange={setSize} />
           <p className="text-xs font-semibold" aria-live="polite">
             {!tier ? (
               <span className="text-red-600">{t.parcels.staff.tooLarge}</span>
@@ -485,8 +464,21 @@ function StationParcels({ station, stations, info }: { station: StationView; sta
           {notice}
         </p>
       )}
+      {/* Registering a parcel is the main job at the counter, so it comes first. */}
+      <NewParcelForm
+        station={station}
+        stations={stations}
+        info={info}
+        onError={setError}
+        onCreated={(parcel) => {
+          setNotice(format(t.parcels.staff.created, { no: parcel.trackingNo }));
+          setSlip(parcel);
+          reload();
+        }}
+      />
       <PickupBox
         stationId={station.id}
+        waiting={waiting}
         onError={setError}
         onDone={(msg) => {
           setNotice(msg);
@@ -515,17 +507,6 @@ function StationParcels({ station, stations, info }: { station: StationView; sta
           </ul>
         </Section>
       )}
-      <NewParcelForm
-        station={station}
-        stations={stations}
-        info={info}
-        onError={setError}
-        onCreated={(parcel) => {
-          setNotice(format(t.parcels.staff.created, { no: parcel.trackingNo }));
-          setSlip(parcel);
-          reload();
-        }}
-      />
       <Section title={t.parcels.staff.outgoing} hint={t.parcels.staff.outgoingHint}>
         <BatchList
           parcels={outgoing}
@@ -609,14 +590,17 @@ export function StaffParcels() {
 
   if (error) return <p className="p-6 text-sm text-red-600">{t.errors.forbidden}</p>;
   if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
-  const [mine, all, info] = data;
+  const [allMine, all, info] = data;
+  // Only stations that take parcels; admins see every station and would otherwise land on one without a counter.
+  const depots = new Set(info.depots.map((d) => d.stationId));
+  const mine = allMine.filter((s) => depots.has(s.id));
   const station = mine.find((s) => s.id === selectedId) ?? mine[0];
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
-      <OperatorTabs />
+      <OperatorBack />
       <h1 className="text-2xl font-semibold">{t.parcels.staff.title}</h1>
-      {mine.length === 0 && <p className="text-sm">{t.operator.noStations}</p>}
+      {mine.length === 0 && <p className="text-sm">{allMine.length ? t.parcels.staff.noDepot : t.operator.noStations}</p>}
       {mine.length > 1 && (
         <select className={input} value={station?.id} onChange={(e) => setSelectedId(e.target.value)}>
           {mine.map((s) => (

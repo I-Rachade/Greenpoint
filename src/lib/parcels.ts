@@ -77,6 +77,14 @@ export function validMeasures(m: ParcelMeasures): boolean {
   return values.every((v) => typeof v === "number" && Number.isFinite(v) && v > 0) && m.weightKg <= PARCEL_MAX_KG;
 }
 
+/**
+ * The measures sent when staff only choose a size: the tier's limits. The server
+ * then finds that same tier (sizeFor), so price and vehicle limits follow the size.
+ */
+export function measuresOf(tier: ParcelSizeTier): ParcelMeasures {
+  return { lengthCm: tier.maxLengthCm, widthCm: tier.maxWidthCm, heightCm: tier.maxHeightCm, weightKg: tier.maxWeightKg };
+}
+
 /** The smallest tier the parcel fits, or null when it is too big or too heavy. */
 export function sizeFor(m: ParcelMeasures, tiers: ParcelSizeTier[]): ParcelSizeTier | null {
   if (!validMeasures(m)) return null;
@@ -114,6 +122,20 @@ export function parsePickupInput(input: string): { trackingNo: string | null; co
   if (qr) return { trackingNo: qr[1], code: qr[2] };
   const digits = text.replace(/\s/g, "");
   return /^\d{6}$/.test(digits) ? { trackingNo: null, code: digits } : null;
+}
+
+/**
+ * What staff type or scan at the handover counter: the recipient's pickup code (or QR),
+ * or just the parcel number "GP-…", which then needs an ID check. A bare 6-digit
+ * number is always a code, so the parcel number has to carry a letter or "GP".
+ */
+export function parseHandoverInput(input: string): { trackingNo: string | null; code: string | null } | null {
+  const pickup = parsePickupInput(input);
+  if (pickup) return pickup;
+  const text = input.trim();
+  if (!/[a-z]/i.test(text)) return null;
+  const trackingNo = normalizeTrackingNo(text);
+  return trackingNo ? { trackingNo, code: null } : null;
 }
 
 /** A station that accepts and hands out parcels. */

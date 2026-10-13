@@ -3,9 +3,11 @@ import { DEMO_CODE, DemoBackend } from "../backend/demo";
 import {
   DEFAULT_PARCEL_SIZES,
   liabilityLimit,
+  measuresOf,
   newTrackingNo,
   normalizeTrackingNo,
   PARCEL_PICKUP_DAYS,
+  parseHandoverInput,
   parsePickupInput,
   pickupQrPayload,
   sizeFor,
@@ -13,6 +15,10 @@ import {
 
 describe("parcel sizes and prices", () => {
   const m = (lengthCm: number, widthCm: number, heightCm: number, weightKg: number) => ({ lengthCm, widthCm, heightCm, weightKg });
+
+  it("turns a chosen size back into that same size, as the server computes it", () => {
+    for (const tier of DEFAULT_PARCEL_SIZES) expect(sizeFor(measuresOf(tier), DEFAULT_PARCEL_SIZES)?.size).toBe(tier.size);
+  });
 
   it("picks the smallest size that fits by dimensions and weight", () => {
     expect(sizeFor(m(25, 15, 10, 1), DEFAULT_PARCEL_SIZES)?.size).toBe("S");
@@ -54,6 +60,13 @@ describe("tracking numbers and pickup codes", () => {
     expect(parsePickupInput(pickupQrPayload("GP-7K3M9Q", "123456"))).toEqual({ trackingNo: "GP-7K3M9Q", code: "123456" });
     expect(parsePickupInput(" 123 456 ")).toEqual({ trackingNo: null, code: "123456" });
     expect(parsePickupInput("12345")).toBeNull();
+  });
+
+  it("takes the parcel number alone at the handover counter, but a bare 6-digit number stays a code", () => {
+    expect(parseHandoverInput("gp-9nr78v")).toEqual({ trackingNo: "GP-9NR78V", code: null });
+    expect(parseHandoverInput("9NR78V")).toEqual({ trackingNo: "GP-9NR78V", code: null });
+    expect(parseHandoverInput("234567")).toEqual({ trackingNo: null, code: "234567" });
+    expect(parseHandoverInput("GP-0O1IL0")).toBeNull();
   });
 });
 
@@ -113,6 +126,16 @@ describe("DemoBackend parcel depot", () => {
       code: "wrong_pickup_code",
     });
     const done = await backend.pickUpParcel(TO, pickupQrPayload(mine.trackingNo, mine.pickupCode!));
+    expect(done.status).toBe("picked_up");
+  });
+
+  it("hands a parcel out with its number alone, and says when it is not waiting here", async () => {
+    await as("operator");
+    const parcel = await backend.createParcel(FROM, input);
+    await expect(backend.pickUpParcel(TO, parcel.trackingNo)).rejects.toMatchObject({ code: "parcel_not_arrived" });
+    await backend.markParcelsInTransit(FROM, [parcel.id]);
+    await backend.markParcelsArrived(TO, [parcel.id]);
+    const done = await backend.pickUpParcel(TO, parcel.trackingNo.toLowerCase());
     expect(done.status).toBe("picked_up");
   });
 

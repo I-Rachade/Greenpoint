@@ -87,6 +87,7 @@ export type BackendErrorCode =
   | "parcel_wrong_status"
   | "code_locked"
   | "parcel_with_driver"
+  | "parcel_not_arrived"
   | "not_a_driver"
   | "phone_required"
   | "driver_busy"
