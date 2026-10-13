@@ -76,6 +76,7 @@ import {
   stationBookings,
 } from "./partners";
 import type { Env } from "./env";
+import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setParcelsEnabled } from "./features";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 import { refreshTopup, startTopup } from "./wallet-topups";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
@@ -924,6 +925,13 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
   ["GET", /^\/api\/stations\/([\w-]+)\/reservations$/, (c, [id]) => stationReservations(c, id)],
   ["GET", /^\/api\/promotions\/current$/, (c) => currentPromotion(c)],
+  // Modules the backoffice switches off (worker/features.ts)
+  ["GET", /^\/api\/features$/, (c) => getFeatures(c.env)],
+  ["POST", /^\/api\/admin\/features\/parcels$/, async (c) => {
+    const admin = await c.requireAdmin();
+    const { enabled } = await readJson<{ enabled?: boolean }>(c.request);
+    return setParcelsEnabled(c.env, admin, !!enabled);
+  }],
   // Wallet (worker/wallet.ts)
   ["GET", /^\/api\/wallet$/, async (c) => getWallet(c.env, await c.requireUser())],
   ["GET", /^\/api\/wallet\/recipient$/, async (c) => findRecipient(c.env, await c.requireUser(), c.url.searchParams.get("contact"))],
@@ -1107,7 +1115,10 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (url.pathname === "/api/devices/commands") return await handleDeviceCommands(request, env);
     if (url.pathname === "/api/devices/xingke") return await handleXingkeCallback(request, env);
     // Other apps authenticate with their API key (worker/partners.ts).
-    if (url.pathname.startsWith(`${PARTNER_API_BASE}/`) || url.pathname === PARTNER_API_BASE) return await handlePartnerApi(request, env);
+    const partnerApi = url.pathname.startsWith(`${PARTNER_API_BASE}/`) || url.pathname === PARTNER_API_BASE;
+    // A switched-off parcel module answers as if it did not exist; the backoffice keeps its pages.
+    if ((partnerApi || PARCEL_ROUTE.test(url.pathname)) && !(await parcelsEnabled(env))) return json({ error: "not_found" }, 404);
+    if (partnerApi) return await handlePartnerApi(request, env);
     for (const [method, pattern, handler] of ROUTES) {
       const m = pattern.exec(url.pathname);
       if (!m) continue;

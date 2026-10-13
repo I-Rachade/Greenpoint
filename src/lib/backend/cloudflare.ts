@@ -1,4 +1,5 @@
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
@@ -423,6 +424,15 @@ export class CloudflareBackend implements Backend {
   }
 
   // Advertising popup ---------------------------------------------------------------
+
+  features() {
+    return this.call<Features>("GET", "/api/features");
+  }
+
+  async setParcelsEnabled(enabled: boolean) {
+    await this.call("POST", "/api/admin/features/parcels", { enabled });
+    this.changed();
+  }
 
   currentPromotion() {
     return this.call<Promotion | null>("GET", "/api/promotions/current");

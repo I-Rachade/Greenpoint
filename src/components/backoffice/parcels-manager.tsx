@@ -7,7 +7,7 @@ import { ParcelStatusPill } from "@/components/parcels/status";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { OPEN_PARCEL_STATUSES, type ParcelDepot, type ParcelSizeTier, type ParcelStatus } from "@/lib/parcels";
 import type { StationView } from "@/lib/types";
-import { card, field, Loading, Table, td, th, useDateTime } from "./shared";
+import { card, field, Loading, Pill, Table, td, th, useDateTime } from "./shared";
 
 const STATUSES: ParcelStatus[] = ["deposited", "in_transit", "arrived", "picked_up", "stored", "released", "auctioned", "cancelled"];
 
@@ -106,6 +106,45 @@ function SizesEditor({ sizes, onSaved }: { sizes: ParcelSizeTier[]; onSaved: (ms
   );
 }
 
+/** Switches the whole parcel module (depot, partner API, driver pickups) on or off for everyone. */
+export function ParcelsModuleSwitch() {
+  const { t } = useI18n();
+  const { backend, features, featuresReady } = useApp();
+  const errorMessage = useErrorMessage();
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const a = t.parcels.admin;
+  if (!featuresReady) return null;
+  const on = features.parcels;
+
+  async function toggle() {
+    if (on && !window.confirm(a.confirmOff)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await backend.setParcelsEnabled(!on);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className={`${card} space-y-2`}>
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-xs uppercase tracking-wide text-zinc-500">{a.module}</span>
+        <Pill tone={on ? "green" : "amber"}>{on ? a.moduleOn : a.moduleOff}</Pill>
+        <button type="button" disabled={busy} onClick={toggle} className="text-sm text-gp-green-dark underline disabled:opacity-40 dark:text-gp-green">
+          {on ? a.turnOff : a.turnOn}
+        </button>
+      </div>
+      {!on && <p className="text-sm text-amber-700 dark:text-amber-300">{a.offHint}</p>}
+      {error && <p className="text-sm text-red-600">{error}</p>}
+    </section>
+  );
+}
+
 export function ParcelsManager() {
   const { t } = useI18n();
   const { backend } = useApp();
@@ -151,6 +190,7 @@ export function ParcelsManager() {
         <h1 className="text-2xl font-semibold">{t.parcels.admin.title}</h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.parcels.admin.intro}</p>
       </div>
+      <ParcelsModuleSwitch />
       {message && (
         <p role="status" className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>
           {message.text}

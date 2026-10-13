@@ -26,6 +26,7 @@ import {
   type StaffAssignment,
 } from "../admin/types";
 import { validPinFormat, weakPin } from "../pin";
+import type { Features } from "../features";
 import { MAX_PROMO_IMAGE_BYTES, pickPromotion, type Promotion, type PromotionInput } from "../promo";
 import {
   DEFAULT_PARCEL_SIZES,
@@ -120,6 +121,8 @@ interface DemoState {
   bookings?: (StationBooking & { partnerId: string; fromStationId: string })[];
   /** Wallet (demo only: switched on, everyone starts with DEMO_WALLET_START francs). */
   wallet?: DemoWallet;
+  /** Parcel module switch of the backoffice (missing = on). */
+  parcelsEnabled?: boolean;
   /** Demo PINs by phone number or e-mail address (stored in clear: demo only). */
   pins?: Record<string, string>;
 }
@@ -1476,6 +1479,16 @@ export class DemoBackend implements Backend {
           return copy;
         }),
     };
+  }
+
+  async features(): Promise<Features> {
+    return { parcels: this.load().parcelsEnabled !== false };
+  }
+
+  async setParcelsEnabled(enabled: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    this.save(withAudit({ ...state, parcelsEnabled: enabled }, { table: "parcels", action: "update", rowId: "parcels_enabled", changes: { enabled } }));
   }
 
   async setWalletEnabled(enabled: boolean) {
