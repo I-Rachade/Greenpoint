@@ -73,9 +73,3 @@ create index wallet_transactions_user_idx on wallet_transactions (user_id, creat
 create index wallet_transactions_created_idx on wallet_transactions (created_at);
 create unique index wallet_transactions_idempotency on wallet_transactions (user_id, idempotency_key)
   where idempotency_key is not null;
-
--- Deleting an account removes the person's name from the other side's history.
-create trigger wallet_transactions_anonymize_on_user_delete before delete on users
-begin
-  update wallet_transactions set counterparty_label = null where counterparty_user_id = old.id;
-end;
