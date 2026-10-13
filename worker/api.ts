@@ -1,7 +1,7 @@
 import { offersCharging, offersSwap, withinOpeningHours } from "../src/lib/availability";
 import { depotPoints, hasAnyPoint } from "../src/lib/station-points";
 import type { BatteryTypeInput } from "../src/lib/battery-types";
-import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements } from "./battery-types";
+import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements, typeBatteryStatements } from "./battery-types";
 import {
   ADMIN_HISTORY_DAYS,
   type AdminSnapshot,
@@ -474,7 +474,11 @@ async function staffStations(c: Ctx) {
   );
 }
 
-async function updateStatus(c: Ctx, stationId: string, patch: { isOpen?: boolean; freeSlots?: number; fullBatteries?: number }) {
+async function updateStatus(
+  c: Ctx,
+  stationId: string,
+  patch: { isOpen?: boolean; freeSlots?: number; fullBatteries?: number; typeBatteries?: Record<string, number> },
+) {
   const user = await c.requireUser();
   if (!(await c.isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
   const before = await c.db
@@ -482,19 +486,22 @@ async function updateStatus(c: Ctx, stationId: string, patch: { isOpen?: boolean
     .bind(stationId)
     .first<{ is_open: number; free_slots: number; full_batteries: number }>();
   if (!before) throw new ApiError("station_not_found", 404);
+  // Counts per battery type: the station's total becomes their sum.
+  const types = patch.typeBatteries ? await typeBatteryStatements(c.db, stationId, patch.typeBatteries) : null;
   const after = {
     is_open: patch.isOpen === undefined ? before.is_open : patch.isOpen ? 1 : 0,
     free_slots: patch.freeSlots === undefined ? before.free_slots : int(patch.freeSlots),
-    full_batteries: patch.fullBatteries === undefined ? before.full_batteries : int(patch.fullBatteries),
+    full_batteries: types ? types.total : patch.fullBatteries === undefined ? before.full_batteries : int(patch.fullBatteries),
   };
   const statements = [
+    ...(types?.statements ?? []),
     c.db
       .prepare(
         "update station_status set is_open = ?, free_slots = ?, full_batteries = ?, updated_at = ?, updated_by = ? where station_id = ?",
       )
       .bind(after.is_open, after.free_slots, after.full_batteries, nowIso(), user.id, stationId),
   ];
-  const changes = diff(before, after);
+  const changes: Record<string, unknown> = { ...diff(before, after), ...types?.changes };
   if (Object.keys(changes).length) {
     statements.push(c.audit(user.id, "station_status", "update", stationId, changes, { stationId }));
   }

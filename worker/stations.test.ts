@@ -225,4 +225,30 @@ describe("battery types", () => {
     await save(env, station("Mixte", { kind: "both" }), s.id);
     expect((await byName(env, "Mixte")).batteryTypes!.map((t) => t.id)).toEqual([spiro]);
   });
+
+  it("counts full batteries per type, the station total being their sum", async () => {
+    const { env } = await setup();
+    const spiro = await addType(env, "Spiro", "72 V");
+    const ovt = await addType(env, "Omnivoltaic", "60 V");
+    const other = await addType(env, "Omnivoltaic", "72 V");
+    await save(env, station("Echange", { kind: "swap", batteryCapacity: 10, batteryTypeIds: [spiro, ovt] }));
+    const { id } = await byName(env, "Echange");
+    const status = (body: unknown) => call(env, "PATCH", `/api/stations/${id}/status`, body);
+
+    expect((await status({ typeBatteries: { [spiro]: 4, [ovt]: 2 } })).status).toBe(200);
+    let s = await byName(env, "Echange");
+    expect(s.batteryTypes!.map((t) => [t.brand, t.fullBatteries])).toEqual([["Omnivoltaic", 2], ["Spiro", 4]]);
+    expect(s.status.fullBatteries).toBe(6);
+
+    await status({ typeBatteries: { [ovt]: 0 } });
+    expect((await byName(env, "Echange")).status.fullBatteries).toBe(4);
+
+    // A type the station does not swap is refused.
+    expect((await status({ typeBatteries: { [other]: 1 } })).status).toBe(400);
+
+    // Saving the station keeps the counts of the types it still swaps.
+    await save(env, station("Echange", { kind: "swap", batteryCapacity: 10, batteryTypeIds: [spiro, other] }), id);
+    s = await byName(env, "Echange");
+    expect(s.batteryTypes!.map((t) => [t.name, t.fullBatteries])).toEqual([["72 V", 0], ["72 V", 4]]);
+  });
 });

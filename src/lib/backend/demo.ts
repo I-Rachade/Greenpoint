@@ -154,6 +154,8 @@ interface DemoState {
   batteryTypes?: BatteryType[];
   /** Battery types each station swaps, by station id. */
   stationBatteryTypes?: Record<string, string[]>;
+  /** Full batteries per battery type, by station id then type id (default: the station's total spread over its types). */
+  typeBatteries?: Record<string, Record<string, number>>;
   parcelSizes?: ParcelSizeTier[];
   parcelCodeFailures?: { stationId: string; at: string }[];
   /** Drivers (see src/lib/drivers.ts). */
@@ -490,9 +492,11 @@ export class DemoBackend implements Backend {
       const parcelPoint = depot?.isActive ? { counter: depot.counter ?? true, lockers: depot.lockers } : null;
       const types = state.batteryTypes ?? DEMO_BATTERY_TYPES;
       const swapped = (state.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES)[s.id] ?? [];
+      const counts = typeCounts(state, s.id, status.fullBatteries);
       const batteryTypes = types
         .filter((t) => swapped.includes(t.id))
-        .sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name));
+        .sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name))
+        .map((t) => ({ ...t, fullBatteries: counts[t.id] ?? 0 }));
       return {
         ...s,
         chargingSlots,
@@ -739,13 +743,26 @@ export class DemoBackend implements Backend {
             : r,
         )
       : state.reservations;
+    const { typeBatteries: typePatch, ...statusPatch } = patch;
+    let typeBatteries = state.typeBatteries;
+    let typeTotal: number | undefined;
+    if (typePatch) {
+      // Counts per battery type: the station's total becomes their sum.
+      const swapped = (state.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES)[stationId] ?? [];
+      if (Object.keys(typePatch).some((id) => !swapped.includes(id))) throw new BackendError("unknown", "battery type not swapped here");
+      const current = state.statuses.find((s) => s.stationId === stationId)?.fullBatteries ?? 0;
+      const counts = { ...typeCounts(state, stationId, current) };
+      for (const [id, n] of Object.entries(typePatch)) counts[id] = Math.max(0, Math.floor(n));
+      typeBatteries = { ...state.typeBatteries, [stationId]: counts };
+      typeTotal = swapped.reduce((sum, id) => sum + (counts[id] ?? 0), 0);
+    }
     const statuses = state.statuses.map((s) =>
       s.stationId === stationId
         ? {
             ...s,
-            ...patch,
+            ...statusPatch,
             freeSlots: Math.max(0, patch.freeSlots ?? s.freeSlots),
-            fullBatteries: Math.max(0, patch.fullBatteries ?? s.fullBatteries),
+            fullBatteries: Math.max(0, typeTotal ?? patch.fullBatteries ?? s.fullBatteries),
             updatedAt: new Date().toISOString(),
           }
         : s,
@@ -755,8 +772,8 @@ export class DemoBackend implements Backend {
     const changes = before && after ? diff(before, after) : {};
     this.save(
       Object.keys(changes).length
-        ? withAudit({ ...state, statuses, reservations }, { table: "station_status", action: "update", rowId: stationId, stationId, changes })
-        : { ...state, statuses, reservations },
+        ? withAudit({ ...state, statuses, reservations, typeBatteries }, { table: "station_status", action: "update", rowId: stationId, stationId, changes })
+        : { ...state, statuses, reservations, typeBatteries },
     );
   }
 
@@ -2970,4 +2987,13 @@ export class DemoBackend implements Backend {
       ),
     );
   }
+}
+
+/** Full batteries per type at a station; until staff count them, the total spread evenly over its types. */
+function typeCounts(state: DemoState, stationId: string, total: number): Record<string, number> {
+  const stored = state.typeBatteries?.[stationId];
+  if (stored) return stored;
+  const swapped = (state.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES)[stationId] ?? [];
+  const share = Math.floor(total / Math.max(1, swapped.length));
+  return Object.fromEntries(swapped.map((id, i) => [id, share + (i === 0 ? total - share * swapped.length : 0)]));
 }

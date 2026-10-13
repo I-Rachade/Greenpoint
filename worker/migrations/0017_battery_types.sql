@@ -15,10 +15,12 @@ create table battery_types (
   unique (brand, name)
 );
 
--- Battery types a station's swap point swaps.
+-- Battery types a station's swap point swaps, and how many of each are full
+-- there (set by the station staff; station_status.full_batteries is their sum).
 create table station_battery_types (
   station_id text not null references stations (id) on delete cascade,
   battery_type_id text not null references battery_types (id) on delete cascade,
+  full_batteries integer not null default 0 check (full_batteries >= 0),
   primary key (station_id, battery_type_id)
 );
 create index station_battery_types_type_idx on station_battery_types (battery_type_id);

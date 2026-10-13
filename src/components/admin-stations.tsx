@@ -394,7 +394,8 @@ function PointBadges({ station, sockets }: { station: StationView; sockets: Devi
       {offersSwap(station.kind) && (
         <span className={pill}>
           <BatteryIcon size={12} /> {p.swap} · {station.batteryCapacity}
-          {(station.batteryTypes ?? []).length > 0 && ` · ${(station.batteryTypes ?? []).map(batteryTypeLabel).join(", ")}`}
+          {(station.batteryTypes ?? []).length > 0 &&
+            ` · ${(station.batteryTypes ?? []).map((bt) => `${batteryTypeLabel(bt)} (${bt.fullBatteries})`).join(", ")}`}
         </span>
       )}
       {offersCharging(station.kind) && (

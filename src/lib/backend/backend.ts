@@ -37,7 +37,10 @@ import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, Wallet
 /** Where a code goes: by SMS to the phone number or by e-mail. */
 export type CodeChannel = "sms" | "email";
 
-export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots" | "fullBatteries">>;
+export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots" | "fullBatteries">> & {
+  /** Full batteries per battery type (id → count); the station's total becomes their sum. */
+  typeBatteries?: Record<string, number>;
+};
 
 /** Error codes shared by both backends, translated in the UI (see i18n `errors`). */
 export type BackendErrorCode =

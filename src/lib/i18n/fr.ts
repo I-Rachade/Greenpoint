@@ -85,6 +85,7 @@ export const fr = {
     outlets: "Prises",
     liveOutlets: "Prises connectées, état en direct",
     batteryTypes: "Batteries échangées",
+    typeFull: "{n} pleines",
     services: "Dans cette station",
     parcelCounter: "Dépôt de colis au comptoir",
     parcelLockers: "Casiers colis",
@@ -193,6 +194,7 @@ export const fr = {
     complete: "Terminer",
     pickupCode: "Code du client",
     capacity: "sur {n}",
+    byType: "Batteries pleines par type. Total de la station : {n}",
   },
   owner: {
     title: "Mes stations",

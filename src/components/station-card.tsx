@@ -5,7 +5,7 @@ import { availableBatteries, availableSlots, offersCharging, offersSwap, station
 import { formatDistance } from "@/lib/geo";
 import { format } from "@/lib/i18n/format";
 import { useFavorites } from "@/lib/prefs";
-import { stationBrands } from "@/lib/battery-types";
+import { brandFullBatteries, stationBrands } from "@/lib/battery-types";
 import { offersParcels } from "@/lib/station-points";
 import type { StationView } from "@/lib/types";
 import { AvailabilityBadge } from "./availability-badge";
@@ -84,7 +84,11 @@ export function StationCard({
             <span className="flex items-center gap-1 text-gp-muted dark:text-zinc-400">
               <BatteryIcon size={14} />
               <b className="text-gp-forest dark:text-zinc-100">{availableBatteries(station)}</b>/{station.batteryCapacity}
-              {stationBrands(station).length > 0 && <span className="truncate">· {stationBrands(station).join(", ")}</span>}
+              {stationBrands(station).length > 0 && (
+                <span className="truncate">
+                  · {stationBrands(station).map((b) => `${b} ${brandFullBatteries(station, b)}`).join(", ")}
+                </span>
+              )}
             </span>
           )}
           {charging && (

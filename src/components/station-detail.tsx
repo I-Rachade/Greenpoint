@@ -145,10 +145,17 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
           <h3 className="flex items-center gap-2 text-sm font-semibold">
             <BatteryIcon size={16} /> {t.station.batteryTypes}
           </h3>
-          <ul className="mt-1 flex flex-wrap gap-1 text-xs">
+          <ul className="mt-1 divide-y divide-gp-border text-sm dark:divide-white/10">
             {(station.batteryTypes ?? []).map((bt) => (
-              <li key={bt.id} className="rounded-full bg-gp-green/10 px-2 py-0.5 text-gp-green-dark">
-                {batteryTypeLabel(bt)}
+              <li key={bt.id} className="flex items-center justify-between gap-3 py-1.5">
+                <span>{batteryTypeLabel(bt)}</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                    bt.fullBatteries > 0 ? "bg-gp-green/10 text-gp-green-dark" : "bg-zinc-500/10 text-gp-muted"
+                  }`}
+                >
+                  {format(t.station.typeFull, { n: bt.fullBatteries })}
+                </span>
               </li>
             ))}
           </ul>

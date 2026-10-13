@@ -14,6 +14,11 @@ export interface BatteryType {
   isActive: boolean;
 }
 
+/** A type a station swaps, with how many of its batteries are full there. */
+export interface StationBatteryType extends BatteryType {
+  fullBatteries: number;
+}
+
 export interface BatteryTypeInput {
   brand: string;
   name: string;
@@ -33,6 +38,11 @@ export function validBatteryType(input: BatteryTypeInput): boolean {
 /** Brands whose batteries the station swaps. */
 export function stationBrands(station: Pick<StationView, "batteryTypes">): string[] {
   return [...new Set((station.batteryTypes ?? []).map((t) => t.brand))];
+}
+
+/** Full batteries of one brand at the station. */
+export function brandFullBatteries(station: Pick<StationView, "batteryTypes">, brand: string): number {
+  return (station.batteryTypes ?? []).filter((t) => t.brand === brand).reduce((n, t) => n + t.fullBatteries, 0);
 }
 
 /** Every brand swapped at any of the stations, sorted, for the app's filter. */

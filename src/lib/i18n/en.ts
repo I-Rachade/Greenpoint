@@ -86,6 +86,7 @@ export const en: Dictionary = {
     outlets: "Outlets",
     liveOutlets: "Connected outlets, live status",
     batteryTypes: "Batteries swapped",
+    typeFull: "{n} full",
     services: "At this station",
     parcelCounter: "Parcel drop-off at the counter",
     parcelLockers: "Parcel lockers",
@@ -193,6 +194,7 @@ export const en: Dictionary = {
     complete: "Complete",
     pickupCode: "Customer's code",
     capacity: "of {n}",
+    byType: "Full batteries per type. Station total: {n}",
   },
   owner: {
     title: "My stations",
