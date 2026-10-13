@@ -49,6 +49,7 @@ export type BackendErrorCode =
   | "device_command_failed"
   | "device_not_configured"
   | "depot_inactive"
+  | "station_without_point"
   | "same_station"
   | "parcel_too_large"
   | "parcel_not_found"

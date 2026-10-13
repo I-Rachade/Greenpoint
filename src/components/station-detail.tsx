@@ -18,7 +18,7 @@ import { format } from "@/lib/i18n/format";
 import { RESERVATION_MINUTES, type ReservationType, type StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { AvailabilityBadge } from "./availability-badge";
-import { BatteryIcon, BoltIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, StoreIcon } from "./icons";
+import { BatteryIcon, BoltIcon, BoxIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, StoreIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { FavoriteButton } from "./station-card";
 
@@ -65,6 +65,7 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
     }
   }
 
+  const battery = station.kind !== "parcel";
   const slots = availableSlots(station, now);
   const points = station.chargingPoints ?? [];
   const connected = points.some((p) => p.deviceId !== null);
@@ -131,10 +132,23 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        {offersCharging(station.kind) && tile(slots, station.chargingSlots, t.station.freeSlots, BoltIcon)}
-        {offersSwap(station.kind) && tile(batteries, station.batteryCapacity, t.station.fullBatteries, BatteryIcon)}
-      </div>
+      {battery && (
+        <div className="grid grid-cols-2 gap-3">
+          {offersCharging(station.kind) && tile(slots, station.chargingSlots, t.station.freeSlots, BoltIcon)}
+          {offersSwap(station.kind) && tile(batteries, station.batteryCapacity, t.station.fullBatteries, BatteryIcon)}
+        </div>
+      )}
+
+      {station.parcelPoint && (station.parcelPoint.counter || station.parcelPoint.lockers > 0) && (
+        <div className="rounded-2xl border border-gp-border bg-gp-surface px-3 dark:border-white/10">
+          <h3 className="pt-3 text-sm font-semibold">{t.station.services}</h3>
+          <ul className="divide-y divide-gp-border dark:divide-white/10">
+            {station.parcelPoint.counter && infoRow(BoxIcon, t.station.parcelCounter, "✓")}
+            {station.parcelPoint.lockers > 0 &&
+              infoRow(BoxIcon, t.station.parcelLockers, format(t.station.lockers, { n: station.parcelPoint.lockers }))}
+          </ul>
+        </div>
+      )}
 
       {points.length > 0 && (
         <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 dark:border-white/10">
@@ -168,13 +182,15 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
         </ul>
       </div>
 
-      <p className="text-xs text-gp-muted">
-        {format(t.station.updated, { time: relativeTime(station.status.updatedAt, now) })}
-      </p>
+      {battery && (
+        <p className="text-xs text-gp-muted">
+          {format(t.station.updated, { time: relativeTime(station.status.updatedAt, now) })}
+        </p>
+      )}
       {station.status.isOpen && !withinOpeningHours(station.openingHours, now) && (
         <p className="text-sm text-red-700 dark:text-red-400">{t.station.outsideHours}</p>
       )}
-      {isStale(station, now) && <p className="text-sm text-amber-700 dark:text-amber-400">{t.station.stale}</p>}
+      {battery && isStale(station, now) && <p className="text-sm text-amber-700 dark:text-amber-400">{t.station.stale}</p>}
 
       <div className="flex gap-2">
         <a href={directionsUrl(station)} target="_blank" rel="noopener noreferrer" className={secondary}>
@@ -189,7 +205,7 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
         )}
       </div>
 
-      {profile ? (
+      {!battery ? null : profile ? (
         <div className="flex flex-wrap gap-2">
           {offersSwap(station.kind) && (
             <button type="button" disabled={busy || batteries === 0} onClick={() => reserve("battery")} className={primary}>

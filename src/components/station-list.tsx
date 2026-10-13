@@ -16,12 +16,12 @@ import { StationCard } from "./station-card";
 /** Folds accents and case so "lome" finds "Lomé". */
 const fold = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
 
-type Chip = "all" | "available" | "charging" | "swap" | "favorites";
+type Chip = "all" | "available" | "charging" | "swap" | "parcel" | "favorites";
 
 /** Station list screen: search, filter chips, nearest first. */
 export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean }) {
   const { t } = useI18n();
-  const { backend } = useApp();
+  const { backend, features } = useApp();
   const { position, state } = usePosition();
   const favorites = useFavorites();
   const { data: stations } = useLiveQuery(() => backend.listStations());
@@ -30,7 +30,7 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
 
   const filter: StationFilter = {
     ...DEFAULT_FILTER,
-    service: chip === "charging" || chip === "swap" ? chip : "all",
+    service: chip === "charging" || chip === "swap" || chip === "parcel" ? chip : "all",
     onlyAvailable: chip === "available",
   };
   const ranked = useMemo(() => rankStations(stations ?? [], position, filter), [stations, position, filter.service, filter.onlyAvailable]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -46,6 +46,7 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
     { id: "available", label: t.ui.stations.available },
     { id: "charging", label: t.filter.charging },
     { id: "swap", label: t.filter.swap },
+    ...(features.parcels ? [{ id: "parcel" as const, label: t.filter.parcel }] : []),
     { id: "favorites", label: t.ui.stations.favorites },
   ];
 

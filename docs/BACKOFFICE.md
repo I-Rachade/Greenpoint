@@ -5,12 +5,25 @@ Erreichbar unter `/admin`, nur für Nutzer mit Rolle `admin`. Alle Seiten aktual
 | Seite | Inhalt |
 |---|---|
 | **Tableau de bord** `/admin` | Kennzahlen (Stationen, unbestätigte Status, laufende Reservierungen, Reservierungen 7 Tage, Abschluss- und Nichterscheinen-Quote, Nutzer, vernetzte Steckdosen), Reservierungen pro Tag (14 Tage) und die Liste „À vérifier“ mit Auffälligkeiten |
-| **Stations** `/admin/stations` | Status aller Stationen inkl. deaktivierter: offen/zu, Zähler gegen Kapazität, gehaltene Reservierungen, wann zuletzt bestätigt, zugeordnetes Personal; Stationen (de)aktivieren; vernetzte Steckdosen mit letztem Signal; darunter der bisherige Stations-Editor |
+| **Stations** `/admin/stations` | Status aller Stationen inkl. deaktivierter: offen/zu, Zähler gegen Kapazität, gehaltene Reservierungen, wann zuletzt bestätigt, zugeordnetes Personal; Stationen (de)aktivieren; vernetzte Steckdosen mit letztem Signal; darunter der Stations-Editor mit den Punkten der Station (siehe unten) |
 | **Réservations** `/admin/reservations` | Reservierungen der letzten 30 Tage, filterbar nach Status, Station und Telefon/Name; laufende Reservierungen stornieren |
 | **Utilisateurs** `/admin/users` | Alle Nutzer mit Rolle (änderbar, außer der eigenen), zugeordneten Stationen (zuordnen/entfernen), Reservierungen und Nichterscheinen in 30 Tagen, letzter Login |
 | **Activité** `/admin/activity` | Aktivitätsprotokoll: wer hat wann was geändert, filterbar nach Bereich, Station und Person |
 | **Partenaires API** `/admin/partners` | Partner-Apps anlegen, API-Schlüssel erstellen und sperren, Webhook-Adresse und Secret, Pakete und Summe der letzten 30 Tage, letzte Webhooks mit Zustellstatus; siehe [PARTNER-API.md](PARTNER-API.md) |
 | **Publicité** `/admin/promotions` | Werbung, die beim Öffnen der App als Fenster erscheint: Titel, Text, Bild, optionaler Button mit Link, aktiv/inaktiv, Zeitraum; mit Vorschau |
+
+## Punkte einer Station
+
+Jede Station bietet einen oder mehrere dieser Punkte an, frei kombinierbar (`src/lib/station-points.ts`, Migration `0013_station_points.sql`):
+
+| Punkt | Gespeichert in | Hinweis |
+|---|---|---|
+| Point d'échange de batterie | `stations.kind` `swap`/`both`, `battery_capacity` | Personal meldet volle Akkus |
+| Point de recharge de batterie | `stations.kind` `charging`/`both` | Die Ladeplätze sind die vernetzten Steckdosen der Station (eine pro Ausgang); `charging_slots` zählt der Worker selbst. Eine neue Steckdose macht die Station automatisch zum Ladepunkt. |
+| Point de dépôt de colis | `parcel_depots.is_active`, `has_counter` | Personal nimmt Pakete am Schalter an und gibt sie aus |
+| Casiers colis | `parcel_depots.is_active`, `lockers` | Fächer, die der Empfänger mit seinem Code öffnet |
+
+Eine Station ohne Tausch und Laden ist ein reiner Paketpunkt (`has_battery = 0`, in der App `kind = "parcel"`). Sie hat keine Zähler, erscheint in der App mit dem Filter „Colis“ und verschwindet aus der App, solange das Paketmodul aus ist. Eine Station ohne jeden Punkt lässt sich nicht speichern.
 
 ## Auffälligkeiten („À vérifier“)
 

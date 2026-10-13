@@ -15,7 +15,8 @@ import {
   type UserRole,
 } from "../types";
 import { BackendError, type Backend, type CodeChannel, type StatusPatch } from "./backend";
-import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, initialDemoStatus } from "./demo-data";
+import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, demoSocketPoints, initialDemoStatus } from "./demo-data";
+import { depotPoints, hasAnyPoint, kindFor } from "../station-points";
 import { DEMO_STAFF, demoHistory, demoUsers } from "../admin/demo-seed";
 import {
   ADMIN_HISTORY_DAYS,
@@ -180,6 +181,24 @@ function seedDevices(): Device[] {
       createdAt: "2026-10-01T08:00:00.000Z",
       points: DEMO_CHARGING_POINTS,
     },
+    ...(
+      [
+        ["st-grand-marche", "DEMO-GM01", 6, 3],
+        ["st-universite", "DEMO-UL01", 8, 5],
+        ["st-be", "DEMO-BE01", 4, 0],
+        ["st-hedzranawoe", "DEMO-HZ01", 4, 1],
+      ] as const
+    ).map(([stationId, externalId, outlets, free]) => ({
+      externalId,
+      stationId,
+      vendor: "Xingke",
+      model: `${outlets} prises`,
+      link: "vendor_cloud" as const,
+      outlets,
+      lastSeenAt: null,
+      createdAt: "2026-10-01T08:00:00.000Z",
+      points: demoSocketPoints(stationId, externalId, outlets, free),
+    })),
   ];
 }
 
@@ -189,8 +208,9 @@ function seedDepots(): ParcelDepot[] {
     stationId,
     isActive: true,
     note: "au comptoir",
+    counter: true,
     lockers: 0,
-  }));
+  })).concat({ stationId: "st-colis-adewui", isActive: true, note: "à l'entrée du marché", counter: false, lockers: 24 });
 }
 
 /** One partner shop and one booked parcel, so the drop-off at the station can be tried. */
@@ -352,7 +372,19 @@ export class DemoBackend implements Backend {
         .flatMap((d) => d.points)
         .filter((p) => p.stationId === s.id)
         .map((p) => ({ ...p, lastSeenAt: seen }));
-      return { ...s, status, reservedSlots: held.slots, reservedBatteries: held.batteries, chargingPoints };
+      // Charging places are the connected outlets.
+      const chargingSlots = chargingPoints.filter((p) => p.deviceId).length;
+      const depot = (state.parcelDepots ?? seedDepots()).find((d) => d.stationId === s.id);
+      const parcelPoint = depot?.isActive ? { counter: depot.counter ?? true, lockers: depot.lockers } : null;
+      return {
+        ...s,
+        chargingSlots,
+        status: { ...status, freeSlots: Math.min(status.freeSlots, chargingSlots) },
+        reservedSlots: held.slots,
+        reservedBatteries: held.batteries,
+        chargingPoints,
+        parcelPoint,
+      };
     });
   }
 
@@ -363,7 +395,9 @@ export class DemoBackend implements Backend {
 
   async listStations() {
     const state = this.load();
-    return this.views(state, this.activeStations(state));
+    const views = this.views(state, this.activeStations(state));
+    if (state.parcelsEnabled !== false) return views;
+    return views.filter((s) => s.kind !== "parcel").map((s) => ({ ...s, parcelPoint: null }));
   }
 
   private activeStations(state: DemoState): Station[] {
@@ -634,8 +668,14 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const operator = state.operators.find((o) => o.id === input.operatorId);
     if (!operator) throw new BackendError("unknown", "operator not found");
+    const { parcelDepot, ...fields } = input;
+    const existing = id ? (state.parcelDepots ?? seedDepots()).find((d) => d.stationId === id) : undefined;
+    const depot = depotPoints(parcelDepot ?? existing);
+    if (!hasAnyPoint({ swap: offersSwap(input.kind), charging: offersCharging(input.kind), ...depot })) {
+      throw new BackendError("station_without_point");
+    }
     const station: Station = {
-      ...input,
+      ...fields,
       id: id ?? crypto.randomUUID(),
       operatorName: operator.name,
       isOwn: operator.isOwn,
@@ -652,7 +692,7 @@ export class DemoBackend implements Backend {
       const status: StationStatus = {
         stationId: station.id,
         isOpen: true,
-        freeSlots: station.chargingSlots,
+        freeSlots: 0,
         fullBatteries: station.batteryCapacity,
         updatedAt: new Date().toISOString(),
       };
@@ -663,6 +703,7 @@ export class DemoBackend implements Backend {
         ),
       );
     }
+    if (parcelDepot) await this.writeDepot(station.id, parcelDepot);
   }
 
   /** Restores the example data (used by the "reset demo" button). */
@@ -831,9 +872,13 @@ export class DemoBackend implements Backend {
         lastSeenAt: null,
       })),
     };
+    // A connected socket makes the station a charging point.
+    const stations = state.stations.map((s) =>
+      s.id === input.stationId && !offersCharging(s.kind) ? { ...s, kind: kindFor(offersSwap(s.kind), true) } : s,
+    );
     this.save(
       withAudit(
-        { ...state, devices: [device, ...devices] },
+        { ...state, stations, devices: [device, ...devices] },
         { table: "charging_points", action: "insert", rowId: externalId, stationId: input.stationId, changes: { device: externalId, outlets } },
       ),
     );
@@ -1110,10 +1155,21 @@ export class DemoBackend implements Backend {
   async saveParcelDepot(stationId: string, input: ParcelDepotInput) {
     const state = this.load();
     this.requireAdmin(state);
-    if (!state.stations.some((s) => s.id === stationId)) throw new BackendError("station_not_found");
+    const station = state.stations.find((s) => s.id === stationId);
+    if (!station) throw new BackendError("station_not_found");
+    // A parcel point has nothing else, so its depot cannot be switched off here.
+    if (station.kind === "parcel" && !input.isActive) throw new BackendError("station_without_point");
+    await this.writeDepot(stationId, input);
+  }
+
+  private async writeDepot(stationId: string, input: ParcelDepotInput) {
+    const state = this.load();
     const depots = state.parcelDepots ?? seedDepots();
     const before = depots.find((d) => d.stationId === stationId);
-    const depot: ParcelDepot = { stationId, isActive: input.isActive, note: input.note.trim().slice(0, 200), lockers: Math.max(0, Math.floor(input.lockers)) };
+    const lockers = Math.max(0, Math.floor(input.lockers));
+    const counter = input.counter ?? before?.counter ?? true;
+    if (input.isActive && !counter && lockers === 0) throw new BackendError("unknown", "a depot needs a counter or lockers");
+    const depot: ParcelDepot = { stationId, isActive: input.isActive, note: input.note.trim().slice(0, 200), counter, lockers };
     this.save(
       withAudit(
         { ...state, parcelDepots: [...depots.filter((d) => d.stationId !== stationId), depot] },
@@ -1122,7 +1178,7 @@ export class DemoBackend implements Backend {
           action: before ? "update" : "insert",
           rowId: stationId,
           stationId,
-          changes: before ? diff(before, depot) : { is_active: depot.isActive, note: depot.note, lockers: depot.lockers },
+          changes: before ? diff(before, depot) : { is_active: depot.isActive, note: depot.note, has_counter: counter, lockers: depot.lockers },
         },
       ),
     );
