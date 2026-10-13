@@ -42,7 +42,7 @@ Für den echten Betrieb mit Datenbank und SMS-Login: siehe [docs/DEPLOYMENT.md](
 | `/operator` | Personal, Admin | zwei große Knöpfe: „Statut“ und „Colis“ (ohne Paketmodul direkt der Status) |
 | `/operator/statut` | Personal, Admin | Station öffnen/schließen, volle Akkus und freie Plätze melden, Reservierungen abschließen |
 | `/operator/colis` | Personal, Admin | Paketschalter: große Knöpfe, einer pro Aufgabe (nur Stationen mit Paket-Depot) |
-| `/operator/colis/<aufgabe>` | Personal, Admin | Eine Aufgabe pro Seite: `nouveau`, `remettre`, `expedier`, `arrivees`, `a-retirer`, `chauffeurs`, `annonces`, `historique` |
+| `/operator/colis/<aufgabe>` | Personal, Admin | Eine Aufgabe pro Seite: `nouveau`, `remettre`, `expedier`, `arrivees`, `a-retirer`, `chauffeurs` (Menü) mit `chauffeur-comptoir`, `chauffeur-remettre`, `chauffeur-apportes`, `chauffeur-file`, dazu `annonces`, `historique` |
 | `/admin` | Admin | Stationen anlegen und bearbeiten |
 | `/contact` | alle | Kontaktadresse |
 

@@ -7,7 +7,7 @@ import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { measuresOf, PARCEL_SIZES, parseHandoverInput, type Parcel, type ParcelInfo, type ParcelInput, type ParcelSize } from "@/lib/parcels";
 import type { StationBooking } from "@/lib/partners";
-import type { ParcelSection } from "@/lib/parcel-sections";
+import { isDriverPart, type ParcelSection } from "@/lib/parcel-sections";
 import type { StationView } from "@/lib/types";
 import { fareFor } from "@/lib/drivers";
 import { distanceMeters } from "@/lib/geo";
@@ -16,6 +16,7 @@ import { BackIcon } from "../icons";
 import { StationDriversSection } from "../drivers/station-drivers";
 import { useI18n } from "../i18n-provider";
 import { canScanQr, QrScanner } from "./qr-scanner";
+import { MenuTile } from "./menu-tile";
 import { SizePicker } from "./size-picker";
 import { SlipDialog } from "./slip-dialog";
 import { ParcelStatusPill } from "./status";
@@ -418,21 +419,6 @@ function BatchList({
   );
 }
 
-/** One big tile on the parcel counter menu, with how many parcels wait there. */
-function MenuTile({ href, label, count }: { href: string; label: string; count?: number }) {
-  return (
-    <Link
-      href={href}
-      className="relative flex min-h-24 items-center justify-center rounded-2xl bg-gp-forest p-4 text-center text-lg font-semibold text-white shadow-sm active:scale-[0.99]"
-    >
-      {label}
-      {!!count && (
-        <span className="absolute right-2 top-2 min-w-6 rounded-full bg-white px-1.5 text-sm font-bold text-gp-forest">{count}</span>
-      )}
-    </Link>
-  );
-}
-
 function StationParcels({
   station,
   stations,
@@ -617,7 +603,9 @@ function StationParcels({
           )}
         </Section>
       )}
-      {section === "chauffeurs" && <StationDriversSection station={station} stations={stations} />}
+      {(section === "chauffeurs" || isDriverPart(section)) && (
+        <StationDriversSection station={station} stations={stations} part={isDriverPart(section) ? section : undefined} />
+      )}
       {section === "historique" && (
         <Section title={s.history}>
           {history.length === 0 ? (
@@ -682,9 +670,12 @@ export function StaffParcels({ section }: { section?: ParcelSection }) {
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-4 sm:p-6">
       {section ? (
-        <Link href="/operator/colis" className="-ml-1 inline-flex items-center gap-1 text-sm text-gp-green-dark dark:text-gp-green">
+        <Link
+          href={isDriverPart(section) ? "/operator/colis/chauffeurs" : "/operator/colis"}
+          className="-ml-1 inline-flex items-center gap-1 text-sm text-gp-green-dark dark:text-gp-green"
+        >
           <BackIcon size={18} />
-          {t.parcels.staff.title}
+          {isDriverPart(section) ? t.drivers.staff.title : t.parcels.staff.title}
         </Link>
       ) : (
         <>
