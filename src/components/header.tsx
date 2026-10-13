@@ -6,16 +6,21 @@ import { useEffect, useState } from "react";
 import { DemoBackend, DEMO_CODE, HOSTED_DEMO } from "@/lib/backend";
 import { format } from "@/lib/i18n/format";
 import { useApp } from "./app-provider";
+import { BellIcon, GearIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
+import { useAlerts } from "./use-alerts";
 
 export function Header() {
   const { t, locale, setLocale } = useI18n();
   const { backend, profile } = useApp();
   const pathname = usePathname();
   const walletShown = useWalletShown();
+  const { unread } = useAlerts();
 
   const links: { href: string; label: string; show: boolean }[] = [
     { href: "/", label: t.nav.map, show: true },
+    { href: "/stations", label: t.ui.tabs.stations, show: true },
+    { href: "/favoris", label: t.ui.tabs.favorites, show: true },
     { href: "/reservations", label: t.nav.reservations, show: !!profile },
     { href: "/colis", label: t.nav.parcels, show: !!profile },
     { href: "/portefeuille", label: t.nav.wallet, show: !!profile && walletShown },
@@ -25,7 +30,7 @@ export function Header() {
   ];
 
   return (
-    <header className="z-20 border-b border-black/10 bg-white dark:border-white/10 dark:bg-zinc-950">
+    <header className="z-20 border-b border-black/10 bg-gp-surface dark:border-white/10">
       {backend.mode === "demo" && (
         <div className="flex flex-wrap items-center justify-center gap-x-3 bg-amber-100 px-4 py-1 text-center text-xs text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">
           <span className={HOSTED_DEMO ? "font-semibold" : undefined}>
@@ -41,14 +46,15 @@ export function Header() {
           </button>
         </div>
       )}
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2 px-3 py-2 sm:flex-nowrap sm:gap-3 sm:px-4">
+      <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 py-2 sm:gap-3 sm:px-4">
         <Link href="/" className="flex items-center gap-2 font-semibold text-gp-green-dark dark:text-gp-green">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-mini.svg" alt="" width={28} height={28} className="h-7 w-7" />
           {t.appName}
         </Link>
-        <span className="flex-1 sm:hidden" />
-        <nav className="order-last flex w-full gap-1 overflow-x-auto text-sm sm:order-none sm:w-auto sm:flex-1">
+        <span className="flex-1 md:hidden" />
+        {/* On phones the tab bar at the bottom replaces these links. */}
+        <nav className="hidden flex-1 gap-1 overflow-x-auto text-sm md:flex">
           {links
             .filter((l) => l.show)
             .map((l) => (
@@ -65,6 +71,21 @@ export function Header() {
               </Link>
             ))}
         </nav>
+        <Link
+          href="/notifications"
+          className="relative hidden h-9 w-9 items-center justify-center rounded-full text-gp-forest hover:bg-black/5 md:flex dark:text-zinc-200 dark:hover:bg-white/10"
+          aria-label={t.ui.alerts.title}
+        >
+          <BellIcon size={20} />
+          {unread > 0 && <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-gp-closed" />}
+        </Link>
+        <Link
+          href="/parametres"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-gp-forest hover:bg-black/5 dark:text-zinc-200 dark:hover:bg-white/10"
+          aria-label={t.ui.settings.title}
+        >
+          <GearIcon size={20} />
+        </Link>
         <button
           type="button"
           onClick={() => setLocale(locale === "fr" ? "en" : "fr")}
@@ -77,12 +98,12 @@ export function Header() {
           <button
             type="button"
             onClick={() => backend.signOut()}
-            className="whitespace-nowrap text-sm text-zinc-600 hover:underline dark:text-zinc-400"
+            className="hidden whitespace-nowrap text-sm text-zinc-600 hover:underline md:inline dark:text-zinc-400"
           >
             {t.nav.logout}
           </button>
         ) : (
-          <Link href="/login" className="whitespace-nowrap rounded-full bg-gp-green-dark px-3 py-1 text-sm text-white">
+          <Link href="/login" className="hidden whitespace-nowrap rounded-full bg-gp-green-dark px-3 py-1 text-sm text-white md:inline">
             {t.nav.login}
           </Link>
         )}
@@ -92,7 +113,7 @@ export function Header() {
 }
 
 /** The wallet link only appears once the module is on (admins see it while testing). Checked once per login. */
-function useWalletShown(): boolean {
+export function useWalletShown(): boolean {
   const { backend, profile } = useApp();
   const [shown, setShown] = useState<{ userId: string; shown: boolean } | null>(null);
   const userId = profile?.id ?? null;
