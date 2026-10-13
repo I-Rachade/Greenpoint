@@ -70,7 +70,7 @@ describe("DemoBackend parcel depot", () => {
     measures: { lengthCm: 35, widthCm: 25, heightCm: 15, weightKg: 1.5 },
   };
 
-  async function as(role: "operator" | "rider", phone = "+22890000002") {
+  async function as(role: "operator" | "customer", phone = "+22890000002") {
     await backend.register(phone, DEMO_CODE, "2580", role);
   }
 
@@ -98,12 +98,12 @@ describe("DemoBackend parcel depot", () => {
     expect(staffView.status).toBe("arrived");
     expect(staffView.pickupCode).toBeUndefined();
 
-    await as("rider", "+22891445566");
+    await as("customer", "+22891445566");
     const [mine] = await backend.myParcels();
     expect(mine.direction).toBe("received");
     expect(mine.pickupCode).toMatch(/^\d{6}$/);
 
-    await as("rider", "+22890112233");
+    await as("customer", "+22890112233");
     const [sent] = await backend.myParcels();
     expect(sent.direction).toBe("sent");
     expect(sent.pickupCode).toBeUndefined();

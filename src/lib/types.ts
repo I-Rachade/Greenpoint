@@ -3,7 +3,7 @@ import type { ParcelDepotInput } from "./parcels";
 export type VehicleType = "scooter" | "tricycle" | "ebike" | "moped";
 /** Battery services of a station; "parcel" = neither swap nor charging, a parcel point only. See station-points.ts. */
 export type StationKind = "charging" | "swap" | "both" | "parcel";
-export type UserRole = "rider" | "operator" | "fleet_manager" | "admin";
+export type UserRole = "customer" | "operator" | "fleet_manager" | "admin";
 export type ReservationType = "battery" | "slot";
 export type ReservationStatus = "active" | "completed" | "cancelled" | "expired";
 export type ChargingPointStatus = "free" | "reserved" | "charging" | "done" | "fault";
@@ -73,9 +73,9 @@ export interface Reservation {
   status: ReservationStatus;
   createdAt: string;
   expiresAt: string;
-  /** 4-digit code the rider shows at the station. Only present on the rider's own reservations. */
+  /** 4-digit code the customer shows at the station. Only present on the customer's own reservations. */
   pickupCode?: string;
-  /** Set when the reservation was cancelled for the rider, e.g. "station_closed". */
+  /** Set when the reservation was cancelled for the customer, e.g. "station_closed". */
   cancelReason?: string | null;
 }
 
@@ -116,7 +116,7 @@ export interface Operator {
 export const RESERVATION_MINUTES = 20;
 /** Status reports older than this are shown as uncertain. */
 export const STALE_STATUS_HOURS = 2;
-/** Unused (cancelled or expired) reservations a rider may have in 24 hours. Mirrors reserve(). */
+/** Unused (cancelled or expired) reservations a customer may have in 24 hours. Mirrors reserve(). */
 export const MAX_UNUSED_RESERVATIONS_PER_DAY = 3;
 /** Pause at a station after an unused reservation there. Mirrors reserve(). */
 export const STATION_COOLDOWN_MINUTES = 60;

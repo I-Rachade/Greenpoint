@@ -118,7 +118,7 @@ export interface Backend {
   /** Deletes the signed-in user's account for good, after checking the code. */
   deleteAccount(channel: CodeChannel, code: string): Promise<void>;
 
-  // Rider
+  // Customer
   myReservations(): Promise<Reservation[]>;
   reserve(stationId: string, type: ReservationType): Promise<Reservation>;
   cancelReservation(id: string): Promise<void>;
@@ -127,7 +127,7 @@ export interface Backend {
   staffStations(): Promise<StationView[]>;
   updateStatus(stationId: string, patch: StatusPatch): Promise<void>;
   stationReservations(stationId: string): Promise<Reservation[]>;
-  /** Needs the rider's pickup code; also takes the battery or slot off the station's counter. */
+  /** Needs the customer's pickup code; also takes the battery or slot off the station's counter. */
   completeReservation(id: string, pickupCode: string): Promise<void>;
 
   // Admin

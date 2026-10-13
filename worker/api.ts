@@ -80,6 +80,7 @@ import {
 import type { Env } from "./env";
 import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setParcelsEnabled } from "./features";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
+import { DB_CUSTOMER, roleFromDb, roleToDb } from "./roles";
 import { refreshTopup, startTopup } from "./wallet-topups";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
 import { adjustBalance, adminWallet, findRecipient, getWallet, saveFeeSetting, sendMoney, setWalletEnabled, setWalletFrozen } from "./wallet";
@@ -142,7 +143,7 @@ interface PromotionRow {
   updated_at: string;
 }
 
-const ROLES: UserRole[] = ["rider", "operator", "fleet_manager", "admin"];
+const ROLES: UserRole[] = ["customer", "operator", "fleet_manager", "admin"];
 
 function toStationView(r: StationRow): StationView & { isActive: boolean } {
   let vehicleTypes: StationView["vehicleTypes"] = [];
@@ -303,7 +304,7 @@ function int(value: unknown): number {
   return Math.floor(n);
 }
 
-// Riders --------------------------------------------------------------------
+// Customers --------------------------------------------------------------------
 
 async function reserve(c: Ctx, stationId: string, type: ReservationType): Promise<Reservation> {
   const user = await c.requireUser();
@@ -342,7 +343,7 @@ async function reserve(c: Ctx, stationId: string, type: ReservationType): Promis
   const expires = new Date(Date.now() + RESERVATION_MINUTES * 60_000).toISOString();
   let inserted: D1Result;
   try {
-    // The availability check and the insert are one statement, so two riders
+    // The availability check and the insert are one statement, so two customers
     // cannot take the last battery at once. Stations with connected sockets count
     // their outlets that reported in the last minutes instead of the staff counter.
     inserted = await c.db
@@ -396,7 +397,7 @@ async function cancelReservation(c: Ctx, id: string) {
   const own = r.user_id === user.id;
   if (!own && user.role !== "admin") throw new ApiError("forbidden", 403);
   if (r.status !== "active") throw new ApiError("reservation_not_active");
-  // Cancelled by the team: does not count against the rider's limits.
+  // Cancelled by the team: does not count against the customer's limits.
   const reason = own ? null : "admin";
   await c.db.batch([
     c.db
@@ -444,7 +445,7 @@ async function updateStatus(c: Ctx, stationId: string, patch: { isOpen?: boolean
   if (Object.keys(changes).length) {
     statements.push(c.audit(user.id, "station_status", "update", stationId, changes, { stationId }));
   }
-  // Closing a station cancels its active reservations, so riders do not ride there for nothing.
+  // Closing a station cancels its active reservations, so customers do not ride there for nothing.
   if (before.is_open && !after.is_open) {
     const { results } = await c.db
       .prepare("select id, user_id from reservations where station_id = ? and status = 'active'")
@@ -472,7 +473,7 @@ async function stationReservations(c: Ctx, stationId: string) {
     .prepare("select * from reservations where station_id = ? order by created_at desc limit 50")
     .bind(stationId)
     .all<ReservationRow>();
-  // Staff never see pickup codes: the rider tells them at the station.
+  // Staff never see pickup codes: the customer tells them at the station.
   return results.map((r) => toReservation(r, false));
 }
 
@@ -488,7 +489,7 @@ async function completeReservation(c: Ctx, id: string, pickupCode: string) {
     .bind(id)
     .run();
   if (!done.meta.changes) throw new ApiError("reservation_not_active");
-  // The battery or slot the rider took comes off the counter, so the map does not show it as free again.
+  // The battery or slot the customer took comes off the counter, so the map does not show it as free again.
   const column = r.type === "battery" ? "full_batteries" : "free_slots";
   await c.db.batch([
     c.db
@@ -610,7 +611,7 @@ async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
         phone: string | null;
         email: string | null;
         full_name: string | null;
-        role: UserRole;
+        role: string;
         created_at: string;
         last_sign_in_at: string | null;
       }>(),
@@ -630,7 +631,7 @@ async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
       phone: u.phone,
       email: u.email,
       fullName: u.full_name,
-      role: u.role,
+      role: roleFromDb(u.role),
       createdAt: u.created_at,
       lastSignInAt: u.last_sign_in_at,
     })),
@@ -686,12 +687,13 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
   const admin = await c.requireAdmin();
   if (!ROLES.includes(role)) throw new ApiError("bad_request");
   if (userId === admin.id) throw new ApiError("forbidden", 403);
-  const before = await c.db.prepare("select role from users where id = ?").bind(userId).first<{ role: UserRole }>();
-  if (!before) throw new ApiError("forbidden", 403);
-  if (before.role === role) return;
+  const row = await c.db.prepare("select role from users where id = ?").bind(userId).first<{ role: string }>();
+  if (!row) throw new ApiError("forbidden", 403);
+  const before = roleFromDb(row.role);
+  if (before === role) return;
   await c.db.batch([
-    c.db.prepare("update users set role = ? where id = ?").bind(role, userId),
-    c.audit(admin.id, "profiles", "update", userId, { role: [before.role, role] }, { userId }),
+    c.db.prepare("update users set role = ? where id = ?").bind(roleToDb(role), userId),
+    c.audit(admin.id, "profiles", "update", userId, { role: [before, role] }, { userId }),
   ]);
 }
 
@@ -705,7 +707,7 @@ async function assignStaff(c: Ctx, stationId: string, userId: string) {
   // The role follows the assignment.
   await c.db.batch([
     c.audit(admin.id, "station_staff", "insert", `${stationId}:${userId}`, {}, { stationId, userId }),
-    c.db.prepare("update users set role = 'operator' where id = ? and role = 'rider'").bind(userId),
+    c.db.prepare("update users set role = 'operator' where id = ? and role = ?").bind(userId, DB_CUSTOMER),
   ]);
 }
 
@@ -720,9 +722,9 @@ async function unassignStaff(c: Ctx, stationId: string, userId: string) {
     c.audit(admin.id, "station_staff", "delete", `${stationId}:${userId}`, {}, { stationId, userId }),
     c.db
       .prepare(
-        "update users set role = 'rider' where id = ?1 and role = 'operator' and not exists (select 1 from station_staff where user_id = ?1)",
+        "update users set role = ?2 where id = ?1 and role = 'operator' and not exists (select 1 from station_staff where user_id = ?1)",
       )
-      .bind(userId),
+      .bind(userId, DB_CUSTOMER),
   ]);
 }
 

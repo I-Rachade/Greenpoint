@@ -22,7 +22,7 @@ export const en: Dictionary = {
     role: "Try as",
   },
   roles: {
-    rider: "Rider",
+    customer: "Customer",
     operator: "Station staff",
     fleet_manager: "Fleet manager",
     admin: "Administrator",
@@ -177,14 +177,14 @@ export const en: Dictionary = {
   },
   operator: {
     title: "My station",
-    intro: "Update the station status. Riders see it live.",
+    intro: "Update the station status. Customers see it live.",
     noStations: "No station is assigned to you. Contact the administrator.",
     open: "Open",
     closed: "Closed",
     reservations: "Active reservations",
     noReservations: "No active reservations.",
     complete: "Complete",
-    pickupCode: "Rider's code",
+    pickupCode: "Customer's code",
     capacity: "of {n}",
   },
   admin: {
@@ -278,7 +278,7 @@ export const en: Dictionary = {
       no_show: "{user} did not show up {n} times in 7 days.",
       station_without_staff: "{station} has no staff assigned.",
       operator_without_station: "{user} has the staff role but no station.",
-      staff_without_role: "{user} is assigned to a station but has the rider role.",
+      staff_without_role: "{user} is assigned to a station but has the customer role.",
       lapsed_still_active: "{n} expired reservation(s) still marked active.",
     },
     stations: {
@@ -307,7 +307,7 @@ export const en: Dictionary = {
       allStations: "All stations",
       search: "Phone, e-mail or name",
       created: "Created",
-      user: "Rider",
+      user: "Customer",
       station: "Station",
       type: "Type",
       status: "Status",

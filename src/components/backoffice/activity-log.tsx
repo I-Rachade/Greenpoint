@@ -51,7 +51,7 @@ export function ActivityLog() {
 
   const b = t.backoffice.activity;
   const idx = indexSnapshot(snap);
-  const actors = snap.users.filter((u) => u.role !== "rider");
+  const actors = snap.users.filter((u) => u.role !== "customer");
   const resetPage = () => setLimit(PAGE);
 
   function subject(e: AuditEntry): string {

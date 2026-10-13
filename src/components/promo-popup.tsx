@@ -64,7 +64,7 @@ export function PromoCard({
 }
 
 /**
- * Shows the current ad (managed in /admin/promotions) every time the rider
+ * Shows the current ad (managed in /admin/promotions) every time the customer
  * opens or comes back to the map. Nothing shows when no ad is running.
  */
 export function PromoPopup() {

@@ -16,8 +16,8 @@ import { useI18n } from "./i18n-provider";
 import { MailIcon, PhoneIcon } from "./icons";
 import { OtpInput } from "./otp-input";
 
-// On the public site the demo only offers the rider view (anyone could otherwise "log in" as admin).
-const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["rider"] : ["rider", "operator", "admin"];
+// On the public site the demo only offers the customer view (anyone could otherwise "log in" as admin).
+const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["customer"] : ["customer", "operator", "admin"];
 
 /**
  * "pin": everyday login with phone number or e-mail address, and PIN.
@@ -47,7 +47,7 @@ export function LoginForm() {
   const [code, setCode] = useState("");
   const [pin, setPin] = useState("");
   const [pinConfirm, setPinConfirm] = useState("");
-  const [demoRole, setDemoRole] = useState<UserRole>("rider");
+  const [demoRole, setDemoRole] = useState<UserRole>("customer");
   /** New accounts must accept the terms and the privacy policy before the SMS code is sent. */
   const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);

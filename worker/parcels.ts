@@ -26,6 +26,7 @@ import {
 import type { Profile } from "../src/lib/types";
 import type { Env } from "./env";
 import { ApiError, nowIso, randomDigits, uuid } from "./http";
+import { roleToDb } from "./roles";
 import { notifyPerson, type Message } from "./notify";
 
 /** What the parcel handlers need from the request context (worker/api.ts). */
@@ -201,13 +202,13 @@ async function accountFor(c: ParcelCtx, phone: string, name: string | null, acto
   const id = uuid();
   const now = nowIso();
   await c.db
-    .prepare("insert into users (id, phone, full_name, role, created_at) values (?, ?, ?, 'rider', ?) on conflict do nothing")
-    .bind(id, phone, name, now)
+    .prepare("insert into users (id, phone, full_name, role, created_at) values (?, ?, ?, ?, ?) on conflict do nothing")
+    .bind(id, phone, name, roleToDb("customer"), now)
     .run();
   const user = await find();
   if (!user) throw new ApiError("unknown", 500);
   if (user.id === id) {
-    await c.audit(actor, "profiles", "insert", id, { phone, role: "rider", source: "parcel" }, { userId: id }).run();
+    await c.audit(actor, "profiles", "insert", id, { phone, role: "customer", source: "parcel" }, { userId: id }).run();
   }
   return { id: user.id, created: user.id === id };
 }

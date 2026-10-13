@@ -4,6 +4,7 @@ import { validPinFormat, weakPin } from "../src/lib/pin";
 import type { Profile, UserRole } from "../src/lib/types";
 import type { Env } from "./env";
 import { ApiError, nowIso, randomDigits, sha256, uuid } from "./http";
+import { roleFromDb, roleToDb } from "./roles";
 
 const CODE_MINUTES = 10;
 const MAX_ATTEMPTS = 5;
@@ -23,11 +24,12 @@ interface UserRow {
   phone: string | null;
   email: string | null;
   full_name: string | null;
-  role: UserRole;
+  /** As stored, see roles.ts. */
+  role: string;
 }
 
 export function toProfile(u: UserRow): Profile {
-  return { id: u.id, phone: u.phone, email: u.email, fullName: u.full_name, role: u.role };
+  return { id: u.id, phone: u.phone, email: u.email, fullName: u.full_name, role: roleFromDb(u.role) };
 }
 
 function listSetting(value: string | undefined): string[] {
@@ -270,12 +272,12 @@ export async function register(env: Env, rawContact: string, rawCode: string, ra
     env.DB.prepare(`select ${USER_COLUMNS} from users where ${column} = ?`).bind(contact.value).first<UserRow>();
   let user = await findUser();
   if (!user) {
-    const role: UserRole = isAdminContact(env, contact) ? "admin" : "rider";
+    const role: UserRole = isAdminContact(env, contact) ? "admin" : "customer";
     const id = uuid();
     await env.DB.prepare(
       `insert into users (id, ${column}, role, created_at, pin_hash) values (?, ?, ?, ?, ?) on conflict do nothing`,
     )
-      .bind(id, contact.value, role, now, pinHash)
+      .bind(id, contact.value, roleToDb(role), now, pinHash)
       .run();
     user = await findUser();
     if (!user) throw new ApiError("unknown", 500);

@@ -37,8 +37,8 @@ Berechnet in `src/lib/admin/insights.ts` (Tests in `src/lib/__tests__/admin-insi
 | Steckdose meldet Fehler | Status `fault` | Urgent |
 | Status nicht bestätigt | offene Station, letzte Meldung älter als 2 Std. | À surveiller |
 | Zähler über Kapazität | freie Plätze / volle Akkus größer als die Kapazität | À surveiller |
-| Viele Reservierungen | ein Fahrer mit 3 oder mehr Reservierungen in 24 Std. (Stornieren und neu Reservieren) | À surveiller |
-| Nichterscheinen | ein Fahrer mit 2 oder mehr abgelaufenen Reservierungen in 7 Tagen | À surveiller |
+| Viele Reservierungen | ein Kunde mit 3 oder mehr Reservierungen in 24 Std. (Stornieren und neu Reservieren) | À surveiller |
+| Nichterscheinen | ein Kunde mit 2 oder mehr abgelaufenen Reservierungen in 7 Tagen | À surveiller |
 | Eigene Station ohne Personal | keine Zuordnung in `station_staff` | Info |
 | Personal ohne Station / Zuordnung ohne Rolle | Rolle und `station_staff` widersprechen sich | Info |
 | Abgelaufen, aber noch `active` | Reservierungen, die nie auf `expired` gesetzt wurden | Info |
@@ -63,4 +63,4 @@ Das Protokoll wächst mit jeder Reservierung und Statusmeldung. Ältere Einträg
 
 ## Demo-Modus
 
-Im Demo-Modus (`npm run dev`) zeigt das Backoffice Beispielnutzer, eine Reservierungshistorie der letzten zwei Wochen (inkl. eines Fahrers, der dreimal nicht erschienen ist) und protokolliert eigene Änderungen im Browser. Anmeldung als Admin: Code `123456`, Rolle „Administrateur“. Eine Beispiel-Werbung („1ère recharge offerte“) ist angelegt, aber ausgeschaltet; Bilder bleiben im Demo-Modus im Browser (max. 500 KB).
+Im Demo-Modus (`npm run dev`) zeigt das Backoffice Beispielnutzer, eine Reservierungshistorie der letzten zwei Wochen (inkl. eines Kunden, der dreimal nicht erschienen ist) und protokolliert eigene Änderungen im Browser. Anmeldung als Admin: Code `123456`, Rolle „Administrateur“. Eine Beispiel-Werbung („1ère recharge offerte“) ist angelegt, aber ausgeschaltet; Bilder bleiben im Demo-Modus im Browser (max. 500 KB).

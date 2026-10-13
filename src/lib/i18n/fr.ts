@@ -21,7 +21,7 @@ export const fr = {
     role: "Tester en tant que",
   },
   roles: {
-    rider: "Conducteur",
+    customer: "Client",
     operator: "Personnel de station",
     fleet_manager: "Gestionnaire de flotte",
     admin: "Administrateur",
@@ -177,14 +177,14 @@ export const fr = {
   },
   operator: {
     title: "Ma station",
-    intro: "Mettez à jour l'état de la station. Les conducteurs le voient en direct.",
+    intro: "Mettez à jour l'état de la station. Les clients le voient en direct.",
     noStations: "Aucune station ne vous est attribuée. Contactez l'administrateur.",
     open: "Ouverte",
     closed: "Fermée",
     reservations: "Réservations actives",
     noReservations: "Aucune réservation active.",
     complete: "Terminer",
-    pickupCode: "Code du conducteur",
+    pickupCode: "Code du client",
     capacity: "sur {n}",
   },
   admin: {
@@ -278,7 +278,7 @@ export const fr = {
       no_show: "{user} ne s'est pas présenté {n} fois en 7 jours.",
       station_without_staff: "{station} n'a aucun personnel attribué.",
       operator_without_station: "{user} a le rôle Personnel mais aucune station.",
-      staff_without_role: "{user} est attribué à une station mais a le rôle Conducteur.",
+      staff_without_role: "{user} est attribué à une station mais a le rôle Client.",
       lapsed_still_active: "{n} réservation(s) expirée(s) encore marquées actives.",
     },
     stations: {
@@ -307,7 +307,7 @@ export const fr = {
       allStations: "Toutes les stations",
       search: "Téléphone, e-mail ou nom",
       created: "Créée",
-      user: "Conducteur",
+      user: "Client",
       station: "Station",
       type: "Type",
       status: "Statut",

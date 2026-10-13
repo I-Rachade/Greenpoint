@@ -17,7 +17,7 @@ import type {
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StatusPatch } from "./backend";
 
 const TOKEN_KEY = "poinderecharge-session";
-/** How often open pages reload station data (other riders' holds, staff updates). */
+/** How often open pages reload station data (other customers' holds, staff updates). */
 const POLL_MS = 15_000;
 
 const KNOWN_CODES: BackendErrorCode[] = [
@@ -218,7 +218,7 @@ export class CloudflareBackend implements Backend {
     this.changed();
   }
 
-  // Rider -----------------------------------------------------------------------
+  // Customer -----------------------------------------------------------------------
 
   async myReservations() {
     if (!this.token) return [];

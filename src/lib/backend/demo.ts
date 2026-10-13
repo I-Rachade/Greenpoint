@@ -91,7 +91,7 @@ const STORAGE_KEY = "poinderecharge-demo-v3";
 export const DEMO_CODE = "123456";
 /**
  * True when this build was made by Cloudflare (see next.config.ts) but set to the
- * demo backend. Visitors then see a clear notice and can only try the rider view.
+ * demo backend. Visitors then see a clear notice and can only try the customer view.
  */
 export const HOSTED_DEMO = process.env.NEXT_PUBLIC_HOSTED_BUILD === "1" && process.env.NEXT_PUBLIC_BACKEND === "demo";
 
@@ -432,7 +432,7 @@ export class DemoBackend implements Backend {
     // Nothing is sent in demo mode; the code is always DEMO_CODE.
   }
 
-  async register(contact: string, code: string, pin: string, demoRole: UserRole = "rider") {
+  async register(contact: string, code: string, pin: string, demoRole: UserRole = "customer") {
     if (!validPinFormat(pin)) throw new BackendError("bad_pin");
     if (weakPin(pin)) throw new BackendError("weak_pin");
     if (code.trim() !== DEMO_CODE) throw new BackendError("invalid_code");
@@ -441,13 +441,13 @@ export class DemoBackend implements Backend {
     return this.signInAs(contact, demoRole);
   }
 
-  async signIn(contact: string, pin: string, demoRole: UserRole = "rider") {
+  async signIn(contact: string, pin: string, demoRole: UserRole = "customer") {
     if (!validPinFormat(pin) || this.load().pins?.[contact] !== pin) throw new BackendError("invalid_pin");
     return this.signInAs(contact, demoRole);
   }
 
   private signInAs(contact: string, demoRole: UserRole) {
-    if (HOSTED_DEMO && demoRole !== "rider") throw new BackendError("forbidden");
+    if (HOSTED_DEMO && demoRole !== "customer") throw new BackendError("forbidden");
     const state = this.load();
     const users = state.users ?? demoUsers(new Date());
     const known = users.find((u) => u.id === `demo-${demoRole}`);
@@ -627,7 +627,7 @@ export class DemoBackend implements Backend {
   }
 
   async stationReservations(stationId: string) {
-    // Staff never see the pickup code; the rider shows it.
+    // Staff never see the pickup code; the customer shows it.
     return this.load()
       .reservations.filter((r) => r.stationId === stationId)
       .map((r) => ({ ...r, pickupCode: undefined }))
@@ -792,7 +792,7 @@ export class DemoBackend implements Backend {
           staff: [...staff, { stationId, userId }],
           // The role follows the assignment, like sync_staff_role() in SQL.
           users: (state.users ?? demoUsers(new Date())).map((u) =>
-            u.id === userId && u.role === "rider" ? { ...u, role: "operator" as const } : u,
+            u.id === userId && u.role === "customer" ? { ...u, role: "operator" as const } : u,
           ),
         },
         { table: "station_staff", action: "insert", rowId: `${stationId}:${userId}`, stationId, userId, changes: {} },
@@ -806,7 +806,7 @@ export class DemoBackend implements Backend {
     const staff = (state.staff ?? DEMO_STAFF).filter((a) => !(a.stationId === stationId && a.userId === userId));
     const stillStaff = staff.some((a) => a.userId === userId);
     const users = (state.users ?? demoUsers(new Date())).map((u) =>
-      u.id === userId && u.role === "operator" && !stillStaff ? { ...u, role: "rider" as const } : u,
+      u.id === userId && u.role === "operator" && !stillStaff ? { ...u, role: "customer" as const } : u,
     );
     this.save(
       withAudit(
@@ -986,7 +986,7 @@ export class DemoBackend implements Backend {
       phone,
       email: null,
       fullName: name,
-      role: "rider",
+      role: "customer",
       createdAt: new Date().toISOString(),
       lastSignInAt: null,
     };

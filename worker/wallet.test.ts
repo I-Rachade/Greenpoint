@@ -5,6 +5,7 @@ import type { Profile } from "../src/lib/types";
 import { hashPin } from "./auth";
 import type { Env } from "./env";
 import { ApiError } from "./http";
+import { roleToDb } from "./roles";
 import { adjustBalance, adminWallet, findRecipient, getWallet, saveFeeSetting, sendMoney, setWalletEnabled, setWalletFrozen } from "./wallet";
 import { refreshTopup, startTopup, topupCallback } from "./wallet-topups";
 
@@ -66,14 +67,14 @@ beforeAll(async () => {
 });
 
 const ADMIN: Profile = { id: "admin", phone: "+22890000001", email: null, fullName: "Admin", role: "admin" };
-const KOFI: Profile = { id: "kofi", phone: "+22896123456", email: null, fullName: "Kofi Mensah", role: "rider" };
-const AMA: Profile = { id: "ama", phone: null, email: "ama@mail.tg", fullName: null, role: "rider" };
+const KOFI: Profile = { id: "kofi", phone: "+22896123456", email: null, fullName: "Kofi Mensah", role: "customer" };
+const AMA: Profile = { id: "ama", phone: null, email: "ama@mail.tg", fullName: null, role: "customer" };
 
 function setup() {
   const { db, d1 } = fakeD1();
   const now = new Date().toISOString();
   const insert = db.prepare("insert into users (id, phone, email, full_name, role, created_at, pin_hash) values (?, ?, ?, ?, ?, ?, ?)");
-  for (const u of [ADMIN, KOFI, AMA]) insert.run(u.id, u.phone, u.email, u.fullName, u.role, now, pinHash);
+  for (const u of [ADMIN, KOFI, AMA]) insert.run(u.id, u.phone, u.email, u.fullName, roleToDb(u.role), now, pinHash);
   const env = { DB: d1 } as unknown as Env;
   return { db, env };
 }

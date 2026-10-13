@@ -8,7 +8,7 @@ import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
 
 /**
- * The signed-in rider's notifications (reservations, parcels, current offer) and
+ * The signed-in customer's notifications (reservations, parcels, current offer) and
  * which are unread on this device. `alerts` is null while loading.
  */
 export function useAlerts(): { alerts: Alert[] | null; unread: number; isRead: (id: string) => boolean; markAllRead: () => void } {
