@@ -9,6 +9,7 @@ import { useApp } from "./app-provider";
 import { BellIcon, GearIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
+import { runsOperator, worksAtStations } from "@/lib/operators";
 
 export function Header() {
   const { t, locale, setLocale } = useI18n();
@@ -25,7 +26,8 @@ export function Header() {
     { href: "/colis", label: t.nav.parcels, show: !!profile && features.parcels },
     { href: "/portefeuille", label: t.nav.wallet, show: !!profile && walletShown },
     { href: "/compte", label: t.nav.account, show: !!profile },
-    { href: "/operator", label: t.nav.operator, show: profile?.role === "operator" || profile?.role === "admin" },
+    { href: "/exploitant", label: t.nav.owner, show: runsOperator(profile) },
+    { href: "/operator", label: t.nav.operator, show: worksAtStations(profile) },
     { href: "/admin", label: t.nav.admin, show: profile?.role === "admin" },
   ];
 

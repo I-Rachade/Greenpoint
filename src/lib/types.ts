@@ -87,6 +87,8 @@ export interface Profile {
   email: string | null;
   fullName: string | null;
   role: UserRole;
+  /** Operators this person runs (operator accounts, see operators.ts). */
+  ownerOf?: string[];
 }
 
 export interface StationInput {

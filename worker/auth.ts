@@ -26,11 +26,23 @@ interface UserRow {
   full_name: string | null;
   /** As stored, see roles.ts. */
   role: string;
+  /** Comma-separated operators this person runs (operator_owners). */
+  owner_of?: string | null;
 }
 
 export function toProfile(u: UserRow): Profile {
-  return { id: u.id, phone: u.phone, email: u.email, fullName: u.full_name, role: roleFromDb(u.role) };
+  return {
+    id: u.id,
+    phone: u.phone,
+    email: u.email,
+    fullName: u.full_name,
+    role: roleFromDb(u.role),
+    ownerOf: u.owner_of ? u.owner_of.split(",") : [],
+  };
 }
+
+const ownerOf = (alias: string) =>
+  `(select group_concat(operator_id) from operator_owners where user_id = ${alias}.id) as owner_of`;
 
 function listSetting(value: string | undefined): string[] {
   return (value ?? "")
@@ -244,7 +256,7 @@ function checkPinFormat(pin: string) {
   if (weakPin(pin)) throw new ApiError("weak_pin");
 }
 
-const USER_COLUMNS = "id, phone, email, full_name, role";
+const USER_COLUMNS = `id, phone, email, full_name, role, ${ownerOf("users")}`;
 /** Column of users that holds this kind of contact. Fixed names only, never user input. */
 const contactColumn = (contact: Contact) => (contact.kind === "phone" ? "phone" : "email");
 
@@ -383,7 +395,7 @@ export async function currentUser(env: Env, request: Request): Promise<Profile |
   const token = bearer(request);
   if (!token) return null;
   const row = await env.DB.prepare(
-    "select u.id, u.phone, u.email, u.full_name, u.role from sessions s join users u on u.id = s.user_id where s.token_hash = ? and s.expires_at > ?",
+    `select u.id, u.phone, u.email, u.full_name, u.role, ${ownerOf("u")} from sessions s join users u on u.id = s.user_id where s.token_hash = ? and s.expires_at > ?`,
   )
     .bind(await sha256(token), nowIso())
     .first<UserRow>();
@@ -482,6 +494,7 @@ export async function deleteAccount(
     ).bind(profile.id, profile.id),
     env.DB.prepare("delete from sessions where user_id = ?").bind(profile.id),
     env.DB.prepare("delete from station_staff where user_id = ?").bind(profile.id),
+    env.DB.prepare("delete from operator_owners where user_id = ?").bind(profile.id),
     env.DB.prepare("delete from reservations where user_id = ?").bind(profile.id),
     // Parcels stay on record (phone numbers included) but lose the link to the account.
     env.DB.prepare("update parcels set sender_user_id = null where sender_user_id = ?").bind(profile.id),

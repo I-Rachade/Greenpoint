@@ -15,6 +15,7 @@ import { CountryPicker } from "./country-picker";
 import { useI18n } from "./i18n-provider";
 import { MailIcon, PhoneIcon } from "./icons";
 import { OtpInput } from "./otp-input";
+import { runsOperator } from "@/lib/operators";
 
 // On the public site the demo only offers the customer view (anyone could otherwise "log in" as admin).
 const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["customer"] : ["customer", "operator", "admin"];
@@ -91,7 +92,9 @@ export function LoginForm() {
     setPhoneInput("");
     setEmailInput("");
     switchMode("pin");
-    router.push(profile.role === "operator" ? "/operator" : profile.role === "admin" ? "/admin" : "/");
+    router.push(
+      profile.role === "admin" ? "/admin" : runsOperator(profile) ? "/exploitant" : profile.role === "operator" ? "/operator" : "/",
+    );
   }
 
   function signIn(e: FormEvent) {
