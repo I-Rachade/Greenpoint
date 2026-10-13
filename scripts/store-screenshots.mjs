@@ -30,9 +30,7 @@ const page = await context.newPage();
 const fr = lang !== "en";
 const T = {
   reserve: fr ? "Réserver une batterie" : "Reserve a battery",
-  login: fr ? "Connexion" : "Log in",
-  reservations: fr ? "Réservations" : "Reservations",
-  register: fr ? "S'inscrire" : "Sign up",
+  register: fr ? "Inscription" : "Sign up",
   sendCode: fr ? "Recevoir le code" : "Send code",
   confirm: fr ? "Valider" : "Confirm",
 };
@@ -53,7 +51,12 @@ async function shot(name) {
 
 async function open(path) {
   await page.goto(base + path, { waitUntil: "load" });
-  await page.evaluate((l) => localStorage.setItem("poinderecharge-locale", l), lang);
+  await page.evaluate((l) => {
+    localStorage.setItem("poinderecharge-locale", l);
+    // Skip the first-launch introduction and the web splash screen.
+    localStorage.setItem("poinderecharge-onboarded", "1");
+    sessionStorage.setItem("poinderecharge-splash", "1");
+  }, lang);
   await page.reload({ waitUntil: "load" });
   // Map tiles and stations.
   await page.waitForTimeout(8000);
@@ -69,8 +72,8 @@ await page.waitForTimeout(1200);
 await shot("2-station");
 
 // 3. Sign up: phone number confirmed by SMS code, then a PIN.
-await page.getByRole("link", { name: T.login, exact: true }).click();
-await page.getByRole("button", { name: T.register }).click();
+await open("/login.html");
+await page.getByRole("tab", { name: T.register }).click();
 await page.getByPlaceholder("90 12 34 56").fill("90 12 34 56");
 // Sign-up needs the terms and privacy policy accepted before the code is sent.
 await page.getByRole("checkbox").check();
@@ -95,8 +98,7 @@ await page.waitForTimeout(1500);
 await shot("4-reservation");
 
 // 5. The pickup code to show at the station.
-await page.getByRole("link", { name: T.reservations, exact: true }).click();
-await page.waitForTimeout(1500);
+await open("/reservations.html");
 await shot("5-code");
 
 await browser.close();
