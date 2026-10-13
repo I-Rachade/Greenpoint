@@ -1,5 +1,6 @@
 import { distanceMeters, type LatLng } from "./geo";
 import { freeConnectedPoints, isConnected } from "./iot/charging-points";
+import { offersParcels } from "./station-points";
 import { STALE_STATUS_HOURS, type Reservation, type StationView, type VehicleType, type StationKind } from "./types";
 
 export function offersCharging(kind: StationKind): boolean {
@@ -57,6 +58,8 @@ export type Availability = "available" | "limited" | "full" | "closed" | "unknow
 
 export function stationAvailability(station: StationView): Availability {
   if (!isOpenNow(station)) return "closed";
+  // A parcel point has no counts to go stale or run out.
+  if (station.kind === "parcel") return "available";
   if (isStale(station)) return "unknown";
   const total = availableSlots(station) + availableBatteries(station);
   if (total === 0) return "full";
@@ -86,7 +89,7 @@ export function countHolding(
 
 export interface StationFilter {
   vehicle: VehicleType | "all";
-  service: "all" | "charging" | "swap";
+  service: "all" | "charging" | "swap" | "parcel";
   onlyAvailable: boolean;
 }
 
@@ -96,9 +99,11 @@ export function matchesFilter(station: StationView, filter: StationFilter): bool
   if (filter.vehicle !== "all" && !station.vehicleTypes.includes(filter.vehicle)) return false;
   if (filter.service === "charging" && !offersCharging(station.kind)) return false;
   if (filter.service === "swap" && !offersSwap(station.kind)) return false;
+  if (filter.service === "parcel") return offersParcels(station) && (!filter.onlyAvailable || isOpenNow(station));
   if (filter.onlyAvailable) {
     if (filter.service === "charging") return availableSlots(station) > 0;
     if (filter.service === "swap") return availableBatteries(station) > 0;
+    if (station.kind === "parcel") return isOpenNow(station);
     return availableSlots(station) + availableBatteries(station) > 0;
   }
   return true;

@@ -119,6 +119,22 @@ export const DEMO_STATIONS: Station[] = [
     openingHours: "24h/24",
     phone: null,
   },
+  {
+    id: "st-colis-adewui",
+    operatorId: "op-poinderecharge",
+    operatorName: "poinderecharge",
+    isOwn: true,
+    name: "poinderecharge Adewui (casiers colis)",
+    address: "Marché d'Adewui",
+    lat: 6.1452,
+    lng: 1.2141,
+    kind: "parcel",
+    vehicleTypes: [],
+    chargingSlots: 0,
+    batteryCapacity: 0,
+    openingHours: "06:00-22:00",
+    phone: null,
+  },
 ];
 
 /** One LoRa dual-outlet socket at Déckon. The demo backend stamps them as just seen. */
@@ -144,6 +160,23 @@ export const DEMO_CHARGING_POINTS: ChargingPoint[] = [
     lastSeenAt: null,
   },
 ];
+
+/**
+ * Demo sockets at the other charging stations, one outlet per charging place: the first
+ * `free` outlets are free, the rest charging. A station's charging places are its sockets.
+ */
+export function demoSocketPoints(stationId: string, deviceId: string, outlets: number, free: number): ChargingPoint[] {
+  return Array.from({ length: outlets }, (_, i) => ({
+    id: `cp-${deviceId}-${i + 1}`,
+    stationId,
+    label: `${deviceId.slice(-4)}-${i + 1}`,
+    status: i < free ? ("free" as const) : ("charging" as const),
+    deviceId,
+    outlet: i + 1,
+    powerWatts: i < free ? 0 : 180,
+    lastSeenAt: null,
+  }));
+}
 
 export function initialDemoStatus(now: string): StationStatus[] {
   const levels: Record<string, [number, number]> = {

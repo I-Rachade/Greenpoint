@@ -193,6 +193,21 @@ export function recountFreeSlots(db: D1Database, stationId: string) {
     .bind(stationId, onlineSince(), nowIso());
 }
 
+/**
+ * A station's charging places are its connected outlets: sets charging_slots to their
+ * number and keeps the staff counter within it.
+ */
+export function syncChargingSlots(db: D1Database, stationId: string): D1PreparedStatement[] {
+  return [
+    db
+      .prepare("update stations set charging_slots = (select count(*) from charging_points where station_id = ?1 and device_id is not null) where id = ?1")
+      .bind(stationId),
+    db
+      .prepare("update station_status set free_slots = min(free_slots, (select charging_slots from stations where id = ?1)) where station_id = ?1")
+      .bind(stationId),
+  ];
+}
+
 /** Registers a socket and creates one charging point per outlet, labelled "<last 4 of id>-<outlet>". */
 export async function createDevice(db: D1Database, input: DeviceInput, actor: string) {
   if (!validDeviceInput(input)) throw new ApiError("invalid_device");
@@ -224,7 +239,16 @@ export async function createDevice(db: D1Database, input: DeviceInput, actor: st
     );
   }
   // Nothing is offered until the device reports.
-  statements.push(recountFreeSlots(db, stationId));
+  statements.push(...syncChargingSlots(db, stationId), recountFreeSlots(db, stationId));
+  // A connected socket makes the station a charging point.
+  statements.push(
+    db
+      .prepare(
+        `update stations set kind = case when has_battery = 0 or kind = 'charging' then 'charging' else 'both' end, has_battery = 1
+         where id = ? and not (has_battery = 1 and kind in ('charging', 'both'))`,
+      )
+      .bind(stationId),
+  );
   statements.push(auditDevice(db, actor, "insert", externalId, stationId, { device: externalId, outlets, vendor, model, link }));
   try {
     await db.batch(statements);
@@ -278,6 +302,7 @@ export async function deleteDevice(db: D1Database, rawId: string, actor: string)
     db.prepare("delete from device_commands where external_id = ?").bind(externalId),
     db.prepare("delete from charging_points where device_id = ?").bind(externalId),
     db.prepare("delete from devices where external_id = ?").bind(externalId),
+    ...syncChargingSlots(db, device.station_id),
     recountFreeSlots(db, device.station_id),
     auditDevice(db, actor, "delete", externalId, device.station_id, { device: externalId, outlets: device.outlets }),
   ]);

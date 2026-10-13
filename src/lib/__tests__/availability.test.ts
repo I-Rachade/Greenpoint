@@ -141,3 +141,32 @@ describe("opening hours and stale reports", () => {
     expect(isStale(s("2026-10-12T09:30:00Z"), now)).toBe(true);
   });
 });
+
+describe("parcel points", () => {
+  const now = new Date().toISOString();
+  const parcel = station({
+    id: "p1",
+    kind: "parcel",
+    chargingSlots: 0,
+    batteryCapacity: 0,
+    status: { stationId: "p1", isOpen: true, freeSlots: 0, fullBatteries: 0, updatedAt: "2020-01-01T00:00:00Z" },
+    parcelPoint: { counter: false, lockers: 12 },
+  });
+  const battery = station({ status: { stationId: "s1", isOpen: true, freeSlots: 2, fullBatteries: 5, updatedAt: now } });
+
+  it("are available while open, with nothing to reserve", () => {
+    expect(stationAvailability(parcel)).toBe("available");
+    expect(availableSlots(parcel)).toBe(0);
+    expect(availableBatteries(parcel)).toBe(0);
+  });
+
+  it("match the parcel filter, battery stations do not", () => {
+    const ids = (service: "parcel" | "charging" | "swap", onlyAvailable = false) =>
+      rankStations([parcel, battery], null, { ...DEFAULT_FILTER, service, onlyAvailable }).map((r) => r.station.id);
+    expect(ids("parcel")).toEqual(["p1"]);
+    expect(ids("parcel", true)).toEqual(["p1"]);
+    expect(ids("charging")).toEqual(["s1"]);
+    expect(ids("swap")).toEqual(["s1"]);
+    expect(rankStations([parcel], null, { ...DEFAULT_FILTER, onlyAvailable: true })).toHaveLength(1);
+  });
+});

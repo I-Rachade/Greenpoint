@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { availableBatteries, availableSlots, offersCharging, offersSwap, stationAvailability } from "@/lib/availability";
 import { formatDistance } from "@/lib/geo";
+import { format } from "@/lib/i18n/format";
 import { useFavorites } from "@/lib/prefs";
+import { offersParcels } from "@/lib/station-points";
 import type { StationView } from "@/lib/types";
 import { AvailabilityBadge } from "./availability-badge";
-import { BatteryIcon, BoltIcon, HeartIcon, PinIcon } from "./icons";
+import { BatteryIcon, BoltIcon, BoxIcon, HeartIcon, PinIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 
 /** Link to the full station screen. */
@@ -55,7 +57,7 @@ export function StationCard({
       className="flex gap-3 rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm transition-shadow hover:shadow-md dark:border-white/10"
     >
       <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-gp-green/15 text-gp-green-dark dark:text-gp-green">
-        {charging ? <BoltIcon size={28} /> : <BatteryIcon size={28} />}
+        {charging ? <BoltIcon size={28} /> : swap ? <BatteryIcon size={28} /> : <BoxIcon size={28} />}
       </div>
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex items-start gap-2">
@@ -87,6 +89,12 @@ export function StationCard({
             <span className="flex items-center gap-1 text-gp-muted dark:text-zinc-400">
               <BoltIcon size={14} />
               <b className="text-gp-forest dark:text-zinc-100">{availableSlots(station)}</b>/{station.chargingSlots}
+            </span>
+          )}
+          {offersParcels(station) && (
+            <span className="flex items-center gap-1 text-gp-muted dark:text-zinc-400" title={t.filter.parcel}>
+              <BoxIcon size={14} />
+              {station.parcelPoint!.lockers > 0 ? format(t.station.lockers, { n: station.parcelPoint!.lockers }) : t.filter.parcel}
             </span>
           )}
           {distance !== null && <span className="ml-auto font-semibold text-gp-forest dark:text-zinc-100">{formatDistance(distance)}</span>}

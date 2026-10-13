@@ -1,5 +1,8 @@
+import type { ParcelDepotInput } from "./parcels";
+
 export type VehicleType = "scooter" | "tricycle" | "ebike" | "moped";
-export type StationKind = "charging" | "swap" | "both";
+/** Battery services of a station; "parcel" = neither swap nor charging, a parcel point only. See station-points.ts. */
+export type StationKind = "charging" | "swap" | "both" | "parcel";
 export type UserRole = "rider" | "operator" | "fleet_manager" | "admin";
 export type ReservationType = "battery" | "slot";
 export type ReservationStatus = "active" | "completed" | "cancelled" | "expired";
@@ -51,6 +54,15 @@ export interface StationView extends Station {
   reservedBatteries: number;
   /** Individual outlets, when the station has any registered. */
   chargingPoints?: ChargingPoint[];
+  /** Parcel counter and lockers, when the station has an active parcel depot (and the parcel module is on). */
+  parcelPoint?: ParcelPoint | null;
+}
+
+export interface ParcelPoint {
+  /** Staff take in and hand out parcels at a counter. */
+  counter: boolean;
+  /** Locker compartments; 0 = none. */
+  lockers: number;
 }
 
 export interface Reservation {
@@ -85,10 +97,13 @@ export interface StationInput {
   lng: number;
   kind: StationKind;
   vehicleTypes: VehicleType[];
+  /** Ignored by the server: a station's charging places are its connected outlets. */
   chargingSlots: number;
   batteryCapacity: number;
   openingHours: string;
   phone: string | null;
+  /** Parcel counter and lockers, saved with the station. Left out: unchanged. */
+  parcelDepot?: ParcelDepotInput;
 }
 
 export interface Operator {

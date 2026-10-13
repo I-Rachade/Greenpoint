@@ -99,6 +99,7 @@ describe("DemoBackend connected sockets", () => {
     const backend = new DemoBackend();
     await backend.register("+22890123456", DEMO_CODE, "2580", "admin");
     const before = await backend.listDevices();
+    const outletsBefore = (await backend.listStations()).find((s) => s.id === STATION)!.chargingSlots;
 
     await expect(backend.createDevice({ externalId: "x", stationId: STATION })).rejects.toMatchObject({ code: "invalid_device" });
     await backend.createDevice({ externalId: "123456", stationId: STATION, outlets: 2, link: "vendor_cloud" });
@@ -107,7 +108,8 @@ describe("DemoBackend connected sockets", () => {
     const added = (await backend.listDevices()).find((d) => d.externalId === "123456")!;
     expect(added.points.map((p) => p.label)).toEqual(["3456-1", "3456-2"]);
     const station = (await backend.listStations()).find((s) => s.id === STATION)!;
-    expect(station.chargingPoints).toHaveLength(2);
+    expect(station.chargingPoints).toHaveLength(outletsBefore + 2);
+    expect(station.chargingSlots).toBe(outletsBefore + 2);
 
     await backend.switchOutlet("123456", 2, true);
     expect((await backend.listDevices()).find((d) => d.externalId === "123456")!.points[1].status).toBe("charging");
@@ -120,5 +122,31 @@ describe("DemoBackend connected sockets", () => {
     const backend = new DemoBackend();
     await asRole(backend, "rider");
     await expect(backend.listDevices()).rejects.toMatchObject({ code: "forbidden" });
+  });
+});
+
+describe("DemoBackend station points", () => {
+  it("keeps parcel points and refuses stations without any point", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890123456", DEMO_CODE, "2580", "admin");
+    const base = {
+      operatorId: "op-poinderecharge",
+      name: "Casiers",
+      address: "",
+      lat: 6.13,
+      lng: 1.22,
+      vehicleTypes: [],
+      chargingSlots: 5,
+      batteryCapacity: 0,
+      openingHours: "",
+      phone: null,
+    };
+    await expect(backend.saveStation(null, { ...base, kind: "parcel" })).rejects.toMatchObject({ code: "station_without_point" });
+    await backend.saveStation(null, { ...base, kind: "parcel", parcelDepot: { isActive: true, counter: false, lockers: 10, note: "" } });
+    const s = (await backend.listStations()).find((x) => x.name === "Casiers")!;
+    expect(s.kind).toBe("parcel");
+    expect(s.chargingSlots).toBe(0);
+    expect(s.parcelPoint).toEqual({ counter: false, lockers: 10 });
+    await expect(backend.saveParcelDepot(s.id, { isActive: false, note: "", lockers: 0 })).rejects.toMatchObject({ code: "station_without_point" });
   });
 });

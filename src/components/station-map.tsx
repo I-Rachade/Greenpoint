@@ -35,7 +35,7 @@ function markerElement(station: StationView, selected: boolean): HTMLElement {
     lineHeight: "1",
     cursor: "pointer",
   });
-  el.textContent = station.kind === "charging" ? "⚡" : station.kind === "swap" ? "🔋" : "⚡";
+  el.textContent = station.kind === "swap" ? "🔋" : station.kind === "parcel" ? "📦" : "⚡";
   return el;
 }
 

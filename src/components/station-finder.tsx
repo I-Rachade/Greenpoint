@@ -15,6 +15,7 @@ import {
 import { formatDistance } from "@/lib/geo";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
+import { offersParcels } from "@/lib/station-points";
 import { VEHICLE_TYPES, type VehicleType } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
@@ -27,7 +28,7 @@ const StationMap = dynamic(() => import("./station-map").then((m) => m.StationMa
 
 export function StationFinder() {
   const { t } = useI18n();
-  const { backend } = useApp();
+  const { backend, features } = useApp();
   const { position, state } = usePosition();
   const { data: stations, reload } = useLiveQuery(() => backend.listStations());
   const [filter, setFilter] = useState<StationFilter>(DEFAULT_FILTER);
@@ -90,6 +91,7 @@ export function StationFinder() {
                 <option value="all">{t.filter.allServices}</option>
                 <option value="charging">{t.filter.charging}</option>
                 <option value="swap">{t.filter.swap}</option>
+                {features.parcels && <option value="parcel">{t.filter.parcel}</option>}
               </select>
               <label className="flex items-center gap-1 text-sm">
                 <input
@@ -142,6 +144,7 @@ export function StationFinder() {
                             ⚡ {availableSlots(station)} {t.station.freeSlots.toLowerCase()}
                           </span>
                         )}
+                        {offersParcels(station) && <span>📦 {t.filter.parcel}</span>}
                       </div>
                     </div>
                     {distance !== null && (
