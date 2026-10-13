@@ -49,10 +49,18 @@ export function availableSlots(station: StationView, now: Date = new Date()): nu
   return Math.max(0, free - station.reservedSlots);
 }
 
-/** Full swap batteries a new customer can still get. */
-export function availableBatteries(station: StationView): number {
-  if (!isOpenNow(station) || !offersSwap(station.kind)) return 0;
+/**
+ * Full swap batteries in stock and not held by reservations, open or not, for display:
+ * it matches the counts per battery type. Opening hours are shown by the availability badge.
+ */
+export function stockBatteries(station: StationView): number {
+  if (!offersSwap(station.kind)) return 0;
   return Math.max(0, station.status.fullBatteries - station.reservedBatteries);
+}
+
+/** Full swap batteries a new customer can still get (none while the station is closed). */
+export function availableBatteries(station: StationView): number {
+  return isOpenNow(station) ? stockBatteries(station) : 0;
 }
 
 export type Availability = "available" | "limited" | "full" | "closed" | "unknown";

@@ -8,6 +8,7 @@ import {
   isStale,
   rankStations,
   stationAvailability,
+  stockBatteries,
   withinOpeningHours,
 } from "../availability";
 import type { Reservation, StationView } from "../types";
@@ -189,5 +190,14 @@ describe("battery brand filter", () => {
     expect(ids("Omnivoltaic")).toEqual(["b", "d"]);
     expect(ids("Spiro", true)).toEqual(["a", "d"]);
     expect(ids("Omnivoltaic", true)).toEqual([]);
+  });
+});
+
+describe("battery stock", () => {
+  it("shows the stock of a closed station, but offers none of it", () => {
+    const now = new Date().toISOString();
+    const closed = station({ status: { stationId: "s1", isOpen: false, freeSlots: 0, fullBatteries: 4, updatedAt: now } });
+    expect(stockBatteries(closed)).toBe(4);
+    expect(availableBatteries(closed)).toBe(0);
   });
 });

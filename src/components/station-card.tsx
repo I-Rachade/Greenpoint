@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { availableBatteries, availableSlots, offersCharging, offersSwap, stationAvailability } from "@/lib/availability";
+import { availableSlots, offersCharging, offersSwap, stationAvailability, stockBatteries } from "@/lib/availability";
 import { formatDistance } from "@/lib/geo";
 import { format } from "@/lib/i18n/format";
 import { useFavorites } from "@/lib/prefs";
@@ -83,7 +83,7 @@ export function StationCard({
           {swap && (
             <span className="flex items-center gap-1 text-gp-muted dark:text-zinc-400">
               <BatteryIcon size={14} />
-              <b className="text-gp-forest dark:text-zinc-100">{availableBatteries(station)}</b>/{station.batteryCapacity}
+              <b className="text-gp-forest dark:text-zinc-100">{stockBatteries(station)}</b>/{station.batteryCapacity}
               {stationBrands(station).length > 0 && (
                 <span className="truncate">
                   · {stationBrands(station).map((b) => `${b} ${brandFullBatteries(station, b)}`).join(", ")}

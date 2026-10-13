@@ -9,6 +9,7 @@ import {
   offersCharging,
   offersSwap,
   stationAvailability,
+  stockBatteries,
   withinOpeningHours,
 } from "@/lib/availability";
 import { batteryTypeLabel } from "@/lib/battery-types";
@@ -70,7 +71,7 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
   const slots = availableSlots(station, now);
   const points = station.chargingPoints ?? [];
   const connected = points.some((p) => p.deviceId !== null);
-  const batteries = availableBatteries(station);
+  const batteries = stockBatteries(station);
 
   const tile = (value: number, total: number, label: string, Icon: typeof BoltIcon) => (
     <div className="rounded-2xl bg-gp-green/10 p-3 dark:bg-gp-green/15">
@@ -231,7 +232,7 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
       {!battery ? null : profile ? (
         <div className="flex flex-wrap gap-2">
           {offersSwap(station.kind) && (
-            <button type="button" disabled={busy || batteries === 0} onClick={() => reserve("battery")} className={primary}>
+            <button type="button" disabled={busy || availableBatteries(station) === 0} onClick={() => reserve("battery")} className={primary}>
               <BatteryIcon size={18} />
               {t.station.reserveBattery}
             </button>
