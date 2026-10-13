@@ -2,8 +2,9 @@
 -- users, fees and limits per product, admin corrections. Code: worker/wallet.ts,
 -- src/lib/wallet.ts; plan: planung/cashplus-plan.md. Numbered 0009 because 0007
 -- is the driver role (PR #16). Only adds tables, so it is safe to apply before
--- the new Worker is deployed. The module stays off ('wallet_enabled' = '0')
--- until the legal question (BCEAO e-money) is settled; admins can test it.
+-- the new Worker is deployed. The module starts on for customers
+-- ('wallet_enabled' = '1', owner's decision of 2026-10-13); the backoffice
+-- switch turns it off, after which only admins can use it.
 -- Apply: npx wrangler d1 migrations apply DB --remote
 
 -- Switches and values the backoffice changes at run time.
@@ -13,7 +14,7 @@ create table app_settings (
   updated_by text,
   updated_at text not null
 );
-insert into app_settings (key, value, updated_at) values ('wallet_enabled', '0', '2026-10-13T00:00:00.000Z');
+insert into app_settings (key, value, updated_at) values ('wallet_enabled', '1', '2026-10-13T00:00:00.000Z');
 
 -- One wallet per user, in FCFA (whole francs). The check makes every booking
 -- that would overdraw a wallet fail, and with it the whole batch it is part of.

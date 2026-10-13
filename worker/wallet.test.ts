@@ -107,8 +107,10 @@ async function credit(env: Env, contact: string, amountXof: number) {
 }
 
 describe("module switch", () => {
-  it("is off after the migration: customers are refused, admins test", async () => {
+  it("is on after the migration; switched off, customers are refused and admins test", async () => {
     const { env } = setup();
+    expect((await getWallet(env, KOFI)).enabled).toBe(true);
+    await setWalletEnabled(env, ADMIN, false);
     expect(await code(getWallet(env, KOFI))).toBe("wallet_disabled");
     const view = await getWallet(env, ADMIN);
     expect(view.testMode).toBe(true);
