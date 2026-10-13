@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { HOSTED_DEMO } from "@/lib/backend";
-import { CONTACT_EMAIL } from "@/lib/config";
 import { useErrorMessage } from "@/lib/hooks";
 import { LEGAL_PATHS } from "@/lib/legal/content";
 import { normalizeEmail, type Contact } from "@/lib/contact";
@@ -15,7 +14,6 @@ import { useApp } from "./app-provider";
 import { CountryPicker } from "./country-picker";
 import { useI18n } from "./i18n-provider";
 import { MailIcon, PhoneIcon } from "./icons";
-import { LegalLinks } from "./legal-links";
 import { OtpInput } from "./otp-input";
 
 // On the public site the demo only offers the rider view (anyone could otherwise "log in" as admin).
@@ -364,12 +362,6 @@ export function LoginForm() {
             {error}
           </p>
         )}
-        <p className="pt-4 text-center text-xs text-zinc-500">
-          <a href={`mailto:${CONTACT_EMAIL}`} className="hover:underline">
-            {CONTACT_EMAIL}
-          </a>
-        </p>
-        <LegalLinks />
       </div>
     </div>
   );
