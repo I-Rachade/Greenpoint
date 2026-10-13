@@ -211,3 +211,86 @@ export const ScooterIcon = (p: IconProps) => (
     <path d="M8.5 17h6.5l2-7h-3M14 5h2l1 5M4 13h6l1.5 4" />
   </Svg>
 );
+
+/** Parcel counter: register a new parcel. */
+export const BoxPlusIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M20 11.5V7l-8-4-8 4v10l8 4 1.5-.75" />
+    <path d="m4 7 8 4 8-4M12 11v10M18.5 15v6M15.5 18h6" />
+  </Svg>
+);
+
+/** Parcel counter: hand a parcel to its recipient. */
+export const HandBoxIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="8" y="3" width="8" height="7" rx="1" />
+    <path d="M12 3v3" />
+    <path d="M2.5 14.5h3l3 1.5h4a1.5 1.5 0 0 1 0 3H9M5.5 21H13l7.5-4.5a1.6 1.6 0 0 0-2-2.5l-4 2" />
+  </Svg>
+);
+
+/** Parcels leaving the station. */
+export const BoxOutIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M14 20.5 12 21.5l-8-4v-10l8-4 8 4v4" />
+    <path d="m4 7.5 8 4 8-4M12 11.5v10M16 17h6M19 14l3 3-3 3" />
+  </Svg>
+);
+
+/** Parcels coming to the station. */
+export const BoxInIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M14 20.5 12 21.5l-8-4v-10l8-4 8 4v4" />
+    <path d="m4 7.5 8 4 8-4M12 11.5v10M22 17h-6M19 14l-3 3 3 3" />
+  </Svg>
+);
+
+export const TruckIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 6.5h11v10H3zM14 9.5h3.5L21 13v3.5h-7" />
+    <circle cx="7" cy="17.5" r="1.8" />
+    <circle cx="17.5" cy="17.5" r="1.8" />
+  </Svg>
+);
+
+/** A shelf of parcels waiting for pickup. */
+export const ShelfIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 21V3M21 21V3M3 11.5h18M3 20h18" />
+    <rect x="6" y="6" width="5" height="5.5" />
+    <rect x="13" y="14" width="5" height="6" />
+  </Svg>
+);
+
+export const ClipboardIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="5" y="4.5" width="14" height="16.5" rx="2" />
+    <path d="M9 4.5V3h6v1.5M9 10h6M9 13.5h6M9 17h3.5" />
+  </Svg>
+);
+
+export const HistoryIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3.5 12a8.5 8.5 0 1 0 2.5-6L3.5 8.5" />
+    <path d="M3.5 4v4.5H8M12 7.5V12l3 2" />
+  </Svg>
+);
+
+export const QrIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="3.5" width="6" height="6" rx="1" />
+    <rect x="14.5" y="3.5" width="6" height="6" rx="1" />
+    <rect x="3.5" y="14.5" width="6" height="6" rx="1" />
+    <path d="M14.5 14.5h2.5v2.5M20.5 14.5v.01M14.5 20.5h6v-3M17 17v3.5" />
+  </Svg>
+);
+
+/** People waiting in line. */
+export const QueueIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="5" cy="8" r="2" />
+    <circle cx="12" cy="8" r="2" />
+    <circle cx="19" cy="8" r="2" />
+    <path d="M2 18v-2.5A2.5 2.5 0 0 1 4.5 13h1A2.5 2.5 0 0 1 8 15.5V18M9 18v-2.5a2.5 2.5 0 0 1 2.5-2.5h1a2.5 2.5 0 0 1 2.5 2.5V18M16 18v-2.5a2.5 2.5 0 0 1 2.5-2.5h1a2.5 2.5 0 0 1 2.5 2.5V18" />
+  </Svg>
+);

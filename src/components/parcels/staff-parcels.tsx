@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type ComponentType, type FormEvent, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
@@ -12,7 +12,17 @@ import type { StationView } from "@/lib/types";
 import { fareFor } from "@/lib/drivers";
 import { distanceMeters } from "@/lib/geo";
 import { useApp } from "../app-provider";
-import { BackIcon } from "../icons";
+import {
+  BackIcon,
+  BoxOutIcon,
+  BoxPlusIcon,
+  ClipboardIcon,
+  HandBoxIcon,
+  HistoryIcon,
+  ScooterIcon,
+  ShelfIcon,
+  TruckIcon,
+} from "../icons";
 import { StationDriversSection } from "../drivers/station-drivers";
 import { useI18n } from "../i18n-provider";
 import { canScanQr, QrScanner } from "./qr-scanner";
@@ -37,10 +47,23 @@ export function OperatorBack() {
 const input = "w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-sm dark:border-white/20 dark:bg-zinc-900";
 const primary = "rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40";
 
-function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+function Section({
+  icon: Icon,
+  title,
+  hint,
+  children,
+}: {
+  icon?: ComponentType<{ size?: number }>;
+  title: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   return (
     <section className="space-y-2 rounded-xl border border-black/10 p-4 dark:border-white/10">
-      <h2 className="font-semibold">{title}</h2>
+      <h2 className="flex items-center gap-2 font-semibold">
+        {Icon && <Icon size={22} />}
+        {title}
+      </h2>
       {hint && <p className="text-xs text-zinc-500">{hint}</p>}
       {children}
     </section>
@@ -79,7 +102,7 @@ function PickupBox({
   }
 
   return (
-    <Section title={t.parcels.staff.pickupTitle} hint={t.parcels.staff.pickupHint}>
+    <Section icon={HandBoxIcon} title={t.parcels.staff.pickupTitle} hint={t.parcels.staff.pickupHint}>
       <form
         className="flex flex-wrap items-center gap-2"
         onSubmit={(e) => {
@@ -193,7 +216,7 @@ function NewParcelForm({
 
   const label = "space-y-1 text-sm";
   return (
-    <Section title={t.parcels.staff.newTitle} hint={t.parcels.newAccount}>
+    <Section icon={BoxPlusIcon} title={t.parcels.staff.newTitle} hint={t.parcels.newAccount}>
       <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2">
         <label className={label}>
           <span>{t.parcels.staff.senderPhone}</span>
@@ -467,17 +490,19 @@ function StationParcels({
   const s = t.parcels.staff;
 
   if (!section) {
-    const tile = (slug: ParcelSection, label: string, count?: number) => <MenuTile href={`/operator/colis/${slug}`} label={label} count={count} />;
+    const tile = (slug: ParcelSection, icon: ComponentType<{ size?: number }>, label: string, count?: number) => (
+      <MenuTile href={`/operator/colis/${slug}`} icon={icon} label={label} count={count} />
+    );
     return (
       <div className="grid grid-cols-2 gap-3">
-        {tile("nouveau", s.newTitle)}
-        {tile("remettre", s.pickupTitle)}
-        {tile("expedier", s.outgoing, outgoing.length)}
-        {tile("arrivees", s.incoming, incoming.length)}
-        {tile("a-retirer", s.waiting, waiting.length)}
-        {tile("chauffeurs", t.drivers.staff.title)}
-        {tile("annonces", s.bookedTitle, bookings?.length)}
-        {tile("historique", s.history)}
+        {tile("nouveau", BoxPlusIcon, s.newTitle)}
+        {tile("remettre", HandBoxIcon, s.pickupTitle)}
+        {tile("expedier", BoxOutIcon, s.outgoing, outgoing.length)}
+        {tile("arrivees", TruckIcon, s.incoming, incoming.length)}
+        {tile("a-retirer", ShelfIcon, s.waiting, waiting.length)}
+        {tile("chauffeurs", ScooterIcon, t.drivers.staff.title)}
+        {tile("annonces", ClipboardIcon, s.bookedTitle, bookings?.length)}
+        {tile("historique", HistoryIcon, s.history)}
       </div>
     );
   }
@@ -519,7 +544,7 @@ function StationParcels({
         />
       )}
       {section === "annonces" && (
-        <Section title={s.bookedTitle} hint={s.bookedHint}>
+        <Section icon={ClipboardIcon} title={s.bookedTitle} hint={s.bookedHint}>
           {(bookings?.length ?? 0) === 0 ? (
             <p className="text-sm text-zinc-500">{s.none}</p>
           ) : (
@@ -545,7 +570,7 @@ function StationParcels({
         </Section>
       )}
       {section === "expedier" && (
-        <Section title={s.outgoing} hint={s.outgoingHint}>
+        <Section icon={BoxOutIcon} title={s.outgoing} hint={s.outgoingHint}>
           <BatchList
             parcels={outgoing}
             stations={stations}
@@ -569,7 +594,7 @@ function StationParcels({
         </Section>
       )}
       {section === "arrivees" && (
-        <Section title={s.incoming}>
+        <Section icon={TruckIcon} title={s.incoming}>
           <BatchList
             parcels={incoming}
             stations={stations}
@@ -579,7 +604,7 @@ function StationParcels({
         </Section>
       )}
       {section === "a-retirer" && (
-        <Section title={s.waiting}>
+        <Section icon={ShelfIcon} title={s.waiting}>
           {waiting.length === 0 ? (
             <p className="text-sm text-zinc-500">{s.none}</p>
           ) : (
@@ -607,7 +632,7 @@ function StationParcels({
         <StationDriversSection station={station} stations={stations} part={isDriverPart(section) ? section : undefined} />
       )}
       {section === "historique" && (
-        <Section title={s.history}>
+        <Section icon={HistoryIcon} title={s.history}>
           {history.length === 0 ? (
             <p className="text-sm text-zinc-500">{s.none}</p>
           ) : (

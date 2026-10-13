@@ -1,22 +1,36 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState, type ComponentType, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
 import type { DeliveryJob, DriverAtStation, JobDriver } from "@/lib/drivers";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { DriverPart } from "@/lib/parcel-sections";
 import type { StationView } from "@/lib/types";
+import { BoxInIcon, BoxOutIcon, QrIcon, QueueIcon } from "../icons";
 import { MenuTile } from "../parcels/menu-tile";
 import { useApp } from "../app-provider";
 import { useI18n } from "../i18n-provider";
 import { canScanQr, QrScanner } from "../parcels/qr-scanner";
 import { JobStatusPill, Notice, primary, secondary, useFcfa, useJobRoute } from "./shared";
 
-function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+function Section({
+  icon: Icon,
+  title,
+  hint,
+  children,
+}: {
+  icon?: ComponentType<{ size?: number }>;
+  title: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   return (
     <section className="space-y-2 rounded-xl border border-black/10 p-4 dark:border-white/10">
-      <h2 className="font-semibold">{title}</h2>
+      <h2 className="flex items-center gap-2 font-semibold">
+        {Icon && <Icon size={22} />}
+        {title}
+      </h2>
       {hint && <p className="text-xs text-zinc-500">{hint}</p>}
       {children}
     </section>
@@ -164,10 +178,10 @@ export function StationDriversSection({ station, stations, part }: { station: St
       <div className="space-y-3">
         <h1 className="text-2xl font-semibold">{t.drivers.staff.title}</h1>
         <div className="grid grid-cols-2 gap-3">
-          <MenuTile href="/operator/colis/chauffeur-comptoir" label={t.drivers.staff.scanTitle} />
-          <MenuTile href="/operator/colis/chauffeur-remettre" label={t.drivers.staff.outgoing} count={data?.outgoing.length} />
-          <MenuTile href="/operator/colis/chauffeur-apportes" label={t.drivers.staff.incoming} count={data?.incoming.length} />
-          <MenuTile href="/operator/colis/chauffeur-file" label={t.drivers.staff.queue} count={data?.queue.length} />
+          <MenuTile href="/operator/colis/chauffeur-comptoir" icon={QrIcon} label={t.drivers.staff.scanTitle} />
+          <MenuTile href="/operator/colis/chauffeur-remettre" icon={BoxOutIcon} label={t.drivers.staff.outgoing} count={data?.outgoing.length} />
+          <MenuTile href="/operator/colis/chauffeur-apportes" icon={BoxInIcon} label={t.drivers.staff.incoming} count={data?.incoming.length} />
+          <MenuTile href="/operator/colis/chauffeur-file" icon={QueueIcon} label={t.drivers.staff.queue} count={data?.queue.length} />
         </div>
       </div>
     );
@@ -176,7 +190,7 @@ export function StationDriversSection({ station, stations, part }: { station: St
   return (
     <div className="space-y-4">
       {part === "chauffeur-comptoir" && (
-        <Section title={t.drivers.staff.scanTitle} hint={t.drivers.staff.scanHint}>
+        <Section icon={QrIcon} title={t.drivers.staff.scanTitle} hint={t.drivers.staff.scanHint}>
           <form
             className="flex flex-wrap items-center gap-2"
             onSubmit={(e) => {
@@ -228,17 +242,17 @@ export function StationDriversSection({ station, stations, part }: { station: St
         </Section>
       )}
       {part === "chauffeur-remettre" && (
-        <Section title={t.drivers.staff.outgoing}>
+        <Section icon={BoxOutIcon} title={t.drivers.staff.outgoing}>
           <JobList jobs={data?.outgoing ?? []} stations={stations} />
         </Section>
       )}
       {part === "chauffeur-apportes" && (
-        <Section title={t.drivers.staff.incoming}>
+        <Section icon={BoxInIcon} title={t.drivers.staff.incoming}>
           <JobList jobs={data?.incoming ?? []} stations={stations} />
         </Section>
       )}
       {part === "chauffeur-file" && (
-        <Section title={t.drivers.staff.queue}>
+        <Section icon={QueueIcon} title={t.drivers.staff.queue}>
           {!data || data.queue.length === 0 ? (
             <p className="text-sm text-zinc-500">{t.drivers.staff.emptyQueue}</p>
           ) : (
