@@ -1,0 +1,12 @@
+{
+  "messageId": "evt-0023",
+  "deviceId": "XK16-DEMO-000001",
+  "action": "FaultNotification",
+  "timestamp": "2026-10-13T02:00:00Z",
+  "data": {
+    "scope": "Connector",
+    "connectorId": 3,
+    "errorCode": "OverVoltage",
+    "vendorCode": "11"
+  }
+}

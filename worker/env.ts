@@ -33,4 +33,10 @@ export interface Env {
   EMAIL_HOURLY_LIMIT?: string;
   /** Shared key of the connected sockets (secret), see docs/steckdosen-lora.md. */
   DEVICE_WEBHOOK_SECRET?: string;
+  /** Host of the Xingke cloud API, e.g. "api.example.com" (from the vendor), see docs/steckdosen-lora.md. */
+  XINGKE_API_HOST?: string;
+  /** Our access credential for the Xingke cloud API (secret). */
+  XINGKE_API_TOKEN?: string;
+  /** Credential the Xingke platform sends with its callbacks to /api/devices/xingke (secret). */
+  XINGKE_CALLBACK_TOKEN?: string;
 }
