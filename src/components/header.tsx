@@ -24,6 +24,7 @@ export function Header() {
     { href: "/reservations", label: t.nav.reservations, show: !!profile },
     { href: "/colis", label: t.nav.parcels, show: !!profile && features.parcels },
     { href: "/portefeuille", label: t.nav.wallet, show: !!profile && walletShown },
+    { href: "/greenpoint", label: t.nav.greenpoint, show: !!profile },
     { href: "/compte", label: t.nav.account, show: !!profile },
     { href: "/operator", label: t.nav.operator, show: profile?.role === "operator" || profile?.role === "admin" },
     { href: "/admin", label: t.nav.admin, show: profile?.role === "admin" },

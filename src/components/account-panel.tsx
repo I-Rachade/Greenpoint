@@ -11,7 +11,7 @@ import { normalizeTogoPhone } from "@/lib/phone";
 import { LEGAL_PATHS } from "@/lib/legal/content";
 import { useApp } from "./app-provider";
 import { useWalletShown } from "./header";
-import { BoxIcon, GearIcon, HelpIcon, LogoutIcon, ShieldIcon, StoreIcon, TicketIcon, UserIcon, WalletIcon } from "./icons";
+import { BoxIcon, GearIcon, HelpIcon, LeafIcon, LogoutIcon, ShieldIcon, StoreIcon, TicketIcon, UserIcon, WalletIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { MenuButton, MenuGroup, MenuLink } from "./menu";
 import { PageTitle } from "./page-title";
@@ -85,6 +85,7 @@ export function AccountPanel() {
             <MenuLink href="/reservations" icon={TicketIcon} label={t.nav.reservations} />
             {features.parcels && <MenuLink href="/colis" icon={BoxIcon} label={t.nav.parcels} />}
             {walletShown && <MenuLink href="/portefeuille" icon={WalletIcon} label={t.nav.wallet} />}
+            <MenuLink href="/greenpoint" icon={LeafIcon} label={t.nav.greenpoint} />
             {(profile.role === "operator" || profile.role === "admin") && (
               <MenuLink href="/operator" icon={StoreIcon} label={t.nav.operator} />
             )}
