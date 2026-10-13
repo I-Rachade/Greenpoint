@@ -16,7 +16,7 @@ create table driver_settings (
 -- Our own vehicles, handed to drivers by the admin.
 create table fleet_vehicles (
   id text primary key,
-  type text not null check (type in ('moto', 'tricycle', 'car')),
+  type text not null check (type in ('moto', 'tricycle', 'cargo_tricycle')),
   plate text not null unique check (length(plate) between 2 and 20),
   is_active integer not null default 1,
   created_at text not null
@@ -28,7 +28,7 @@ create table drivers (
   full_name text not null check (length(full_name) between 2 and 80),
   id_number text not null check (length(id_number) between 3 and 40),
   license_number text not null check (length(license_number) between 3 and 40),
-  wanted_type text not null check (wanted_type in ('moto', 'tricycle', 'car')),
+  wanted_type text not null check (wanted_type in ('moto', 'tricycle', 'cargo_tricycle')),
   id_doc_key text,                 -- R2 keys of the photos (private, admins only)
   license_doc_key text,
   portrait_key text,

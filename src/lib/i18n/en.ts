@@ -568,7 +568,7 @@ export const en: Dictionary = {
     },
   },
   drivers: {
-    vehicle: { moto: "Motorbike", tricycle: "Tricycle", car: "Car" },
+    vehicle: { moto: "Motorbike", tricycle: "Tricycle", cargo_tricycle: "Cargo tricycle" },
     kind: { express: "Express between stations", pickup: "Pickup at home", delivery: "Home delivery" },
     status: {
       open: "Looking for a driver",
@@ -585,7 +585,7 @@ export const en: Dictionary = {
     fcfa: "{n} FCFA",
     page: {
       title: "Driver",
-      intro: "Drive a poinderecharge motorbike, tricycle or car and carry parcels across Lomé. You earn {pct}% of every trip, paid daily.",
+      intro: "Drive a poinderecharge motorbike, tricycle or cargo tricycle and carry parcels across Lomé. You earn {pct}% of every trip, paid daily.",
       applyTitle: "Become a driver",
       fullName: "Full name (as on your ID)",
       idNumber: "ID card number",

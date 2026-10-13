@@ -204,7 +204,7 @@ function seedFleet(): FleetVehicle[] {
   return [
     { id: "veh-moto", type: "moto", plate: "TG 1001 AA", isActive: true },
     { id: "veh-tricycle", type: "tricycle", plate: "TG 2002 BB", isActive: true },
-    { id: "veh-car", type: "car", plate: "TG 3003 CC", isActive: true },
+    { id: "veh-cargo", type: "cargo_tricycle", plate: "TG 3003 CC", isActive: true },
   ];
 }
 

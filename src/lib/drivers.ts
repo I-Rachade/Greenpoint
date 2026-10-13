@@ -5,9 +5,12 @@
 import { distanceMeters, LOME_CENTER, type LatLng } from "./geo";
 import { PARCEL_SIZES, type ParcelMeasures, type ParcelSize } from "./parcels";
 
-/** Our own vehicles; drivers never use their own. */
-export type FleetVehicleType = "moto" | "tricycle" | "car";
-export const FLEET_VEHICLE_TYPES: FleetVehicleType[] = ["moto", "tricycle", "car"];
+/**
+ * Our own vehicles; drivers never use their own. Moto: people or parcels, fast.
+ * Tricycle: carries people (passengers come later). Cargo tricycle: goods.
+ */
+export type FleetVehicleType = "moto" | "tricycle" | "cargo_tricycle";
+export const FLEET_VEHICLE_TYPES: FleetVehicleType[] = ["moto", "tricycle", "cargo_tricycle"];
 
 export type DriverStatus =
   | "pending" // applied in the app, waiting for the admin
@@ -73,8 +76,8 @@ export const DEFAULT_DRIVER_SETTINGS: DriverSettings = {
   queueRadiusM: 500,
   vehicles: [
     { type: "moto", maxSize: "M", maxWeightKg: 20 },
-    { type: "tricycle", maxSize: "XL", maxWeightKg: 150 },
-    { type: "car", maxSize: "XL", maxWeightKg: 100 },
+    { type: "tricycle", maxSize: "L", maxWeightKg: 50 },
+    { type: "cargo_tricycle", maxSize: "XL", maxWeightKg: 300 },
   ],
 };
 

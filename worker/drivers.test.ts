@@ -97,7 +97,7 @@ const photo = () =>
 const profile = (id: string, phone: string): Profile => ({ id, phone, email: null, fullName: null, role: "rider" });
 
 /** A driver who applied, sent their photos and was approved with a vehicle of this type. */
-async function approvedDriver(t: ReturnType<typeof setup>, id: string, type: "moto" | "tricycle" | "car" = "tricycle") {
+async function approvedDriver(t: ReturnType<typeof setup>, id: string, type: "moto" | "tricycle" | "cargo_tricycle" = "tricycle") {
   const me = t.ctx(profile(id, `+2289300000${id.slice(-1)}`));
   await applyDriver(me, { fullName: `Chauffeur ${id}`, idNumber: "ID12345", licenseNumber: "LIC9876", wantedType: type });
   for (const kind of ["id", "license", "portrait"]) await uploadDriverDocument(me, kind, photo());

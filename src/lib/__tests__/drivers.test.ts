@@ -55,7 +55,7 @@ describe("dispatch", () => {
     { id: "near", lat: 6.13, lng: 1.22 },
     { id: "far", lat: 6.2, lng: 1.3 },
   ];
-  const q = (driverId: string, stationId: string, since: string, vehicleType: QueueEntry["vehicleType"] = "car"): QueueEntry => ({
+  const q = (driverId: string, stationId: string, since: string, vehicleType: QueueEntry["vehicleType"] = "cargo_tricycle"): QueueEntry => ({
     driverId,
     stationId,
     since,
@@ -65,9 +65,9 @@ describe("dispatch", () => {
   it("picks the first in line at the nearest station with a fitting vehicle", () => {
     const queue = [q("late", "near", "2026-10-12T10:05:00Z"), q("early", "near", "2026-10-12T10:00:00Z"), q("other", "far", "2026-10-12T09:00:00Z")];
     expect(pickDriver({ lat: 6.131, lng: 1.221 }, queue, stations, () => true)?.driverId).toBe("early");
-    expect(pickDriver({ lat: 6.131, lng: 1.221 }, queue, stations, (t) => t !== "car")).toBeNull();
-    const mixed = [q("moto", "near", "2026-10-12T10:00:00Z", "moto"), q("car", "far", "2026-10-12T10:00:00Z")];
-    expect(pickDriver({ lat: 6.131, lng: 1.221 }, mixed, stations, (t) => t === "car")?.driverId).toBe("car");
+    expect(pickDriver({ lat: 6.131, lng: 1.221 }, queue, stations, (t) => t !== "cargo_tricycle")).toBeNull();
+    const mixed = [q("moto", "near", "2026-10-12T10:00:00Z", "moto"), q("cargo", "far", "2026-10-12T10:00:00Z")];
+    expect(pickDriver({ lat: 6.131, lng: 1.221 }, mixed, stations, (t) => t === "cargo_tricycle")?.driverId).toBe("car");
   });
 
   it("only serves Lomé", () => {

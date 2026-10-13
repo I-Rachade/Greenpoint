@@ -568,7 +568,7 @@ export const fr = {
     },
   },
   drivers: {
-    vehicle: { moto: "Moto", tricycle: "Tricycle", car: "Voiture" },
+    vehicle: { moto: "Moto", tricycle: "Tricycle", cargo_tricycle: "Tricycle cargo" },
     kind: { express: "Express entre stations", pickup: "Enlèvement à domicile", delivery: "Livraison à domicile" },
     status: {
       open: "Recherche d'un chauffeur",
@@ -585,7 +585,7 @@ export const fr = {
     fcfa: "{n} FCFA",
     page: {
       title: "Chauffeur",
-      intro: "Conduisez une moto, un tricycle ou une voiture poinderecharge et transportez des colis dans Lomé. Vous gagnez {pct} % de chaque course, payés chaque jour.",
+      intro: "Conduisez une moto, un tricycle ou un tricycle cargo poinderecharge et transportez des colis dans Lomé. Vous gagnez {pct} % de chaque course, payés chaque jour.",
       applyTitle: "Devenir chauffeur",
       fullName: "Nom complet (comme sur la pièce d'identité)",
       idNumber: "N° de la pièce d'identité",
