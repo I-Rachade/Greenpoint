@@ -4,7 +4,7 @@ import { DEMO_CODE, DemoBackend } from "../backend/demo";
 // Runs without a browser: the demo falls back to in-memory storage.
 const STATION = "st-grand-marche"; // open around the clock in the demo data
 
-async function asRole(backend: DemoBackend, role: "rider" | "operator") {
+async function asRole(backend: DemoBackend, role: "customer" | "operator") {
   await backend.register("+22890123456", DEMO_CODE, "2580", role);
 }
 
@@ -20,8 +20,8 @@ describe("DemoBackend reservations", () => {
     vi.useRealTimers();
   });
 
-  it("gives the rider a pickup code that staff never see", async () => {
-    await asRole(backend, "rider");
+  it("gives the customer a pickup code that staff never see", async () => {
+    await asRole(backend, "customer");
     const r = await backend.reserve(STATION, "battery");
     expect(r.pickupCode).toMatch(/^\d{4}$/);
     const staffView = await backend.stationReservations(STATION);
@@ -29,7 +29,7 @@ describe("DemoBackend reservations", () => {
   });
 
   it("completes only with the right code and takes the battery off the counter", async () => {
-    await asRole(backend, "rider");
+    await asRole(backend, "customer");
     const r = await backend.reserve(STATION, "battery");
     const before = (await backend.listStations()).find((s) => s.id === STATION)!.status.fullBatteries;
 
@@ -46,25 +46,25 @@ describe("DemoBackend reservations", () => {
   });
 
   it("cancels active reservations when the station closes", async () => {
-    await asRole(backend, "rider");
+    await asRole(backend, "customer");
     const r = await backend.reserve(STATION, "slot");
     await asRole(backend, "operator");
     await backend.updateStatus(STATION, { isOpen: false });
-    await asRole(backend, "rider");
+    await asRole(backend, "customer");
     const mine = (await backend.myReservations()).find((x) => x.id === r.id)!;
     expect(mine.status).toBe("cancelled");
     expect(mine.cancelReason).toBe("station_closed");
   });
 
   it("pauses re-reserving at a station after cancelling there", async () => {
-    await asRole(backend, "rider");
+    await asRole(backend, "customer");
     const r = await backend.reserve(STATION, "battery");
     await backend.cancelReservation(r.id);
     await expect(backend.reserve(STATION, "battery")).rejects.toMatchObject({ code: "cooldown" });
   });
 
   it("limits unused reservations per day", async () => {
-    await asRole(backend, "rider");
+    await asRole(backend, "customer");
     for (const station of ["st-tokoin", "st-agoe", "st-universite"]) {
       const r = await backend.reserve(station, station === "st-universite" ? "slot" : "battery");
       await backend.cancelReservation(r.id);
@@ -78,7 +78,7 @@ describe("DemoBackend account deletion", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-12T12:00:00Z"));
     const backend = new DemoBackend();
-    await asRole(backend, "rider");
+    await asRole(backend, "customer");
     await backend.reserve(STATION, "battery");
 
     // The account has no e-mail address, so no code can go there.
@@ -120,7 +120,7 @@ describe("DemoBackend connected sockets", () => {
 
   it("is admin only", async () => {
     const backend = new DemoBackend();
-    await asRole(backend, "rider");
+    await asRole(backend, "customer");
     await expect(backend.listDevices()).rejects.toMatchObject({ code: "forbidden" });
   });
 });

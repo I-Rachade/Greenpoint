@@ -3,6 +3,7 @@ import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
+import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
 import type { Promotion, PromotionInput } from "../promo";
 import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
 import type {
@@ -17,7 +18,7 @@ import type {
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StatusPatch } from "./backend";
 
 const TOKEN_KEY = "poinderecharge-session";
-/** How often open pages reload station data (other riders' holds, staff updates). */
+/** How often open pages reload station data (other customers' holds, staff updates). */
 const POLL_MS = 15_000;
 
 const KNOWN_CODES: BackendErrorCode[] = [
@@ -218,7 +219,7 @@ export class CloudflareBackend implements Backend {
     this.changed();
   }
 
-  // Rider -----------------------------------------------------------------------
+  // Customer -----------------------------------------------------------------------
 
   async myReservations() {
     if (!this.token) return [];
@@ -253,6 +254,25 @@ export class CloudflareBackend implements Backend {
 
   async completeReservation(id: string, pickupCode: string) {
     await this.call("POST", `/api/reservations/${encodeURIComponent(id)}/complete`, { pickupCode });
+    this.changed();
+  }
+
+  // Operator accounts ---------------------------------------------------------------
+
+  ownerView() {
+    return this.call<OwnerView>("GET", "/api/owner");
+  }
+
+  async ownerAddStaff(stationId: string, contact: string) {
+    await this.call("POST", "/api/owner/staff", { stationId, contact });
+  }
+
+  async ownerRemoveStaff(stationId: string, userId: string) {
+    await this.call("DELETE", "/api/owner/staff", { stationId, userId });
+  }
+
+  async ownerSaveStation(stationId: string, input: OwnerStationInput) {
+    await this.call("POST", `/api/owner/stations/${encodeURIComponent(stationId)}`, input);
     this.changed();
   }
 
@@ -295,6 +315,23 @@ export class CloudflareBackend implements Backend {
   async setStationActive(stationId: string, active: boolean) {
     await this.call("POST", `/api/admin/stations/${encodeURIComponent(stationId)}/active`, { active });
     this.changed();
+  }
+
+  adminOperators() {
+    return this.call<AdminOperator[]>("GET", "/api/admin/operators");
+  }
+
+  async saveOperator(id: string | null, input: OperatorInput) {
+    await this.call("POST", "/api/admin/operators", { id, input });
+    this.changed();
+  }
+
+  async addOperatorOwner(operatorId: string, contact: string) {
+    await this.call("POST", `/api/admin/operators/${encodeURIComponent(operatorId)}/owners`, { contact });
+  }
+
+  async removeOperatorOwner(operatorId: string, userId: string) {
+    await this.call("DELETE", `/api/admin/operators/${encodeURIComponent(operatorId)}/owners/${encodeURIComponent(userId)}`);
   }
 
   // Connected sockets ---------------------------------------------------------------

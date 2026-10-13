@@ -4,7 +4,7 @@ import { RequireLogin } from "@/components/require-login";
 
 export default function OperatorParcelsPage() {
   return (
-    <RequireLogin roles={["operator", "admin"]}>
+    <RequireLogin stationWork>
       <ParcelsGate>
         <StaffParcels />
       </ParcelsGate>

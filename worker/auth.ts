@@ -4,6 +4,7 @@ import { validPinFormat, weakPin } from "../src/lib/pin";
 import type { Profile, UserRole } from "../src/lib/types";
 import type { Env } from "./env";
 import { ApiError, nowIso, randomDigits, sha256, uuid } from "./http";
+import { roleFromDb, roleToDb } from "./roles";
 
 const CODE_MINUTES = 10;
 const MAX_ATTEMPTS = 5;
@@ -23,12 +24,25 @@ interface UserRow {
   phone: string | null;
   email: string | null;
   full_name: string | null;
-  role: UserRole;
+  /** As stored, see roles.ts. */
+  role: string;
+  /** Comma-separated operators this person runs (operator_owners). */
+  owner_of?: string | null;
 }
 
 export function toProfile(u: UserRow): Profile {
-  return { id: u.id, phone: u.phone, email: u.email, fullName: u.full_name, role: u.role };
+  return {
+    id: u.id,
+    phone: u.phone,
+    email: u.email,
+    fullName: u.full_name,
+    role: roleFromDb(u.role),
+    ownerOf: u.owner_of ? u.owner_of.split(",") : [],
+  };
 }
+
+const ownerOf = (alias: string) =>
+  `(select group_concat(operator_id) from operator_owners where user_id = ${alias}.id) as owner_of`;
 
 function listSetting(value: string | undefined): string[] {
   return (value ?? "")
@@ -242,7 +256,7 @@ function checkPinFormat(pin: string) {
   if (weakPin(pin)) throw new ApiError("weak_pin");
 }
 
-const USER_COLUMNS = "id, phone, email, full_name, role";
+const USER_COLUMNS = `id, phone, email, full_name, role, ${ownerOf("users")}`;
 /** Column of users that holds this kind of contact. Fixed names only, never user input. */
 const contactColumn = (contact: Contact) => (contact.kind === "phone" ? "phone" : "email");
 
@@ -270,12 +284,12 @@ export async function register(env: Env, rawContact: string, rawCode: string, ra
     env.DB.prepare(`select ${USER_COLUMNS} from users where ${column} = ?`).bind(contact.value).first<UserRow>();
   let user = await findUser();
   if (!user) {
-    const role: UserRole = isAdminContact(env, contact) ? "admin" : "rider";
+    const role: UserRole = isAdminContact(env, contact) ? "admin" : "customer";
     const id = uuid();
     await env.DB.prepare(
       `insert into users (id, ${column}, role, created_at, pin_hash) values (?, ?, ?, ?, ?) on conflict do nothing`,
     )
-      .bind(id, contact.value, role, now, pinHash)
+      .bind(id, contact.value, roleToDb(role), now, pinHash)
       .run();
     user = await findUser();
     if (!user) throw new ApiError("unknown", 500);
@@ -381,7 +395,7 @@ export async function currentUser(env: Env, request: Request): Promise<Profile |
   const token = bearer(request);
   if (!token) return null;
   const row = await env.DB.prepare(
-    "select u.id, u.phone, u.email, u.full_name, u.role from sessions s join users u on u.id = s.user_id where s.token_hash = ? and s.expires_at > ?",
+    `select u.id, u.phone, u.email, u.full_name, u.role, ${ownerOf("u")} from sessions s join users u on u.id = s.user_id where s.token_hash = ? and s.expires_at > ?`,
   )
     .bind(await sha256(token), nowIso())
     .first<UserRow>();
@@ -480,6 +494,7 @@ export async function deleteAccount(
     ).bind(profile.id, profile.id),
     env.DB.prepare("delete from sessions where user_id = ?").bind(profile.id),
     env.DB.prepare("delete from station_staff where user_id = ?").bind(profile.id),
+    env.DB.prepare("delete from operator_owners where user_id = ?").bind(profile.id),
     env.DB.prepare("delete from reservations where user_id = ?").bind(profile.id),
     // Parcels stay on record (phone numbers included) but lose the link to the account.
     env.DB.prepare("update parcels set sender_user_id = null where sender_user_id = ?").bind(profile.id),

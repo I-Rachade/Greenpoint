@@ -7,7 +7,7 @@ Anbietervergleich und was dafür zu beantragen ist: `planung/zahlungsanbieter.md
 ## Ablauf
 
 ```
-App ──(1) POST /api/payments──► Worker ──(2)──► PayGate Global ──(3) Bestätigung──► Handy des Fahrers
+App ──(1) POST /api/payments──► Worker ──(2)──► PayGate Global ──(3) Bestätigung──► Handy des Kunden
  ▲                                │                    │
  │                                ▼                    │ (4) Rückruf
  └──(6) /api/payments/:id/refresh  D1 payments ◄─(5)── POST /api/payments/callback?key=…
@@ -15,7 +15,7 @@ App ──(1) POST /api/payments──► Worker ──(2)──► PayGate Glob
 
 1. Die App ruft `POST /api/payments` mit `{ reservationId, network: "flooz" | "tmoney", phone }` auf (angemeldet).
 2. Der Worker legt eine Zahlung `pending` an. **Der Betrag kommt aus der Station** (`price_battery_xof` bzw. `price_slot_xof`), nie aus der App. Danach fordert er die Zahlung beim Anbieter an.
-3. Der Fahrer bestätigt auf dem Handy mit seinem Flooz- bzw. T-Money-PIN.
+3. Der Kunde bestätigt auf dem Handy mit seinem Flooz- bzw. T-Money-PIN.
 4. Der Anbieter ruft `POST /api/payments/callback?key=<PAYMENT_CALLBACK_SECRET>` auf.
 5. Der Worker **glaubt dem Inhalt des Rückrufs nicht**, sondern fragt den Status selbst beim Anbieter ab. Nur `pending`-Zahlungen ändern sich; ein doppelter oder später Rückruf kann eine erfolgreiche Zahlung nicht mehr umwerfen.
 6. Die App fragt mit `POST /api/payments/:id/refresh` nach, bis die Zahlung nicht mehr `pending` ist. `GET /api/payments/mine` listet die eigenen Zahlungen.
@@ -23,11 +23,11 @@ App ──(1) POST /api/payments──► Worker ──(2)──► PayGate Glob
 ## Regeln im Code
 
 - Nur **eigene Stationen** (`operators.is_own`) nehmen Zahlungen an. Geld für fremde Betreiber einzusammeln kann nach BCEAO-Instruktion 001-01-2024 ein Zahlungsdienst sein (siehe `planung/rechtliches-togo.md`). Das wird erst freigeschaltet, wenn der Anbieter Split-Payment anbietet und ein Anwalt zugestimmt hat.
-- Höchstens eine offene oder erfolgreiche Zahlung pro Reservierung (eindeutiger Index, gilt auch bei gleichzeitigen Anfragen). Nach einer abgelehnten Zahlung darf der Fahrer es erneut versuchen.
+- Höchstens eine offene oder erfolgreiche Zahlung pro Reservierung (eindeutiger Index, gilt auch bei gleichzeitigen Anfragen). Nach einer abgelehnten Zahlung darf der Kunde es erneut versuchen.
 - Preise in FCFA, ganze Zahl, Vielfaches von 5. Ohne Preis wird für die Station nichts verlangt.
-- Löscht ein Fahrer sein Konto, bleiben seine Zahlungen für die Buchhaltung erhalten, aber ohne Nutzer und ohne Mobile-Money-Nummer (Trigger in der Migration).
-- Fahrer sehen nur ihre eigenen Zahlungen. Jede Zahlung und jeder Statuswechsel landet im Aktivitätsprotokoll.
-- Netz-Vorauswahl nach Vorwahl (`detectNetwork`): Togocom/T-Money 70–73, 90–93; Moov/Flooz 78, 79, 96–99. Nur ein Vorschlag, der Fahrer kann wechseln.
+- Löscht ein Kunde sein Konto, bleiben seine Zahlungen für die Buchhaltung erhalten, aber ohne Nutzer und ohne Mobile-Money-Nummer (Trigger in der Migration).
+- Kunden sehen nur ihre eigenen Zahlungen. Jede Zahlung und jeder Statuswechsel landet im Aktivitätsprotokoll.
+- Netz-Vorauswahl nach Vorwahl (`detectNetwork`): Togocom/T-Money 70–73, 90–93; Moov/Flooz 78, 79, 96–99. Nur ein Vorschlag, der Kunde kann wechseln.
 
 ## Dateien
 

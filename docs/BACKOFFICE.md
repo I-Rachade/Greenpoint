@@ -7,8 +7,9 @@ Erreichbar unter `/admin`, nur für Nutzer mit Rolle `admin`. Alle Seiten aktual
 | **Tableau de bord** `/admin` | Kennzahlen (Stationen, unbestätigte Status, laufende Reservierungen, Reservierungen 7 Tage, Abschluss- und Nichterscheinen-Quote, Nutzer, vernetzte Steckdosen), Reservierungen pro Tag (14 Tage) und die Liste „À vérifier“ mit Auffälligkeiten |
 | **Stations** `/admin/stations` | Status aller Stationen inkl. deaktivierter: offen/zu, Zähler gegen Kapazität, gehaltene Reservierungen, wann zuletzt bestätigt, zugeordnetes Personal; Stationen (de)aktivieren; vernetzte Steckdosen mit letztem Signal; darunter der Stations-Editor mit den Punkten der Station (siehe unten) |
 | **Réservations** `/admin/reservations` | Reservierungen der letzten 30 Tage, filterbar nach Status, Station und Telefon/Name; laufende Reservierungen stornieren |
-| **Utilisateurs** `/admin/users` | Alle Nutzer mit Rolle (änderbar, außer der eigenen), zugeordneten Stationen (zuordnen/entfernen), Reservierungen und Nichterscheinen in 30 Tagen, letzter Login |
+| **Utilisateurs** `/admin/users` | Alle Nutzer mit Rolle (änderbar, außer der eigenen; Menü und Rechte folgen der Rolle: wer `operator` verliert, verliert auch alle Stationen und Betreiber-Konten, wer einer Station oder einem Betreiber zugeordnet wird, wird `operator`, wer keine mehr hat, wieder Kunde), zugeordneten Stationen (zuordnen/entfernen), Reservierungen und Nichterscheinen in 30 Tagen, letzter Login |
 | **Activité** `/admin/activity` | Aktivitätsprotokoll: wer hat wann was geändert, filterbar nach Bereich, Station und Person |
+| **Exploitants** `/admin/operators` | Betreiber anlegen und umbenennen, Anzahl Stationen, Betreiber-Konten verknüpfen und entfernen (per Telefon oder E-Mail eines bestehenden Kontos). Welche Stationen zu einem Betreiber gehören, wird im Stations-Editor gewählt. Das Konto sieht danach „Mes stations“ (`/exploitant`): Personal seiner Stationen hinzufügen und entfernen, Öffnungszeiten und Telefon ändern, Status und Reservierungen wie Personal |
 | **Partenaires API** `/admin/partners` | Partner-Apps anlegen, API-Schlüssel erstellen und sperren, Webhook-Adresse und Secret, Pakete und Summe der letzten 30 Tage, letzte Webhooks mit Zustellstatus; siehe [PARTNER-API.md](PARTNER-API.md) |
 | **Publicité** `/admin/promotions` | Werbung, die beim Öffnen der App als Fenster erscheint: Titel, Text, Bild, optionaler Button mit Link, aktiv/inaktiv, Zeitraum; mit Vorschau |
 
@@ -37,8 +38,8 @@ Berechnet in `src/lib/admin/insights.ts` (Tests in `src/lib/__tests__/admin-insi
 | Steckdose meldet Fehler | Status `fault` | Urgent |
 | Status nicht bestätigt | offene Station, letzte Meldung älter als 2 Std. | À surveiller |
 | Zähler über Kapazität | freie Plätze / volle Akkus größer als die Kapazität | À surveiller |
-| Viele Reservierungen | ein Fahrer mit 3 oder mehr Reservierungen in 24 Std. (Stornieren und neu Reservieren) | À surveiller |
-| Nichterscheinen | ein Fahrer mit 2 oder mehr abgelaufenen Reservierungen in 7 Tagen | À surveiller |
+| Viele Reservierungen | ein Kunde mit 3 oder mehr Reservierungen in 24 Std. (Stornieren und neu Reservieren) | À surveiller |
+| Nichterscheinen | ein Kunde mit 2 oder mehr abgelaufenen Reservierungen in 7 Tagen | À surveiller |
 | Eigene Station ohne Personal | keine Zuordnung in `station_staff` | Info |
 | Personal ohne Station / Zuordnung ohne Rolle | Rolle und `station_staff` widersprechen sich | Info |
 | Abgelaufen, aber noch `active` | Reservierungen, die nie auf `expired` gesetzt wurden | Info |
@@ -63,4 +64,4 @@ Das Protokoll wächst mit jeder Reservierung und Statusmeldung. Ältere Einträg
 
 ## Demo-Modus
 
-Im Demo-Modus (`npm run dev`) zeigt das Backoffice Beispielnutzer, eine Reservierungshistorie der letzten zwei Wochen (inkl. eines Fahrers, der dreimal nicht erschienen ist) und protokolliert eigene Änderungen im Browser. Anmeldung als Admin: Code `123456`, Rolle „Administrateur“. Eine Beispiel-Werbung („1ère recharge offerte“) ist angelegt, aber ausgeschaltet; Bilder bleiben im Demo-Modus im Browser (max. 500 KB).
+Im Demo-Modus (`npm run dev`) zeigt das Backoffice Beispielnutzer, eine Reservierungshistorie der letzten zwei Wochen (inkl. eines Kunden, der dreimal nicht erschienen ist) und protokolliert eigene Änderungen im Browser. Anmeldung als Admin: Code `123456`, Rolle „Administrateur“. Eine Beispiel-Werbung („1ère recharge offerte“) ist angelegt, aber ausgeschaltet; Bilder bleiben im Demo-Modus im Browser (max. 500 KB).

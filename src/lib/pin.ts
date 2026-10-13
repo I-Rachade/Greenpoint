@@ -1,4 +1,4 @@
-/** Login PIN: four digits, like the mobile money PINs riders already know. */
+/** Login PIN: four digits, like the mobile money PINs customers already know. */
 export const PIN_LENGTH = 4;
 
 export function validPinFormat(pin: string): boolean {

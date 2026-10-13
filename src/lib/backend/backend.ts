@@ -13,6 +13,7 @@ import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
+import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
 import type { Promotion, PromotionInput } from "../promo";
 import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
 
@@ -65,6 +66,7 @@ export type BackendErrorCode =
   | "wallet_frozen"
   | "insufficient_balance"
   | "recipient_not_found"
+  | "account_not_found"
   | "self_transfer"
   | "invalid_amount"
   | "amount_too_small"
@@ -118,7 +120,7 @@ export interface Backend {
   /** Deletes the signed-in user's account for good, after checking the code. */
   deleteAccount(channel: CodeChannel, code: string): Promise<void>;
 
-  // Rider
+  // Customer
   myReservations(): Promise<Reservation[]>;
   reserve(stationId: string, type: ReservationType): Promise<Reservation>;
   cancelReservation(id: string): Promise<void>;
@@ -127,8 +129,16 @@ export interface Backend {
   staffStations(): Promise<StationView[]>;
   updateStatus(stationId: string, patch: StatusPatch): Promise<void>;
   stationReservations(stationId: string): Promise<Reservation[]>;
-  /** Needs the rider's pickup code; also takes the battery or slot off the station's counter. */
+  /** Needs the customer's pickup code; also takes the battery or slot off the station's counter. */
   completeReservation(id: string, pickupCode: string): Promise<void>;
+
+  // Operator accounts (see src/lib/operators.ts)
+  /** The operators the signed-in person runs, their stations and staff. */
+  ownerView(): Promise<OwnerView>;
+  /** Makes the account with this phone number or e-mail address staff of one of the operator's stations. */
+  ownerAddStaff(stationId: string, contact: string): Promise<void>;
+  ownerRemoveStaff(stationId: string, userId: string): Promise<void>;
+  ownerSaveStation(stationId: string, input: OwnerStationInput): Promise<void>;
 
   // Admin
   listOperators(): Promise<Operator[]>;
@@ -141,6 +151,13 @@ export interface Backend {
   assignStaff(stationId: string, userId: string): Promise<void>;
   unassignStaff(stationId: string, userId: string): Promise<void>;
   setStationActive(stationId: string, active: boolean): Promise<void>;
+  /** Operators with their stations count and the accounts that run them. */
+  adminOperators(): Promise<AdminOperator[]>;
+  /** Creates a partner operator (`id` null) or renames one. */
+  saveOperator(id: string | null, input: OperatorInput): Promise<void>;
+  /** Lets the account with this phone number or e-mail address run the operator. */
+  addOperatorOwner(operatorId: string, contact: string): Promise<void>;
+  removeOperatorOwner(operatorId: string, userId: string): Promise<void>;
 
   // Connected sockets (admins only; see src/lib/iot/devices.ts)
   listDevices(): Promise<Device[]>;

@@ -37,7 +37,7 @@ export function isStale(station: StationView, now: Date = new Date()): boolean {
 }
 
 /**
- * Charging slots a new rider can still get: free slots minus slots already held by reservations.
+ * Charging slots a new customer can still get: free slots minus slots already held by reservations.
  * Stations with connected sockets count their reporting free outlets instead, so a socket
  * that went silent is not offered.
  */
@@ -48,7 +48,7 @@ export function availableSlots(station: StationView, now: Date = new Date()): nu
   return Math.max(0, free - station.reservedSlots);
 }
 
-/** Full swap batteries a new rider can still get. */
+/** Full swap batteries a new customer can still get. */
 export function availableBatteries(station: StationView): number {
   if (!isOpenNow(station) || !offersSwap(station.kind)) return 0;
   return Math.max(0, station.status.fullBatteries - station.reservedBatteries);

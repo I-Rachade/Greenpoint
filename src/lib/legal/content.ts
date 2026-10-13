@@ -264,7 +264,7 @@ const fr: Record<LegalDocId, LegalDoc> = {
       {
         heading: "7. Sécurité",
         body: [
-          "Connexions chiffrées (HTTPS), code PIN et codes SMS enregistrés uniquement sous forme chiffrée irréversible, blocage après plusieurs codes PIN erronés, accès limité selon le rôle (conducteur, personnel, administrateur) et journal des modifications.",
+          "Connexions chiffrées (HTTPS), code PIN et codes SMS enregistrés uniquement sous forme chiffrée irréversible, blocage après plusieurs codes PIN erronés, accès limité selon le rôle (client, personnel, administrateur) et journal des modifications.",
         ],
       },
       {
@@ -520,7 +520,7 @@ const en: Record<LegalDocId, LegalDoc> = {
       {
         heading: "7. Security",
         body: [
-          "Encrypted connections (HTTPS), PIN and SMS codes stored only in irreversibly encrypted form, lock after several wrong PINs, role-based access (rider, staff, administrator) and a log of changes.",
+          "Encrypted connections (HTTPS), PIN and SMS codes stored only in irreversibly encrypted form, lock after several wrong PINs, role-based access (customer, staff, administrator) and a log of changes.",
         ],
       },
       {
