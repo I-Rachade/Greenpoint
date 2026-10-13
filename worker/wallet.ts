@@ -23,7 +23,7 @@ import {
   type WalletView,
 } from "../src/lib/wallet";
 import { verifyPin } from "./auth";
-import { providerFromEnv } from "./payment-providers";
+import { cardProviderFromEnv, providerFromEnv } from "./payment-providers";
 import type { Env } from "./env";
 import { ApiError, nowIso, readJson, uuid } from "./http";
 
@@ -122,6 +122,12 @@ export function topupAvailable(env: Env, user: Profile): boolean {
   return pay.name !== "mock" || user.role === "admin";
 }
 
+/** The same for bank cards, which have their own provider. */
+export function cardTopupAvailable(env: Env, user: Profile): boolean {
+  const pay = cardProviderFromEnv((key) => env[key as keyof Env] as string | undefined);
+  return pay.name !== "mock" || user.role === "admin";
+}
+
 async function feeSetting(env: Env, product: WalletProduct): Promise<WalletFeeSetting> {
   const row = await env.DB.prepare("select * from wallet_fee_settings where product = ?").bind(product).first<FeeRow>();
   if (!row) throw new ApiError("unknown", 500);
@@ -204,6 +210,7 @@ export async function getWallet(env: Env, user: Profile): Promise<WalletView> {
     usage: used,
     receiveCode: contact ? receivePayload(contact) : null,
     topupAvailable: topupAvailable(env, user),
+    cardTopupAvailable: cardTopupAvailable(env, user),
     transactions: history.results.map(toTransaction),
   };
 }

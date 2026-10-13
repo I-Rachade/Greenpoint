@@ -1,5 +1,6 @@
--- Wallet top-ups from Flooz / T-Money (Cashplus phase 2, "Add money"). A top-up
--- is asked from the provider like a reservation payment (worker/payments.ts);
+-- Wallet top-ups from Flooz / T-Money or a bank card (Cashplus phase 2, "Add
+-- money"). Mobile money is asked from the provider like a reservation payment
+-- (worker/payments.ts), a card is paid on the card provider's checkout page;
 -- once the provider confirms it, the wallet is credited with a 'topup' booking.
 -- Code: worker/wallet-topups.ts. Only adds a table and widens the type check of
 -- wallet_transactions (SQLite cannot change a check, so the table is rebuilt).
@@ -14,7 +15,8 @@ create table wallet_topups (
   -- Null once the person deleted the account: the record stays (accounting records).
   user_id text references users (id) on delete set null,
   amount_xof integer not null check (amount_xof > 0),
-  network text not null check (network in ('flooz', 'tmoney')),
+  network text not null check (network in ('flooz', 'tmoney', 'card')),
+  -- The paying Flooz/T-Money number; null for cards and after account deletion.
   phone text check (phone glob '+228[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'),
   provider text not null,
   provider_reference text,

@@ -219,9 +219,11 @@ async function readIdentifier(request: Request): Promise<string | null> {
   let value: unknown;
   if ((request.headers.get("Content-Type") ?? "").includes("application/json")) {
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-    value = body?.identifier;
+    value = body?.identifier ?? body?.cpm_trans_id;
   } else {
-    value = new URLSearchParams(await request.text()).get("identifier");
+    // PayGate sends "identifier", CinetPay (cards) "cpm_trans_id".
+    const form = new URLSearchParams(await request.text());
+    value = form.get("identifier") ?? form.get("cpm_trans_id");
   }
   return typeof value === "string" && value.length > 0 && value.length <= 100 ? value : null;
 }

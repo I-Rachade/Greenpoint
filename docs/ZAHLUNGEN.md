@@ -64,3 +64,25 @@ Ohne `PAYMENTS_PROVIDER=paygate` und Token:
 - Bezahlen-Knopf in der App (Reservierung, Statusanzeige, Wechsel Flooz/T-Money) und Preisfelder im Stationsformular.
 - Wann bezahlt wird: beim Reservieren oder an der Station. Erstattung bei Stornierung oder geschlossener Station.
 - Beleg nach togoischem Verbraucherrecht (Art. 25) und Aufbewahrung 5 Jahre (siehe `planung/rechtliches-togo.md`).
+
+## Portefeuille aufladen (Flooz, T-Money, Bankkarte)
+
+Im Portefeuille gibt es den Reiter „Recharger“ (`worker/wallet-topups.ts`, Tabelle `wallet_topups`, Migration `0010_wallet_topups.sql`).
+
+- **Flooz / T-Money:** wie oben über PayGate, die Anfrage geht aufs Handy. Kennung `pdw_…`, derselbe Rückruf `/api/payments/callback`.
+- **Bankkarte (Visa, Mastercard):** über CinetPay. Der Worker legt eine Zahlung an und gibt die Bezahlseite von CinetPay zurück; die App öffnet sie, CinetPay schickt die Person zurück auf `/portefeuille?topup=<id>` und meldet das Ergebnis an `/api/payments/callback` (Feld `cpm_trans_id`). Beträge müssen Vielfache von 5 sein.
+- Gutgeschrieben wird erst, wenn der Anbieter selbst den Erfolg bestätigt, und genau einmal: Statuswechsel und Gutschrift sind ein Batch.
+- Ohne echte Zugangsdaten läuft die Simulation, die jede Zahlung bestätigt. Damit niemand Geld aus dem Nichts bekommt, sehen Kunden dann „arrive bientôt“; nur Admins können testen.
+
+Einschalten (Worker > Settings > Variables and secrets):
+
+| Name | Typ | Inhalt |
+|---|---|---|
+| `PAYMENTS_PROVIDER` | Text | `paygate` (Flooz/T-Money) |
+| `PAYGATE_AUTH_TOKEN` | Secret | API-Schlüssel von PayGate |
+| `CARD_PROVIDER` | Text | `cinetpay` (Bankkarte) |
+| `CINETPAY_API_KEY` | Secret | API-Schlüssel von CinetPay |
+| `CINETPAY_SITE_ID` | Text | Site-ID von CinetPay |
+| `PAYMENT_CALLBACK_SECRET` | Secret | langer Zufallswert, auch für den Rückruf von CinetPay |
+
+Bei CinetPay den Kartenkanal freischalten lassen und die Feldnamen in `cinetpayProvider()` mit der Doku im Händler-Dashboard abgleichen. Die Kartengebühr von CinetPay trägt derzeit poinderecharge: gutgeschrieben wird der volle Betrag.

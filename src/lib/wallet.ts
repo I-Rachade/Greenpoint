@@ -90,6 +90,8 @@ export interface WalletView {
   receiveCode: string | null;
   /** False while no real Flooz/T-Money provider is set up (admins can still test with the simulation). */
   topupAvailable: boolean;
+  /** The same for top-ups by bank card. */
+  cardTopupAvailable: boolean;
   transactions: WalletTransaction[];
 }
 
@@ -111,7 +113,7 @@ export interface SendMoneyInput {
 export const TOPUP_MIN_XOF = 100;
 export const TOPUP_MAX_XOF = 500_000;
 
-export type TopupNetwork = "flooz" | "tmoney";
+export type TopupNetwork = "flooz" | "tmoney" | "card";
 export type TopupStatus = "pending" | "succeeded" | "failed" | "expired" | "cancelled";
 
 /** A top-up from the user's Flooz or T-Money account. The wallet is credited once the provider confirms it. */
@@ -123,13 +125,15 @@ export interface WalletTopup {
   failureReason: string | null;
   createdAt: string;
   paidAt: string | null;
+  /** Card top-ups: the provider's page where the person types the card details (only in the answer that starts it). */
+  checkoutUrl?: string | null;
 }
 
 export interface TopupInput {
   amountXof: number;
   network: TopupNetwork;
-  /** The Flooz/T-Money number that pays, +228… */
-  phone: string;
+  /** The Flooz/T-Money number that pays, +228…; not needed for a card. */
+  phone?: string;
 }
 
 /**
@@ -141,7 +145,7 @@ export function guessTopupNetwork(phone: string | null | undefined): TopupNetwor
   return prefix && ["78", "79", "96", "97", "98", "99"].includes(prefix) ? "flooz" : "tmoney";
 }
 
-export const TOPUP_NETWORK_LABEL: Record<TopupNetwork, string> = { flooz: "Flooz", tmoney: "T-Money" };
+export const TOPUP_NETWORK_LABEL: Record<TopupNetwork, string> = { flooz: "Flooz", tmoney: "T-Money", card: "Carte bancaire" };
 
 /** One line in the backoffice ledger (both sides of every booking). */
 export interface AdminWalletTransaction extends WalletTransaction {

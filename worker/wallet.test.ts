@@ -281,4 +281,40 @@ describe("top-ups from Flooz / T-Money", () => {
       globalThis.fetch = realFetch;
     }
   });
+
+  it("sends card payments to the provider's page and credits once the card provider accepts", async () => {
+    const { db, env: base } = setup();
+    const env = { ...base, CARD_PROVIDER: "cinetpay", CINETPAY_API_KEY: "key", CINETPAY_SITE_ID: "site", PAYMENT_CALLBACK_SECRET: "s3cret" } as Env;
+    const status = { value: "WAITING_CUSTOMER_PAYMENT" };
+    const sent: Record<string, unknown>[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      sent.push(JSON.parse(String(init?.body)));
+      const json = String(url).endsWith("/check")
+        ? { code: "00", data: { status: status.value, operator_id: "op1" } }
+        : { code: "201", data: { payment_token: "tok", payment_url: "https://checkout.cinetpay.com/payment/tok" } };
+      return new Response(JSON.stringify(json), { headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      expect((await getWallet(env, KOFI)).cardTopupAvailable).toBe(true);
+      expect(await code(startTopup(env, KOFI, topupReq({ amountXof: 1_002, network: "card" })))).toBe("invalid_amount");
+      const topup = await startTopup(env, KOFI, topupReq({ amountXof: 2_500, network: "card" }));
+      expect(topup).toMatchObject({ status: "pending", network: "card", checkoutUrl: "https://checkout.cinetpay.com/payment/tok" });
+      expect(sent[0]).toMatchObject({ amount: 2_500, currency: "XOF", channels: "CREDIT_CARD", return_url: `https://app.poinderecharge.com/portefeuille?topup=${topup.id}` });
+      expect(String(sent[0].notify_url)).toContain("/api/payments/callback?key=s3cret");
+      expect((await refreshTopup(env, KOFI, topup.id)).status).toBe("pending");
+      status.value = "ACCEPTED";
+      expect((await refreshTopup(env, KOFI, topup.id)).status).toBe("succeeded");
+      expect(balance(db, "kofi")).toBe(2_500);
+      expect((await getWallet(env, KOFI)).transactions[0]).toMatchObject({ type: "topup", counterparty: "Carte bancaire" });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it("keeps cards closed to customers while only the simulated card provider is set up", async () => {
+    const { env } = setup();
+    expect((await getWallet(env, KOFI)).cardTopupAvailable).toBe(false);
+    expect(await code(startTopup(env, KOFI, topupReq({ amountXof: 1_000, network: "card" })))).toBe("topup_unavailable");
+  });
 });

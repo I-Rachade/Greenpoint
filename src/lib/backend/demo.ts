@@ -1370,6 +1370,7 @@ export class DemoBackend implements Backend {
       },
       receiveCode: contact ? receivePayload(contact) : null,
       topupAvailable: true,
+      cardTopupAvailable: true,
       transactions: mine.slice(0, 50),
     };
   }
@@ -1504,7 +1505,7 @@ export class DemoBackend implements Backend {
     if (amount === null) throw new BackendError("invalid_amount");
     if (amount < TOPUP_MIN_XOF) throw new BackendError("amount_too_small");
     if (amount > TOPUP_MAX_XOF) throw new BackendError("amount_too_large");
-    if (!normalizeTogoPhone(input.phone)) throw new BackendError("phone_not_allowed");
+    if (input.network !== "card" && !normalizeTogoPhone(input.phone ?? "")) throw new BackendError("phone_not_allowed");
     const topup: WalletTopup & { userId: string } = {
       id: crypto.randomUUID(),
       amountXof: amount,
@@ -1517,7 +1518,9 @@ export class DemoBackend implements Backend {
     };
     const w = this.wallet(state);
     this.save({ ...state, wallet: { ...w, topups: [topup, ...(w.topups ?? [])].slice(0, 100) } });
-    return demoTopupView(topup);
+    // A card is paid on the provider's page; in the demo that "page" sends straight back.
+    const checkoutUrl = input.network === "card" ? `${window.location.origin}/portefeuille?topup=${topup.id}` : null;
+    return { ...demoTopupView(topup), checkoutUrl };
   }
 
   async refreshTopup(id: string): Promise<WalletTopup> {
