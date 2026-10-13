@@ -99,6 +99,7 @@ interface DepotRow {
   is_active: number;
   note: string;
   lockers: number;
+  has_counter?: number;
 }
 
 export function toParcel(r: ParcelRow, withCode: boolean): Parcel {
@@ -143,6 +144,7 @@ const toDepot = (r: DepotRow): ParcelDepot => ({
   stationId: r.station_id,
   isActive: !!r.is_active,
   note: r.note,
+  counter: r.has_counter !== 0,
   lockers: r.lockers,
 });
 
@@ -669,25 +671,36 @@ export async function adminParcels(c: ParcelCtx): Promise<AdminParcels> {
   return { parcels: parcels.results.map((r) => toParcel(r, false)), depots: depots.results.map(toDepot), sizes: tiers };
 }
 
-export async function saveDepot(c: ParcelCtx, stationId: string, input: ParcelDepotInput) {
-  const admin = await c.requireAdmin();
+/** Statements that save a station's parcel depot (counter and lockers), with the audit entry. */
+export async function depotStatements(c: Pick<ParcelCtx, "db" | "audit">, actor: string, stationId: string, input: ParcelDepotInput) {
   const lockers = Number(input?.lockers ?? 0);
   if (!Number.isInteger(lockers) || lockers < 0 || lockers > 500) throw new ApiError("bad_request");
   const note = String(input?.note ?? "").trim().slice(0, 200);
-  const exists = await c.db.prepare("select 1 from stations where id = ?").bind(stationId).first();
-  if (!exists) throw new ApiError("station_not_found", 404);
   const before = await c.db.prepare("select * from parcel_depots where station_id = ?").bind(stationId).first<DepotRow>();
-  const after = { is_active: input?.isActive ? 1 : 0, note, lockers };
-  await c.db.batch([
+  const counter = input?.counter ?? (before ? before.has_counter !== 0 : true);
+  const after = { is_active: input?.isActive ? 1 : 0, note, lockers, has_counter: counter ? 1 : 0 };
+  // An active depot needs a counter or at least one locker.
+  if (after.is_active && !counter && lockers === 0) throw new ApiError("bad_request");
+  return [
     c.db
       .prepare(
-        `insert into parcel_depots (station_id, is_active, note, lockers, updated_at) values (?, ?, ?, ?, ?)
+        `insert into parcel_depots (station_id, is_active, note, lockers, has_counter, updated_at) values (?, ?, ?, ?, ?, ?)
          on conflict (station_id) do update set is_active = excluded.is_active, note = excluded.note,
-         lockers = excluded.lockers, updated_at = excluded.updated_at`,
+         lockers = excluded.lockers, has_counter = excluded.has_counter, updated_at = excluded.updated_at`,
       )
-      .bind(stationId, after.is_active, note, lockers, nowIso()),
-    c.audit(admin.id, "parcel_depots", before ? "update" : "insert", stationId, before ? changed({ ...before }, after) : after, { stationId }),
-  ]);
+      .bind(stationId, after.is_active, note, lockers, after.has_counter, nowIso()),
+    c.audit(actor, "parcel_depots", before ? "update" : "insert", stationId, before ? changed({ ...before }, after) : after, { stationId }),
+  ];
+}
+
+export async function saveDepot(c: ParcelCtx, stationId: string, input: ParcelDepotInput) {
+  const admin = await c.requireAdmin();
+  const station = await c.db.prepare("select has_battery from stations where id = ?").bind(stationId).first<{ has_battery: number | null }>();
+  if (!station) throw new ApiError("station_not_found", 404);
+  const statements = await depotStatements(c, admin.id, stationId, input);
+  // A parcel point has nothing else, so its depot cannot be switched off here.
+  if (station.has_battery === 0 && !input?.isActive) throw new ApiError("station_without_point");
+  await c.db.batch(statements);
 }
 
 function changed(before: Record<string, unknown>, after: Record<string, unknown>) {

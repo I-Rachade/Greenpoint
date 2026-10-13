@@ -21,10 +21,22 @@ export interface Env {
   PAYMENTS_PROVIDER?: string;
   /** PayGate Global API key (secret). */
   PAYGATE_AUTH_TOKEN?: string;
+  /** "cinetpay" switches wallet top-ups by bank card from the simulation to real payments (needs both CINETPAY values). */
+  CARD_PROVIDER?: string;
+  /** CinetPay API key (secret). */
+  CINETPAY_API_KEY?: string;
+  /** CinetPay site id. */
+  CINETPAY_SITE_ID?: string;
   /** Secret in the callback URL the provider calls, see docs/ZAHLUNGEN.md. */
   PAYMENT_CALLBACK_SECRET?: string;
   /** Most code e-mails sent per hour across all addresses. Default 100. */
   EMAIL_HOURLY_LIMIT?: string;
   /** Shared key of the connected sockets (secret), see docs/steckdosen-lora.md. */
   DEVICE_WEBHOOK_SECRET?: string;
+  /** Host of the Xingke cloud API, e.g. "api.example.com" (from the vendor), see docs/steckdosen-lora.md. */
+  XINGKE_API_HOST?: string;
+  /** Our access credential for the Xingke cloud API (secret). */
+  XINGKE_API_TOKEN?: string;
+  /** Credential the Xingke platform sends with its callbacks to /api/devices/xingke (secret). */
+  XINGKE_CALLBACK_TOKEN?: string;
 }

@@ -40,7 +40,8 @@ describe("vehicles", () => {
     expect(vehicleFits("moto", "M", 5, s)).toBe(true);
     expect(vehicleFits("moto", "L", 5, s)).toBe(false);
     expect(vehicleFits("moto", "M", 25, s)).toBe(false);
-    expect(vehicleFits("tricycle", "XL", 50, s)).toBe(true);
+    expect(vehicleFits("tricycle", "XL", 50, s)).toBe(false);
+    expect(vehicleFits("cargo_tricycle", "XL", 150, s)).toBe(true);
   });
 
   it("validates settings", () => {
@@ -67,7 +68,7 @@ describe("dispatch", () => {
     expect(pickDriver({ lat: 6.131, lng: 1.221 }, queue, stations, () => true)?.driverId).toBe("early");
     expect(pickDriver({ lat: 6.131, lng: 1.221 }, queue, stations, (t) => t !== "cargo_tricycle")).toBeNull();
     const mixed = [q("moto", "near", "2026-10-12T10:00:00Z", "moto"), q("cargo", "far", "2026-10-12T10:00:00Z")];
-    expect(pickDriver({ lat: 6.131, lng: 1.221 }, mixed, stations, (t) => t === "cargo_tricycle")?.driverId).toBe("car");
+    expect(pickDriver({ lat: 6.131, lng: 1.221 }, mixed, stations, (t) => t === "cargo_tricycle")?.driverId).toBe("cargo");
   });
 
   it("only serves Lomé", () => {

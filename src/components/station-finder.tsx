@@ -1,7 +1,6 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   DEFAULT_FILTER,
@@ -13,16 +12,15 @@ import {
   stationAvailability,
   type StationFilter,
 } from "@/lib/availability";
-import { CONTACT_EMAIL } from "@/lib/config";
 import { formatDistance } from "@/lib/geo";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
+import { offersParcels } from "@/lib/station-points";
 import { VEHICLE_TYPES, type VehicleType } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
 import { AvailabilityBadge } from "./availability-badge";
 import { useI18n } from "./i18n-provider";
-import { LegalLinks } from "./legal-links";
 import { StationDetail } from "./station-detail";
 
 // MapLibre needs the browser (WebGL), so it is never rendered on the server.
@@ -30,7 +28,7 @@ const StationMap = dynamic(() => import("./station-map").then((m) => m.StationMa
 
 export function StationFinder() {
   const { t } = useI18n();
-  const { backend } = useApp();
+  const { backend, features } = useApp();
   const { position, state } = usePosition();
   const { data: stations, reload } = useLiveQuery(() => backend.listStations());
   const [filter, setFilter] = useState<StationFilter>(DEFAULT_FILTER);
@@ -40,7 +38,7 @@ export function StationFinder() {
   const selected = ranked.find((r) => r.station.id === selectedId) ?? null;
 
   const selectClass =
-    "rounded-full border border-black/10 bg-white px-3 py-1 text-sm dark:border-white/20 dark:bg-zinc-900";
+    "rounded-full border border-gp-border bg-gp-surface px-3 py-1.5 text-sm font-medium dark:border-white/15";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -93,6 +91,7 @@ export function StationFinder() {
                 <option value="all">{t.filter.allServices}</option>
                 <option value="charging">{t.filter.charging}</option>
                 <option value="swap">{t.filter.swap}</option>
+                {features.parcels && <option value="parcel">{t.filter.parcel}</option>}
               </select>
               <label className="flex items-center gap-1 text-sm">
                 <input
@@ -113,7 +112,7 @@ export function StationFinder() {
                   : format(t.map.stations, { count: ranked.length })}
             </div>
 
-            <ul className="min-h-0 flex-1 overflow-y-auto p-2">
+            <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
               {stations !== null && ranked.length === 0 && (
                 <li className="p-4 text-center text-sm text-zinc-500">{t.map.noResults}</li>
               )}
@@ -122,7 +121,7 @@ export function StationFinder() {
                   <button
                     type="button"
                     onClick={() => setSelectedId(station.id)}
-                    className="flex w-full items-start gap-3 rounded-lg p-3 text-left hover:bg-zinc-100 dark:hover:bg-zinc-900"
+                    className="flex w-full items-start gap-3 rounded-2xl border border-gp-border bg-gp-surface p-3 text-left shadow-sm hover:shadow-md dark:border-white/10"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -145,6 +144,7 @@ export function StationFinder() {
                             ⚡ {availableSlots(station)} {t.station.freeSlots.toLowerCase()}
                           </span>
                         )}
+                        {offersParcels(station) && <span>📦 {t.filter.parcel}</span>}
                       </div>
                     </div>
                     {distance !== null && (
@@ -156,12 +156,6 @@ export function StationFinder() {
                 </li>
               ))}
             </ul>
-            <div className="space-y-1 border-t border-black/10 px-3 py-2 dark:border-white/10">
-              <Link href="/contact" className="block text-center text-xs text-zinc-500 hover:underline">
-                {t.contact.link} · {CONTACT_EMAIL}
-              </Link>
-              <LegalLinks />
-            </div>
           </>
         )}
       </aside>

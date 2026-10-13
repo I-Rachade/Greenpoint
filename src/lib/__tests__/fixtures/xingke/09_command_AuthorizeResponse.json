@@ -1,0 +1,9 @@
+{
+  "messageId": "card-msg-0003",
+  "action": "AuthorizeResponse",
+  "data": {
+    "connectorId": 1,
+    "idTag": "0012345678",
+    "status": "Invalid"
+  }
+}

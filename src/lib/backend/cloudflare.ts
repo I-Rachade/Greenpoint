@@ -1,8 +1,10 @@
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
 import type { Promotion, PromotionInput } from "../promo";
+import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
 import type {
   AdminDrivers,
   DeliveryJob,
@@ -54,6 +56,9 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "image_too_large",
   "invalid_device",
   "device_exists",
+  "device_offline",
+  "device_command_failed",
+  "device_not_configured",
   "depot_inactive",
   "same_station",
   "parcel_too_large",
@@ -82,6 +87,19 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "contact_taken",
   "rate_limited",
   "forbidden",
+  "wallet_disabled",
+  "wallet_frozen",
+  "insufficient_balance",
+  "recipient_not_found",
+  "self_transfer",
+  "invalid_amount",
+  "amount_too_small",
+  "amount_too_large",
+  "daily_limit_exceeded",
+  "monthly_limit_exceeded",
+  "wallet_not_empty",
+  "topup_unavailable",
+  "provider_unavailable",
 ];
 
 /**
@@ -570,6 +588,15 @@ export class CloudflareBackend implements Backend {
 
   // Advertising popup ---------------------------------------------------------------
 
+  features() {
+    return this.call<Features>("GET", "/api/features");
+  }
+
+  async setParcelsEnabled(enabled: boolean) {
+    await this.call("POST", "/api/admin/features/parcels", { enabled });
+    this.changed();
+  }
+
   currentPromotion() {
     return this.call<Promotion | null>("GET", "/api/promotions/current");
   }
@@ -591,5 +618,60 @@ export class CloudflareBackend implements Backend {
   async uploadPromotionImage(file: File) {
     const { url } = await this.call<{ url: string }>("POST", "/api/admin/media", file);
     return url;
+  }
+
+  // Wallet ------------------------------------------------------------------------
+
+  myWallet() {
+    return this.call<WalletView>("GET", "/api/wallet");
+  }
+
+  findWalletRecipient(contact: string) {
+    return this.call<WalletRecipient>("GET", `/api/wallet/recipient?contact=${encodeURIComponent(contact)}`);
+  }
+
+  async sendMoney(input: SendMoneyInput) {
+    const tx = await this.call<WalletTransaction>("POST", "/api/wallet/send", input);
+    this.changed();
+    return tx;
+  }
+
+  startTopup(input: TopupInput) {
+    return this.call<WalletTopup>("POST", "/api/wallet/topups", input);
+  }
+
+  async refreshTopup(id: string) {
+    const topup = await this.call<WalletTopup>("POST", `/api/wallet/topups/${encodeURIComponent(id)}/refresh`);
+    if (topup.status === "succeeded") this.changed();
+    return topup;
+  }
+
+  adminWallet(filter: { type?: string; userId?: string } = {}) {
+    const query = new URLSearchParams();
+    if (filter.type) query.set("type", filter.type);
+    if (filter.userId) query.set("user", filter.userId);
+    const qs = query.toString();
+    return this.call<AdminWallet>("GET", `/api/admin/wallet${qs ? `?${qs}` : ""}`);
+  }
+
+  async setWalletEnabled(enabled: boolean) {
+    await this.call("POST", "/api/admin/wallet/enabled", { enabled });
+    this.changed();
+  }
+
+  async saveWalletFees(setting: WalletFeeSetting) {
+    await this.call("POST", "/api/admin/wallet/fees", setting);
+    this.changed();
+  }
+
+  async adjustWallet(input: WalletAdjustInput) {
+    const tx = await this.call<WalletTransaction>("POST", "/api/admin/wallet/adjust", input);
+    this.changed();
+    return tx;
+  }
+
+  async setWalletFrozen(contact: string, frozen: boolean) {
+    await this.call("POST", "/api/admin/wallet/freeze", { contact, frozen });
+    this.changed();
   }
 }

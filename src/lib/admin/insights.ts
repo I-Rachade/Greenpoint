@@ -72,7 +72,8 @@ export function computeKpis(snap: AdminSnapshot, now: Date): Kpis {
     stationsActive: active.length,
     stationsInactive: snap.stations.length - active.length,
     stationsOpen: active.filter((s) => s.status.isOpen).length,
-    stationsStale: active.filter((s) => s.status.isOpen && statusAgeHours(s, now) >= STALE_STATUS_HOURS).length,
+    // A parcel point has no counters to confirm.
+    stationsStale: active.filter((s) => s.kind !== "parcel" && s.status.isOpen && statusAgeHours(s, now) >= STALE_STATUS_HOURS).length,
     usersTotal: snap.users.length,
     usersByRole,
     usersNew7d: snap.users.filter((u) => t - new Date(u.createdAt).getTime() < 7 * DAY).length,
@@ -171,7 +172,7 @@ export function findAnomalies(snap: AdminSnapshot, now: Date): Finding[] {
     const holding = snap.reservations.filter((r) => r.stationId === s.id && isHolding(r, now)).length;
     if (!s.status.isOpen && holding > 0) add({ kind: "closed_with_reservations", stationId: s.id, count: holding });
     const age = statusAgeHours(s, now);
-    if (s.status.isOpen && age >= STALE_STATUS_HOURS) add({ kind: "stale_status", stationId: s.id, count: Math.floor(age) });
+    if (s.kind !== "parcel" && s.status.isOpen && age >= STALE_STATUS_HOURS) add({ kind: "stale_status", stationId: s.id, count: Math.floor(age) });
     if (s.status.freeSlots > s.chargingSlots || s.status.fullBatteries > s.batteryCapacity) {
       add({ kind: "over_capacity", stationId: s.id });
     }

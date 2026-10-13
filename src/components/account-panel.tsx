@@ -8,14 +8,19 @@ import { normalizeEmail } from "@/lib/contact";
 import { useErrorMessage } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { normalizeTogoPhone } from "@/lib/phone";
+import { LEGAL_PATHS } from "@/lib/legal/content";
 import { useApp } from "./app-provider";
+import { useWalletShown } from "./header";
+import { BoxIcon, GearIcon, HelpIcon, LogoutIcon, ScooterIcon, ShieldIcon, StoreIcon, TicketIcon, UserIcon, WalletIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
+import { MenuButton, MenuGroup, MenuLink } from "./menu";
+import { PageTitle } from "./page-title";
 
 const CODE_LENGTH = 6;
 const digits = (value: string) => value.replace(/\D/g, "").slice(0, CODE_LENGTH);
 
 const input =
-  "w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-base dark:border-white/20 dark:bg-zinc-900";
+  "w-full rounded-xl border border-gp-border bg-gp-surface px-3 py-2.5 text-base dark:border-white/15";
 const codeInput = `${input} tracking-[0.4em]`;
 const link = "text-sm text-gp-green-dark underline disabled:opacity-50 dark:text-gp-green";
 
@@ -27,34 +32,93 @@ const link = "text-sm text-gp-green-dark underline disabled:opacity-50 dark:text
  */
 export function AccountPanel() {
   const { t } = useI18n();
-  const { profile, ready } = useApp();
+  const { backend, profile, ready, features } = useApp();
+  const walletShown = useWalletShown();
   const [deleted, setDeleted] = useState(false);
+  const a = t.ui.account;
 
   if (!ready) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
 
+  const name = profile?.fullName || profile?.phone || profile?.email || a.guest;
+  const initials = profile?.fullName
+    ? profile.fullName
+        .split(/\s+/)
+        .map((w) => w[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase()
+    : null;
+
   return (
-    <div className="mx-auto w-full max-w-sm space-y-6 p-6">
-      <h1 className="text-2xl font-semibold">{t.account.title}</h1>
+    <div className="mx-auto w-full max-w-2xl flex-1 space-y-6 overflow-y-auto px-4 pb-6 pt-4">
+      <PageTitle title={t.account.title} />
+
+      {/* Profile card */}
+      <div className="flex items-center gap-4 rounded-2xl bg-gp-forest p-4 text-white shadow-sm">
+        <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gp-green text-lg font-bold text-gp-forest">
+          {initials ?? <UserIcon size={28} />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-lg font-semibold">{deleted ? a.guest : name}</p>
+          <p className="truncate text-sm text-white/70">{profile && !deleted ? t.roles[profile.role] : a.guestText}</p>
+        </div>
+        {!profile && (
+          <Link href="/login" className="rounded-full bg-gp-green px-4 py-2 text-sm font-semibold text-gp-forest">
+            {t.nav.login}
+          </Link>
+        )}
+      </div>
 
       {deleted ? (
-        <p className="rounded-lg bg-gp-green/10 p-3 text-sm">{t.account.deleted}</p>
-      ) : !profile ? (
-        <section className="space-y-2">
-          <h2 className="font-semibold">{t.account.deleteTitle}</h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            {format(t.account.loggedOutText, { email: CONTACT_EMAIL })}
-          </p>
-        </section>
+        <p className="rounded-2xl bg-gp-green/10 p-4 text-sm">{t.account.deleted}</p>
+      ) : profile ? (
+        <>
+          <section className="space-y-2">
+            <h2 className="px-1 text-xs font-semibold uppercase tracking-wide text-gp-muted">{a.details}</h2>
+            <div className="space-y-3 rounded-2xl border border-gp-border bg-gp-surface p-4 shadow-sm dark:border-white/10">
+              <ContactRow kind="phone" value={profile.phone} />
+              <ContactRow kind="email" value={profile.email} />
+            </div>
+          </section>
+
+          <MenuGroup title={a.menu}>
+            <MenuLink href="/reservations" icon={TicketIcon} label={t.nav.reservations} />
+            {features.parcels && <MenuLink href="/colis" icon={BoxIcon} label={t.nav.parcels} />}
+            {walletShown && <MenuLink href="/portefeuille" icon={WalletIcon} label={t.nav.wallet} />}
+            {features.parcels && (
+              <MenuLink href="/chauffeur" icon={ScooterIcon} label={profile.driverStatus ? t.nav.driver : t.account.becomeDriver} />
+            )}
+            {(profile.role === "operator" || profile.role === "admin") && (
+              <MenuLink href="/operator" icon={StoreIcon} label={t.nav.operator} />
+            )}
+            {profile.role === "admin" && <MenuLink href="/admin" icon={ShieldIcon} label={t.nav.admin} />}
+          </MenuGroup>
+
+          <MenuGroup>
+            <MenuLink href="/parametres" icon={GearIcon} label={a.settings} />
+            <MenuLink href={LEGAL_PATHS.privacy} icon={ShieldIcon} label={a.privacy} />
+            <MenuLink href="/contact" icon={HelpIcon} label={a.help} />
+            <MenuButton icon={LogoutIcon} label={t.nav.logout} onClick={() => void backend.signOut()} danger />
+          </MenuGroup>
+
+          <section className="space-y-2">
+            <h2 className="px-1 text-xs font-semibold uppercase tracking-wide text-gp-muted">{a.danger}</h2>
+            <DeleteAccount phone={profile.phone} email={profile.email} onDeleted={() => setDeleted(true)} />
+          </section>
+        </>
       ) : (
         <>
-          <section className="space-y-3">
-            <ContactRow kind="phone" value={profile.phone} />
-            <ContactRow kind="email" value={profile.email} />
+          <MenuGroup>
+            <MenuLink href="/parametres" icon={GearIcon} label={a.settings} />
+            <MenuLink href={LEGAL_PATHS.privacy} icon={ShieldIcon} label={a.privacy} />
+            <MenuLink href="/contact" icon={HelpIcon} label={a.help} />
+          </MenuGroup>
+          <section className="space-y-2 rounded-2xl border border-gp-border bg-gp-surface p-4 dark:border-white/10">
+            <h2 className="font-semibold">{t.account.deleteTitle}</h2>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              {format(t.account.loggedOutText, { email: CONTACT_EMAIL })}
+            </p>
           </section>
-          <Link href="/chauffeur" className="block text-sm text-gp-green-dark underline dark:text-gp-green">
-            {profile.driverStatus ? t.nav.driver : t.account.becomeDriver}
-          </Link>
-          <DeleteAccount phone={profile.phone} email={profile.email} onDeleted={() => setDeleted(true)} />
         </>
       )}
     </div>
@@ -94,7 +158,7 @@ function ContactRow({ kind, value }: { kind: "phone" | "email"; value: string | 
     e.preventDefault();
     const contact = kind === "phone" ? normalizeTogoPhone(raw) : normalizeEmail(raw);
     if (!contact) {
-      setError(t.login.invalidContact);
+      setError(kind === "phone" ? t.login.invalidPhone : t.login.invalidEmail);
       return;
     }
     run(async () => {
@@ -227,7 +291,7 @@ function DeleteAccount({
   }
 
   return (
-    <form onSubmit={sent ? remove : send} className="space-y-3 rounded-lg border border-red-200 p-4 dark:border-red-900">
+    <form onSubmit={sent ? remove : send} className="space-y-3 rounded-2xl border border-red-200 bg-gp-surface p-4 dark:border-red-900">
       <h2 className="font-semibold text-red-700 dark:text-red-400">{t.account.deleteTitle}</h2>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.account.deleteText}</p>
 

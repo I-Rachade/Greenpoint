@@ -1,10 +1,14 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { AppProvider } from "@/components/app-provider";
+import { BottomNav } from "@/components/bottom-nav";
 import { Header } from "@/components/header";
 import { I18nProvider } from "@/components/i18n-provider";
 import { NativeShell } from "@/components/native-shell";
+import { Onboarding } from "@/components/onboarding";
 import { PromoPopup } from "@/components/promo-popup";
+import { Splash } from "@/components/splash";
+import { THEME_BOOT_SCRIPT, ThemeController } from "@/components/theme-controller";
 import "./globals.css";
 
 // Fonts are bundled with the app so the build never has to reach Google Fonts.
@@ -48,14 +52,21 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="fr" className={`${inter.variable} ${poppins.variable} h-full antialiased`}>
+    <html lang="fr" className={`${inter.variable} ${poppins.variable} h-full antialiased`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+      </head>
       <body className="flex h-full flex-col">
         <I18nProvider>
           <AppProvider>
+            <ThemeController />
             <NativeShell />
             <Header />
             <main className="flex min-h-0 flex-1 flex-col">{children}</main>
+            <BottomNav />
             <PromoPopup />
+            <Onboarding />
+            <Splash />
           </AppProvider>
         </I18nProvider>
       </body>

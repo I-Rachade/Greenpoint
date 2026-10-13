@@ -1,0 +1,11 @@
+{
+  "messageId": "start-timed-0001",
+  "action": "RemoteStartTransaction",
+  "data": {
+    "connectorId": 2,
+    "transactionId": "20261013000000000002",
+    "startSource": "Remote",
+    "chargingMode": "Timed",
+    "duration": 3600
+  }
+}

@@ -57,7 +57,7 @@ export function StationsBoard() {
         }
       >
         {snap.stations.map((s) => {
-          const stale = s.isActive && s.status.isOpen && statusAgeHours(s, now) >= STALE_STATUS_HOURS;
+          const stale = s.isActive && s.kind !== "parcel" && s.status.isOpen && statusAgeHours(s, now) >= STALE_STATUS_HOURS;
           const staff = snap.staff.filter((a) => a.stationId === s.id);
           return (
             <tr key={s.id} className={s.isActive ? "" : "opacity-60"}>

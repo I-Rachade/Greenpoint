@@ -122,7 +122,9 @@ export interface ParcelDepot {
   isActive: boolean;
   /** Where at the station, e.g. "au comptoir". */
   note: string;
-  /** Compartments of a future locker; 0 = counter only. */
+  /** Staff take and hand out parcels at a counter. */
+  counter: boolean;
+  /** Compartments of a locker; 0 = counter only. */
   lockers: number;
 }
 
@@ -130,6 +132,8 @@ export interface ParcelDepotInput {
   isActive: boolean;
   note: string;
   lockers: number;
+  /** Left out: unchanged (a new depot gets a counter). */
+  counter?: boolean;
 }
 
 /** Someone the parcel is from or for, identified by phone number. */

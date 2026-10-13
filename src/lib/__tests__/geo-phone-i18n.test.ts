@@ -5,6 +5,7 @@ import { format } from "../i18n/format";
 import { fr } from "../i18n/fr";
 import { normalizeTogoPhone } from "../phone";
 import { normalizeEmail, parseContact } from "../contact";
+import { DEFAULT_PHONE_COUNTRY, PHONE_COUNTRIES, phoneWithCountry } from "../countries";
 
 describe("geo", () => {
   it("measures distances across Lomé", () => {
@@ -44,6 +45,23 @@ describe("parseContact", () => {
     expect(parseContact("+33612345678")).toBeNull();
     expect(parseContact("")).toBeNull();
     expect(normalizeEmail("a b@c.d")).toBeNull();
+  });
+});
+
+describe("phoneWithCountry", () => {
+  it("offers only Togo for now", () => {
+    expect(PHONE_COUNTRIES.map((c) => c.dial)).toEqual(["+228"]);
+  });
+
+  it.each(["90 12 34 56", "90123456", "+228 90 12 34 56", "0022890123456", "228 90 12 34 56"])(
+    "reads %s next to +228",
+    (input) => {
+      expect(phoneWithCountry(DEFAULT_PHONE_COUNTRY, input)).toBe("+22890123456");
+    },
+  );
+
+  it.each(["", "1234", "+33612345678", "name@example.com"])("rejects %s", (input) => {
+    expect(phoneWithCountry(DEFAULT_PHONE_COUNTRY, input)).toBeNull();
   });
 });
 

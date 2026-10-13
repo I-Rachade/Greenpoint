@@ -59,7 +59,8 @@ export type AuditTable =
   | "driver_settings"
   | "partners"
   | "partner_api_keys"
-  | "partner_bookings";
+  | "partner_bookings"
+  | "wallets";
 
 export const AUDIT_TABLES: AuditTable[] = [
   "reservations",
@@ -82,6 +83,7 @@ export const AUDIT_TABLES: AuditTable[] = [
   "partners",
   "partner_api_keys",
   "partner_bookings",
+  "wallets",
 ];
 
 export type AuditAction = "insert" | "update" | "delete";

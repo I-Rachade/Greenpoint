@@ -21,7 +21,9 @@ import { ParcelStatusPill } from "./status";
 /** Switches between the station status page and the parcel page. */
 export function OperatorTabs() {
   const { t } = useI18n();
+  const { features } = useApp();
   const pathname = usePathname().replace(/\/$/, "");
+  if (!features.parcels) return null;
   const tabs = [
     { href: "/operator", label: t.parcels.staff.tabStatus },
     { href: "/operator/colis", label: t.parcels.staff.tabParcels },

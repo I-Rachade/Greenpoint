@@ -15,7 +15,8 @@ import {
   type UserRole,
 } from "../types";
 import { BackendError, type Backend, type CodeChannel, type StatusPatch } from "./backend";
-import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, initialDemoStatus } from "./demo-data";
+import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, demoSocketPoints, initialDemoStatus } from "./demo-data";
+import { depotPoints, hasAnyPoint, kindFor } from "../station-points";
 import { DEMO_STAFF, demoHistory, demoUsers } from "../admin/demo-seed";
 import {
   ADMIN_HISTORY_DAYS,
@@ -26,6 +27,7 @@ import {
   type StaffAssignment,
 } from "../admin/types";
 import { validPinFormat, weakPin } from "../pin";
+import type { Features } from "../features";
 import { MAX_PROMO_IMAGE_BYTES, pickPromotion, type Promotion, type PromotionInput } from "../promo";
 import {
   DEFAULT_PARCEL_SIZES,
@@ -89,6 +91,32 @@ import {
   type StationDrivers,
 } from "../drivers";
 import { distanceMeters, type LatLng } from "../geo";
+import { parseContact } from "../contact";
+import {
+  checkLimits,
+  DEFAULT_FEE_SETTINGS,
+  newTrxId,
+  parseAmount,
+  periodStarts,
+  personLabel,
+  quoteFee,
+  receivePayload,
+  TOPUP_MAX_XOF,
+  TOPUP_MIN_XOF,
+  TOPUP_NETWORK_LABEL,
+  validFeeSetting,
+  WALLET_REMARK_MAX,
+  type AdminWallet,
+  type AdminWalletTransaction,
+  type SendMoneyInput,
+  type TopupInput,
+  type WalletAdjustInput,
+  type WalletFeeSetting,
+  type WalletRecipient,
+  type WalletTopup,
+  type WalletTransaction,
+  type WalletView,
+} from "../wallet";
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 
 const STORAGE_KEY = "poinderecharge-demo-v3";
@@ -134,8 +162,34 @@ interface DemoState {
   /** Partner API: partners and bookings waiting for drop-off (demo only, no API calls). */
   partners?: Partner[];
   bookings?: (StationBooking & { partnerId: string; fromStationId: string })[];
+  /** Wallet (demo only: switched on, everyone starts with DEMO_WALLET_START francs). */
+  wallet?: DemoWallet;
+  /** Parcel module switch of the backoffice (missing = on). */
+  parcelsEnabled?: boolean;
   /** Demo PINs by phone number or e-mail address (stored in clear: demo only). */
   pins?: Record<string, string>;
+}
+
+interface DemoWallet {
+  enabled: boolean;
+  settings: WalletFeeSetting[];
+  balances: Record<string, number>;
+  frozen: string[];
+  /** Ledger, newest first, with the idempotency key of each payment. */
+  transactions: (AdminWalletTransaction & { key?: string })[];
+  /** Simulated Flooz/T-Money top-ups; confirmed on the first status check. */
+  topups?: (WalletTopup & { userId: string })[];
+}
+
+/** Starting balance of every demo wallet, so sending money can be tried right away. */
+export const DEMO_WALLET_START = 25_000;
+
+function demoTopupView(t: WalletTopup): WalletTopup {
+  return { id: t.id, amountXof: t.amountXof, network: t.network, status: t.status, failureReason: t.failureReason, createdAt: t.createdAt, paidAt: t.paidAt };
+}
+
+function freshWallet(): DemoWallet {
+  return { enabled: true, settings: DEFAULT_FEE_SETTINGS, balances: {}, frozen: [], transactions: [] };
 }
 
 function freshState(): DemoState {
@@ -169,6 +223,24 @@ function seedDevices(): Device[] {
       createdAt: "2026-10-01T08:00:00.000Z",
       points: DEMO_CHARGING_POINTS,
     },
+    ...(
+      [
+        ["st-grand-marche", "DEMO-GM01", 6, 3],
+        ["st-universite", "DEMO-UL01", 8, 5],
+        ["st-be", "DEMO-BE01", 4, 0],
+        ["st-hedzranawoe", "DEMO-HZ01", 4, 1],
+      ] as const
+    ).map(([stationId, externalId, outlets, free]) => ({
+      externalId,
+      stationId,
+      vendor: "Xingke",
+      model: `${outlets} prises`,
+      link: "vendor_cloud" as const,
+      outlets,
+      lastSeenAt: null,
+      createdAt: "2026-10-01T08:00:00.000Z",
+      points: demoSocketPoints(stationId, externalId, outlets, free),
+    })),
   ];
 }
 
@@ -214,8 +286,9 @@ function seedDepots(): ParcelDepot[] {
     stationId,
     isActive: true,
     note: "au comptoir",
+    counter: true,
     lockers: 0,
-  }));
+  })).concat({ stationId: "st-colis-adewui", isActive: true, note: "à l'entrée du marché", counter: false, lockers: 24 });
 }
 
 /** One partner shop and one booked parcel, so the drop-off at the station can be tried. */
@@ -377,7 +450,19 @@ export class DemoBackend implements Backend {
         .flatMap((d) => d.points)
         .filter((p) => p.stationId === s.id)
         .map((p) => ({ ...p, lastSeenAt: seen }));
-      return { ...s, status, reservedSlots: held.slots, reservedBatteries: held.batteries, chargingPoints };
+      // Charging places are the connected outlets.
+      const chargingSlots = chargingPoints.filter((p) => p.deviceId).length;
+      const depot = (state.parcelDepots ?? seedDepots()).find((d) => d.stationId === s.id);
+      const parcelPoint = depot?.isActive ? { counter: depot.counter ?? true, lockers: depot.lockers } : null;
+      return {
+        ...s,
+        chargingSlots,
+        status: { ...status, freeSlots: Math.min(status.freeSlots, chargingSlots) },
+        reservedSlots: held.slots,
+        reservedBatteries: held.batteries,
+        chargingPoints,
+        parcelPoint,
+      };
     });
   }
 
@@ -388,7 +473,9 @@ export class DemoBackend implements Backend {
 
   async listStations() {
     const state = this.load();
-    return this.views(state, this.activeStations(state));
+    const views = this.views(state, this.activeStations(state));
+    if (state.parcelsEnabled !== false) return views;
+    return views.filter((s) => s.kind !== "parcel").map((s) => ({ ...s, parcelPoint: null }));
   }
 
   private activeStations(state: DemoState): Station[] {
@@ -666,8 +753,14 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const operator = state.operators.find((o) => o.id === input.operatorId);
     if (!operator) throw new BackendError("unknown", "operator not found");
+    const { parcelDepot, ...fields } = input;
+    const existing = id ? (state.parcelDepots ?? seedDepots()).find((d) => d.stationId === id) : undefined;
+    const depot = depotPoints(parcelDepot ?? existing);
+    if (!hasAnyPoint({ swap: offersSwap(input.kind), charging: offersCharging(input.kind), ...depot })) {
+      throw new BackendError("station_without_point");
+    }
     const station: Station = {
-      ...input,
+      ...fields,
       id: id ?? crypto.randomUUID(),
       operatorName: operator.name,
       isOwn: operator.isOwn,
@@ -684,7 +777,7 @@ export class DemoBackend implements Backend {
       const status: StationStatus = {
         stationId: station.id,
         isOpen: true,
-        freeSlots: station.chargingSlots,
+        freeSlots: 0,
         fullBatteries: station.batteryCapacity,
         updatedAt: new Date().toISOString(),
       };
@@ -695,6 +788,7 @@ export class DemoBackend implements Backend {
         ),
       );
     }
+    if (parcelDepot) await this.writeDepot(station.id, parcelDepot);
   }
 
   /** Restores the example data (used by the "reset demo" button). */
@@ -863,9 +957,13 @@ export class DemoBackend implements Backend {
         lastSeenAt: null,
       })),
     };
+    // A connected socket makes the station a charging point.
+    const stations = state.stations.map((s) =>
+      s.id === input.stationId && !offersCharging(s.kind) ? { ...s, kind: kindFor(offersSwap(s.kind), true) } : s,
+    );
     this.save(
       withAudit(
-        { ...state, devices: [device, ...devices] },
+        { ...state, stations, devices: [device, ...devices] },
         { table: "charging_points", action: "insert", rowId: externalId, stationId: input.stationId, changes: { device: externalId, outlets } },
       ),
     );
@@ -888,8 +986,10 @@ export class DemoBackend implements Backend {
   async switchOutlet(externalId: string, outlet: number, on: boolean) {
     const state = this.load();
     this.requireAdmin(state);
-    if (!canSwitch(externalId)) throw new BackendError("forbidden");
-    const devices = (state.devices ?? seedDevices()).map((d) =>
+    const all = state.devices ?? seedDevices();
+    const device = all.find((d) => d.externalId === externalId);
+    if (!device || !canSwitch(device)) throw new BackendError("forbidden");
+    const devices = all.map((d) =>
       d.externalId !== externalId
         ? d
         : {
@@ -1156,10 +1256,21 @@ export class DemoBackend implements Backend {
   async saveParcelDepot(stationId: string, input: ParcelDepotInput) {
     const state = this.load();
     this.requireAdmin(state);
-    if (!state.stations.some((s) => s.id === stationId)) throw new BackendError("station_not_found");
+    const station = state.stations.find((s) => s.id === stationId);
+    if (!station) throw new BackendError("station_not_found");
+    // A parcel point has nothing else, so its depot cannot be switched off here.
+    if (station.kind === "parcel" && !input.isActive) throw new BackendError("station_without_point");
+    await this.writeDepot(stationId, input);
+  }
+
+  private async writeDepot(stationId: string, input: ParcelDepotInput) {
+    const state = this.load();
     const depots = state.parcelDepots ?? seedDepots();
     const before = depots.find((d) => d.stationId === stationId);
-    const depot: ParcelDepot = { stationId, isActive: input.isActive, note: input.note.trim().slice(0, 200), lockers: Math.max(0, Math.floor(input.lockers)) };
+    const lockers = Math.max(0, Math.floor(input.lockers));
+    const counter = input.counter ?? before?.counter ?? true;
+    if (input.isActive && !counter && lockers === 0) throw new BackendError("unknown", "a depot needs a counter or lockers");
+    const depot: ParcelDepot = { stationId, isActive: input.isActive, note: input.note.trim().slice(0, 200), counter, lockers };
     this.save(
       withAudit(
         { ...state, parcelDepots: [...depots.filter((d) => d.stationId !== stationId), depot] },
@@ -1168,7 +1279,7 @@ export class DemoBackend implements Backend {
           action: before ? "update" : "insert",
           rowId: stationId,
           stationId,
-          changes: before ? diff(before, depot) : { is_active: depot.isActive, note: depot.note, lockers: depot.lockers },
+          changes: before ? diff(before, depot) : { is_active: depot.isActive, note: depot.note, has_counter: counter, lockers: depot.lockers },
         },
       ),
     );
@@ -2191,5 +2302,305 @@ export class DemoBackend implements Backend {
     this.requireAdmin(this.load());
     if (file.size > MAX_PROMO_IMAGE_BYTES / 4) throw new BackendError("image_too_large");
     return readAsDataUrl(file);
+  }
+
+  // Wallet ------------------------------------------------------------------------
+
+  private wallet(state: DemoState): DemoWallet {
+    return state.wallet ?? freshWallet();
+  }
+
+  private balance(w: DemoWallet, userId: string): number {
+    return w.balances[userId] ?? DEMO_WALLET_START;
+  }
+
+  private walletAccess(state: DemoState): Profile {
+    const profile = this.requireProfile(state);
+    if (!this.wallet(state).enabled && profile.role !== "admin") throw new BackendError("wallet_disabled");
+    return profile;
+  }
+
+  private findWalletUser(state: DemoState, contact: string): AdminUser {
+    const parsed = parseContact(contact);
+    if (!parsed) throw new BackendError(contact.includes("@") ? "invalid_contact" : "phone_not_allowed");
+    const user = (state.users ?? demoUsers(new Date())).find((u) => (parsed.kind === "phone" ? u.phone : u.email) === parsed.value);
+    if (!user) throw new BackendError("recipient_not_found");
+    return user;
+  }
+
+  async myWallet(): Promise<WalletView> {
+    const state = this.load();
+    const profile = this.walletAccess(state);
+    const w = this.wallet(state);
+    const transfer = w.settings.find((s) => s.product === "transfer") ?? DEFAULT_FEE_SETTINGS[0];
+    const mine = w.transactions.filter((t) => t.userId === profile.id);
+    const { day, month } = periodStarts();
+    const sent = mine.filter((t) => t.type === "transfer" && t.attribute === "send" && t.status === "success");
+    const contact = profile.phone ?? profile.email;
+    return {
+      enabled: w.enabled,
+      testMode: !w.enabled,
+      balanceXof: this.balance(w, profile.id),
+      frozen: w.frozen.includes(profile.id),
+      transfer,
+      usage: {
+        todayXof: sent.filter((t) => t.createdAt >= day).reduce((n, t) => n + t.amountXof, 0),
+        monthXof: sent.filter((t) => t.createdAt >= month).reduce((n, t) => n + t.amountXof, 0),
+      },
+      receiveCode: contact ? receivePayload(contact) : null,
+      topupAvailable: true,
+      cardTopupAvailable: true,
+      transactions: mine.slice(0, 50),
+    };
+  }
+
+  async findWalletRecipient(contact: string): Promise<WalletRecipient> {
+    const state = this.load();
+    const profile = this.walletAccess(state);
+    const user = this.findWalletUser(state, contact);
+    if (user.id === profile.id) throw new BackendError("self_transfer");
+    return { label: personLabel(user) };
+  }
+
+  async sendMoney(input: SendMoneyInput): Promise<WalletTransaction> {
+    const state = this.load();
+    const profile = this.walletAccess(state);
+    const w = this.wallet(state);
+    const done = w.transactions.find((t) => t.userId === profile.id && t.key === input.idempotencyKey);
+    if (done) return done;
+    const amount = parseAmount(input.amountXof);
+    if (amount === null) throw new BackendError("invalid_amount");
+    const recipient = this.findWalletUser(state, input.contact);
+    if (recipient.id === profile.id) throw new BackendError("self_transfer");
+    const pinOf = state.pins?.[profile.phone ?? profile.email ?? ""];
+    if (!validPinFormat(input.pin) || (pinOf !== undefined && pinOf !== input.pin)) throw new BackendError("invalid_pin");
+    const view = await this.myWallet();
+    if (!view.transfer.isActive) throw new BackendError("wallet_disabled");
+    const problem = checkLimits(amount, view.transfer, view.usage);
+    if (problem) throw new BackendError(problem);
+    if (view.frozen) throw new BackendError("wallet_frozen");
+    if (w.frozen.includes(recipient.id)) throw new BackendError("recipient_not_found");
+    const fee = quoteFee(amount, view.transfer);
+    const before = this.balance(w, profile.id);
+    if (before < fee.payableXof) throw new BackendError("insufficient_balance");
+    const after = before - fee.payableXof;
+    const received = this.balance(w, recipient.id) + amount;
+    const now = new Date().toISOString();
+    const trxId = newTrxId("transfer");
+    const remark = input.remark?.trim().slice(0, WALLET_REMARK_MAX) || null;
+    const me = (state.users ?? []).find((u) => u.id === profile.id) ?? { ...profile };
+    const send: DemoWallet["transactions"][number] = {
+      id: crypto.randomUUID(),
+      trxId,
+      type: "transfer",
+      attribute: "send",
+      status: "success",
+      amountXof: amount,
+      feeXof: fee.feeXof,
+      totalXof: fee.payableXof,
+      balanceAfterXof: after,
+      counterparty: personLabel(recipient),
+      remark,
+      createdAt: now,
+      userId: profile.id,
+      userLabel: [profile.fullName, profile.phone ?? profile.email].filter(Boolean).join(" · "),
+      adminId: null,
+      key: input.idempotencyKey,
+    };
+    const receive: DemoWallet["transactions"][number] = {
+      ...send,
+      id: crypto.randomUUID(),
+      attribute: "received",
+      feeXof: 0,
+      totalXof: amount,
+      balanceAfterXof: received,
+      counterparty: personLabel(me),
+      userId: recipient.id,
+      userLabel: [recipient.fullName, recipient.phone ?? recipient.email].filter(Boolean).join(" · "),
+      key: undefined,
+    };
+    this.save({
+      ...state,
+      wallet: {
+        ...w,
+        balances: { ...w.balances, [profile.id]: after, [recipient.id]: received },
+        transactions: [send, receive, ...w.transactions].slice(0, 500),
+      },
+    });
+    return send;
+  }
+
+  async adminWallet(filter: { type?: string; userId?: string } = {}): Promise<AdminWallet> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const w = this.wallet(state);
+    const users = state.users ?? demoUsers(new Date());
+    const ids = new Set([...users.map((u) => u.id), ...Object.keys(w.balances)]);
+    return {
+      enabled: w.enabled,
+      settings: w.settings,
+      totals: {
+        balancesXof: [...ids].reduce((n, id) => n + this.balance(w, id), 0),
+        wallets: ids.size,
+        feesXof: w.transactions.filter((t) => t.status === "success").reduce((n, t) => n + t.feeXof, 0),
+        transactions: new Set(w.transactions.map((t) => t.trxId)).size,
+      },
+      transactions: w.transactions
+        .filter((t) => (!filter.type || t.type === filter.type) && (!filter.userId || t.userId === filter.userId))
+        .map((t) => {
+          const copy = { ...t };
+          delete copy.key;
+          return copy;
+        }),
+    };
+  }
+
+  async features(): Promise<Features> {
+    return { parcels: this.load().parcelsEnabled !== false };
+  }
+
+  async setParcelsEnabled(enabled: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    this.save(withAudit({ ...state, parcelsEnabled: enabled }, { table: "parcels", action: "update", rowId: "parcels_enabled", changes: { enabled } }));
+  }
+
+  async setWalletEnabled(enabled: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    this.save(
+      withAudit({ ...state, wallet: { ...this.wallet(state), enabled } }, { table: "wallets", action: "update", rowId: "wallet_enabled", changes: { enabled } }),
+    );
+  }
+
+  async saveWalletFees(setting: WalletFeeSetting) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const s = validFeeSetting(setting);
+    if (!s) throw new BackendError("unknown", "bad_request");
+    const w = this.wallet(state);
+    this.save(
+      withAudit(
+        { ...state, wallet: { ...w, settings: w.settings.map((x) => (x.product === s.product ? s : x)) } },
+        { table: "wallets", action: "update", rowId: `fees:${s.product}`, changes: { ...s } },
+      ),
+    );
+  }
+
+  async startTopup(input: TopupInput): Promise<WalletTopup> {
+    const state = this.load();
+    const profile = this.walletAccess(state);
+    const amount = parseAmount(input.amountXof);
+    if (amount === null) throw new BackendError("invalid_amount");
+    if (amount < TOPUP_MIN_XOF) throw new BackendError("amount_too_small");
+    if (amount > TOPUP_MAX_XOF) throw new BackendError("amount_too_large");
+    if (input.network !== "card" && !normalizeTogoPhone(input.phone ?? "")) throw new BackendError("phone_not_allowed");
+    const topup: WalletTopup & { userId: string } = {
+      id: crypto.randomUUID(),
+      amountXof: amount,
+      network: input.network,
+      status: "pending",
+      failureReason: null,
+      createdAt: new Date().toISOString(),
+      paidAt: null,
+      userId: profile.id,
+    };
+    const w = this.wallet(state);
+    this.save({ ...state, wallet: { ...w, topups: [topup, ...(w.topups ?? [])].slice(0, 100) } });
+    // A card is paid on the provider's page; in the demo that "page" sends straight back.
+    const checkoutUrl = input.network === "card" ? `${window.location.origin}/portefeuille?topup=${topup.id}` : null;
+    return { ...demoTopupView(topup), checkoutUrl };
+  }
+
+  async refreshTopup(id: string): Promise<WalletTopup> {
+    const state = this.load();
+    const profile = this.walletAccess(state);
+    const w = this.wallet(state);
+    const topup = (w.topups ?? []).find((t) => t.id === id && t.userId === profile.id);
+    if (!topup) throw new BackendError("unknown", "not_found");
+    let done = topup;
+    if (topup.status === "pending") {
+      const now = new Date().toISOString();
+      done = { ...topup, status: "succeeded", paidAt: now };
+      const after = this.balance(w, profile.id) + topup.amountXof;
+      const tx: AdminWalletTransaction = {
+        id: crypto.randomUUID(),
+        trxId: newTrxId("topup"),
+        type: "topup",
+        attribute: "received",
+        status: "success",
+        amountXof: topup.amountXof,
+        feeXof: 0,
+        totalXof: topup.amountXof,
+        balanceAfterXof: after,
+        counterparty: TOPUP_NETWORK_LABEL[topup.network],
+        remark: null,
+        createdAt: now,
+        userId: profile.id,
+        userLabel: [profile.fullName, profile.phone ?? profile.email].filter(Boolean).join(" · "),
+        adminId: null,
+      };
+      this.save({
+        ...state,
+        wallet: {
+          ...w,
+          balances: { ...w.balances, [profile.id]: after },
+          transactions: [tx, ...w.transactions].slice(0, 500),
+          topups: (w.topups ?? []).map((t) => (t.id === id ? done : t)),
+        },
+      });
+    }
+    return demoTopupView(done);
+  }
+
+  async adjustWallet(input: WalletAdjustInput): Promise<WalletTransaction> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const amount = parseAmount(input.amountXof);
+    if (amount === null) throw new BackendError("invalid_amount");
+    const remark = input.remark.trim().slice(0, WALLET_REMARK_MAX);
+    if (!remark) throw new BackendError("unknown", "bad_request");
+    const user = this.findWalletUser(state, input.contact);
+    const w = this.wallet(state);
+    const after = this.balance(w, user.id) + (input.direction === "add" ? amount : -amount);
+    if (after < 0) throw new BackendError("insufficient_balance");
+    const tx: AdminWalletTransaction = {
+      id: crypto.randomUUID(),
+      trxId: newTrxId("admin_adjust"),
+      type: "admin_adjust",
+      attribute: input.direction === "add" ? "received" : "send",
+      status: "success",
+      amountXof: amount,
+      feeXof: 0,
+      totalXof: amount,
+      balanceAfterXof: after,
+      counterparty: null,
+      remark,
+      createdAt: new Date().toISOString(),
+      userId: user.id,
+      userLabel: [user.fullName, user.phone ?? user.email].filter(Boolean).join(" · "),
+      adminId: state.profile?.id ?? null,
+    };
+    this.save(
+      withAudit(
+        { ...state, wallet: { ...w, balances: { ...w.balances, [user.id]: after }, transactions: [tx, ...w.transactions].slice(0, 500) } },
+        { table: "wallets", action: "insert", rowId: tx.id, userId: user.id, changes: { direction: input.direction, amount_xof: amount, remark } },
+      ),
+    );
+    return tx;
+  }
+
+  async setWalletFrozen(contact: string, frozen: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const user = this.findWalletUser(state, contact);
+    const w = this.wallet(state);
+    const list = w.frozen.filter((id) => id !== user.id);
+    this.save(
+      withAudit(
+        { ...state, wallet: { ...w, frozen: frozen ? [...list, user.id] : list } },
+        { table: "wallets", action: "update", rowId: user.id, userId: user.id, changes: { status: frozen ? "frozen" : "active" } },
+      ),
+    );
   }
 }

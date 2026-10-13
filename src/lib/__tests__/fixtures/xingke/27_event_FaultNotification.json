@@ -1,0 +1,11 @@
+{
+  "messageId": "evt-0027",
+  "deviceId": "XK16-DEMO-000001",
+  "action": "FaultNotification",
+  "timestamp": "2026-10-13T02:00:00Z",
+  "data": {
+    "scope": "Device",
+    "errorCode": "HighTemperature",
+    "vendorCode": "10"
+  }
+}

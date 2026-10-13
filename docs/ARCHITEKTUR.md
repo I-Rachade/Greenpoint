@@ -27,12 +27,13 @@ Browser / Android-App (Next.js, statisch)  ──►  Cloudflare Worker "pointde
 | `station_staff` | welcher Nutzer welche Station melden darf |
 | `reservations` | Akku oder Ladeplatz, gültig 20 Minuten, mit 4-stelligem Abholcode (sieht nur der Fahrer) |
 | `charging_points` | einzelne Ladeplätze pro Station; bei vernetzten Steckdosen meldet das Gerät den Status |
-| `devices`, `device_messages`, `device_commands` | vernetzte Steckdosen (LoRa), ihre Rohmeldungen und Schaltbefehle, siehe [steckdosen-lora.md](steckdosen-lora.md) |
+| `devices`, `device_messages`, `device_commands`, `device_callbacks` | vernetzte Steckdosen (LoRa, Xingke-Cloud), ihre Rohmeldungen, Schaltbefehle und bereits verarbeiteten Callbacks, siehe [steckdosen-lora.md](steckdosen-lora.md) |
 | `payments` | Flooz/T-Money-Zahlungen pro Reservierung; Preise stehen an der Station (siehe [ZAHLUNGEN.md](ZAHLUNGEN.md)) |
 | `parcel_depots`, `parcel_sizes` | Paket-Depot pro Station und Größen/Preise (S–XL, bis 50 kg), im Backoffice pflegbar |
 | `parcels`, `parcel_events` | Pakete von Station A nach B: Absender/Empfänger per Telefon, Inhalt, Maße, Preis, Status (`deposited` → `in_transit` → `arrived` → `picked_up`, nach 7 Tagen `stored` → `released`/`auctioned`), 6-stelliger Abholcode (sieht nur der Empfänger) |
 | `parcel_notifications`, `parcel_code_failures` | gesendete E-Mails zu Paketen; Sperre nach 5 falschen Codes pro Station |
 | `partners`, `partner_api_keys`, `partner_bookings`, `partner_events` | Partner-API: andere Apps buchen Transporte mit einem Schlüssel (nur SHA-256 gespeichert) und bekommen jede Statusänderung als signierten Webhook, siehe [PARTNER-API.md](PARTNER-API.md) |
+| `wallets`, `wallet_transactions`, `wallet_fee_settings`, `app_settings` | Portefeuille (Cashplus Phase 1): Guthaben in FCFA pro Nutzer, Hauptbuch mit zwei Zeilen pro Überweisung (gleiche Nummer, Gebühr nur auf der zahlenden Seite), Gebühren und Limits je Produkt, Modul-Schalter `wallet_enabled` (Standard an; ausgeschaltet können nur Admins es nutzen). Jede Buchung ist ein D1-Batch; die Prüfung `balance_xof >= 0` lässt eine Überziehung samt Batch scheitern, ein Idempotenzschlüssel verhindert doppelte Zahlungen. Plan: `planung/cashplus-plan.md` im Projektordner |
 | `promotions` | Werbung für das Fenster beim Öffnen der App |
 | `audit_log` | Aktivitätsprotokoll: wer hat wann Status, Reservierungen, Rollen, Personal oder Stationen geändert (nur Admins lesen, siehe [BACKOFFICE.md](BACKOFFICE.md)) |
 

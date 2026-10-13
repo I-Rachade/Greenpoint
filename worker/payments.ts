@@ -1,6 +1,7 @@
 import { normalizeTogoPhone } from "../src/lib/phone";
 import type { Profile } from "../src/lib/types";
 import type { Env } from "./env";
+import { TOPUP_IDENTIFIER_PREFIX, topupCallback } from "./wallet-topups";
 import { ApiError, nowIso, readJson, uuid } from "./http";
 import {
   PAYMENT_NETWORKS,
@@ -218,9 +219,11 @@ async function readIdentifier(request: Request): Promise<string | null> {
   let value: unknown;
   if ((request.headers.get("Content-Type") ?? "").includes("application/json")) {
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-    value = body?.identifier;
+    value = body?.identifier ?? body?.cpm_trans_id;
   } else {
-    value = new URLSearchParams(await request.text()).get("identifier");
+    // PayGate sends "identifier", CinetPay (cards) "cpm_trans_id".
+    const form = new URLSearchParams(await request.text());
+    value = form.get("identifier") ?? form.get("cpm_trans_id");
   }
   return typeof value === "string" && value.length > 0 && value.length <= 100 ? value : null;
 }
@@ -237,6 +240,7 @@ export async function paymentCallback(env: Env, request: Request): Promise<Respo
   }
   const identifier = await readIdentifier(request);
   if (!identifier) return new Response("bad request", { status: 400 });
+  if (identifier.startsWith(TOPUP_IDENTIFIER_PREFIX)) return topupCallback(env, identifier);
 
   const p = await env.DB.prepare("select * from payments where identifier = ?").bind(identifier).first<PaymentRow>();
   // Unknown or already settled: acknowledge so the provider stops retrying.

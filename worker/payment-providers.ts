@@ -155,3 +155,115 @@ export function safeEqual(a: string, b: string): boolean {
   for (let i = 0; i < length; i++) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
   return diff === 0;
 }
+
+// Card payments (Visa / Mastercard) -------------------------------------------------
+// Cards need a page of the provider where the person types the card details, so
+// the provider gives back a checkout URL the app opens; the status is then
+// fetched like for mobile money. CinetPay (cinetpay.com) takes cards in Togo.
+// Field names follow CinetPay's API v2 documentation; check them against the
+// merchant dashboard once the account is active.
+
+export interface CheckoutRequest {
+  /** Our order reference (wallet_topups.identifier). */
+  identifier: string;
+  /** Whole francs; CinetPay wants a multiple of 5. */
+  amountXof: number;
+  description: string;
+  /** Where the provider sends the person back after paying. */
+  returnUrl: string;
+  /** Where the provider reports the result (our callback). */
+  notifyUrl: string;
+  customer: { name: string | null; email: string | null; phone: string | null };
+}
+
+export interface CheckoutProvider {
+  readonly name: string;
+  startCheckout(request: CheckoutRequest): Promise<{ checkoutUrl: string; providerReference?: string }>;
+  fetchStatus(identifier: string): Promise<ProviderStatus>;
+}
+
+const CINETPAY_BASE = "https://api-checkout.cinetpay.com/v2";
+
+/** Transaction statuses of CinetPay's check endpoint; anything else is still open. */
+const CINETPAY_STATUS: Record<string, PaymentStatus> = {
+  ACCEPTED: "succeeded",
+  REFUSED: "failed",
+  CANCELED: "cancelled",
+  CANCELLED: "cancelled",
+};
+
+export function cinetpayProvider(apiKey: string, siteId: string, fetchImpl: Fetch = fetch): CheckoutProvider {
+  async function post(path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const response = await fetchImpl(`${CINETPAY_BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apikey: apiKey, site_id: siteId, ...body }),
+    });
+    const json = (await response.json().catch(() => null)) as unknown;
+    if (typeof json !== "object" || json === null) throw new ProviderError(`cinetpay_http_${response.status}`);
+    return json as Record<string, unknown>;
+  }
+
+  return {
+    name: "cinetpay",
+    async startCheckout(request) {
+      const [first, ...rest] = (request.customer.name ?? "").trim().split(/\s+/);
+      const json = await post("/payment", {
+        transaction_id: request.identifier,
+        amount: request.amountXof,
+        currency: "XOF",
+        description: request.description,
+        notify_url: request.notifyUrl,
+        return_url: request.returnUrl,
+        channels: "CREDIT_CARD",
+        lang: "fr",
+        // Card payments require the holder's details; the bank checks them, not us.
+        customer_name: first || "Client",
+        customer_surname: rest.join(" ") || "poinderecharge",
+        customer_email: request.customer.email ?? "noreply@poinderecharge.com",
+        customer_phone_number: request.customer.phone ?? "",
+        customer_address: "Lomé",
+        customer_city: "Lomé",
+        customer_country: "TG",
+        customer_state: "TG",
+        customer_zip_code: "00228",
+      });
+      const data = json.data as Record<string, unknown> | undefined;
+      if (String(json.code) !== "201" || typeof data?.payment_url !== "string") {
+        throw new ProviderError(`cinetpay_${String(json.code ?? "error")}`);
+      }
+      return { checkoutUrl: data.payment_url, providerReference: typeof data.payment_token === "string" ? data.payment_token : undefined };
+    },
+    async fetchStatus(identifier) {
+      const json = await post("/payment/check", { transaction_id: identifier });
+      const data = json.data as Record<string, unknown> | undefined;
+      const status = CINETPAY_STATUS[String(data?.status ?? "")] ?? "pending";
+      return {
+        status,
+        providerReference: data?.operator_id == null ? undefined : String(data.operator_id),
+        failureReason: status === "failed" || status === "cancelled" ? `cinetpay_${String(data?.status).toLowerCase()}` : undefined,
+      };
+    },
+  };
+}
+
+/** Simulated card checkout: the "checkout page" is the return URL itself, and the payment counts as done. */
+export function mockCheckoutProvider(): CheckoutProvider {
+  return {
+    name: "mock",
+    async startCheckout(request) {
+      return { checkoutUrl: request.returnUrl, providerReference: `mock_${request.identifier}` };
+    },
+    async fetchStatus(identifier) {
+      return { status: "succeeded", providerReference: `mock_${identifier}` };
+    },
+  };
+}
+
+/** `CARD_PROVIDER=cinetpay` with both keys switches card payments on; anything else runs the simulation. */
+export function cardProviderFromEnv(env: (key: string) => string | undefined, fetchImpl: Fetch = fetch): CheckoutProvider {
+  const apiKey = env("CINETPAY_API_KEY");
+  const siteId = env("CINETPAY_SITE_ID");
+  if (env("CARD_PROVIDER") === "cinetpay" && apiKey && siteId) return cinetpayProvider(apiKey, siteId, fetchImpl);
+  return mockCheckoutProvider();
+}

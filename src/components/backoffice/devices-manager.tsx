@@ -81,7 +81,7 @@ export function DevicesManager() {
       ) : (
         <ul className="space-y-2">
           {devices.map((d) => {
-            const switchable = canSwitch(d.externalId);
+            const switchable = canSwitch(d);
             return (
               <li key={d.externalId} className={`${card} space-y-3`}>
                 <div className="flex flex-wrap items-start justify-between gap-2">
@@ -215,7 +215,15 @@ function DeviceForm({
       </label>
       <label className={label}>
         {f.link}
-        <select value={input.link} onChange={(e) => set({ link: e.target.value as DeviceInput["link"] })} className={field}>
+        <select
+          value={input.link}
+          onChange={(e) => {
+            const link = e.target.value as DeviceInput["link"];
+            // Sockets on a vendor cloud are Xingke ones so far; the name enables switching.
+            set(link === "vendor_cloud" && !input.vendor ? { link, vendor: "Xingke" } : { link });
+          }}
+          className={field}
+        >
           {DEVICE_LINKS.map((l) => (
             <option key={l} value={l}>
               {links[l]}

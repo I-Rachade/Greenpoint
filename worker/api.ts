@@ -1,4 +1,5 @@
-import { withinOpeningHours } from "../src/lib/availability";
+import { offersCharging, offersSwap, withinOpeningHours } from "../src/lib/availability";
+import { depotPoints, hasAnyPoint } from "../src/lib/station-points";
 import {
   ADMIN_HISTORY_DAYS,
   type AdminSnapshot,
@@ -45,6 +46,7 @@ import {
   stopOutlet,
 } from "./devices";
 import type { DeviceInput } from "../src/lib/iot/devices";
+import { handleXingkeCallback } from "./xingke";
 import type { ParcelDepotInput, ParcelInput, ParcelMeasures } from "../src/lib/parcels";
 import {
   adminParcels,
@@ -57,6 +59,7 @@ import {
   parcelInfo,
   pickUpParcel,
   resendPickupCode,
+  depotStatements,
   saveDepot,
   saveSizes,
   stationParcels,
@@ -105,8 +108,12 @@ import {
   stationBookings,
 } from "./partners";
 import type { Env } from "./env";
+import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setParcelsEnabled } from "./features";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
+import { refreshTopup, startTopup } from "./wallet-topups";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
+import { adjustBalance, adminWallet, findRecipient, getWallet, saveFeeSetting, sendMoney, setWalletEnabled, setWalletFrozen } from "./wallet";
+import type { WalletFeeSetting } from "../src/lib/wallet";
 
 // Rows as stored in D1 (snake_case, booleans as 0/1, JSON as text).
 
@@ -132,6 +139,11 @@ interface StationRow {
   updated_at: string | null;
   reserved_slots: number;
   reserved_batteries: number;
+  /** Missing before migration 0013. */
+  has_battery?: number;
+  depot_active: number | null;
+  depot_counter: number | null;
+  depot_lockers: number | null;
 }
 
 interface ReservationRow {
@@ -176,7 +188,7 @@ function toStationView(r: StationRow): StationView & { isActive: boolean } {
     address: r.address,
     lat: r.lat,
     lng: r.lng,
-    kind: r.kind,
+    kind: r.has_battery === 0 ? "parcel" : r.kind,
     vehicleTypes,
     chargingSlots: r.charging_slots,
     batteryCapacity: r.battery_capacity,
@@ -192,6 +204,7 @@ function toStationView(r: StationRow): StationView & { isActive: boolean } {
     },
     reservedSlots: r.reserved_slots,
     reservedBatteries: r.reserved_batteries,
+    parcelPoint: r.depot_active ? { counter: r.depot_counter !== 0, lockers: r.depot_lockers ?? 0 } : null,
   };
 }
 
@@ -228,11 +241,13 @@ function toPromotion(r: PromotionRow): Promotion {
 const STATION_SELECT = `
   select s.*, o.name as operator_name, o.is_own,
          st.is_open, st.free_slots, st.full_batteries, st.updated_at,
+         pd.is_active as depot_active, pd.has_counter as depot_counter, pd.lockers as depot_lockers,
          (select count(*) from reservations r where r.station_id = s.id and r.status = 'active' and r.expires_at > ?1 and r.type = 'slot') as reserved_slots,
          (select count(*) from reservations r where r.station_id = s.id and r.status = 'active' and r.expires_at > ?1 and r.type = 'battery') as reserved_batteries
   from stations s
   left join operators o on o.id = s.operator_id
-  left join station_status st on st.station_id = s.id`;
+  left join station_status st on st.station_id = s.id
+  left join parcel_depots pd on pd.station_id = s.id`;
 
 /** Everything a request handler needs. */
 class Ctx {
@@ -348,7 +363,7 @@ async function reserve(c: Ctx, stationId: string, type: ReservationType): Promis
   const [station] = await c.stations("where s.id = ?2 and s.is_active = 1", stationId);
   if (!station) throw new ApiError("station_not_found", 404);
   if (!station.status.isOpen || !withinOpeningHours(station.openingHours)) throw new ApiError("station_closed");
-  if ((type === "slot" && station.kind === "swap") || (type === "battery" && station.kind === "charging")) {
+  if ((type === "slot" && !offersCharging(station.kind)) || (type === "battery" && !offersSwap(station.kind))) {
     throw new ApiError("service_not_offered");
   }
 
@@ -527,7 +542,7 @@ async function listOperators(c: Ctx) {
 
 function stationRow(input: StationInput) {
   if (!input || typeof input.name !== "string" || !input.name.trim()) throw new ApiError("bad_request");
-  if (!["charging", "swap", "both"].includes(input.kind)) throw new ApiError("bad_request");
+  if (!["charging", "swap", "both", "parcel"].includes(input.kind)) throw new ApiError("bad_request");
   const lat = Number(input.lat);
   const lng = Number(input.lng);
   if (!(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180)) throw new ApiError("bad_request");
@@ -537,23 +552,42 @@ function stationRow(input: StationInput) {
     address: String(input.address ?? ""),
     lat,
     lng,
-    kind: input.kind,
+    // The column only knows battery services; a parcel point keeps a valid value and has_battery = 0.
+    kind: input.kind === "parcel" ? "charging" : input.kind,
+    has_battery: input.kind === "parcel" ? 0 : 1,
     vehicle_types: JSON.stringify((input.vehicleTypes ?? []).filter((v) => VEHICLE_TYPES.includes(v))),
-    charging_slots: int(input.chargingSlots),
     battery_capacity: int(input.batteryCapacity),
     opening_hours: String(input.openingHours ?? ""),
     phone: input.phone ? String(input.phone) : null,
   };
 }
 
+/** Charging places of station ?{station}: its connected outlets. */
+const CONNECTED_OUTLETS_SQL = (station: string) =>
+  `(select count(*) from charging_points where station_id = ${station} and device_id is not null)`;
+
+/**
+ * Creates or updates a station, and its parcel depot when the input has one. A station must
+ * offer at least one of swap, charging, parcel counter or parcel lockers (src/lib/station-points.ts).
+ */
 async function saveStation(c: Ctx, id: string | null, input: StationInput) {
   const admin = await c.requireAdmin();
   const row = stationRow(input);
+  const depotInput = input.parcelDepot ?? null;
+  const existingDepot = id
+    ? await c.db.prepare("select is_active, has_counter, lockers from parcel_depots where station_id = ?").bind(id).first<{ is_active: number; has_counter: number | null; lockers: number }>()
+    : null;
+  const depot = depotPoints(
+    depotInput ?? (existingDepot && { isActive: !!existingDepot.is_active, counter: existingDepot.has_counter !== 0, lockers: existingDepot.lockers }),
+  );
+  if (!hasAnyPoint({ swap: offersSwap(input.kind), charging: offersCharging(input.kind), ...depot })) {
+    throw new ApiError("station_without_point");
+  }
   const now = nowIso();
   if (id) {
     const before = await c.db
       .prepare(
-        "select operator_id, name, address, lat, lng, kind, vehicle_types, charging_slots, battery_capacity, opening_hours, phone from stations where id = ?",
+        "select operator_id, name, address, lat, lng, kind, has_battery, vehicle_types, battery_capacity, opening_hours, phone from stations where id = ?",
       )
       .bind(id)
       .first<Record<string, unknown>>();
@@ -561,11 +595,12 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
     await c.db.batch([
       c.db
         .prepare(
-          `update stations set operator_id = ?, name = ?, address = ?, lat = ?, lng = ?, kind = ?, vehicle_types = ?,
-           charging_slots = ?, battery_capacity = ?, opening_hours = ?, phone = ? where id = ?`,
+          `update stations set operator_id = ?, name = ?, address = ?, lat = ?, lng = ?, kind = ?, has_battery = ?, vehicle_types = ?,
+           battery_capacity = ?, opening_hours = ?, phone = ?, charging_slots = ${CONNECTED_OUTLETS_SQL("stations.id")} where id = ?`,
         )
         .bind(...Object.values(row), id),
       c.audit(admin.id, "stations", "update", id, diff(before, row), { stationId: id }),
+      ...(depotInput ? await depotStatements(c, admin.id, id, depotInput) : []),
     ]);
     return;
   }
@@ -573,15 +608,24 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
   await c.db.batch([
     c.db
       .prepare(
-        `insert into stations (id, operator_id, name, address, lat, lng, kind, vehicle_types, charging_slots,
-         battery_capacity, opening_hours, phone, is_active, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+        `insert into stations (id, operator_id, name, address, lat, lng, kind, has_battery, vehicle_types,
+         battery_capacity, opening_hours, phone, charging_slots, is_active, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?)`,
       )
       .bind(newId, ...Object.values(row), now),
+    // No connected socket yet, so no free charging place.
     c.db
-      .prepare("insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values (?, 1, ?, ?, ?)")
-      .bind(newId, row.charging_slots, row.battery_capacity, now),
+      .prepare("insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values (?, 1, 0, ?, ?)")
+      .bind(newId, row.battery_capacity, now),
     c.audit(admin.id, "stations", "insert", newId, row, { stationId: newId }),
+    ...(depotInput ? await depotStatements(c, admin.id, newId, depotInput) : []),
   ]);
+}
+
+/** Active stations for the app. With the parcel module off, parcel points are left out. */
+async function publicStations(c: Ctx) {
+  const stations = await c.stations("where s.is_active = 1");
+  if (await parcelsEnabled(c.env)) return stations;
+  return stations.filter((s) => s.kind !== "parcel").map((s) => ({ ...s, parcelPoint: null }));
 }
 
 async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
@@ -851,7 +895,7 @@ async function media(c: Ctx, key: string): Promise<Response> {
 type Handler = (c: Ctx, params: string[]) => Promise<unknown>;
 
 const ROUTES: [string, RegExp, Handler][] = [
-  ["GET", /^\/api\/stations$/, (c) => c.stations("where s.is_active = 1")],
+  ["GET", /^\/api\/stations$/, (c) => publicStations(c)],
   ["GET", /^\/api\/operators$/, (c) => listOperators(c)],
   ["GET", /^\/api\/me$/, (c) => c.user()],
   // Auth bodies name the phone number or e-mail address "contact"; "phone" is the
@@ -950,6 +994,35 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
   ["GET", /^\/api\/stations\/([\w-]+)\/reservations$/, (c, [id]) => stationReservations(c, id)],
   ["GET", /^\/api\/promotions\/current$/, (c) => currentPromotion(c)],
+  // Modules the backoffice switches off (worker/features.ts)
+  ["GET", /^\/api\/features$/, (c) => getFeatures(c.env)],
+  ["POST", /^\/api\/admin\/features\/parcels$/, async (c) => {
+    const admin = await c.requireAdmin();
+    const { enabled } = await readJson<{ enabled?: boolean }>(c.request);
+    return setParcelsEnabled(c.env, admin, !!enabled);
+  }],
+  // Wallet (worker/wallet.ts)
+  ["GET", /^\/api\/wallet$/, async (c) => getWallet(c.env, await c.requireUser())],
+  ["GET", /^\/api\/wallet\/recipient$/, async (c) => findRecipient(c.env, await c.requireUser(), c.url.searchParams.get("contact"))],
+  ["POST", /^\/api\/wallet\/send$/, async (c) => sendMoney(c.env, await c.requireUser(), c.request)],
+  ["POST", /^\/api\/wallet\/topups$/, async (c) => startTopup(c.env, await c.requireUser(), c.request)],
+  ["POST", /^\/api\/wallet\/topups\/([\w-]+)\/refresh$/, async (c, [id]) => refreshTopup(c.env, await c.requireUser(), id)],
+  ["GET", /^\/api\/admin\/wallet$/, async (c) => {
+    await c.requireAdmin();
+    return adminWallet(c.env, c.url);
+  }],
+  ["POST", /^\/api\/admin\/wallet\/enabled$/, async (c) => {
+    const admin = await c.requireAdmin();
+    const { enabled } = await readJson<{ enabled?: boolean }>(c.request);
+    return setWalletEnabled(c.env, admin, !!enabled);
+  }],
+  ["POST", /^\/api\/admin\/wallet\/fees$/, async (c) => saveFeeSetting(c.env, await c.requireAdmin(), await readJson<WalletFeeSetting>(c.request))],
+  ["POST", /^\/api\/admin\/wallet\/adjust$/, async (c) => adjustBalance(c.env, await c.requireAdmin(), c.request)],
+  ["POST", /^\/api\/admin\/wallet\/freeze$/, async (c) => {
+    const admin = await c.requireAdmin();
+    const { contact, frozen } = await readJson<{ contact?: string; frozen?: boolean }>(c.request);
+    return setWalletFrozen(c.env, admin, contact, !!frozen);
+  }],
   ["GET", /^\/api\/payments\/mine$/, async (c) => myPayments(c.env, await c.requireUser())],
   ["POST", /^\/api\/payments$/, async (c) => startPayment(c.env, await c.requireUser(), c.request)],
   ["POST", /^\/api\/payments\/([\w-]+)\/refresh$/, async (c, [id]) => refreshPayment(c.env, await c.requireUser(), id)],
@@ -1161,9 +1234,9 @@ const ROUTES: [string, RegExp, Handler][] = [
     async (c, [encoded, outlet, action]) => {
       const admin = await c.requireAdmin();
       const device = decodeURIComponent(encoded);
-      if (action === "stop") return stopOutlet(c.db, device, Number(outlet), admin.id);
+      if (action === "stop") return stopOutlet(c.env, device, Number(outlet), admin.id);
       const { minutes } = await readJson<{ minutes?: number }>(c.request).catch(() => ({ minutes: undefined }));
-      return startOutlet(c.db, device, Number(outlet), admin.id, minutes);
+      return startOutlet(c.env, device, Number(outlet), admin.id, minutes);
     },
   ],
 ];
@@ -1183,8 +1256,12 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     const fileMatch = /^\/api\/admin\/driver-files\/((?:drivers|proofs)\/[\w/.-]+)$/.exec(url.pathname);
     if (fileMatch && request.method === "GET") return await driverFile(c, fileMatch[1]);
 
+    if (url.pathname === "/api/devices/xingke") return await handleXingkeCallback(request, env);
     // Other apps authenticate with their API key (worker/partners.ts).
-    if (url.pathname.startsWith(`${PARTNER_API_BASE}/`) || url.pathname === PARTNER_API_BASE) return await handlePartnerApi(request, env);
+    const partnerApi = url.pathname.startsWith(`${PARTNER_API_BASE}/`) || url.pathname === PARTNER_API_BASE;
+    // A switched-off parcel module answers as if it did not exist; the backoffice keeps its pages.
+    if ((partnerApi || PARCEL_ROUTE.test(url.pathname)) && !(await parcelsEnabled(env))) return json({ error: "not_found" }, 404);
+    if (partnerApi) return await handlePartnerApi(request, env);
     for (const [method, pattern, handler] of ROUTES) {
       const m = pattern.exec(url.pathname);
       if (!m) continue;

@@ -18,7 +18,9 @@ import { format } from "@/lib/i18n/format";
 import { RESERVATION_MINUTES, type ReservationType, type StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { AvailabilityBadge } from "./availability-badge";
+import { BatteryIcon, BoltIcon, BoxIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, StoreIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
+import { FavoriteButton } from "./station-card";
 
 const OUTLET_COLORS: Record<ChargingPointDisplay, string> = {
   free: "bg-green-600",
@@ -32,7 +34,8 @@ const OUTLET_COLORS: Record<ChargingPointDisplay, string> = {
 interface Props {
   station: StationView;
   distance: number | null;
-  onClose: () => void;
+  /** Shows a close button (map side panel); the full station screen has a back arrow instead. */
+  onClose?: () => void;
   onChanged: () => void;
 }
 
@@ -62,70 +65,104 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
     }
   }
 
+  const battery = station.kind !== "parcel";
   const slots = availableSlots(station, now);
   const points = station.chargingPoints ?? [];
   const connected = points.some((p) => p.deviceId !== null);
   const batteries = availableBatteries(station);
 
+  const tile = (value: number, total: number, label: string, Icon: typeof BoltIcon) => (
+    <div className="rounded-2xl bg-gp-green/10 p-3 dark:bg-gp-green/15">
+      <div className="flex items-center gap-2 text-gp-green-dark dark:text-gp-green">
+        <Icon size={20} />
+        <span className="text-2xl font-bold">
+          {value}
+          <span className="text-sm font-normal text-gp-muted"> / {total}</span>
+        </span>
+      </div>
+      <div className="mt-0.5 text-xs text-gp-muted dark:text-zinc-400">{label}</div>
+    </div>
+  );
+  const infoRow = (Icon: typeof BoltIcon, label: string, value: string) => (
+    <li className="flex items-start gap-3 py-2.5">
+      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gp-green/10 text-gp-green-dark dark:text-gp-green">
+        <Icon size={17} />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-xs text-gp-muted dark:text-zinc-400">{label}</span>
+        <span className="block text-sm">{value}</span>
+      </span>
+    </li>
+  );
+  const primary =
+    "flex flex-1 items-center justify-center gap-2 rounded-full bg-gp-green-dark px-4 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-40";
+  const secondary =
+    "flex flex-1 items-center justify-center gap-2 rounded-full border-2 border-gp-green-dark px-4 py-2.5 text-sm font-semibold text-gp-green-dark dark:border-gp-green dark:text-gp-green";
+
   return (
-    <div className="space-y-3 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">{station.name}</h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+    <div className="space-y-4 p-4">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-xl font-semibold">{station.name}</h2>
+          <p className="text-sm text-gp-muted dark:text-zinc-400">
             {station.address}
             {distance !== null && ` · ${formatDistance(distance)}`}
           </p>
         </div>
-        <button type="button" onClick={onClose} className="text-2xl leading-none text-zinc-500" aria-label={t.station.close}>
-          ×
-        </button>
+        <FavoriteButton stationId={station.id} />
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-10 w-10 items-center justify-center rounded-full text-2xl leading-none text-gp-muted hover:bg-black/5 dark:hover:bg-white/10"
+            aria-label={t.station.close}
+          >
+            ×
+          </button>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <AvailabilityBadge value={stationAvailability(station)} />
-        <span className="rounded-full bg-zinc-100 px-2 py-0.5 dark:bg-zinc-800">{t.kinds[station.kind]}</span>
+        <span className="rounded-full bg-gp-border/60 px-2 py-0.5 dark:bg-white/10">{t.kinds[station.kind]}</span>
         {station.vehicleTypes.map((v) => (
-          <span key={v} className="rounded-full bg-zinc-100 px-2 py-0.5 dark:bg-zinc-800">
+          <span key={v} className="rounded-full bg-gp-border/60 px-2 py-0.5 dark:bg-white/10">
             {t.vehicles[v]}
           </span>
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        {offersCharging(station.kind) && (
-          <div className="rounded-lg bg-gp-green/10 p-3 dark:bg-gp-green/15">
-            <div className="text-2xl font-bold text-gp-green-dark dark:text-gp-green">
-              {slots}
-              <span className="text-sm font-normal text-zinc-500"> / {station.chargingSlots}</span>
-            </div>
-            <div className="text-xs text-zinc-600 dark:text-zinc-400">{t.station.freeSlots}</div>
-          </div>
-        )}
-        {offersSwap(station.kind) && (
-          <div className="rounded-lg bg-gp-green/10 p-3 dark:bg-gp-green/15">
-            <div className="text-2xl font-bold text-gp-green-dark dark:text-gp-green">
-              {batteries}
-              <span className="text-sm font-normal text-zinc-500"> / {station.batteryCapacity}</span>
-            </div>
-            <div className="text-xs text-zinc-600 dark:text-zinc-400">{t.station.fullBatteries}</div>
-          </div>
-        )}
-      </div>
+      {battery && (
+        <div className="grid grid-cols-2 gap-3">
+          {offersCharging(station.kind) && tile(slots, station.chargingSlots, t.station.freeSlots, BoltIcon)}
+          {offersSwap(station.kind) && tile(batteries, station.batteryCapacity, t.station.fullBatteries, BatteryIcon)}
+        </div>
+      )}
+
+      {station.parcelPoint && (station.parcelPoint.counter || station.parcelPoint.lockers > 0) && (
+        <div className="rounded-2xl border border-gp-border bg-gp-surface px-3 dark:border-white/10">
+          <h3 className="pt-3 text-sm font-semibold">{t.station.services}</h3>
+          <ul className="divide-y divide-gp-border dark:divide-white/10">
+            {station.parcelPoint.counter && infoRow(BoxIcon, t.station.parcelCounter, "✓")}
+            {station.parcelPoint.lockers > 0 &&
+              infoRow(BoxIcon, t.station.parcelLockers, format(t.station.lockers, { n: station.parcelPoint.lockers }))}
+          </ul>
+        </div>
+      )}
 
       {points.length > 0 && (
-        <div>
-          <h3 className="text-sm font-medium">{connected ? t.station.liveOutlets : t.station.outlets}</h3>
-          <ul className="mt-1 divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+        <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 dark:border-white/10">
+          <h3 className="text-sm font-semibold">{connected ? t.station.liveOutlets : t.station.outlets}</h3>
+          <ul className="mt-1 divide-y divide-gp-border text-sm dark:divide-white/10">
             {points.map((p) => {
               const shown = displayStatus(p, now);
               return (
-                <li key={p.id} className="flex items-center justify-between gap-2 py-1.5">
+                <li key={p.id} className="flex items-center justify-between gap-2 py-2">
                   <span className="flex items-center gap-2">
                     <span className={`h-2.5 w-2.5 rounded-full ${OUTLET_COLORS[shown]}`} aria-hidden />
                     {p.label}
                   </span>
-                  <span className="text-zinc-600 dark:text-zinc-400">
+                  <span className="text-gp-muted dark:text-zinc-400">
                     {t.station.outletStatus[shown]}
                     {shown === "charging" && p.powerWatts ? ` · ${p.powerWatts} W` : ""}
                   </span>
@@ -136,67 +173,66 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
         </div>
       )}
 
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-        <dt className="text-zinc-500">{t.station.openingHours}</dt>
-        <dd>{station.openingHours || "–"}</dd>
-        <dt className="text-zinc-500">{t.station.operator}</dt>
-        <dd>{station.operatorName}</dd>
-      </dl>
-      <p className="text-xs text-zinc-500">
-        {format(t.station.updated, { time: relativeTime(station.status.updatedAt, now) })}
-      </p>
+      <div className="rounded-2xl border border-gp-border bg-gp-surface px-3 dark:border-white/10">
+        <h3 className="pt-3 text-sm font-semibold">{t.ui.detail.about}</h3>
+        <ul className="divide-y divide-gp-border dark:divide-white/10">
+          {infoRow(ClockIcon, t.station.openingHours, station.openingHours || "–")}
+          {infoRow(PinIcon, t.ui.detail.address, station.address)}
+          {infoRow(StoreIcon, t.station.operator, station.operatorName)}
+        </ul>
+      </div>
+
+      {battery && (
+        <p className="text-xs text-gp-muted">
+          {format(t.station.updated, { time: relativeTime(station.status.updatedAt, now) })}
+        </p>
+      )}
       {station.status.isOpen && !withinOpeningHours(station.openingHours, now) && (
         <p className="text-sm text-red-700 dark:text-red-400">{t.station.outsideHours}</p>
       )}
-      {isStale(station, now) && <p className="text-sm text-amber-700 dark:text-amber-400">{t.station.stale}</p>}
+      {battery && isStale(station, now) && <p className="text-sm text-amber-700 dark:text-amber-400">{t.station.stale}</p>}
 
-      <div className="flex flex-wrap gap-2">
-        <a
-          href={directionsUrl(station)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-full border border-gp-green-dark px-4 py-2 text-sm font-medium text-gp-green-dark dark:text-gp-green"
-        >
+      <div className="flex gap-2">
+        <a href={directionsUrl(station)} target="_blank" rel="noopener noreferrer" className={secondary}>
+          <NavigateIcon size={18} />
           {t.station.directions}
         </a>
         {station.phone && (
-          <a href={`tel:${station.phone}`} className="rounded-full border border-zinc-300 px-4 py-2 text-sm dark:border-zinc-700">
+          <a href={`tel:${station.phone}`} className={secondary}>
+            <PhoneIcon size={18} />
             {t.station.call}
           </a>
         )}
       </div>
 
-      {profile ? (
+      {!battery ? null : profile ? (
         <div className="flex flex-wrap gap-2">
           {offersSwap(station.kind) && (
-            <button
-              type="button"
-              disabled={busy || batteries === 0}
-              onClick={() => reserve("battery")}
-              className="rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
-            >
+            <button type="button" disabled={busy || batteries === 0} onClick={() => reserve("battery")} className={primary}>
+              <BatteryIcon size={18} />
               {t.station.reserveBattery}
             </button>
           )}
           {offersCharging(station.kind) && (
-            <button
-              type="button"
-              disabled={busy || slots === 0}
-              onClick={() => reserve("slot")}
-              className="rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
-            >
+            <button type="button" disabled={busy || slots === 0} onClick={() => reserve("slot")} className={primary}>
+              <BoltIcon size={18} />
               {t.station.reserveSlot}
             </button>
           )}
         </div>
       ) : (
-        <Link href="/login" className="inline-block rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white">
+        <Link href="/login" className={primary}>
           {t.station.loginToReserve}
         </Link>
       )}
 
       {message && (
-        <p role="status" className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>
+        <p
+          role="status"
+          className={`rounded-xl px-3 py-2 text-sm ${
+            message.ok ? "bg-gp-green/15 text-gp-forest dark:text-gp-green" : "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300"
+          }`}
+        >
           {message.text}
         </p>
       )}

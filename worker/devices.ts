@@ -2,7 +2,15 @@ import { DEVICE_OFFLINE_MINUTES } from "../src/lib/iot/charging-points";
 import { deviceKeyError, handleDeviceRequest, type Ingest } from "../src/lib/iot/device-events";
 import { xingkeOrderNumber, xingkeStartCommand, xingkeStopCommand } from "../src/lib/iot/xingke-commands";
 import {
-  canSwitch,
+  XINGKE_ID,
+  xingkeMessageId,
+  xingkeStartRequest,
+  xingkeStopRequest,
+  xingkeTransactionId,
+  type XingkeCommand,
+} from "../src/lib/iot/xingke-cloud";
+import {
+  commandRoute,
   normalizeDeviceId,
   outletLabel,
   validDeviceInput,
@@ -13,6 +21,7 @@ import {
 import type { ChargingPoint, ChargingPointStatus } from "../src/lib/types";
 import type { Env } from "./env";
 import { ApiError, nowIso, uuid } from "./http";
+import { dispatchXingkeCommand } from "./xingke";
 
 // Connected sockets (e.g. LoRa). See docs/steckdosen-lora.md.
 
@@ -175,13 +184,28 @@ function auditDevice(db: D1Database, actor: string, action: "insert" | "delete",
 }
 
 /** Recounts a station's free slots from its live outlets, if it still has any. */
-function recountFreeSlots(db: D1Database, stationId: string) {
+export function recountFreeSlots(db: D1Database, stationId: string) {
   return db
     .prepare(
       `update station_status set free_slots = ${liveFreePointsSql("?1", "?2")}, updated_at = ?3
        where station_id = ?1 and ${hasConnectedPointsSql("?1")}`,
     )
     .bind(stationId, onlineSince(), nowIso());
+}
+
+/**
+ * A station's charging places are its connected outlets: sets charging_slots to their
+ * number and keeps the staff counter within it.
+ */
+export function syncChargingSlots(db: D1Database, stationId: string): D1PreparedStatement[] {
+  return [
+    db
+      .prepare("update stations set charging_slots = (select count(*) from charging_points where station_id = ?1 and device_id is not null) where id = ?1")
+      .bind(stationId),
+    db
+      .prepare("update station_status set free_slots = min(free_slots, (select charging_slots from stations where id = ?1)) where station_id = ?1")
+      .bind(stationId),
+  ];
 }
 
 /** Registers a socket and creates one charging point per outlet, labelled "<last 4 of id>-<outlet>". */
@@ -197,10 +221,15 @@ export async function createDevice(db: D1Database, input: DeviceInput, actor: st
   const now = nowIso();
   const vendor = String(input.vendor ?? "").trim().slice(0, 80);
   const model = String(input.model ?? "").trim().slice(0, 80);
+  // The vendor's API wants the id exactly as typed.
+  const vendorRef = String(input.externalId).trim();
+  if (commandRoute({ externalId, vendor, link }) === "xingke_cloud" && !XINGKE_ID.test(vendorRef)) throw new ApiError("invalid_device");
   const statements = [
     db
-      .prepare("insert into devices (external_id, station_id, vendor, model, link, outlets, created_at) values (?, ?, ?, ?, ?, ?, ?)")
-      .bind(externalId, stationId, vendor, model, link, outlets, now),
+      .prepare(
+        "insert into devices (external_id, station_id, vendor, model, link, outlets, vendor_ref, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(externalId, stationId, vendor, model, link, outlets, vendorRef, now),
   ];
   for (let n = 1; n <= outlets; n++) {
     statements.push(
@@ -210,7 +239,16 @@ export async function createDevice(db: D1Database, input: DeviceInput, actor: st
     );
   }
   // Nothing is offered until the device reports.
-  statements.push(recountFreeSlots(db, stationId));
+  statements.push(...syncChargingSlots(db, stationId), recountFreeSlots(db, stationId));
+  // A connected socket makes the station a charging point.
+  statements.push(
+    db
+      .prepare(
+        `update stations set kind = case when has_battery = 0 or kind = 'charging' then 'charging' else 'both' end, has_battery = 1
+         where id = ? and not (has_battery = 1 and kind in ('charging', 'both'))`,
+      )
+      .bind(stationId),
+  );
   statements.push(auditDevice(db, actor, "insert", externalId, stationId, { device: externalId, outlets, vendor, model, link }));
   try {
     await db.batch(statements);
@@ -264,6 +302,7 @@ export async function deleteDevice(db: D1Database, rawId: string, actor: string)
     db.prepare("delete from device_commands where external_id = ?").bind(externalId),
     db.prepare("delete from charging_points where device_id = ?").bind(externalId),
     db.prepare("delete from devices where external_id = ?").bind(externalId),
+    ...syncChargingSlots(db, device.station_id),
     recountFreeSlots(db, device.station_id),
     auditDevice(db, actor, "delete", externalId, device.station_id, { device: externalId, outlets: device.outlets }),
   ]);
@@ -275,48 +314,77 @@ export async function deleteDevice(db: D1Database, rawId: string, actor: string)
 /** A command not fetched by the bridge within this time is dropped, so an outlet never switches on late. */
 const COMMAND_TTL_SECONDS = 120;
 
-async function commandTarget(db: D1Database, rawId: string, outlet: number) {
-  const externalId = normalizeDeviceId(rawId);
-  const point = await db
-    .prepare("select id from charging_points where device_id = ? and outlet = ?")
-    .bind(externalId, outlet)
-    .first();
-  if (!point) throw new ApiError("not_found", 404);
-  if (!canSwitch(externalId)) throw new ApiError("bad_request"); // only Xingke sockets take commands so far
-  return externalId;
+interface CommandTarget {
+  externalId: string;
+  /** The id the vendor's API knows the device by. */
+  vendorRef: string;
+  route: "xingke_cloud" | "xingke_bridge";
 }
 
-/** Queues "switch outlet on", until full or for `minutes`. */
-export async function startOutlet(db: D1Database, rawId: string, outlet: number, actor: string, minutes?: number) {
-  const externalId = await commandTarget(db, rawId, outlet);
-  if (minutes !== undefined && !(Number.isInteger(minutes) && minutes >= 1 && minutes <= 998)) throw new ApiError("bad_request");
-  const order = xingkeOrderNumber();
-  const line = xingkeStartCommand(externalId, outlet, order, minutes);
-  await db
+async function commandTarget(db: D1Database, rawId: string, outlet: number): Promise<CommandTarget> {
+  const externalId = normalizeDeviceId(rawId);
+  const device = await db
     .prepare(
-      "insert into device_commands (external_id, outlet, kind, order_no, line, created_by, created_at) values (?, ?, 'start', ?, ?, ?, ?)",
+      `select d.vendor, d.link, d.vendor_ref from devices d join charging_points p on p.device_id = d.external_id
+       where d.external_id = ? and p.outlet = ?`,
     )
-    .bind(externalId, outlet, order, line, actor, nowIso())
+    .bind(externalId, outlet)
+    .first<{ vendor: string; link: DeviceLink; vendor_ref: string | null }>();
+  if (!device) throw new ApiError("not_found", 404);
+  const route = commandRoute({ externalId, vendor: device.vendor, link: device.link });
+  if (!route) throw new ApiError("bad_request"); // this socket only reports
+  return { externalId, vendorRef: device.vendor_ref ?? externalId, route };
+}
+
+/** Stores a cloud command, then sends it to the vendor platform. */
+async function sendCloud(env: Env, target: CommandTarget, outlet: number, kind: "start" | "stop", command: XingkeCommand, actor: string) {
+  await env.DB.prepare(
+    `insert into device_commands (external_id, outlet, kind, order_no, line, message_id, created_by, created_at)
+     values (?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(target.externalId, outlet, kind, String(command.data.transactionId), JSON.stringify(command), command.messageId, actor, nowIso())
+    .run();
+  await dispatchXingkeCommand(env, target.vendorRef, command);
+}
+
+/** Switches an outlet on, until full or for `minutes` (1 to 998). */
+export async function startOutlet(env: Env, rawId: string, outlet: number, actor: string, minutes?: number) {
+  const target = await commandTarget(env.DB, rawId, outlet);
+  if (minutes !== undefined && !(Number.isInteger(minutes) && minutes >= 1 && minutes <= 998)) throw new ApiError("bad_request");
+  if (target.route === "xingke_cloud") {
+    const order = xingkeTransactionId();
+    const command = xingkeStartRequest(xingkeMessageId("start"), outlet, order, minutes === undefined ? undefined : minutes * 60);
+    await sendCloud(env, target, outlet, "start", command, actor);
+    return { order };
+  }
+  const order = xingkeOrderNumber();
+  const line = xingkeStartCommand(target.externalId, outlet, order, minutes);
+  await env.DB.prepare(
+    "insert into device_commands (external_id, outlet, kind, order_no, line, created_by, created_at) values (?, ?, 'start', ?, ?, ?, ?)",
+  )
+    .bind(target.externalId, outlet, order, line, actor, nowIso())
     .run();
   return { order };
 }
 
-/** Queues "switch outlet off" for the outlet's last started order. */
-export async function stopOutlet(db: D1Database, rawId: string, outlet: number, actor: string) {
-  const externalId = await commandTarget(db, rawId, outlet);
-  const last = await db
-    .prepare(
-      `select order_no from device_commands where external_id = ? and outlet = ? and kind = 'start' and status in ('sent', 'done')
-       order by id desc limit 1`,
-    )
-    .bind(externalId, outlet)
+/** Switches an outlet off, ending its last started charge. */
+export async function stopOutlet(env: Env, rawId: string, outlet: number, actor: string) {
+  const target = await commandTarget(env.DB, rawId, outlet);
+  const last = await env.DB.prepare(
+    `select order_no from device_commands where external_id = ? and outlet = ? and kind = 'start' and status in ('sent', 'done')
+     order by id desc limit 1`,
+  )
+    .bind(target.externalId, outlet)
     .first<{ order_no: string }>();
   const order = last?.order_no ?? xingkeOrderNumber();
-  await db
-    .prepare(
-      "insert into device_commands (external_id, outlet, kind, order_no, line, created_by, created_at) values (?, ?, 'stop', ?, ?, ?, ?)",
-    )
-    .bind(externalId, outlet, order, xingkeStopCommand(externalId, outlet, order), actor, nowIso())
+  if (target.route === "xingke_cloud") {
+    await sendCloud(env, target, outlet, "stop", xingkeStopRequest(xingkeMessageId("stop"), outlet, order), actor);
+    return { order };
+  }
+  await env.DB.prepare(
+    "insert into device_commands (external_id, outlet, kind, order_no, line, created_by, created_at) values (?, ?, 'stop', ?, ?, ?, ?)",
+  )
+    .bind(target.externalId, outlet, order, xingkeStopCommand(target.externalId, outlet, order), actor, nowIso())
     .run();
   return { order };
 }
@@ -332,10 +400,10 @@ export async function handleDeviceCommands(request: Request, env: Env): Promise<
   const device = new URL(request.url).searchParams.get("device")?.toUpperCase() ?? null;
   const now = nowIso();
   const cutoff = new Date(Date.now() - COMMAND_TTL_SECONDS * 1000).toISOString();
-  await env.DB.prepare("update device_commands set status = 'expired' where status = 'pending' and created_at < ?").bind(cutoff).run();
+  await env.DB.prepare("update device_commands set status = 'expired' where status = 'pending' and message_id is null and created_at < ?").bind(cutoff).run();
   const { results } = await env.DB.prepare(
     `update device_commands set status = 'sent', sent_at = ?1
-     where status = 'pending' and (?2 is null or external_id = ?2)
+     where status = 'pending' and message_id is null and (?2 is null or external_id = ?2)
      returning id, line`,
   )
     .bind(now, device)

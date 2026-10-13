@@ -9,6 +9,7 @@ import type {
   UserRole,
 } from "../types";
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
@@ -28,6 +29,7 @@ import type {
   StationDrivers,
 } from "../drivers";
 import type { LatLng } from "../geo";
+import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
 
 /** Where a code goes: by SMS to the phone number or by e-mail. */
 export type CodeChannel = "sms" | "email";
@@ -58,7 +60,11 @@ export type BackendErrorCode =
   | "image_too_large"
   | "invalid_device"
   | "device_exists"
+  | "device_offline"
+  | "device_command_failed"
+  | "device_not_configured"
   | "depot_inactive"
+  | "station_without_point"
   | "same_station"
   | "parcel_too_large"
   | "parcel_not_found"
@@ -87,6 +93,18 @@ export type BackendErrorCode =
   | "payment_exists"
   | "provider_unavailable"
   | "forbidden"
+  | "wallet_disabled"
+  | "wallet_frozen"
+  | "insufficient_balance"
+  | "recipient_not_found"
+  | "self_transfer"
+  | "invalid_amount"
+  | "amount_too_small"
+  | "amount_too_large"
+  | "daily_limit_exceeded"
+  | "monthly_limit_exceeded"
+  | "wallet_not_empty"
+  | "topup_unavailable"
   | "unknown";
 
 export class BackendError extends Error {
@@ -164,6 +182,12 @@ export interface Backend {
   deleteDevice(externalId: string): Promise<void>;
   /** Switches an outlet on (until full) or off; only where `canSwitch`. */
   switchOutlet(externalId: string, outlet: number, on: boolean): Promise<void>;
+
+  // Modules (see src/lib/features.ts)
+  /** Which modules are switched on. Public. */
+  features(): Promise<Features>;
+  /** Backoffice: switches the parcel module on or off for everyone (admins only). */
+  setParcelsEnabled(enabled: boolean): Promise<void>;
 
   // Parcel depot (see src/lib/parcels.ts)
   /** Stations that take parcels, and the prices. Public. */
@@ -261,4 +285,22 @@ export interface Backend {
   deletePromotion(id: string): Promise<void>;
   /** Stores an image and returns its public URL (admins only). */
   uploadPromotionImage(file: File): Promise<string>;
+
+  // Wallet (see src/lib/wallet.ts)
+  /** Balance, fees, limits and history of the signed-in user. Fails with wallet_disabled while the module is off (admins may test). */
+  myWallet(): Promise<WalletView>;
+  /** Who would get money sent to this phone number or e-mail address. */
+  findWalletRecipient(contact: string): Promise<WalletRecipient>;
+  /** Sends money; the PIN is checked on the server. */
+  sendMoney(input: SendMoneyInput): Promise<WalletTransaction>;
+  /** Asks the person's Flooz/T-Money account for the money; the wallet is credited once the provider confirms. */
+  startTopup(input: TopupInput): Promise<WalletTopup>;
+  /** Asks again for the status of a top-up while the person confirms on the phone. */
+  refreshTopup(id: string): Promise<WalletTopup>;
+  /** Backoffice: switch, fees, totals and the ledger (admins only). */
+  adminWallet(filter?: { type?: string; userId?: string }): Promise<AdminWallet>;
+  setWalletEnabled(enabled: boolean): Promise<void>;
+  saveWalletFees(setting: WalletFeeSetting): Promise<void>;
+  adjustWallet(input: WalletAdjustInput): Promise<WalletTransaction>;
+  setWalletFrozen(contact: string, frozen: boolean): Promise<void>;
 }
