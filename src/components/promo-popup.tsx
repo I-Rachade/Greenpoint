@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
+import { useOnboarding } from "@/lib/prefs";
 import { safeImage, safeLink, type Promotion } from "@/lib/promo";
 
 /** The ad shows on the map only; other pages are never interrupted. */
@@ -71,7 +72,9 @@ export function PromoPopup() {
   const pathname = usePathname();
   const [promo, setPromo] = useState<Promotion | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const onMap = pathname === MAP_PATH;
+  const [introShowing] = useOnboarding();
+  // Never on top of the first-launch introduction.
+  const onMap = pathname === MAP_PATH && introShowing === false;
 
   useEffect(() => {
     if (!onMap) return;

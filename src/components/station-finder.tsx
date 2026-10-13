@@ -40,7 +40,7 @@ export function StationFinder() {
   const selected = ranked.find((r) => r.station.id === selectedId) ?? null;
 
   const selectClass =
-    "rounded-full border border-black/10 bg-white px-3 py-1 text-sm dark:border-white/20 dark:bg-zinc-900";
+    "rounded-full border border-gp-border bg-gp-surface px-3 py-1.5 text-sm font-medium dark:border-white/15";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -113,7 +113,7 @@ export function StationFinder() {
                   : format(t.map.stations, { count: ranked.length })}
             </div>
 
-            <ul className="min-h-0 flex-1 overflow-y-auto p-2">
+            <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
               {stations !== null && ranked.length === 0 && (
                 <li className="p-4 text-center text-sm text-zinc-500">{t.map.noResults}</li>
               )}
@@ -122,7 +122,7 @@ export function StationFinder() {
                   <button
                     type="button"
                     onClick={() => setSelectedId(station.id)}
-                    className="flex w-full items-start gap-3 rounded-lg p-3 text-left hover:bg-zinc-100 dark:hover:bg-zinc-900"
+                    className="flex w-full items-start gap-3 rounded-2xl border border-gp-border bg-gp-surface p-3 text-left shadow-sm hover:shadow-md dark:border-white/10"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
