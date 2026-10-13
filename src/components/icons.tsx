@@ -121,6 +121,13 @@ export const PhoneIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const MailIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <path d="m4 7 8 6 8-6" />
+  </Svg>
+);
+
 export const ShieldIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 3 4.5 6v5.5c0 4.5 3.2 8 7.5 9.5 4.3-1.5 7.5-5 7.5-9.5V6L12 3Z" />

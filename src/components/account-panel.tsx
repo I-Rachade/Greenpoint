@@ -155,7 +155,7 @@ function ContactRow({ kind, value }: { kind: "phone" | "email"; value: string | 
     e.preventDefault();
     const contact = kind === "phone" ? normalizeTogoPhone(raw) : normalizeEmail(raw);
     if (!contact) {
-      setError(t.login.invalidContact);
+      setError(kind === "phone" ? t.login.invalidPhone : t.login.invalidEmail);
       return;
     }
     run(async () => {
