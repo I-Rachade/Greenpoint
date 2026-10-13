@@ -41,7 +41,8 @@ Für den echten Betrieb mit Datenbank und SMS-Login: siehe [docs/DEPLOYMENT.md](
 | `/reservations` | angemeldete Nutzer | eigene Reservierungen mit Restzeit, stornieren |
 | `/operator` | Personal, Admin | zwei große Knöpfe: „Statut“ und „Colis“ (ohne Paketmodul direkt der Status) |
 | `/operator/statut` | Personal, Admin | Station öffnen/schließen, volle Akkus und freie Plätze melden, Reservierungen abschließen |
-| `/operator/colis` | Personal, Admin | Paketschalter: Pakete annehmen, ausgeben, für die Abholung laden (nur Stationen mit Paket-Depot) |
+| `/operator/colis` | Personal, Admin | Paketschalter: große Knöpfe, einer pro Aufgabe (nur Stationen mit Paket-Depot) |
+| `/operator/colis/<aufgabe>` | Personal, Admin | Eine Aufgabe pro Seite: `nouveau`, `remettre`, `expedier`, `arrivees`, `a-retirer`, `chauffeurs`, `annonces`, `historique` |
 | `/admin` | Admin | Stationen anlegen und bearbeiten |
 | `/contact` | alle | Kontaktadresse |
 

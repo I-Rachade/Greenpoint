@@ -7,6 +7,7 @@ import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { measuresOf, PARCEL_SIZES, parseHandoverInput, type Parcel, type ParcelInfo, type ParcelInput, type ParcelSize } from "@/lib/parcels";
 import type { StationBooking } from "@/lib/partners";
+import type { ParcelSection } from "@/lib/parcel-sections";
 import type { StationView } from "@/lib/types";
 import { fareFor } from "@/lib/drivers";
 import { distanceMeters } from "@/lib/geo";
@@ -417,7 +418,33 @@ function BatchList({
   );
 }
 
-function StationParcels({ station, stations, info }: { station: StationView; stations: StationView[]; info: ParcelInfo }) {
+/** One big tile on the parcel counter menu, with how many parcels wait there. */
+function MenuTile({ href, label, count }: { href: string; label: string; count?: number }) {
+  return (
+    <Link
+      href={href}
+      className="relative flex min-h-24 items-center justify-center rounded-2xl bg-gp-forest p-4 text-center text-lg font-semibold text-white shadow-sm active:scale-[0.99]"
+    >
+      {label}
+      {!!count && (
+        <span className="absolute right-2 top-2 min-w-6 rounded-full bg-white px-1.5 text-sm font-bold text-gp-forest">{count}</span>
+      )}
+    </Link>
+  );
+}
+
+function StationParcels({
+  station,
+  stations,
+  info,
+  section,
+}: {
+  station: StationView;
+  stations: StationView[];
+  info: ParcelInfo;
+  /** Which page of the counter; none shows the menu. */
+  section?: ParcelSection;
+}) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
@@ -445,12 +472,29 @@ function StationParcels({ station, stations, info }: { station: StationView; sta
 
   if (!hasDepot) return <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.parcels.staff.noDepot}</p>;
   const list = parcels ?? [];
-  // Express parcels go with a driver (section below), not on the collection run.
+  // Express parcels go with a driver (drivers page), not on the collection run.
   const outgoing = list.filter((p) => p.fromStationId === station.id && p.status === "deposited" && !p.express);
   const incoming = list.filter((p) => p.toStationId === station.id && p.status === "in_transit" && !p.express);
   const waiting = list.filter((p) => p.toStationId === station.id && p.status === "arrived");
   const history = list.filter((p) => !["deposited", "in_transit", "arrived"].includes(p.status)).slice(0, 30);
   const small = "rounded-full border border-black/15 px-2 py-0.5 text-xs dark:border-white/20";
+  const s = t.parcels.staff;
+
+  if (!section) {
+    const tile = (slug: ParcelSection, label: string, count?: number) => <MenuTile href={`/operator/colis/${slug}`} label={label} count={count} />;
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        {tile("nouveau", s.newTitle)}
+        {tile("remettre", s.pickupTitle)}
+        {tile("expedier", s.outgoing, outgoing.length)}
+        {tile("arrivees", s.incoming, incoming.length)}
+        {tile("a-retirer", s.waiting, waiting.length)}
+        {tile("chauffeurs", t.drivers.staff.title)}
+        {tile("annonces", s.bookedTitle, bookings?.length)}
+        {tile("historique", s.history)}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -464,129 +508,168 @@ function StationParcels({ station, stations, info }: { station: StationView; sta
           {notice}
         </p>
       )}
-      {/* Registering a parcel is the main job at the counter, so it comes first. */}
-      <NewParcelForm
-        station={station}
-        stations={stations}
-        info={info}
-        onError={setError}
-        onCreated={(parcel) => {
-          setNotice(format(t.parcels.staff.created, { no: parcel.trackingNo }));
-          setSlip(parcel);
-          reload();
-        }}
-      />
-      <PickupBox
-        stationId={station.id}
-        waiting={waiting}
-        onError={setError}
-        onDone={(msg) => {
-          setNotice(msg);
-          reload();
-        }}
-      />
-      {(bookings?.length ?? 0) > 0 && (
-        <Section title={t.parcels.staff.bookedTitle} hint={t.parcels.staff.bookedHint}>
-          <ul className="space-y-2">
-            {bookings!.map((b) => (
-              <BookedParcel
-                key={b.id}
-                booking={b}
-                station={station}
-                stations={stations}
-                info={info}
-                onError={setError}
-                onAccepted={(parcel) => {
-                  setNotice(format(t.parcels.staff.accepted, { no: parcel.trackingNo }));
-                  setSlip(parcel);
-                  reload();
-                  reloadBookings();
-                }}
-              />
-            ))}
-          </ul>
+      {section === "nouveau" && (
+        <NewParcelForm
+          station={station}
+          stations={stations}
+          info={info}
+          onError={setError}
+          onCreated={(parcel) => {
+            setNotice(format(s.created, { no: parcel.trackingNo }));
+            setSlip(parcel);
+            reload();
+          }}
+        />
+      )}
+      {section === "remettre" && (
+        <PickupBox
+          stationId={station.id}
+          waiting={waiting}
+          onError={setError}
+          onDone={(msg) => {
+            setNotice(msg);
+            reload();
+          }}
+        />
+      )}
+      {section === "annonces" && (
+        <Section title={s.bookedTitle} hint={s.bookedHint}>
+          {(bookings?.length ?? 0) === 0 ? (
+            <p className="text-sm text-zinc-500">{s.none}</p>
+          ) : (
+            <ul className="space-y-2">
+              {bookings!.map((b) => (
+                <BookedParcel
+                  key={b.id}
+                  booking={b}
+                  station={station}
+                  stations={stations}
+                  info={info}
+                  onError={setError}
+                  onAccepted={(parcel) => {
+                    setNotice(format(s.accepted, { no: parcel.trackingNo }));
+                    setSlip(parcel);
+                    reload();
+                    reloadBookings();
+                  }}
+                />
+              ))}
+            </ul>
+          )}
         </Section>
       )}
-      <Section title={t.parcels.staff.outgoing} hint={t.parcels.staff.outgoingHint}>
-        <BatchList
-          parcels={outgoing}
-          stations={stations}
-          actionLabel={(n) => format(t.parcels.staff.markInTransit, { n })}
-          onAction={(ids) => run(() => backend.markParcelsInTransit(station.id, ids))}
-          extra={(p) => (
-            <>
-              <button type="button" className={small} onClick={() => setSlip(p)}>
-                {t.parcels.slip}
-              </button>
-              <button
-                type="button"
-                className={small}
-                onClick={() => window.confirm(t.parcels.staff.confirmCancel) && void run(() => backend.cancelParcel(p.id))}
-              >
-                {t.parcels.staff.cancel}
-              </button>
-            </>
-          )}
-        />
-      </Section>
-      <Section title={t.parcels.staff.incoming}>
-        <BatchList
-          parcels={incoming}
-          stations={stations}
-          actionLabel={(n) => format(t.parcels.staff.markArrived, { n })}
-          onAction={(ids) => run(() => backend.markParcelsArrived(station.id, ids))}
-        />
-      </Section>
-      <Section title={t.parcels.staff.waiting}>
-        {waiting.length === 0 ? (
-          <p className="text-sm text-zinc-500">{t.parcels.staff.none}</p>
-        ) : (
-          <ul className="space-y-1">
-            {waiting.map((p) => (
-              <li key={p.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-zinc-100 p-2 text-sm dark:bg-zinc-900">
-                <span className="font-mono">{p.trackingNo}</span>
-                <span>
-                  {p.size} · {p.recipient.name ? `${p.recipient.name} · ` : ""}
-                  {p.recipient.phone}
-                </span>
-                {p.deliveryStatus && <span className="text-xs text-blue-700 dark:text-blue-300">{t.drivers.delivery[p.deliveryStatus]}</span>}
-                <span className="flex-1" />
-                {p.pickupDeadline && <span className="text-xs text-zinc-500">{format(t.parcels.deadline, { date: when(p.pickupDeadline) })}</span>}
-                <button type="button" className={small} onClick={() => void run(() => backend.resendPickupCode(p.id), t.parcels.staff.resent)}>
-                  {t.parcels.staff.resend}
+      {section === "expedier" && (
+        <Section title={s.outgoing} hint={s.outgoingHint}>
+          <BatchList
+            parcels={outgoing}
+            stations={stations}
+            actionLabel={(n) => format(s.markInTransit, { n })}
+            onAction={(ids) => run(() => backend.markParcelsInTransit(station.id, ids))}
+            extra={(p) => (
+              <>
+                <button type="button" className={small} onClick={() => setSlip(p)}>
+                  {t.parcels.slip}
                 </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
-      <h2 className="pt-2 text-lg font-semibold">{t.drivers.staff.title}</h2>
-      <StationDriversSection station={station} stations={stations} />
-      <Section title={t.parcels.staff.history}>
-        {history.length === 0 ? (
-          <p className="text-sm text-zinc-500">{t.parcels.staff.none}</p>
-        ) : (
-          <ul className="space-y-1 text-sm">
-            {history.map((p) => (
-              <li key={p.id} className="flex flex-wrap items-center gap-2">
-                <span className="font-mono">{p.trackingNo}</span>
-                <ParcelStatusPill status={p.status} />
-                <span className="text-xs text-zinc-500">{when(p.createdAt)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
+                <button
+                  type="button"
+                  className={small}
+                  onClick={() => window.confirm(s.confirmCancel) && void run(() => backend.cancelParcel(p.id))}
+                >
+                  {s.cancel}
+                </button>
+              </>
+            )}
+          />
+        </Section>
+      )}
+      {section === "arrivees" && (
+        <Section title={s.incoming}>
+          <BatchList
+            parcels={incoming}
+            stations={stations}
+            actionLabel={(n) => format(s.markArrived, { n })}
+            onAction={(ids) => run(() => backend.markParcelsArrived(station.id, ids))}
+          />
+        </Section>
+      )}
+      {section === "a-retirer" && (
+        <Section title={s.waiting}>
+          {waiting.length === 0 ? (
+            <p className="text-sm text-zinc-500">{s.none}</p>
+          ) : (
+            <ul className="space-y-1">
+              {waiting.map((p) => (
+                <li key={p.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-zinc-100 p-2 text-sm dark:bg-zinc-900">
+                  <span className="font-mono">{p.trackingNo}</span>
+                  <span>
+                    {p.size} · {p.recipient.name ? `${p.recipient.name} · ` : ""}
+                    {p.recipient.phone}
+                  </span>
+                  {p.deliveryStatus && <span className="text-xs text-blue-700 dark:text-blue-300">{t.drivers.delivery[p.deliveryStatus]}</span>}
+                  <span className="flex-1" />
+                  {p.pickupDeadline && <span className="text-xs text-zinc-500">{format(t.parcels.deadline, { date: when(p.pickupDeadline) })}</span>}
+                  <button type="button" className={small} onClick={() => void run(() => backend.resendPickupCode(p.id), s.resent)}>
+                    {s.resend}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+      )}
+      {section === "chauffeurs" && <StationDriversSection station={station} stations={stations} />}
+      {section === "historique" && (
+        <Section title={s.history}>
+          {history.length === 0 ? (
+            <p className="text-sm text-zinc-500">{s.none}</p>
+          ) : (
+            <ul className="space-y-1 text-sm">
+              {history.map((p) => (
+                <li key={p.id} className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono">{p.trackingNo}</span>
+                  <ParcelStatusPill status={p.status} />
+                  <span className="text-xs text-zinc-500">{when(p.createdAt)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+      )}
       {slip && <SlipDialog parcel={slip} stations={stations} onClose={() => setSlip(null)} />}
     </div>
   );
 }
 
-export function StaffParcels() {
+const STATION_KEY = "gp-parcel-station";
+
+/** The counter's station, kept while staff move between its pages. */
+function useCounterStation(): [string | null, (id: string) => void] {
+  const [id, setId] = useState<string | null>(() => {
+    try {
+      return typeof window === "undefined" ? null : window.localStorage.getItem(STATION_KEY);
+    } catch {
+      return null;
+    }
+  });
+  return [
+    id,
+    (next) => {
+      setId(next);
+      try {
+        window.localStorage.setItem(STATION_KEY, next);
+      } catch {
+        // Private mode: the choice lasts for this page only.
+      }
+    },
+  ];
+}
+
+/** /operator/colis: big buttons, one per job; /operator/colis/<section>: that job alone. */
+export function StaffParcels({ section }: { section?: ParcelSection }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const { data, error } = useLiveQuery(() => Promise.all([backend.staffStations(), backend.listStations(), backend.parcelInfo()]));
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useCounterStation();
 
   if (error) return <p className="p-6 text-sm text-red-600">{t.errors.forbidden}</p>;
   if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
@@ -597,12 +680,21 @@ export function StaffParcels() {
   const station = mine.find((s) => s.id === selectedId) ?? mine[0];
 
   return (
-    <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
-      <OperatorBack />
-      <h1 className="text-2xl font-semibold">{t.parcels.staff.title}</h1>
+    <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-4 sm:p-6">
+      {section ? (
+        <Link href="/operator/colis" className="-ml-1 inline-flex items-center gap-1 text-sm text-gp-green-dark dark:text-gp-green">
+          <BackIcon size={18} />
+          {t.parcels.staff.title}
+        </Link>
+      ) : (
+        <>
+          <OperatorBack />
+          <h1 className="text-2xl font-semibold">{t.parcels.staff.title}</h1>
+        </>
+      )}
       {mine.length === 0 && <p className="text-sm">{allMine.length ? t.parcels.staff.noDepot : t.operator.noStations}</p>}
       {mine.length > 1 && (
-        <select className={input} value={station?.id} onChange={(e) => setSelectedId(e.target.value)}>
+        <select className={input} value={station?.id} onChange={(e) => setSelectedId(e.target.value)} aria-label={t.parcels.staff.station}>
           {mine.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
@@ -610,7 +702,7 @@ export function StaffParcels() {
           ))}
         </select>
       )}
-      {station && <StationParcels key={station.id} station={station} stations={all} info={info} />}
+      {station && <StationParcels key={station.id} station={station} stations={all} info={info} section={section} />}
     </div>
   );
 }

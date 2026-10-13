@@ -629,6 +629,7 @@ export const en: Dictionary = {
       title: "Parcels",
       tabStatus: "Status",
       tabParcels: "Parcels",
+      station: "Station",
       noDepot: "This station has no parcel depot. An admin can switch it on in the backoffice.",
       pickupTitle: "Hand out a parcel",
       pickupHint: "Parcel number (GP-…), the 6-digit pickup code, or scan the recipient's QR code.",

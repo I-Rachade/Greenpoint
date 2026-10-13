@@ -629,6 +629,7 @@ export const fr = {
       title: "Colis",
       tabStatus: "Statut",
       tabParcels: "Colis",
+      station: "Station",
       noDepot: "Cette station n'a pas de dépôt de colis. Un administrateur peut l'activer dans le back-office.",
       pickupTitle: "Remettre un colis",
       pickupHint: "Numéro du colis (GP-…), code de retrait à 6 chiffres, ou scannez le QR code du destinataire.",
