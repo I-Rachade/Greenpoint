@@ -1,7 +1,6 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   DEFAULT_FILTER,
@@ -13,7 +12,6 @@ import {
   stationAvailability,
   type StationFilter,
 } from "@/lib/availability";
-import { CONTACT_EMAIL } from "@/lib/config";
 import { formatDistance } from "@/lib/geo";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
@@ -22,7 +20,6 @@ import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
 import { AvailabilityBadge } from "./availability-badge";
 import { useI18n } from "./i18n-provider";
-import { LegalLinks } from "./legal-links";
 import { StationDetail } from "./station-detail";
 
 // MapLibre needs the browser (WebGL), so it is never rendered on the server.
@@ -156,12 +153,6 @@ export function StationFinder() {
                 </li>
               ))}
             </ul>
-            <div className="space-y-1 border-t border-black/10 px-3 py-2 dark:border-white/10">
-              <Link href="/contact" className="block text-center text-xs text-zinc-500 hover:underline">
-                {t.contact.link} · {CONTACT_EMAIL}
-              </Link>
-              <LegalLinks />
-            </div>
           </>
         )}
       </aside>
