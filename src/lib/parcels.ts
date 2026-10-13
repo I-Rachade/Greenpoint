@@ -124,6 +124,20 @@ export function parsePickupInput(input: string): { trackingNo: string | null; co
   return /^\d{6}$/.test(digits) ? { trackingNo: null, code: digits } : null;
 }
 
+/**
+ * What staff type or scan at the handover counter: the recipient's pickup code (or QR),
+ * or just the parcel number "GP-…", which then needs an ID check. A bare 6-digit
+ * number is always a code, so the parcel number has to carry a letter or "GP".
+ */
+export function parseHandoverInput(input: string): { trackingNo: string | null; code: string | null } | null {
+  const pickup = parsePickupInput(input);
+  if (pickup) return pickup;
+  const text = input.trim();
+  if (!/[a-z]/i.test(text)) return null;
+  const trackingNo = normalizeTrackingNo(text);
+  return trackingNo ? { trackingNo, code: null } : null;
+}
+
 /** A station that accepts and hands out parcels. */
 export interface ParcelDepot {
   stationId: string;

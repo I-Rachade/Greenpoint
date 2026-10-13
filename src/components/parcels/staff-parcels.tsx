@@ -5,7 +5,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { measuresOf, PARCEL_SIZES, type Parcel, type ParcelInfo, type ParcelInput, type ParcelSize } from "@/lib/parcels";
+import { measuresOf, PARCEL_SIZES, parseHandoverInput, type Parcel, type ParcelInfo, type ParcelInput, type ParcelSize } from "@/lib/parcels";
 import type { StationBooking } from "@/lib/partners";
 import type { StationView } from "@/lib/types";
 import { fareFor } from "@/lib/drivers";
@@ -45,12 +45,25 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
   );
 }
 
-function PickupBox({ stationId, onDone, onError }: { stationId: string; onDone: (msg: string) => void; onError: (msg: string) => void }) {
+function PickupBox({
+  stationId,
+  waiting,
+  onDone,
+  onError,
+}: {
+  stationId: string;
+  /** Parcels waiting here, to show who a typed parcel number is for. */
+  waiting: Parcel[];
+  onDone: (msg: string) => void;
+  onError: (msg: string) => void;
+}) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
   const [code, setCode] = useState("");
   const [scanning, setScanning] = useState(false);
+  const typed = parseHandoverInput(code);
+  const match = typed && !typed.code ? waiting.find((p) => p.trackingNo === typed.trackingNo) : undefined;
 
   async function handOver(value: string) {
     onError("");
@@ -73,14 +86,15 @@ function PickupBox({ stationId, onDone, onError }: { stationId: string; onDone: 
         }}
       >
         <input
-          inputMode="numeric"
-          pattern="[0-9 ]{6,7}"
+          autoCapitalize="characters"
+          autoComplete="off"
           required
+          maxLength={20}
           value={code}
-          onChange={(e) => setCode(e.target.value.replace(/[^\d ]/g, ""))}
-          placeholder="000000"
-          aria-label={t.parcels.pickupCode}
-          className="w-36 rounded-lg border border-black/20 bg-white px-3 py-2 text-center font-mono text-lg tracking-widest dark:border-white/20 dark:bg-zinc-950"
+          onChange={(e) => setCode(e.target.value.toUpperCase())}
+          placeholder="GP-… / 000000"
+          aria-label={t.parcels.staff.pickupInput}
+          className="w-48 rounded-lg border border-black/20 bg-white px-3 py-2 text-center font-mono text-lg tracking-widest dark:border-white/20 dark:bg-zinc-950"
         />
         <button type="submit" className={primary}>
           {t.parcels.staff.pickupButton}
@@ -91,6 +105,11 @@ function PickupBox({ stationId, onDone, onError }: { stationId: string; onDone: 
           </button>
         )}
       </form>
+      {match && (
+        <p className="text-sm">
+          {format(t.parcels.staff.pickupFor, { no: match.trackingNo, who: [match.recipient.name, match.recipient.phone].filter(Boolean).join(" · ") })}
+        </p>
+      )}
       {scanning && (
         <QrScanner
           onClose={() => setScanning(false)}
@@ -459,6 +478,7 @@ function StationParcels({ station, stations, info }: { station: StationView; sta
       />
       <PickupBox
         stationId={station.id}
+        waiting={waiting}
         onError={setError}
         onDone={(msg) => {
           setNotice(msg);

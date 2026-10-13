@@ -37,6 +37,7 @@ import {
   PARCEL_CODE_LOCK_MINUTES,
   PARCEL_MAX_CODE_FAILURES,
   PARCEL_PICKUP_DAYS,
+  parseHandoverInput,
   parsePickupInput,
   sizeFor,
   type AdminParcels,
@@ -1508,20 +1509,21 @@ export class DemoBackend implements Backend {
     const since = Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000;
     const failures = (state.parcelCodeFailures ?? []).filter((f) => f.stationId === stationId && new Date(f.at).getTime() > since);
     if (failures.length >= PARCEL_MAX_CODE_FAILURES) throw new BackendError("code_locked");
-    const input = parsePickupInput(codeOrQr);
+    const input = parseHandoverInput(codeOrQr);
     const parcels = this.parcelsOf(state);
     const parcel = input
       ? parcels.find(
           (p) =>
             p.toStationId === stationId &&
             p.status === "arrived" &&
-            p.pickupCode === input.code &&
+            (input.code ? p.pickupCode === input.code : true) &&
             (!input.trackingNo || p.trackingNo === input.trackingNo),
         )
       : undefined;
     if (parcel?.deliveryStatus === "out_for_delivery") throw new BackendError("parcel_with_driver");
     if (!parcel) {
       this.save({ ...state, parcelCodeFailures: [...failures, { stationId, at: new Date().toISOString() }] });
+      if (input && !input.code && parcels.some((p) => p.trackingNo === input.trackingNo)) throw new BackendError("parcel_not_arrived");
       throw new BackendError("wrong_pickup_code");
     }
     const done: Parcel = { ...parcel, status: "picked_up", pickedUpAt: new Date().toISOString(), pickupCode: undefined };

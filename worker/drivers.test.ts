@@ -312,6 +312,19 @@ describe("home delivery", () => {
   });
 });
 
+describe("handover at the counter", () => {
+  it("finds an arrived parcel by its number alone", async () => {
+    const t = setup();
+    const parcel = await createParcel(t.admin, A.id, parcelInput(false));
+    await expect(pickUpParcel(t.admin, B.id, parcel.trackingNo)).rejects.toMatchObject({ code: "parcel_not_arrived" });
+    await markInTransit(t.admin, A.id, [parcel.id]);
+    t.db.exec(`update parcels set status = 'arrived', pickup_code = '654321', arrived_at = '${new Date().toISOString()}' where id = '${parcel.id}'`);
+    const done = await pickUpParcel(t.admin, B.id, parcel.trackingNo);
+    expect(done.status).toBe("picked_up");
+    expect(t.db.prepare("select status from parcels where id = ?").get(parcel.id)).toMatchObject({ status: "picked_up" });
+  });
+});
+
 describe("pickup at home", () => {
   it("creates the parcel when the driver measured and collected, and it arrives at B", async () => {
     const t = setup();
