@@ -13,6 +13,7 @@ import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
 import type { Promotion, PromotionInput } from "../promo";
+import type { AdminWallet, SendMoneyInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTransaction, WalletView } from "../wallet";
 
 /** Where a code goes: by SMS to the phone number or by e-mail. */
 export type CodeChannel = "sms" | "email";
@@ -55,6 +56,17 @@ export type BackendErrorCode =
   | "payment_exists"
   | "provider_unavailable"
   | "forbidden"
+  | "wallet_disabled"
+  | "wallet_frozen"
+  | "insufficient_balance"
+  | "recipient_not_found"
+  | "self_transfer"
+  | "invalid_amount"
+  | "amount_too_small"
+  | "amount_too_large"
+  | "daily_limit_exceeded"
+  | "monthly_limit_exceeded"
+  | "wallet_not_empty"
   | "unknown";
 
 export class BackendError extends Error {
@@ -184,4 +196,18 @@ export interface Backend {
   deletePromotion(id: string): Promise<void>;
   /** Stores an image and returns its public URL (admins only). */
   uploadPromotionImage(file: File): Promise<string>;
+
+  // Wallet (see src/lib/wallet.ts)
+  /** Balance, fees, limits and history of the signed-in user. Fails with wallet_disabled while the module is off (admins may test). */
+  myWallet(): Promise<WalletView>;
+  /** Who would get money sent to this phone number or e-mail address. */
+  findWalletRecipient(contact: string): Promise<WalletRecipient>;
+  /** Sends money; the PIN is checked on the server. */
+  sendMoney(input: SendMoneyInput): Promise<WalletTransaction>;
+  /** Backoffice: switch, fees, totals and the ledger (admins only). */
+  adminWallet(filter?: { type?: string; userId?: string }): Promise<AdminWallet>;
+  setWalletEnabled(enabled: boolean): Promise<void>;
+  saveWalletFees(setting: WalletFeeSetting): Promise<void>;
+  adjustWallet(input: WalletAdjustInput): Promise<WalletTransaction>;
+  setWalletFrozen(contact: string, frozen: boolean): Promise<void>;
 }

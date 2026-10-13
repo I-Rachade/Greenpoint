@@ -225,7 +225,7 @@ async function pbkdf2(pin: string, salt: Uint8Array, iterations: number): Promis
   return b64(new Uint8Array(bits));
 }
 
-async function hashPin(pin: string): Promise<string> {
+export async function hashPin(pin: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   return `pbkdf2$${PIN_ITERATIONS}$${b64(salt)}$${await pbkdf2(pin, salt, PIN_ITERATIONS)}`;
 }
@@ -311,20 +311,42 @@ export async function signIn(env: Env, rawContact: string, rawPin: string) {
     .first<UserRow & { pin_hash: string | null; pin_failures: number; pin_locked_until: string | null }>();
   // Same answer for unknown contacts and wrong PINs, so the login does not reveal who has an account.
   if (!user?.pin_hash) throw new ApiError("invalid_pin");
-  if (user.pin_locked_until && user.pin_locked_until > nowIso()) throw new ApiError("pin_locked", 429);
+  await checkPin(env, user.id, pin, user);
+  return openSession(env, user);
+}
 
-  if (!(await pinMatches(pin, user.pin_hash))) {
-    const failures = user.pin_failures + 1;
+interface PinState {
+  pin_hash: string | null;
+  pin_failures: number;
+  pin_locked_until: string | null;
+}
+
+/** Compares a PIN with the stored hash. A few wrong PINs in a row lock the account for a while. */
+async function checkPin(env: Env, userId: string, pin: string, state: PinState) {
+  if (!state.pin_hash) throw new ApiError("invalid_pin");
+  if (state.pin_locked_until && state.pin_locked_until > nowIso()) throw new ApiError("pin_locked", 429);
+  if (!(await pinMatches(pin, state.pin_hash))) {
+    const failures = state.pin_failures + 1;
     const locked = failures >= PIN_MAX_FAILURES;
     await env.DB.prepare("update users set pin_failures = ?, pin_locked_until = ? where id = ?")
-      .bind(locked ? 0 : failures, locked ? new Date(Date.now() + PIN_LOCK_MINUTES * 60_000).toISOString() : null, user.id)
+      .bind(locked ? 0 : failures, locked ? new Date(Date.now() + PIN_LOCK_MINUTES * 60_000).toISOString() : null, userId)
       .run();
     throw new ApiError(locked ? "pin_locked" : "invalid_pin", locked ? 429 : 400);
   }
-  if (user.pin_failures || user.pin_locked_until) {
-    await env.DB.prepare("update users set pin_failures = 0, pin_locked_until = null where id = ?").bind(user.id).run();
+  if (state.pin_failures || state.pin_locked_until) {
+    await env.DB.prepare("update users set pin_failures = 0, pin_locked_until = null where id = ?").bind(userId).run();
   }
-  return openSession(env, user);
+}
+
+/** Confirms a payment with the signed-in user's PIN; wrong PINs count towards the same lock as the login. */
+export async function verifyPin(env: Env, userId: string, rawPin: unknown) {
+  const pin = String(rawPin ?? "").trim();
+  if (!validPinFormat(pin)) throw new ApiError("invalid_pin");
+  const state = await env.DB.prepare("select pin_hash, pin_failures, pin_locked_until from users where id = ?")
+    .bind(userId)
+    .first<PinState>();
+  if (!state) throw new ApiError("not_authenticated", 401);
+  await checkPin(env, userId, pin, state);
 }
 
 async function openSession(env: Env, user: UserRow): Promise<{ token: string; profile: Profile }> {
@@ -447,6 +469,11 @@ export async function deleteAccount(
       throw new ApiError("invalid_pin");
     }
   }
+  // Money left in the wallet belongs to the person: it has to be spent or paid out first.
+  const wallet = await env.DB.prepare("select balance_xof from wallets where user_id = ?")
+    .bind(profile.id)
+    .first<{ balance_xof: number }>();
+  if (wallet && wallet.balance_xof > 0) throw new ApiError("wallet_not_empty");
   await env.DB.batch([
     env.DB.prepare(
       "update audit_log set changes = json_remove(changes, '$.phone', '$.email') where user_id = ? or row_id = ?",
@@ -458,6 +485,10 @@ export async function deleteAccount(
     env.DB.prepare("update parcels set sender_user_id = null where sender_user_id = ?").bind(profile.id),
     env.DB.prepare("update parcels set recipient_user_id = null where recipient_user_id = ?").bind(profile.id),
     env.DB.prepare("delete from otp_codes where phone in (?, ?)").bind(profile.phone ?? "", profile.email ?? ""),
+    // Only an empty wallet goes; if money arrived meanwhile, the user delete below fails and nothing changes.
+    env.DB.prepare("delete from wallets where user_id = ? and balance_xof = 0").bind(profile.id),
+    // Other people's history keeps the booking but no longer names this person.
+    env.DB.prepare("update wallet_transactions set counterparty_label = null where counterparty_user_id = ?").bind(profile.id),
     env.DB.prepare("delete from users where id = ?").bind(profile.id),
   ]);
 }
