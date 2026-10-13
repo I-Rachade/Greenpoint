@@ -609,14 +609,17 @@ export function StaffParcels() {
 
   if (error) return <p className="p-6 text-sm text-red-600">{t.errors.forbidden}</p>;
   if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
-  const [mine, all, info] = data;
+  const [allMine, all, info] = data;
+  // Only stations that take parcels; admins see every station and would otherwise land on one without a counter.
+  const depots = new Set(info.depots.map((d) => d.stationId));
+  const mine = allMine.filter((s) => depots.has(s.id));
   const station = mine.find((s) => s.id === selectedId) ?? mine[0];
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
       <OperatorTabs />
       <h1 className="text-2xl font-semibold">{t.parcels.staff.title}</h1>
-      {mine.length === 0 && <p className="text-sm">{t.operator.noStations}</p>}
+      {mine.length === 0 && <p className="text-sm">{allMine.length ? t.parcels.staff.noDepot : t.operator.noStations}</p>}
       {mine.length > 1 && (
         <select className={input} value={station?.id} onChange={(e) => setSelectedId(e.target.value)}>
           {mine.map((s) => (

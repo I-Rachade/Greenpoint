@@ -6,6 +6,7 @@ export const fr = {
     map: "Carte",
     reservations: "Réservations",
     operator: "Station",
+    parcelCounter: "Guichet colis",
     owner: "Mes stations",
     admin: "Admin",
     login: "Connexion",

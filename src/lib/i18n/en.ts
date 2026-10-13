@@ -7,6 +7,7 @@ export const en: Dictionary = {
     map: "Map",
     reservations: "Reservations",
     operator: "Station",
+    parcelCounter: "Parcel counter",
     owner: "My stations",
     admin: "Admin",
     login: "Log in",
