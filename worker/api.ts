@@ -105,6 +105,7 @@ import {
   uploadProof,
 } from "./drivers";
 import type { DriverApplication, DriverDecision, FleetVehicleInput, PickupBooking } from "../src/lib/drivers";
+import { fleetAssign, fleetStats, fleetView, setDriverManager } from "./fleet";
 import type { PartnerInput } from "../src/lib/partners";
 import { PARTNER_API_BASE } from "../src/lib/partners";
 import {
@@ -749,6 +750,11 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
           c.db.prepare("select station_id from station_staff where user_id = ?").bind(userId).all<{ station_id: string }>().then((r) => r.results),
           c.db.prepare("select operator_id from operator_owners where user_id = ?").bind(userId).all<{ operator_id: string }>().then((r) => r.results),
         ]);
+  // Leaving "fleet_manager" ends the links to the drivers.
+  const managed =
+    role === "fleet_manager"
+      ? []
+      : (await c.db.prepare("select driver_id from fleet_manager_drivers where manager_id = ?").bind(userId).all<{ driver_id: string }>()).results;
   await c.db.batch([
     c.db.prepare("update users set role = ? where id = ?").bind(roleToDb(role), userId),
     c.audit(admin.id, "profiles", "update", userId, { role: [before, role] }, { userId }),
@@ -756,6 +762,8 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
     ...staff.map((s) => c.audit(admin.id, "station_staff", "delete", `${s.station_id}:${userId}`, {}, { stationId: s.station_id, userId })),
     ...(owned.length ? [c.db.prepare("delete from operator_owners where user_id = ?").bind(userId)] : []),
     ...owned.map((o) => c.audit(admin.id, "operator_owners", "delete", `${o.operator_id}:${userId}`, { operator_id: o.operator_id }, { userId })),
+    ...managed.map((d) => c.db.prepare("delete from fleet_manager_drivers where driver_id = ?").bind(d.driver_id)),
+    ...managed.map((d) => c.audit(admin.id, "fleet_manager_drivers", "delete", d.driver_id, { manager_id: userId }, { userId: d.driver_id })),
   ]);
 }
 
@@ -1371,6 +1379,11 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
   ["POST", /^\/api\/admin\/parcel-sizes$/, async (c) => saveSizes(c, (await readJson<{ sizes: unknown }>(c.request)).sizes)],
   // Drivers (worker/drivers.ts)
+  // Fleet managers (worker/fleet.ts)
+  ["GET", /^\/api\/fleet$/, (c) => fleetView(c)],
+  ["GET", /^\/api\/fleet\/stats$/, (c) => fleetStats(c, c.url.searchParams.get("from") ?? "", c.url.searchParams.get("to") ?? "")],
+  ["POST", /^\/api\/fleet\/jobs\/([\w-]+)\/assign$/, async (c, [id]) => fleetAssign(c, id, String((await readJson<{ driverId: string }>(c.request)).driverId))],
+  ["POST", /^\/api\/admin\/drivers\/([\w-]+)\/manager$/, async (c, [id]) => setDriverManager(c, id, (await readJson<{ contact: string | null }>(c.request)).contact)],
   ["GET", /^\/api\/driver$/, (c) => driverHome(c)],
   ["POST", /^\/api\/driver\/apply$/, async (c) => applyDriver(c, await readJson<DriverApplication>(c.request))],
   ["POST", /^\/api\/driver\/documents\/(id|license|portrait)$/, (c, [kind]) => uploadDriverDocument(c, kind, c.request)],

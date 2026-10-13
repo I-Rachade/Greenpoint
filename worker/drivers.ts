@@ -69,7 +69,7 @@ import {
 
 // Rows ---------------------------------------------------------------------------
 
-interface DriverRow {
+export interface DriverRow {
   user_id: string;
   status: Driver["status"];
   full_name: string;
@@ -89,10 +89,10 @@ interface DriverRow {
   v_active: number | null;
 }
 
-const DRIVER_SELECT = `select d.*, u.phone, v.type as v_type, v.plate as v_plate, v.is_active as v_active
+export const DRIVER_SELECT = `select d.*, u.phone, v.type as v_type, v.plate as v_plate, v.is_active as v_active
   from drivers d join users u on u.id = d.user_id left join fleet_vehicles v on v.id = d.vehicle_id`;
 
-interface JobRow {
+export interface JobRow {
   id: string;
   kind: JobKind;
   status: JobStatus;
@@ -131,7 +131,7 @@ interface JobRow {
   driver_vehicle: FleetVehicleType | null;
 }
 
-const JOB_SELECT = `select j.*, p.tracking_no, d.full_name as driver_name, u.phone as driver_phone,
+export const JOB_SELECT = `select j.*, p.tracking_no, d.full_name as driver_name, u.phone as driver_phone,
     v.plate as driver_plate, v.type as driver_vehicle
   from delivery_jobs j
   left join parcels p on p.id = j.parcel_id
@@ -139,9 +139,9 @@ const JOB_SELECT = `select j.*, p.tracking_no, d.full_name as driver_name, u.pho
   left join users u on u.id = j.driver_id
   left join fleet_vehicles v on v.id = d.vehicle_id`;
 
-const BUSY_SQL = `(${BUSY_JOB_STATUSES.map((s) => `'${s}'`).join(", ")})`;
+export const BUSY_SQL = `(${BUSY_JOB_STATUSES.map((s) => `'${s}'`).join(", ")})`;
 
-function toJob(r: JobRow): DeliveryJob {
+export function toJob(r: JobRow): DeliveryJob {
   return {
     id: r.id,
     kind: r.kind,
@@ -176,7 +176,7 @@ function toJob(r: JobRow): DeliveryJob {
   };
 }
 
-function toVehicle(r: { id: string; type: FleetVehicleType; plate: string; is_active: number }): FleetVehicle {
+export function toVehicle(r: { id: string; type: FleetVehicleType; plate: string; is_active: number }): FleetVehicle {
   return { id: r.id, type: r.type, plate: r.plate, isActive: !!r.is_active };
 }
 
@@ -250,7 +250,7 @@ async function stationPoint(db: D1Database, id: string | null): Promise<LatLng |
   return db.prepare("select lat, lng from stations where id = ?").bind(id).first<LatLng>();
 }
 
-async function balance(db: D1Database, driverId: string): Promise<{ balance: number; lastSettledAt: string | null }> {
+export async function balance(db: D1Database, driverId: string): Promise<{ balance: number; lastSettledAt: string | null }> {
   const { results } = await db
     .prepare("select kind, sum(amount_fcfa) as amount, max(at) as last from driver_ledger where driver_id = ? group by kind")
     .bind(driverId)
@@ -261,7 +261,7 @@ async function balance(db: D1Database, driverId: string): Promise<{ balance: num
   };
 }
 
-async function queueOf(db: D1Database, driverId: string): Promise<Driver["queue"]> {
+export async function queueOf(db: D1Database, driverId: string): Promise<Driver["queue"]> {
   const row = await db
     .prepare(
       `select q.station_id, q.since,
@@ -310,7 +310,7 @@ async function requireDriver(c: ParcelCtx): Promise<{ user: Profile; row: Driver
   return { user, row };
 }
 
-async function loadJob(db: D1Database, id: string): Promise<JobRow> {
+export async function loadJob(db: D1Database, id: string): Promise<JobRow> {
   const row = await db.prepare(`${JOB_SELECT} where j.id = ?`).bind(id).first<JobRow>();
   if (!row) throw new ApiError("job_not_found", 404);
   return row;
@@ -1079,14 +1079,18 @@ export async function createExpressJob(c: ParcelCtx, parcelId: string, actor: st
 export async function adminDrivers(c: ParcelCtx): Promise<AdminDrivers> {
   await c.requireAdmin();
   await dispatch(c);
-  const [drivers, vehicles, jobs, s] = await Promise.all([
+  const [drivers, vehicles, jobs, s, managers] = await Promise.all([
     c.db.prepare(`${DRIVER_SELECT} order by d.created_at desc`).all<DriverRow>(),
     c.db.prepare("select * from fleet_vehicles order by type, plate").all<{ id: string; type: FleetVehicleType; plate: string; is_active: number }>(),
     c.db.prepare(`${JOB_SELECT} order by j.created_at desc limit 500`).all<JobRow>(),
     driverSettings(c.db),
+    c.db
+      .prepare("select f.driver_id, u.id, u.full_name, u.phone, u.email from fleet_manager_drivers f join users u on u.id = f.manager_id")
+      .all<{ driver_id: string; id: string; full_name: string | null; phone: string | null; email: string | null }>(),
   ]);
+  const managerOf = new Map(managers.results.map((m) => [m.driver_id, { userId: m.id, label: m.full_name || m.phone || m.email || "?" }]));
   return {
-    drivers: await Promise.all(drivers.results.map((r) => toDriver(c.db, r, true))),
+    drivers: await Promise.all(drivers.results.map(async (r) => ({ ...(await toDriver(c.db, r, true)), manager: managerOf.get(r.user_id) ?? null }))),
     vehicles: vehicles.results.map(toVehicle),
     jobs: jobs.results.map(toJob),
     settings: s,
@@ -1202,19 +1206,24 @@ export async function assignJob(c: ParcelCtx, jobId: string, driverId: string) {
   const admin = await c.requireAdmin();
   const job = await loadJob(c.db, jobId);
   if (!["open", "assigned", "accepted"].includes(job.status)) throw new ApiError("job_wrong_status");
+  await handJob(c, admin.id, job, driverId, "admin");
+}
+
+/** Gives a trip to a driver ahead of the queue (admin or fleet manager); the driver confirms as usual. */
+export async function handJob(c: ParcelCtx, actorId: string, job: JobRow, driverId: string, by: "admin" | "fleet") {
   const row = await driverRow(c.db, driverId);
   if (!row || row.status !== "active" || !row.v_type || !row.v_active) throw new ApiError("driver_not_found");
   if (await currentJob(c.db, driverId)) throw new ApiError("driver_busy");
   const s = await driverSettings(c.db);
   if (!vehicleFits(row.v_type, job.size, job.weight_kg ?? (await maxWeight(c.db, job.size)), s)) throw new ApiError("vehicle_too_small");
-  if (job.status !== "open") await cancelOffer(c, job, admin.id);
+  if (job.status !== "open") await cancelOffer(c, job, actorId);
   const queued = await queueOf(c.db, driverId);
   if (!(await moveJob(c.db, job.id, ["open"], "status = 'assigned', driver_id = ?, driver_station_id = ?, assigned_at = ?", driverId, queued?.stationId ?? null, nowIso()))) {
     throw new ApiError("job_wrong_status");
   }
   await c.db.batch([
     c.db.prepare("delete from driver_queue where driver_id = ?").bind(driverId),
-    jobAudit(c, admin.id, { ...job, driver_id: driverId }, { status: ["open", "assigned"], by: "admin" }),
+    jobAudit(c, actorId, { ...job, driver_id: driverId }, { status: ["open", "assigned"], by }),
   ]);
 }
 

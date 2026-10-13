@@ -20,6 +20,7 @@ import type {
   PickupBooking,
   StationDrivers,
 } from "../drivers";
+import type { FleetStats, FleetView } from "../fleet";
 import type { LatLng } from "../geo";
 import type {
   Operator,
@@ -80,6 +81,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "photo_missing",
   "vehicle_unavailable",
   "vehicle_too_small",
+  "has_other_role",
   "no_vehicle",
   "documents_missing",
   "balance_changed",
@@ -572,6 +574,22 @@ export class CloudflareBackend implements Backend {
 
   assignJob(jobId: string, driverId: string) {
     return this.act("POST", `/api/admin/jobs/${encodeURIComponent(jobId)}/assign`, { driverId });
+  }
+
+  setDriverManager(driverId: string, contact: string | null) {
+    return this.act("POST", `/api/admin/drivers/${encodeURIComponent(driverId)}/manager`, { contact });
+  }
+
+  fleetView() {
+    return this.call<FleetView>("GET", "/api/fleet");
+  }
+
+  fleetStats(from: string, to: string) {
+    return this.call<FleetStats>("GET", `/api/fleet/stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  }
+
+  fleetAssign(jobId: string, driverId: string) {
+    return this.act("POST", `/api/fleet/jobs/${encodeURIComponent(jobId)}/assign`, { driverId });
   }
 
   /** Private photos need the session, so they are fetched and shown from memory. */

@@ -29,6 +29,7 @@ import type {
   PickupBooking,
   StationDrivers,
 } from "../drivers";
+import type { FleetStats, FleetView } from "../fleet";
 import type { LatLng } from "../geo";
 import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
 
@@ -85,6 +86,7 @@ export type BackendErrorCode =
   | "photo_missing"
   | "vehicle_unavailable"
   | "vehicle_too_small"
+  | "has_other_role"
   | "no_vehicle"
   | "documents_missing"
   | "balance_changed"
@@ -276,6 +278,16 @@ export interface Backend {
   assignJob(jobId: string, driverId: string): Promise<void>;
   /** A displayable URL for a private photo (documents, door photos); admins only. */
   driverFileUrl(key: string): Promise<string>;
+  /** Backoffice: links a driver to a fleet manager by phone or e-mail; null unlinks. */
+  setDriverManager(driverId: string, contact: string | null): Promise<void>;
+
+  // Fleet managers (see src/lib/fleet.ts)
+  /** The manager's drivers and the trips nobody has yet. */
+  fleetView(): Promise<FleetView>;
+  /** Trips, takings, cash and charging of the manager's drivers; days as YYYY-MM-DD. */
+  fleetStats(from: string, to: string): Promise<FleetStats>;
+  /** Gives an open trip to one of the manager's drivers; the driver confirms as usual. */
+  fleetAssign(jobId: string, driverId: string): Promise<void>;
 
   // Partner API (see src/lib/partners.ts)
   /** Parcels other apps booked for drop-off at this station (its staff). */

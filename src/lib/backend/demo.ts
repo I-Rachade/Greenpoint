@@ -92,6 +92,7 @@ import {
 } from "../drivers";
 import { distanceMeters, type LatLng } from "../geo";
 import { parseContact } from "../contact";
+import { fleetRange, jobForManager, managesFleet, type FleetStats, type FleetView } from "../fleet";
 import {
   checkLimits,
   DEFAULT_FEE_SETTINGS,
@@ -165,6 +166,8 @@ interface DemoState {
   bookings?: (StationBooking & { partnerId: string; fromStationId: string })[];
   /** Wallet (demo only: switched on, everyone starts with DEMO_WALLET_START francs). */
   wallet?: DemoWallet;
+  /** Fleet managers: which manager each linked driver belongs to (missing = nobody). */
+  fleetLinks?: { driverId: string; managerId: string }[];
   /** Operator accounts: who runs which operator (missing = nobody). */
   operatorOwners?: { operatorId: string; userId: string }[];
   /** Contact phones of operators, set in the backoffice. */
@@ -906,6 +909,15 @@ export class DemoBackend implements Backend {
         next = withAudit(
           { ...next, operatorOwners: (next.operatorOwners ?? []).filter((x) => x !== o) },
           { table: "operator_owners", action: "delete", rowId: `${o.operatorId}:${userId}`, userId, changes: { operator_id: o.operatorId } },
+        );
+      }
+    }
+    // Leaving "fleet_manager" ends the links to the drivers.
+    if (role !== "fleet_manager") {
+      for (const l of (state.fleetLinks ?? []).filter((x) => x.managerId === userId)) {
+        next = withAudit(
+          { ...next, fleetLinks: (next.fleetLinks ?? []).filter((x) => x !== l) },
+          { table: "fleet_manager_drivers", action: "delete", rowId: l.driverId, userId: l.driverId, changes: { manager_id: userId } },
         );
       }
     }
@@ -2259,7 +2271,10 @@ export class DemoBackend implements Backend {
     const state = this.load();
     this.requireAdmin(state);
     return {
-      drivers: (state.drivers ?? []).map((d) => this.viewDriver(state, d, true)),
+      drivers: (state.drivers ?? []).map((d) => {
+        const link = (state.fleetLinks ?? []).find((l) => l.driverId === d.userId);
+        return { ...this.viewDriver(state, d, true), manager: link ? this.label(state, link.managerId) : null };
+      }),
       vehicles: state.fleet ?? seedFleet(),
       jobs: [...(state.jobs ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 500).map((j) => this.viewJob(state, j)),
       settings: this.settingsOf(state),
@@ -2361,6 +2376,11 @@ export class DemoBackend implements Backend {
     const job = (state.jobs ?? []).find((j) => j.id === jobId);
     if (!job) throw new BackendError("job_not_found");
     if (!["open", "assigned", "accepted"].includes(job.status)) throw new BackendError("job_wrong_status");
+    this.handJob(state, job, driverId, "admin");
+  }
+
+  /** Same rules as handJob() in worker/drivers.ts. */
+  private handJob(state: DemoState, job: DemoJob, driverId: string, by: "admin" | "fleet") {
     const d = (state.drivers ?? []).find((x) => x.userId === driverId);
     const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === d?.vehicleId);
     if (!d || d.status !== "active" || !vehicle?.isActive) throw new BackendError("driver_not_found");
@@ -2371,13 +2391,124 @@ export class DemoBackend implements Backend {
     this.saveJobs(
       state,
       (state.jobs ?? []).map((j) =>
-        j.id === jobId
+        j.id === job.id
           ? { ...j, status: "assigned" as const, driverId, driverStationId: queued?.stationId ?? null, assignedAt: new Date().toISOString(), acceptedAt: null }
           : j,
       ),
-      { table: "delivery_jobs", action: "update", rowId: jobId, userId: driverId, changes: { status: [job.status, "assigned"], by: "admin" } },
+      { table: "delivery_jobs", action: "update", rowId: job.id, userId: driverId, changes: { status: [job.status, "assigned"], by } },
       { driverQueue: (state.driverQueue ?? []).filter((q) => q.driverId !== driverId) },
     );
+  }
+
+  async setDriverManager(driverId: string, contact: string | null) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!(state.drivers ?? []).some((d) => d.userId === driverId)) throw new BackendError("driver_not_found");
+    const links = state.fleetLinks ?? [];
+    const before = links.find((l) => l.driverId === driverId);
+    const rest = links.filter((l) => l.driverId !== driverId);
+    let users = state.users ?? demoUsers(new Date());
+    let next: DemoState = state;
+    if (before) {
+      // A manager left without drivers goes back to customer.
+      const idle = !rest.some((l) => l.managerId === before.managerId);
+      users = users.map((u) => (u.id === before.managerId && u.role === "fleet_manager" && idle ? { ...u, role: "customer" as const } : u));
+      next = withAudit(
+        { ...next, fleetLinks: rest, users },
+        { table: "fleet_manager_drivers", action: "delete", rowId: driverId, userId: driverId, changes: { manager_id: before.managerId } },
+      );
+    }
+    if (contact?.trim()) {
+      const account = this.accountByContact(state, contact);
+      if (account.id === driverId) throw new BackendError("forbidden");
+      if (!["customer", "fleet_manager", "admin"].includes(account.role)) throw new BackendError("has_other_role");
+      if (before?.managerId === account.id) return;
+      users = users.map((u) => (u.id === account.id && u.role === "customer" ? { ...u, role: "fleet_manager" as const } : u));
+      next = withAudit(
+        { ...next, fleetLinks: [...rest, { driverId, managerId: account.id }], users },
+        { table: "fleet_manager_drivers", action: "insert", rowId: driverId, userId: driverId, changes: { manager_id: account.id } },
+      );
+    }
+    if (next !== state) this.save(next);
+  }
+
+  private managedDrivers(state: DemoState): DemoDriver[] {
+    const profile = this.requireProfile(state);
+    if (!managesFleet(profile)) throw new BackendError("forbidden");
+    const drivers = state.drivers ?? [];
+    if (profile.role === "admin") return drivers.filter((d) => d.status === "active" || d.status === "suspended");
+    const mine = new Set((state.fleetLinks ?? []).filter((l) => l.managerId === profile.id).map((l) => l.driverId));
+    return drivers.filter((d) => mine.has(d.userId));
+  }
+
+  async fleetView(): Promise<FleetView> {
+    this.dispatch();
+    const state = this.load();
+    const drivers = this.managedDrivers(state).sort((a, b) => a.fullName.localeCompare(b.fullName));
+    return {
+      drivers: drivers.map((d) => {
+        const view = this.viewDriver(state, d, false);
+        const job = this.busyJob(state, d.userId);
+        return {
+          userId: d.userId,
+          fullName: d.fullName,
+          phone: d.phone,
+          status: d.status,
+          vehicle: view.vehicle,
+          balanceFcfa: view.balanceFcfa,
+          queue: view.queue,
+          job: job ? jobForManager(this.viewJob(state, job)) : null,
+        };
+      }),
+      openJobs: (state.jobs ?? [])
+        .filter((j) => j.status === "open")
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .slice(0, 100)
+        .map((j) => jobForManager(this.viewJob(state, j))),
+      settings: this.settingsOf(state),
+    };
+  }
+
+  async fleetStats(from: string, to: string): Promise<FleetStats> {
+    const state = this.load();
+    const drivers = this.managedDrivers(state);
+    const range = fleetRange(from, to);
+    if (!range) throw new BackendError("unknown", "period");
+    const inRange = (at: string | null) => !!at && at >= range.start && at < range.end;
+    return {
+      from,
+      to,
+      drivers: drivers.map((d) => {
+        const jobs = (state.jobs ?? []).filter((j) => j.driverId === d.userId && inRange(j.doneAt));
+        const done = jobs.filter((j) => j.status === "done");
+        const ledger = (state.ledger ?? []).filter((e) => e.driverId === d.userId && inRange(e.at));
+        const sum = (kind: LedgerEntry["kind"]) => ledger.filter((e) => e.kind === kind).reduce((n, e) => n + e.amountFcfa, 0);
+        const visits = state.reservations.filter((r) => r.userId === d.userId && r.status === "completed" && inRange(r.createdAt));
+        return {
+          userId: d.userId,
+          tripsDone: done.length,
+          tripsFailed: jobs.filter((j) => j.status === "failed").length,
+          fareFcfa: done.reduce((n, j) => n + j.fareFcfa, 0),
+          earningFcfa: sum("earning"),
+          collectedFcfa: sum("collected"),
+          settledFcfa: sum("settlement"),
+          batterySwaps: visits.filter((r) => r.type === "battery").length,
+          chargingSlots: visits.filter((r) => r.type === "slot").length,
+          // The demo has no app payments.
+          chargingPaidFcfa: 0,
+        };
+      }),
+    };
+  }
+
+  async fleetAssign(jobId: string, driverId: string) {
+    this.dispatch();
+    const state = this.load();
+    if (!this.managedDrivers(state).some((d) => d.userId === driverId)) throw new BackendError("driver_not_found");
+    const job = (state.jobs ?? []).find((j) => j.id === jobId);
+    if (!job) throw new BackendError("job_not_found");
+    if (job.status !== "open") throw new BackendError("job_wrong_status");
+    this.handJob(state, job, driverId, "fleet");
   }
 
   async driverFileUrl(key: string): Promise<string> {

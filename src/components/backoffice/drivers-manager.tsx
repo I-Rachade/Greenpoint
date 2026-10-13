@@ -62,6 +62,55 @@ function DocLink({ fileKey, label }: { fileKey: string; label: string }) {
   );
 }
 
+/** Who manages the driver (src/lib/fleet.ts): linked by the manager's phone or e-mail. */
+function ManagerCell({ driver, onReport }: { driver: Driver; onReport: Report }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const run = useRun(onReport);
+  const [contact, setContact] = useState("");
+  if (driver.status !== "active" && driver.status !== "suspended") return null;
+  const a = t.drivers.admin;
+  if (driver.manager) {
+    const manager = driver.manager;
+    return (
+      <div className="flex flex-wrap items-center gap-1 text-xs">
+        <span>{manager.label}</span>
+        <button
+          type="button"
+          className={smallBtn}
+          onClick={() =>
+            window.confirm(format(a.confirmRemoveManager, { driver: driver.fullName, manager: manager.label })) &&
+            void run(() => backend.setDriverManager(driver.userId, null))
+          }
+        >
+          {a.removeManager}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <form
+      className="flex flex-wrap items-center gap-1"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void run(() => backend.setDriverManager(driver.userId, contact));
+      }}
+    >
+      <input
+        className={`${field} w-40`}
+        value={contact}
+        onChange={(e) => setContact(e.target.value)}
+        placeholder={a.managerContact}
+        aria-label={a.managerContact}
+        required
+      />
+      <button type="submit" className={saveBtn}>
+        {a.setManager}
+      </button>
+    </form>
+  );
+}
+
 function DriverRow({ driver, vehicles, drivers, onReport }: { driver: Driver; vehicles: FleetVehicle[]; drivers: Driver[]; onReport: Report }) {
   const { t } = useI18n();
   const { backend } = useApp();
@@ -117,6 +166,9 @@ function DriverRow({ driver, vehicles, drivers, onReport }: { driver: Driver; ve
         )}
       </td>
       <td className={`${td} font-mono`}>{driver.balanceFcfa}</td>
+      <td className={td}>
+        <ManagerCell driver={driver} onReport={onReport} />
+      </td>
       <td className={td}>
         <div className="flex flex-wrap gap-1">
           {(driver.status === "pending" || driver.status === "rejected") && (
@@ -337,12 +389,13 @@ export function DriversManager() {
                 <th className={th}>{t.drivers.admin.documents}</th>
                 <th className={th}>{t.drivers.admin.fleet}</th>
                 <th className={th}>{t.drivers.admin.balance}</th>
+                <th className={th}>{t.drivers.admin.manager}</th>
                 <th className={th} />
               </>
             }
           >
             {drivers.map((d) => (
-              <DriverRow key={`${d.userId}:${d.status}:${d.vehicle?.id}`} driver={d} vehicles={admin.vehicles} drivers={admin.drivers} onReport={onReport} />
+              <DriverRow key={`${d.userId}:${d.status}:${d.vehicle?.id}:${d.manager?.userId}`} driver={d} vehicles={admin.vehicles} drivers={admin.drivers} onReport={onReport} />
             ))}
           </Table>
         )}

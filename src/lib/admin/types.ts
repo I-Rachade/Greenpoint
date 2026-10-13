@@ -61,7 +61,8 @@ export type AuditTable =
   | "partners"
   | "partner_api_keys"
   | "partner_bookings"
-  | "wallets";
+  | "wallets"
+  | "fleet_manager_drivers";
 
 export const AUDIT_TABLES: AuditTable[] = [
   "reservations",
@@ -82,6 +83,7 @@ export const AUDIT_TABLES: AuditTable[] = [
   "delivery_jobs",
   "driver_ledger",
   "driver_settings",
+  "fleet_manager_drivers",
   "partners",
   "partner_api_keys",
   "partner_bookings",

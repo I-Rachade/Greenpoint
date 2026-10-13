@@ -241,6 +241,8 @@ export interface Driver {
   lastSettledAt: string | null;
   /** Where the driver waits, if anywhere. */
   queue: { stationId: string; since: string; position: number } | null;
+  /** Backoffice: the fleet manager the driver belongs to (src/lib/fleet.ts). */
+  manager?: { userId: string; label: string } | null;
 }
 
 export interface DriverApplication {
