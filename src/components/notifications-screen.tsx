@@ -18,7 +18,7 @@ const TONES: Record<AlertTone, string> = {
 
 const ICONS = { reservation: TicketIcon, parcel: BoxIcon, promotion: BellIcon };
 
-/** Notifications screen: the rider's reservations, parcels and the current offer, newest first. */
+/** Notifications screen: the customer's reservations, parcels and the current offer, newest first. */
 export function NotificationsScreen() {
   const { t } = useI18n();
   const { profile, ready } = useApp();

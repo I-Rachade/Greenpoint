@@ -66,7 +66,7 @@ describe("findAnomalies", () => {
     expect(findAnomalies(snapshot(), now)).toEqual([]);
   });
 
-  it("flags a closed station that still has riders holding capacity", () => {
+  it("flags a closed station that still has customers holding capacity", () => {
     const snap = snapshot({
       stations: [station("a", {}, { isOpen: false })],
       reservations: [reservation("r1", "u1", "a", 5)],
@@ -96,7 +96,7 @@ describe("findAnomalies", () => {
     expect(kinds(snapshot({ reservations: [r] }))).toContain("long_hold");
   });
 
-  it("flags riders who keep reserving and riders who never show up", () => {
+  it("flags customers who keep reserving and customers who never show up", () => {
     const reservations = [
       reservation("r1", "loop", "a", 30, { status: "cancelled" }),
       reservation("r2", "loop", "a", 60, { status: "cancelled" }),
@@ -136,7 +136,7 @@ describe("findAnomalies", () => {
 
   it("flags staff role and station assignment that disagree", () => {
     const snap = snapshot({
-      users: [user("staff", "operator"), user("lonely", "operator"), user("helper", "rider")],
+      users: [user("staff", "operator"), user("lonely", "operator"), user("helper", "customer")],
       staff: [{ stationId: "a", userId: "staff" }, { stationId: "a", userId: "helper" }],
     });
     expect(kinds(snap).sort()).toEqual(["operator_without_station", "staff_without_role"]);
@@ -158,8 +158,8 @@ describe("computeKpis", () => {
     const snap = snapshot({
       stations: [station("a"), station("b", {}, { isOpen: false }), station("c", { isActive: false })],
       users: [
-        user("u1", "rider", { createdAt: ago(60), lastSignInAt: ago(30) }),
-        user("u2", "rider"),
+        user("u1", "customer", { createdAt: ago(60), lastSignInAt: ago(30) }),
+        user("u2", "customer"),
         user("admin", "admin", { lastSignInAt: ago(60 * 24 * 10) }),
       ],
       reservations: [
@@ -183,7 +183,7 @@ describe("computeKpis", () => {
       reservations24h: 1,
       reservations7d: 5,
     });
-    expect(k.usersByRole).toEqual({ rider: 2, operator: 0, fleet_manager: 0, admin: 1 });
+    expect(k.usersByRole).toEqual({ customer: 2, operator: 0, fleet_manager: 0, admin: 1 });
     // 4 ended this week: 2 completed, 1 cancelled, 1 expired.
     expect(k.completionRate7d).toBe(0.5);
     expect(k.noShowRate7d).toBe(0.25);

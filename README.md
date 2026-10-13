@@ -2,7 +2,7 @@
 
 Adresse: https://app.poinderecharge.com (Landingpage: https://poinderecharge.com) · Repository: `Greenpoint` · Treueprogramm: greenpoint · Kontakt: contact@poinderecharge.com
 
-Webapp für Fahrer von E-Scootern, E-Tricycles, E-Bikes und E-Rollern in Lomé (Togo): Sie zeigt live die nächste Ladestation oder Akkutausch-Station, ob dort Ladeplätze frei oder volle Akkus da sind, und erlaubt Reservierungen. Stationspersonal meldet den Status mit einem Tipp vom Handy.
+Webapp für Kunden mit E-Scootern, E-Tricycles, E-Bikes und E-Rollern in Lomé (Togo): Sie zeigt live die nächste Ladestation oder Akkutausch-Station, ob dort Ladeplätze frei oder volle Akkus da sind, und erlaubt Reservierungen. Stationspersonal meldet den Status mit einem Tipp vom Handy.
 
 Die App ist auf Französisch (Standard) und Englisch und lässt sich auf Android als App installieren (PWA).
 
@@ -17,7 +17,7 @@ npm run dev
 
 Dann http://localhost:3000 öffnen.
 
-Ohne weitere Einrichtung läuft die App im **Demo-Modus**: Beispielstationen in Lomé, gespeichert nur im Browser, Registrierung mit jeder Telefonnummer und dem SMS-Code `123456`, danach Login mit der gewählten PIN. Dabei kann man die Rolle wählen (Fahrer, Personal, Admin), um alle Ansichten auszuprobieren. Tipp: Karte in einem Tab, Personal-Ansicht in einem zweiten Tab öffnen; Änderungen erscheinen sofort im anderen Tab.
+Ohne weitere Einrichtung läuft die App im **Demo-Modus**: Beispielstationen in Lomé, gespeichert nur im Browser, Registrierung mit jeder Telefonnummer und dem SMS-Code `123456`, danach Login mit der gewählten PIN. Dabei kann man die Rolle wählen (Kunde, Personal, Admin), um alle Ansichten auszuprobieren. Tipp: Karte in einem Tab, Personal-Ansicht in einem zweiten Tab öffnen; Änderungen erscheinen sofort im anderen Tab.
 
 Für den echten Betrieb mit Datenbank und SMS-Login: siehe [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 

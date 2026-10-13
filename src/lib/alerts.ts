@@ -7,7 +7,7 @@ import type { Reservation } from "./types";
 
 export type AlertTone = "success" | "info" | "warning" | "muted";
 
-/** One line in the notifications screen, built from the rider's own data. */
+/** One line in the notifications screen, built from the customer's own data. */
 export interface Alert {
   /** Changes when the underlying status changes, so a new status counts as unread again. */
   id: string;

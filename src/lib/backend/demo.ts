@@ -117,6 +117,7 @@ import {
   type WalletTransaction,
   type WalletView,
 } from "../wallet";
+import { OPERATOR_NAME_MAX, type AdminOperator, type OperatorInput, type OwnerStationInput, type OwnerView } from "../operators";
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 
 const STORAGE_KEY = "poinderecharge-demo-v3";
@@ -124,7 +125,7 @@ const STORAGE_KEY = "poinderecharge-demo-v3";
 export const DEMO_CODE = "123456";
 /**
  * True when this build was made by Cloudflare (see next.config.ts) but set to the
- * demo backend. Visitors then see a clear notice and can only try the rider view.
+ * demo backend. Visitors then see a clear notice and can only try the customer view.
  */
 export const HOSTED_DEMO = process.env.NEXT_PUBLIC_HOSTED_BUILD === "1" && process.env.NEXT_PUBLIC_BACKEND === "demo";
 
@@ -164,6 +165,10 @@ interface DemoState {
   bookings?: (StationBooking & { partnerId: string; fromStationId: string })[];
   /** Wallet (demo only: switched on, everyone starts with DEMO_WALLET_START francs). */
   wallet?: DemoWallet;
+  /** Operator accounts: who runs which operator (missing = nobody). */
+  operatorOwners?: { operatorId: string; userId: string }[];
+  /** Contact phones of operators, set in the backoffice. */
+  operatorPhones?: Record<string, string | null>;
   /** Parcel module switch of the backoffice (missing = on). */
   parcelsEnabled?: boolean;
   /** Demo PINs by phone number or e-mail address (stored in clear: demo only). */
@@ -379,6 +384,27 @@ function readAsDataUrl(file: File): Promise<string> {
 type AuditInput = Pick<AuditEntry, "table" | "action" | "rowId" | "changes"> &
   Partial<Pick<AuditEntry, "stationId" | "userId">>;
 
+/** Operators this demo account runs. */
+function ownedOperators(state: DemoState, userId: string): string[] {
+  return (state.operatorOwners ?? []).filter((x) => x.userId === userId).map((x) => x.operatorId);
+}
+
+/** Whoever gets station work becomes "operator" (admins stay admins). */
+function promoted(state: DemoState, userId: string) {
+  return (state.users ?? demoUsers(new Date())).map((u) =>
+    u.id === userId && u.role !== "admin" && u.role !== "operator" ? { ...u, role: "operator" as const } : u,
+  );
+}
+
+/** Whoever has no station and runs no operator any more goes back to customer. */
+function demotedIfIdle(state: DemoState, userId: string) {
+  const busy =
+    (state.staff ?? DEMO_STAFF).some((a) => a.userId === userId) || (state.operatorOwners ?? []).some((x) => x.userId === userId);
+  return (state.users ?? demoUsers(new Date())).map((u) =>
+    u.id === userId && u.role === "operator" && !busy ? { ...u, role: "customer" as const } : u,
+  );
+}
+
 /** Appends an activity log entry, like the Worker does on Cloudflare. */
 function withAudit(state: DemoState, entry: AuditInput): DemoState {
   const audit = state.audit ?? [];
@@ -517,7 +543,7 @@ export class DemoBackend implements Backend {
     // Nothing is sent in demo mode; the code is always DEMO_CODE.
   }
 
-  async register(contact: string, code: string, pin: string, demoRole: UserRole = "rider") {
+  async register(contact: string, code: string, pin: string, demoRole: UserRole = "customer") {
     if (!validPinFormat(pin)) throw new BackendError("bad_pin");
     if (weakPin(pin)) throw new BackendError("weak_pin");
     if (code.trim() !== DEMO_CODE) throw new BackendError("invalid_code");
@@ -526,13 +552,13 @@ export class DemoBackend implements Backend {
     return this.signInAs(contact, demoRole);
   }
 
-  async signIn(contact: string, pin: string, demoRole: UserRole = "rider") {
+  async signIn(contact: string, pin: string, demoRole: UserRole = "customer") {
     if (!validPinFormat(pin) || this.load().pins?.[contact] !== pin) throw new BackendError("invalid_pin");
     return this.signInAs(contact, demoRole);
   }
 
   private signInAs(contact: string, demoRole: UserRole) {
-    if (HOSTED_DEMO && demoRole !== "rider") throw new BackendError("forbidden");
+    if (HOSTED_DEMO && demoRole !== "customer") throw new BackendError("forbidden");
     const state = this.load();
     const users = state.users ?? demoUsers(new Date());
     const known = users.find((u) => u.id === `demo-${demoRole}`);
@@ -543,6 +569,7 @@ export class DemoBackend implements Backend {
       email: isEmail ? contact : null,
       fullName: known?.fullName ?? null,
       role: demoRole,
+      ownerOf: ownedOperators(state, `demo-${demoRole}`),
     };
     const signedIn: AdminUser = {
       ...profile,
@@ -671,10 +698,15 @@ export class DemoBackend implements Backend {
   async staffStations() {
     const state = this.load();
     const profile = this.requireProfile(state);
-    if (profile.role !== "operator" && profile.role !== "admin") throw new BackendError("forbidden");
-    // Demo staff run every own station; admins see all.
+    // Menu and rights follow the role, like on Cloudflare.
+    if (profile.role !== "operator" && profile.role !== "admin") return [];
+    const owned = new Set(profile.ownerOf ?? []);
+    // Demo staff run every own station, operator accounts their operator's stations; admins see all.
     const active = this.activeStations(state);
-    const stations = profile.role === "admin" ? active : active.filter((s) => s.isOwn);
+    const stations =
+      profile.role === "admin"
+        ? active
+        : active.filter((s) => owned.has(s.operatorId) || (profile.role === "operator" && s.isOwn));
     return this.views(state, stations);
   }
 
@@ -712,7 +744,7 @@ export class DemoBackend implements Backend {
   }
 
   async stationReservations(stationId: string) {
-    // Staff never see the pickup code; the rider shows it.
+    // Staff never see the pickup code; the customer shows it.
     return this.load()
       .reservations.filter((r) => r.stationId === stationId)
       .map((r) => ({ ...r, pickupCode: undefined }))
@@ -857,48 +889,199 @@ export class DemoBackend implements Backend {
     const users = state.users ?? demoUsers(new Date());
     const before = users.find((u) => u.id === userId);
     if (!before) throw new BackendError("unknown", "user not found");
-    this.save(
-      withAudit(
-        { ...state, users: users.map((u) => (u.id === userId ? { ...u, role } : u)) },
-        { table: "profiles", action: "update", rowId: userId, userId, changes: { role: [before.role, role] } },
-      ),
+    if (before.role === role) return;
+    let next = withAudit(
+      { ...state, users: users.map((u) => (u.id === userId ? { ...u, role } : u)) },
+      { table: "profiles", action: "update", rowId: userId, userId, changes: { role: [before.role, role] } },
     );
+    // Leaving "operator" ends every station assignment and operator account, like on Cloudflare.
+    if (role !== "operator") {
+      for (const a of (state.staff ?? DEMO_STAFF).filter((x) => x.userId === userId)) {
+        next = withAudit(
+          { ...next, staff: (next.staff ?? DEMO_STAFF).filter((x) => x !== a) },
+          { table: "station_staff", action: "delete", rowId: `${a.stationId}:${userId}`, stationId: a.stationId, userId, changes: {} },
+        );
+      }
+      for (const o of (state.operatorOwners ?? []).filter((x) => x.userId === userId)) {
+        next = withAudit(
+          { ...next, operatorOwners: (next.operatorOwners ?? []).filter((x) => x !== o) },
+          { table: "operator_owners", action: "delete", rowId: `${o.operatorId}:${userId}`, userId, changes: { operator_id: o.operatorId } },
+        );
+      }
+    }
+    this.save(next);
   }
 
   async assignStaff(stationId: string, userId: string) {
     const state = this.load();
     this.requireAdmin(state);
+    this.save(this.withStaff(state, stationId, userId));
+  }
+
+  private withStaff(state: DemoState, stationId: string, userId: string): DemoState {
     const staff = state.staff ?? DEMO_STAFF;
-    if (staff.some((a) => a.stationId === stationId && a.userId === userId)) return;
-    this.save(
-      withAudit(
-        {
-          ...state,
-          staff: [...staff, { stationId, userId }],
-          // The role follows the assignment, like sync_staff_role() in SQL.
-          users: (state.users ?? demoUsers(new Date())).map((u) =>
-            u.id === userId && u.role === "rider" ? { ...u, role: "operator" as const } : u,
-          ),
-        },
-        { table: "station_staff", action: "insert", rowId: `${stationId}:${userId}`, stationId, userId, changes: {} },
-      ),
+    if (staff.some((a) => a.stationId === stationId && a.userId === userId)) return state;
+    return withAudit(
+      {
+        ...state,
+        staff: [...staff, { stationId, userId }],
+        // The role follows the assignment, like on Cloudflare.
+        users: promoted(state, userId),
+      },
+      { table: "station_staff", action: "insert", rowId: `${stationId}:${userId}`, stationId, userId, changes: {} },
     );
   }
 
   async unassignStaff(stationId: string, userId: string) {
     const state = this.load();
     this.requireAdmin(state);
+    this.save(this.withoutStaff(state, stationId, userId));
+  }
+
+  private withoutStaff(state: DemoState, stationId: string, userId: string): DemoState {
     const staff = (state.staff ?? DEMO_STAFF).filter((a) => !(a.stationId === stationId && a.userId === userId));
-    const stillStaff = staff.some((a) => a.userId === userId);
-    const users = (state.users ?? demoUsers(new Date())).map((u) =>
-      u.id === userId && u.role === "operator" && !stillStaff ? { ...u, role: "rider" as const } : u,
+    return withAudit(
+      { ...state, staff, users: demotedIfIdle({ ...state, staff }, userId) },
+      { table: "station_staff", action: "delete", rowId: `${stationId}:${userId}`, stationId, userId, changes: {} },
     );
+  }
+
+  // Operator accounts --------------------------------------------------------
+
+  /** The signed-in operator account (admins too), and the operators it may manage. */
+  private requireOwnerOf(state: DemoState, stationId: string): Profile {
+    const profile = this.requireProfile(state);
+    if (profile.role === "admin") return profile;
+    if (profile.role !== "operator") throw new BackendError("forbidden");
+    const station = state.stations.find((s) => s.id === stationId);
+    if (!station || !ownedOperators(state, profile.id).includes(station.operatorId)) throw new BackendError("forbidden");
+    return profile;
+  }
+
+  private label(state: DemoState, userId: string) {
+    const u = (state.users ?? demoUsers(new Date())).find((x) => x.id === userId);
+    return { userId, label: u ? personLabel(u) : "?" };
+  }
+
+  private accountByContact(state: DemoState, contact: string) {
+    const parsed = parseContact(contact);
+    if (!parsed) throw new BackendError(contact.includes("@") ? "invalid_contact" : "phone_not_allowed");
+    const user = (state.users ?? demoUsers(new Date())).find((u) =>
+      parsed.kind === "phone" ? u.phone === parsed.value : u.email === parsed.value,
+    );
+    if (!user) throw new BackendError("account_not_found");
+    return user;
+  }
+
+  async ownerView(): Promise<OwnerView> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const owned = new Set(ownedOperators(state, profile.id));
+    if ((profile.role !== "operator" && profile.role !== "admin") || !owned.size) throw new BackendError("forbidden");
+    const stations = this.activeStations(state).filter((s) => owned.has(s.operatorId));
+    const ids = new Set(stations.map((s) => s.id));
+    return {
+      operators: state.operators.filter((o) => owned.has(o.id)),
+      stations: this.views(state, stations),
+      staff: (state.staff ?? DEMO_STAFF)
+        .filter((a) => ids.has(a.stationId))
+        .map((a) => ({ stationId: a.stationId, ...this.label(state, a.userId) })),
+    };
+  }
+
+  async ownerAddStaff(stationId: string, contact: string) {
+    const state = this.load();
+    this.requireOwnerOf(state, stationId);
+    this.save(this.withStaff(state, stationId, this.accountByContact(state, contact).id));
+  }
+
+  async ownerRemoveStaff(stationId: string, userId: string) {
+    const state = this.load();
+    this.requireOwnerOf(state, stationId);
+    this.save(this.withoutStaff(state, stationId, userId));
+  }
+
+  async ownerSaveStation(stationId: string, input: OwnerStationInput) {
+    const state = this.load();
+    this.requireOwnerOf(state, stationId);
+    const openingHours = input.openingHours.trim().slice(0, 200);
+    const phone = input.phone?.trim().slice(0, 40) || null;
     this.save(
       withAudit(
-        { ...state, staff, users },
-        { table: "station_staff", action: "delete", rowId: `${stationId}:${userId}`, stationId, userId, changes: {} },
+        { ...state, stations: state.stations.map((s) => (s.id === stationId ? { ...s, openingHours, phone } : s)) },
+        { table: "stations", action: "update", rowId: stationId, stationId, changes: { opening_hours: openingHours, phone } },
       ),
     );
+  }
+
+  async adminOperators(): Promise<AdminOperator[]> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const owners = state.operatorOwners ?? [];
+    return [...state.operators]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((o) => ({
+        ...o,
+        contactPhone: state.operatorPhones?.[o.id] ?? null,
+        stationCount: state.stations.filter((s) => s.operatorId === o.id).length,
+        owners: owners.filter((x) => x.operatorId === o.id).map((x) => this.label(state, x.userId)),
+      }));
+  }
+
+  async saveOperator(id: string | null, input: OperatorInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const name = input.name.trim().replace(/\s+/g, " ");
+    if (!name || name.length > OPERATOR_NAME_MAX) throw new BackendError("unknown", "invalid name");
+    const contactPhone = input.contactPhone?.trim() ? normalizeTogoPhone(input.contactPhone) : null;
+    if (input.contactPhone?.trim() && !contactPhone) throw new BackendError("phone_not_allowed");
+    const operatorId = id ?? `demo-op-${Date.now()}`;
+    const operators = id
+      ? state.operators.map((o) => (o.id === id ? { ...o, name } : o))
+      : [...state.operators, { id: operatorId, name, isOwn: false }];
+    this.save(
+      withAudit(
+        {
+          ...state,
+          operators,
+          // Station names carry the operator name, like the join on Cloudflare.
+          stations: state.stations.map((s) => (s.operatorId === operatorId ? { ...s, operatorName: name } : s)),
+          operatorPhones: { ...state.operatorPhones, [operatorId]: contactPhone },
+        },
+        { table: "operators", action: id ? "update" : "insert", rowId: operatorId, changes: { name, contact_phone: contactPhone } },
+      ),
+    );
+  }
+
+  async addOperatorOwner(operatorId: string, contact: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!state.operators.some((o) => o.id === operatorId)) throw new BackendError("unknown", "operator not found");
+    const user = this.accountByContact(state, contact);
+    const owners = state.operatorOwners ?? [];
+    if (owners.some((x) => x.operatorId === operatorId && x.userId === user.id)) return;
+    this.saveOwners(
+      { ...state, users: promoted(state, user.id) },
+      [...owners, { operatorId, userId: user.id }],
+      { table: "operator_owners", action: "insert", rowId: `${operatorId}:${user.id}`, userId: user.id, changes: { operator_id: operatorId } },
+    );
+  }
+
+  async removeOperatorOwner(operatorId: string, userId: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const operatorOwners = (state.operatorOwners ?? []).filter((x) => !(x.operatorId === operatorId && x.userId === userId));
+    this.saveOwners(
+      { ...state, users: demotedIfIdle({ ...state, operatorOwners }, userId) },
+      operatorOwners,
+      { table: "operator_owners", action: "delete", rowId: `${operatorId}:${userId}`, userId, changes: { operator_id: operatorId } },
+    );
+  }
+
+  private saveOwners(state: DemoState, operatorOwners: { operatorId: string; userId: string }[], audit: AuditInput) {
+    const next = { ...state, operatorOwners };
+    const profile = state.profile && { ...state.profile, ownerOf: ownedOperators(next, state.profile.id) };
+    this.save(withAudit({ ...next, profile }, audit));
   }
 
   async setStationActive(stationId: string, active: boolean) {
@@ -1072,7 +1255,7 @@ export class DemoBackend implements Backend {
       phone,
       email: null,
       fullName: name,
-      role: "rider",
+      role: "customer",
       createdAt: new Date().toISOString(),
       lastSignInAt: null,
     };

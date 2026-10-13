@@ -40,7 +40,7 @@ const B = { id: "st-b", lat: 6.17, lng: 1.21 };
 const HOME = { lat: 6.175, lng: 1.215, note: "Portail bleu", phone: "90 11 22 33" };
 
 const ADMIN: Profile = { id: "admin", phone: "+22890000001", email: null, fullName: "Admin", role: "admin" };
-const SENDER: Profile = { id: "sender", phone: "+22891000000", email: null, fullName: "Ama", role: "rider" };
+const SENDER: Profile = { id: "sender", phone: "+22891000000", email: null, fullName: "Ama", role: "customer" };
 const RECIPIENT_PHONE = "+22892000000";
 
 function setup() {
@@ -94,7 +94,7 @@ function setup() {
 const photo = () =>
   new Request("https://app.poinderecharge.com/x", { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: new Uint8Array([1, 2, 3]) });
 
-const profile = (id: string, phone: string): Profile => ({ id, phone, email: null, fullName: null, role: "rider" });
+const profile = (id: string, phone: string): Profile => ({ id, phone, email: null, fullName: null, role: "customer" });
 
 /** A driver who applied, sent their photos and was approved with a vehicle of this type. */
 async function approvedDriver(t: ReturnType<typeof setup>, id: string, type: "moto" | "tricycle" | "cargo_tricycle" = "tricycle") {

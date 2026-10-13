@@ -10,7 +10,7 @@ import { format } from "@/lib/i18n/format";
 import type { UserRole } from "@/lib/types";
 import { field, indexSnapshot, Loading, Table, td, th, useAdminSnapshot, userContact, userLabel, useDateTime } from "./shared";
 
-const ROLES: UserRole[] = ["rider", "operator", "fleet_manager", "admin"];
+const ROLES: UserRole[] = ["customer", "operator", "fleet_manager", "admin"];
 
 /** Users with their role, assigned stations, last login and reservation behaviour. */
 export function UsersTable() {

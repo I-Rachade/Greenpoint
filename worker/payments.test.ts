@@ -12,22 +12,22 @@ import type { Profile } from "../src/lib/types";
 import { fakeD1 } from "./test-d1";
 
 const OWN_OPERATOR = "00000000-0000-4000-8000-000000000001";
-const RIDER: Profile = { id: "rider-1", phone: "+22896123456", fullName: null, role: "rider" };
-const OTHER: Profile = { id: "rider-2", phone: "+22890123456", fullName: null, role: "rider" };
+const CUSTOMER: Profile = { id: "customer-1", phone: "+22896123456", fullName: null, role: "customer" };
+const OTHER: Profile = { id: "customer-2", phone: "+22890123456", fullName: null, role: "customer" };
 
 function setup(settings: Partial<Env> = {}) {
   const { db, d1 } = fakeD1();
   const now = new Date().toISOString();
   const later = new Date(Date.now() + 20 * 60_000).toISOString();
   db.exec(`
-    insert into users (id, phone, created_at) values ('rider-1', '+22896123456', '${now}'), ('rider-2', '+22890123456', '${now}');
+    insert into users (id, phone, created_at) values ('customer-1', '+22896123456', '${now}'), ('customer-2', '+22890123456', '${now}');
     insert into operators (id, name, is_own, created_at) values ('other-op', 'Autre', 0, '${now}');
     insert into stations (id, operator_id, name, lat, lng, kind, created_at, price_battery_xof)
       values ('own', '${OWN_OPERATOR}', 'A', 6.1, 1.2, 'both', '${now}', 500),
              ('foreign', 'other-op', 'B', 6.1, 1.2, 'both', '${now}', 500);
     insert into reservations (id, user_id, station_id, type, created_at, expires_at, pickup_code)
-      values ('res-battery', 'rider-1', 'own', 'battery', '${now}', '${later}', '1234'),
-             ('res-foreign', 'rider-2', 'foreign', 'battery', '${now}', '${later}', '1234');
+      values ('res-battery', 'customer-1', 'own', 'battery', '${now}', '${later}', '1234'),
+             ('res-foreign', 'customer-2', 'foreign', 'battery', '${now}', '${later}', '1234');
   `);
   const env = { DB: d1, PAYMENT_CALLBACK_SECRET: "callback-secret", ...settings } as unknown as Env;
   return { db, env };
@@ -45,7 +45,7 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-const start = (env: Env, body: unknown, user = RIDER) => startPayment(env, user, post("/api/payments", body));
+const start = (env: Env, body: unknown, user = CUSTOMER) => startPayment(env, user, post("/api/payments", body));
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -149,7 +149,7 @@ describe("startPayment", () => {
     const payment = await start(env, { reservationId: "res-battery", network: "flooz", phone: "96 12 34 56", amountXof: 5 });
     expect(payment).toMatchObject({ reservationId: "res-battery", amountXof: 500, network: "flooz", status: "pending" });
     const row = db.prepare("select * from payments").get() as Record<string, unknown>;
-    expect(row).toMatchObject({ phone: "+22896123456", provider: "mock", user_id: "rider-1" });
+    expect(row).toMatchObject({ phone: "+22896123456", provider: "mock", user_id: "customer-1" });
     expect(row.provider_reference).toMatch(/^mock_pdr_/);
     expect(db.prepare("select table_name, action from audit_log").all()).toEqual([{ table_name: "payments", action: "insert" }]);
   });
@@ -173,7 +173,7 @@ describe("startPayment", () => {
     });
   });
 
-  it("rejects other riders' and inactive reservations, bad networks and foreign numbers", async () => {
+  it("rejects other customers' and inactive reservations, bad networks and foreign numbers", async () => {
     const { db, env } = setup();
     await expect(start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" }, OTHER)).rejects.toMatchObject({
       code: "not_found",
@@ -190,7 +190,7 @@ describe("startPayment", () => {
     });
   });
 
-  it("marks the payment failed when the provider refuses, so the rider can try again", async () => {
+  it("marks the payment failed when the provider refuses, so the customer can try again", async () => {
     const { db, env } = setup();
     await expect(start(env, { reservationId: "res-battery", network: "flooz", phone: "96123450" })).rejects.toMatchObject({
       code: "provider_unavailable",
@@ -202,14 +202,14 @@ describe("startPayment", () => {
 });
 
 describe("refreshPayment and myPayments", () => {
-  it("asks the provider and only shows the rider's own payments", async () => {
+  it("asks the provider and only shows the customer's own payments", async () => {
     const { env } = setup();
     const payment = await start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" });
     await expect(refreshPayment(env, OTHER, payment.id)).rejects.toMatchObject({ code: "not_found" });
-    const refreshed = await refreshPayment(env, RIDER, payment.id);
+    const refreshed = await refreshPayment(env, CUSTOMER, payment.id);
     expect(refreshed.status).toBe("succeeded");
     expect(refreshed.paidAt).not.toBeNull();
-    expect(await myPayments(env, RIDER)).toHaveLength(1);
+    expect(await myPayments(env, CUSTOMER)).toHaveLength(1);
     expect(await myPayments(env, OTHER)).toHaveLength(0);
   });
 });
@@ -218,7 +218,7 @@ describe("account deletion", () => {
   it("keeps the payment but forgets who paid and from which number", async () => {
     const { db, env } = setup();
     await start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" });
-    db.exec("delete from reservations where user_id = 'rider-1'; delete from users where id = 'rider-1'");
+    db.exec("delete from reservations where user_id = 'customer-1'; delete from users where id = 'customer-1'");
     expect(db.prepare("select user_id, phone, reservation_id, amount_xof from payments").get()).toEqual({
       user_id: null,
       phone: null,
