@@ -127,6 +127,19 @@ import { refreshTopup, startTopup } from "./wallet-topups";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
 import { adjustBalance, adminWallet, findRecipient, getWallet, saveFeeSetting, sendMoney, setWalletEnabled, setWalletFrozen } from "./wallet";
 import type { WalletFeeSetting } from "../src/lib/wallet";
+import {
+  adminGreenpoint,
+  cancelRedemption,
+  confirmRedemption,
+  earnStatement,
+  myGreenpoint,
+  networkTotal,
+  recordVisit,
+  saveFactors,
+  saveReward,
+  setVehicle,
+  startRedemption,
+} from "./greenpoint";
 
 // Rows as stored in D1 (snake_case, booleans as 0/1, JSON as text).
 
@@ -542,6 +555,8 @@ async function completeReservation(c: Ctx, id: string, pickupCode: string) {
   if (!done.meta.changes) throw new ApiError("reservation_not_active");
   // The battery or slot the customer took comes off the counter, so the map does not show it as free again.
   const column = r.type === "battery" ? "full_batteries" : "free_slots";
+  // The rider's CO2 and greenpoints for this swap or charge (worker/greenpoint.ts).
+  const earned = await earnStatement(c.db, { userId: r.user_id, type: r.type, stationId: r.station_id, reservationId: id, createdBy: user.id });
   await c.db.batch([
     c.db
       .prepare(`update station_status set ${column} = max(${column} - 1, 0), updated_at = ?, updated_by = ? where station_id = ?`)
@@ -550,6 +565,7 @@ async function completeReservation(c: Ctx, id: string, pickupCode: string) {
       stationId: r.station_id,
       userId: r.user_id,
     }),
+    ...(earned ? [earned.statement] : []),
   ]);
 }
 
@@ -1325,6 +1341,31 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/payments\/mine$/, async (c) => myPayments(c.env, await c.requireUser())],
   ["POST", /^\/api\/payments$/, async (c) => startPayment(c.env, await c.requireUser(), c.request)],
   ["POST", /^\/api\/payments\/([\w-]+)\/refresh$/, async (c, [id]) => refreshPayment(c.env, await c.requireUser(), id)],
+  // greenpoint (worker/greenpoint.ts)
+  ["GET", /^\/api\/greenpoint$/, async (c) => myGreenpoint(c.env, await c.requireUser())],
+  ["GET", /^\/api\/greenpoint\/total$/, (c) => networkTotal(c.env)],
+  ["POST", /^\/api\/greenpoint\/vehicle$/, async (c) => setVehicle(c.env, await c.requireUser(), c.request)],
+  ["POST", /^\/api\/greenpoint\/redemptions$/, async (c) => startRedemption(c.env, await c.requireUser(), c.request)],
+  ["POST", /^\/api\/greenpoint\/redemptions\/([\w-]+)\/cancel$/, async (c, [id]) => cancelRedemption(c.env, await c.requireUser(), id)],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/greenpoint\/visits$/,
+    async (c, [id]) => recordVisit(c.env, await c.requireUser(), (u, s) => c.isStaffOf(u, s), id, c.request),
+  ],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/greenpoint\/redeem$/,
+    async (c, [id]) => confirmRedemption(c.env, await c.requireUser(), (u, s) => c.isStaffOf(u, s), id, c.request),
+  ],
+  ["GET", /^\/api\/admin\/greenpoint$/, async (c) => {
+    await c.requireAdmin();
+    return adminGreenpoint(c.env);
+  }],
+  ["POST", /^\/api\/admin\/greenpoint\/factors$/, async (c) => saveFactors(c.env, await c.requireAdmin(), c.request)],
+  ["POST", /^\/api\/admin\/greenpoint\/rewards$/, async (c) => {
+    await c.requireAdmin();
+    return saveReward(c.env, c.request);
+  }],
   // Parcel depot (worker/parcels.ts)
   ["GET", /^\/api\/parcels\/info$/, (c) => parcelInfo(c)],
   ["GET", /^\/api\/parcels\/mine$/, (c) => myParcels(c)],

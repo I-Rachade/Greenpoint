@@ -7,6 +7,7 @@ import { format } from "@/lib/i18n/format";
 import type { Reservation, StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
+import { GreenpointStaff } from "./greenpoint/greenpoint-staff";
 import { OperatorTabs } from "./parcels/staff-parcels";
 import { effectiveStatus, minutesLeft } from "./reservation-list";
 
@@ -169,6 +170,8 @@ function StationControls({ station, onError }: { station: StationView; onError: 
           </ul>
         )}
       </div>
+
+      <GreenpointStaff station={station} />
     </section>
   );
 }

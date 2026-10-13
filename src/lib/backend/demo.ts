@@ -13,6 +13,7 @@ import {
   type StationStatus,
   type StationView,
   type UserRole,
+  type VehicleType,
 } from "../types";
 import { BackendError, type Backend, type CodeChannel, type StatusPatch } from "./backend";
 import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, demoSocketPoints, initialDemoStatus } from "./demo-data";
@@ -118,6 +119,28 @@ import {
   type WalletTransaction,
   type WalletView,
 } from "../wallet";
+import {
+  DEFAULT_FACTORS,
+  dayStart,
+  levelFor,
+  MAX_EARNINGS_PER_DAY,
+  nextLevel,
+  pointsFor,
+  REDEEM_CODE_MINUTES,
+  rewardAvailable,
+  treesFor,
+  tripGrams,
+  validFactors,
+  validRewardInput,
+  type AdminGreenpoint,
+  type GreenpointEntry,
+  type GreenpointFactors,
+  type GreenpointReceipt,
+  type GreenpointRedemption,
+  type GreenpointReward,
+  type GreenpointRewardInput,
+  type GreenpointView,
+} from "../greenpoint";
 import { OPERATOR_NAME_MAX, type AdminOperator, type OperatorInput, type OwnerStationInput, type OwnerView } from "../operators";
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 
@@ -166,6 +189,8 @@ interface DemoState {
   bookings?: (StationBooking & { partnerId: string; fromStationId: string })[];
   /** Wallet (demo only: switched on, everyone starts with DEMO_WALLET_START francs). */
   wallet?: DemoWallet;
+  /** greenpoint (demo only). */
+  greenpoint?: DemoGreenpoint;
   /** Fleet managers: which manager each linked driver belongs to (missing = nobody). */
   fleetLinks?: { driverId: string; managerId: string }[];
   /** Operator accounts: who runs which operator (missing = nobody). */
@@ -194,6 +219,34 @@ export const DEMO_WALLET_START = 25_000;
 
 function demoTopupView(t: WalletTopup): WalletTopup {
   return { id: t.id, amountXof: t.amountXof, network: t.network, status: t.status, failureReason: t.failureReason, createdAt: t.createdAt, paidAt: t.paidAt };
+}
+
+interface DemoGreenpoint {
+  factors: GreenpointFactors;
+  rewards: GreenpointReward[];
+  /** Ledger, newest first. */
+  ledger: (GreenpointEntry & { userId: string; reservationId: string | null; jobId?: string })[];
+  redemptions: (GreenpointRedemption & { userId: string; rewardId: string; status: "open" | "used" | "cancelled" })[];
+  vehicles: Record<string, VehicleType>;
+}
+
+/** The main reward, as in migration 0015. */
+const DEMO_REWARDS: GreenpointReward[] = [
+  {
+    id: "free-swap",
+    title: "Échange de batterie offert",
+    description: "Un échange de batterie gratuit dans une station poinderecharge.",
+    costPoints: 150,
+    provider: "network",
+    partnerName: null,
+    stock: null,
+    validUntil: null,
+    isActive: true,
+  },
+];
+
+function freshGreenpoint(): DemoGreenpoint {
+  return { factors: DEFAULT_FACTORS, rewards: DEMO_REWARDS, ledger: [], redemptions: [], vehicles: {} };
 }
 
 function freshWallet(): DemoWallet {
@@ -775,7 +828,7 @@ export class DemoBackend implements Backend {
         : s,
     );
     this.save({
-      ...state,
+      ...this.earn(state, { userId: r.userId, type: r.type, stationId: r.stationId, reservationId: r.id }),
       statuses,
       reservations: state.reservations.map((x) => (x.id === id ? { ...x, status: "completed" as const } : x)),
     });
@@ -1934,6 +1987,7 @@ export class DemoBackend implements Backend {
         parcels: (state.parcels ?? []).map((p) =>
           p.id === parcel.id ? { ...p, status: "picked_up" as const, pickedUpAt: now, pickupCode: undefined, deliveryStatus: "delivered" as const } : p,
         ),
+        greenpoint: this.tripGreenpoint(state, driver.userId, job, job.fromStationId),
         ledger: [
           this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null),
           this.ledgerEntry(driver.userId, "earning", driverEarning(job.fareFcfa, this.settingsOf(state)), job.id, null),
@@ -2174,6 +2228,7 @@ export class DemoBackend implements Backend {
           p.id === job.parcelId ? { ...p, status: "arrived" as const, arrivedAt: now.toISOString(), pickupDeadline: deadline, pickupCode: code } : p,
         ),
         ledger: [this.ledgerEntry(d.userId, "earning", driverEarning(job.fareFcfa, this.settingsOf(state)), job.id, stationId), ...(state.ledger ?? [])],
+        greenpoint: this.tripGreenpoint(state, d.userId, job, stationId),
       },
     );
   }
@@ -2917,5 +2972,234 @@ export class DemoBackend implements Backend {
         { table: "wallets", action: "update", rowId: user.id, userId: user.id, changes: { status: frozen ? "frozen" : "active" } },
       ),
     );
+  }
+
+  // greenpoint (demo) ----------------------------------------------------------
+
+  private gp(state: DemoState): DemoGreenpoint {
+    const g = state.greenpoint ?? freshGreenpoint();
+    // Demo states saved before driver trips counted lack the km factors.
+    return { ...g, factors: validFactors(g.factors) ?? DEFAULT_FACTORS };
+  }
+
+  /** The driver's CO2 and greenpoints for a finished trip (as tripStatement in the Worker). */
+  private tripGreenpoint(state: DemoState, driverId: string, job: DemoJob, stationId: string | null): DemoGreenpoint {
+    const g = this.gp(state);
+    const driver = (state.drivers ?? []).find((d) => d.userId === driverId);
+    const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === driver?.vehicleId);
+    if (!vehicle || g.ledger.some((l) => l.jobId === job.id)) return g;
+    const grams = tripGrams(job.distanceM, vehicle.type, g.factors);
+    const entry = {
+      id: crypto.randomUUID(),
+      userId: driverId,
+      reservationId: null,
+      jobId: job.id,
+      kind: "delivery" as const,
+      co2Grams: grams,
+      points: pointsFor(grams),
+      vehicle: null,
+      stationName: state.stations.find((s) => s.id === stationId)?.name ?? null,
+      rewardTitle: null,
+      createdAt: new Date().toISOString(),
+    };
+    return { ...g, ledger: [entry, ...g.ledger].slice(0, 500) };
+  }
+
+  /** Adds a swap or charge to the ledger, unless the daily limit is reached (as earnStatement in the Worker). */
+  private earn(
+    state: DemoState,
+    input: { userId: string; type: ReservationType; stationId: string; reservationId: string | null; vehicle?: VehicleType },
+  ): DemoState {
+    const g = this.gp(state);
+    const today = dayStart();
+    const earnedToday = g.ledger.filter((l) => l.userId === input.userId && l.points > 0 && l.kind !== "admin_adjust" && l.createdAt >= today).length;
+    if (earnedToday >= MAX_EARNINGS_PER_DAY) return state;
+    // Drivers on one of our vehicles earn per km instead.
+    if ((state.drivers ?? []).some((d) => d.userId === input.userId && d.status === "active" && d.vehicleId)) return state;
+    if (input.reservationId && g.ledger.some((l) => l.reservationId === input.reservationId)) return state;
+    const vehicle = input.vehicle ?? g.vehicles[input.userId] ?? "scooter";
+    const grams = g.factors.batteryGrams[vehicle];
+    const entry = {
+      id: crypto.randomUUID(),
+      userId: input.userId,
+      reservationId: input.reservationId,
+      kind: input.reservationId ? (input.type === "battery" ? ("swap" as const) : ("charge" as const)) : ("visit" as const),
+      co2Grams: grams,
+      points: pointsFor(grams),
+      vehicle,
+      stationName: state.stations.find((s) => s.id === input.stationId)?.name ?? null,
+      rewardTitle: null,
+      createdAt: new Date().toISOString(),
+    };
+    return { ...state, greenpoint: { ...g, ledger: [entry, ...g.ledger].slice(0, 500) } };
+  }
+
+  private gpTotals(g: DemoGreenpoint, userId: string) {
+    const mine = g.ledger.filter((l) => l.userId === userId);
+    return { grams: mine.reduce((n, l) => n + l.co2Grams, 0), points: mine.reduce((n, l) => n + l.points, 0) };
+  }
+
+  private openCode(g: DemoGreenpoint, userId: string) {
+    const now = new Date().toISOString();
+    return g.redemptions.find((r) => r.userId === userId && r.status === "open" && r.expiresAt > now) ?? null;
+  }
+
+  async myGreenpoint(): Promise<GreenpointView> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const g = this.gp(state);
+    const { grams, points } = this.gpTotals(g, profile.id);
+    const open = this.openCode(g, profile.id);
+    return {
+      co2Grams: grams,
+      points,
+      level: levelFor(grams),
+      next: nextLevel(grams),
+      trees: treesFor(grams),
+      vehicle: g.vehicles[profile.id] ?? "scooter",
+      redemption: open ? { id: open.id, code: open.code, rewardTitle: open.rewardTitle, costPoints: open.costPoints, expiresAt: open.expiresAt } : null,
+      rewards: g.rewards.filter((r) => rewardAvailable(r)).sort((a, b) => a.costPoints - b.costPoints),
+      history: g.ledger.filter((l) => l.userId === profile.id).slice(0, 50),
+    };
+  }
+
+  async setGreenpointVehicle(vehicle: VehicleType) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const g = this.gp(state);
+    this.save({ ...state, greenpoint: { ...g, vehicles: { ...g.vehicles, [profile.id]: vehicle } } });
+  }
+
+  async startRedemption(rewardId: string): Promise<GreenpointRedemption> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const g = this.gp(state);
+    const reward = g.rewards.find((r) => r.id === rewardId);
+    if (!reward || !rewardAvailable(reward)) throw new BackendError("reward_unavailable");
+    if (this.openCode(g, profile.id)) throw new BackendError("redemption_open");
+    if (this.gpTotals(g, profile.id).points < reward.costPoints) throw new BackendError("not_enough_points");
+    const code = String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0");
+    const redemption = {
+      id: crypto.randomUUID(),
+      code,
+      rewardTitle: reward.title,
+      costPoints: reward.costPoints,
+      expiresAt: new Date(Date.now() + REDEEM_CODE_MINUTES * 60_000).toISOString(),
+      userId: profile.id,
+      rewardId,
+      status: "open" as const,
+    };
+    // Expired codes of this person are closed, so only one is ever open.
+    const others = g.redemptions.map((r) => (r.userId === profile.id && r.status === "open" ? { ...r, status: "cancelled" as const } : r));
+    this.save({ ...state, greenpoint: { ...g, redemptions: [redemption, ...others].slice(0, 200) } });
+    return { id: redemption.id, code, rewardTitle: reward.title, costPoints: reward.costPoints, expiresAt: redemption.expiresAt };
+  }
+
+  async cancelRedemption(id: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const g = this.gp(state);
+    this.save({
+      ...state,
+      greenpoint: {
+        ...g,
+        redemptions: g.redemptions.map((r) => (r.id === id && r.userId === profile.id && r.status === "open" ? { ...r, status: "cancelled" as const } : r)),
+      },
+    });
+  }
+
+  async recordGreenpointVisit(stationId: string, input: { contact: string; service: "swap" | "charge"; vehicle?: VehicleType }): Promise<GreenpointReceipt> {
+    const state = this.load();
+    const profile = this.requireStaff(state);
+    const station = state.stations.find((s) => s.id === stationId);
+    if (!station) throw new BackendError("station_not_found");
+    const offered = input.service === "swap" ? offersSwap(station.kind) : offersCharging(station.kind);
+    if (!offered) throw new BackendError("service_not_offered");
+    const rider = this.findWalletUser(state, input.contact);
+    if (rider.id === profile.id) throw new BackendError("own_reservation");
+    const next = this.earn(state, {
+      userId: rider.id,
+      type: input.service === "swap" ? "battery" : "slot",
+      stationId,
+      reservationId: null,
+      vehicle: input.vehicle,
+    });
+    if (next === state) throw new BackendError("greenpoint_daily_limit");
+    this.save(next);
+    const entry = this.gp(next).ledger[0];
+    return { person: personLabel(rider), co2Grams: entry.co2Grams, points: entry.points, rewardTitle: null };
+  }
+
+  async confirmRedemption(stationId: string, code: string): Promise<GreenpointReceipt> {
+    const state = this.load();
+    const profile = this.requireStaff(state);
+    const g = this.gp(state);
+    const now = new Date().toISOString();
+    const r = g.redemptions.find((x) => x.code === code.trim() && x.status === "open" && x.expiresAt > now);
+    if (!r) throw new BackendError("invalid_code");
+    if (r.userId === profile.id) throw new BackendError("own_reservation");
+    if (this.gpTotals(g, r.userId).points < r.costPoints) throw new BackendError("not_enough_points");
+    const entry = {
+      id: crypto.randomUUID(),
+      userId: r.userId,
+      reservationId: null,
+      kind: "redeem" as const,
+      co2Grams: 0,
+      points: -r.costPoints,
+      vehicle: null,
+      stationName: state.stations.find((s) => s.id === stationId)?.name ?? null,
+      rewardTitle: r.rewardTitle,
+      createdAt: now,
+    };
+    this.save({
+      ...state,
+      greenpoint: {
+        ...g,
+        ledger: [entry, ...g.ledger].slice(0, 500),
+        redemptions: g.redemptions.map((x) => (x.id === r.id ? { ...x, status: "used" as const } : x)),
+        rewards: g.rewards.map((w) => (w.id === r.rewardId && w.stock !== null ? { ...w, stock: Math.max(0, w.stock - 1) } : w)),
+      },
+    });
+    const rider = (state.users ?? []).find((u) => u.id === r.userId);
+    return { person: rider ? personLabel(rider) : "?", co2Grams: 0, points: -r.costPoints, rewardTitle: r.rewardTitle };
+  }
+
+  async adminGreenpoint(): Promise<AdminGreenpoint> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const g = this.gp(state);
+    const users = state.users ?? [];
+    return {
+      factors: g.factors,
+      rewards: g.rewards,
+      totals: {
+        co2Grams: g.ledger.reduce((n, l) => n + l.co2Grams, 0),
+        pointsEarned: g.ledger.reduce((n, l) => n + Math.max(0, l.points), 0),
+        pointsRedeemed: g.ledger.filter((l) => l.kind === "redeem").reduce((n, l) => n - l.points, 0),
+        members: new Set(g.ledger.map((l) => l.userId)).size,
+      },
+      recent: g.ledger.slice(0, 100).map((l) => {
+        const u = users.find((x) => x.id === l.userId) ?? (state.profile?.id === l.userId ? state.profile : null);
+        return { ...l, person: u ? personLabel(u) : "?" };
+      }),
+    };
+  }
+
+  async saveGreenpointFactors(factors: GreenpointFactors) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const valid = validFactors(factors);
+    if (!valid) throw new BackendError("unknown", "bad_request");
+    this.save({ ...state, greenpoint: { ...this.gp(state), factors: valid } });
+  }
+
+  async saveGreenpointReward(id: string | null, input: GreenpointRewardInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const valid = validRewardInput(input);
+    if (!valid) throw new BackendError("unknown", "bad_request");
+    const g = this.gp(state);
+    const rewards = id ? g.rewards.map((r) => (r.id === id ? { ...valid, id } : r)) : [...g.rewards, { ...valid, id: crypto.randomUUID() }];
+    this.save({ ...state, greenpoint: { ...g, rewards } });
   }
 }

@@ -11,7 +11,7 @@ import { normalizeTogoPhone } from "@/lib/phone";
 import { LEGAL_PATHS } from "@/lib/legal/content";
 import { useApp } from "./app-provider";
 import { useWalletShown } from "./header";
-import { BoxIcon, GearIcon, HelpIcon, LogoutIcon, ScooterIcon, ShieldIcon, StoreIcon, TicketIcon, UserIcon, WalletIcon } from "./icons";
+import { BoxIcon, GearIcon, HelpIcon, LeafIcon, LogoutIcon, ScooterIcon, ShieldIcon, StoreIcon, TicketIcon, UserIcon, WalletIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { MenuButton, MenuGroup, MenuLink } from "./menu";
 import { PageTitle } from "./page-title";
@@ -87,6 +87,7 @@ export function AccountPanel() {
             <MenuLink href="/reservations" icon={TicketIcon} label={t.nav.reservations} />
             {features.parcels && <MenuLink href="/colis" icon={BoxIcon} label={t.nav.parcels} />}
             {walletShown && <MenuLink href="/portefeuille" icon={WalletIcon} label={t.nav.wallet} />}
+            <MenuLink href="/greenpoint" icon={LeafIcon} label={t.nav.greenpoint} />
             {features.parcels && (
               <MenuLink href="/chauffeur" icon={ScooterIcon} label={profile.driverStatus ? t.nav.driver : t.account.becomeDriver} />
             )}

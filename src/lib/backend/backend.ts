@@ -1,5 +1,6 @@
 import type {
   Operator,
+  VehicleType,
   Profile,
   Reservation,
   ReservationType,
@@ -15,6 +16,14 @@ import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, P
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
 import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
 import type { Promotion, PromotionInput } from "../promo";
+import type {
+  AdminGreenpoint,
+  GreenpointFactors,
+  GreenpointReceipt,
+  GreenpointRedemption,
+  GreenpointRewardInput,
+  GreenpointView,
+} from "../greenpoint";
 import type {
   AdminDrivers,
   DeliveryJob,
@@ -109,6 +118,11 @@ export type BackendErrorCode =
   | "monthly_limit_exceeded"
   | "wallet_not_empty"
   | "topup_unavailable"
+  | "reward_unavailable"
+  | "redemption_open"
+  | "not_enough_points"
+  | "greenpoint_daily_limit"
+  | "greenpoint_fleet_driver"
   | "unknown";
 
 export class BackendError extends Error {
@@ -332,4 +346,21 @@ export interface Backend {
   saveWalletFees(setting: WalletFeeSetting): Promise<void>;
   adjustWallet(input: WalletAdjustInput): Promise<WalletTransaction>;
   setWalletFrozen(contact: string, frozen: boolean): Promise<void>;
+
+  // greenpoint (see src/lib/greenpoint.ts)
+  /** CO2 saved, level, greenpoints, rewards and history of the signed-in user. */
+  myGreenpoint(): Promise<GreenpointView>;
+  /** The vehicle that sets the CO2 of a swap or charge. */
+  setGreenpointVehicle(vehicle: VehicleType): Promise<void>;
+  /** A code for a reward, valid REDEEM_CODE_MINUTES; points are taken when staff enter it. */
+  startRedemption(rewardId: string): Promise<GreenpointRedemption>;
+  cancelRedemption(id: string): Promise<void>;
+  /** Staff enter a swap or charge without reservation by the rider's phone number or e-mail. */
+  recordGreenpointVisit(stationId: string, input: { contact: string; service: "swap" | "charge"; vehicle?: VehicleType }): Promise<GreenpointReceipt>;
+  /** Staff enter the code a rider shows for a reward. */
+  confirmRedemption(stationId: string, code: string): Promise<GreenpointReceipt>;
+  /** Backoffice: factors, rewards, totals and the latest movements (admins only). */
+  adminGreenpoint(): Promise<AdminGreenpoint>;
+  saveGreenpointFactors(factors: GreenpointFactors): Promise<void>;
+  saveGreenpointReward(id: string | null, input: GreenpointRewardInput): Promise<void>;
 }

@@ -5,6 +5,14 @@ import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, P
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
 import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
 import type { Promotion, PromotionInput } from "../promo";
+import type {
+  AdminGreenpoint,
+  GreenpointFactors,
+  GreenpointReceipt,
+  GreenpointRedemption,
+  GreenpointRewardInput,
+  GreenpointView,
+} from "../greenpoint";
 import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
 import type {
   AdminDrivers,
@@ -24,6 +32,7 @@ import type { FleetStats, FleetView } from "../fleet";
 import type { LatLng } from "../geo";
 import type {
   Operator,
+  VehicleType,
   Profile,
   Reservation,
   ReservationType,
@@ -103,6 +112,11 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "wallet_not_empty",
   "topup_unavailable",
   "provider_unavailable",
+  "reward_unavailable",
+  "redemption_open",
+  "not_enough_points",
+  "greenpoint_daily_limit",
+  "greenpoint_fleet_driver",
 ];
 
 /**
@@ -728,5 +742,43 @@ export class CloudflareBackend implements Backend {
   async setWalletFrozen(contact: string, frozen: boolean) {
     await this.call("POST", "/api/admin/wallet/freeze", { contact, frozen });
     this.changed();
+  }
+
+  // greenpoint -------------------------------------------------------------------
+
+  myGreenpoint() {
+    return this.call<GreenpointView>("GET", "/api/greenpoint");
+  }
+
+  async setGreenpointVehicle(vehicle: VehicleType) {
+    await this.call("POST", "/api/greenpoint/vehicle", { vehicle });
+  }
+
+  startRedemption(rewardId: string) {
+    return this.call<GreenpointRedemption>("POST", "/api/greenpoint/redemptions", { rewardId });
+  }
+
+  async cancelRedemption(id: string) {
+    await this.call("POST", `/api/greenpoint/redemptions/${encodeURIComponent(id)}/cancel`);
+  }
+
+  recordGreenpointVisit(stationId: string, input: { contact: string; service: "swap" | "charge"; vehicle?: VehicleType }) {
+    return this.call<GreenpointReceipt>("POST", `/api/stations/${encodeURIComponent(stationId)}/greenpoint/visits`, input);
+  }
+
+  confirmRedemption(stationId: string, code: string) {
+    return this.call<GreenpointReceipt>("POST", `/api/stations/${encodeURIComponent(stationId)}/greenpoint/redeem`, { code });
+  }
+
+  adminGreenpoint() {
+    return this.call<AdminGreenpoint>("GET", "/api/admin/greenpoint");
+  }
+
+  async saveGreenpointFactors(factors: GreenpointFactors) {
+    await this.call("POST", "/api/admin/greenpoint/factors", factors);
+  }
+
+  async saveGreenpointReward(id: string | null, input: GreenpointRewardInput) {
+    await this.call("POST", "/api/admin/greenpoint/rewards", { id, input });
   }
 }

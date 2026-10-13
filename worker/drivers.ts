@@ -49,6 +49,7 @@ import {
 } from "../src/lib/parcels";
 import { normalizeTogoPhone } from "../src/lib/phone";
 import type { Profile } from "../src/lib/types";
+import { tripStatement } from "./greenpoint";
 import { ApiError, nowIso, uuid } from "./http";
 import { notifyPerson } from "./notify";
 import {
@@ -700,7 +701,10 @@ export async function deliverJob(c: ParcelCtx, jobId: string, rawCode: unknown) 
   const now = nowIso();
   const s = await driverSettings(c.db);
   if (!(await moveJob(c.db, job.id, ["picked_up", "at_door"], "status = 'done', done_at = ?", now))) throw new ApiError("job_wrong_status");
+  // The driver's CO2 and greenpoints for this trip (worker/greenpoint.ts).
+  const trip = await tripStatement(c.db, { driverId: user.id, jobId: job.id, distanceMeters: job.distance_m, stationId: job.from_station_id, createdBy: user.id });
   await c.db.batch([
+    ...(trip ? [trip] : []),
     c.db
       .prepare(
         "update parcels set status = 'picked_up', picked_up_at = ?, picked_up_by = ?, delivery_status = 'delivered' where id = ? and status = 'arrived'",
@@ -861,7 +865,9 @@ export async function receiveFromDriver(c: ParcelCtx, stationId: string, badge: 
   if (parcel.status !== "in_transit" || parcel.to_station_id !== stationId) throw new ApiError("parcel_wrong_status");
   const s = await driverSettings(c.db);
   if (!(await moveJob(c.db, job.id, ["picked_up"], "status = 'done', done_at = ?", now))) throw new ApiError("job_wrong_status");
+  const trip = await tripStatement(c.db, { driverId: row.user_id, jobId: job.id, distanceMeters: job.distance_m, stationId, createdBy: staff.id });
   await c.db.batch([
+    ...(trip ? [trip] : []),
     ledger(c, row.user_id, "earning", driverEarning(job.fare_fcfa, s), job.id, stationId, staff.id),
     jobAudit(c, staff.id, job, { status: ["picked_up", "done"] }),
   ]);

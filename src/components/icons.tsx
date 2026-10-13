@@ -157,6 +157,13 @@ export const WalletIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const LeafIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5 19c0-8 5-13 15-14-1 10-6 15-14 15" />
+    <path d="M5 19c3-4 6-7 10-9" />
+  </Svg>
+);
+
 export const HelpIcon = (p: IconProps) => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="8.5" />

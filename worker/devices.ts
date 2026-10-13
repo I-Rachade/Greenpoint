@@ -22,6 +22,7 @@ import type { ChargingPoint, ChargingPointStatus } from "../src/lib/types";
 import type { Env } from "./env";
 import { ApiError, nowIso, uuid } from "./http";
 import { dispatchXingkeCommand } from "./xingke";
+import { earnStatement } from "./greenpoint";
 
 // Connected sockets (e.g. LoRa). See docs/steckdosen-lora.md.
 
@@ -130,6 +131,9 @@ export function ingest(db: D1Database): Ingest {
         .bind(device.station_id, now, plugIns)
         .all<{ id: string; user_id: string }>();
       for (const r of results) {
+        // The rider's CO2 and greenpoints for this charge (worker/greenpoint.ts).
+        const earned = await earnStatement(db, { userId: r.user_id, type: "slot", stationId: device.station_id, reservationId: r.id, createdBy: null });
+        if (earned) statements.push(earned.statement);
         statements.push(
           db.prepare("update reservations set status = 'completed' where id = ? and status = 'active'").bind(r.id),
           db
