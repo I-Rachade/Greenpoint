@@ -19,6 +19,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     { href: "/admin/promotions", label: t.backoffice.nav.promotions },
     { href: "/admin/parcels", label: t.backoffice.nav.parcels },
     { href: "/admin/partners", label: t.backoffice.nav.partners },
+    { href: "/admin/wallet", label: t.backoffice.nav.wallet },
   ];
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">

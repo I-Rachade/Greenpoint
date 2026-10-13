@@ -56,6 +56,27 @@ import {
   type StationBooking,
 } from "../partners";
 import { normalizeTogoPhone } from "../phone";
+import { parseContact } from "../contact";
+import {
+  checkLimits,
+  DEFAULT_FEE_SETTINGS,
+  newTrxId,
+  parseAmount,
+  periodStarts,
+  personLabel,
+  quoteFee,
+  receivePayload,
+  validFeeSetting,
+  WALLET_REMARK_MAX,
+  type AdminWallet,
+  type AdminWalletTransaction,
+  type SendMoneyInput,
+  type WalletAdjustInput,
+  type WalletFeeSetting,
+  type WalletRecipient,
+  type WalletTransaction,
+  type WalletView,
+} from "../wallet";
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 
 const STORAGE_KEY = "poinderecharge-demo-v3";
@@ -92,8 +113,26 @@ interface DemoState {
   /** Partner API: partners and bookings waiting for drop-off (demo only, no API calls). */
   partners?: Partner[];
   bookings?: (StationBooking & { partnerId: string; fromStationId: string })[];
+  /** Wallet (demo only: switched on, everyone starts with DEMO_WALLET_START francs). */
+  wallet?: DemoWallet;
   /** Demo PINs by phone number or e-mail address (stored in clear: demo only). */
   pins?: Record<string, string>;
+}
+
+interface DemoWallet {
+  enabled: boolean;
+  settings: WalletFeeSetting[];
+  balances: Record<string, number>;
+  frozen: string[];
+  /** Ledger, newest first, with the idempotency key of each payment. */
+  transactions: (AdminWalletTransaction & { key?: string })[];
+}
+
+/** Starting balance of every demo wallet, so sending money can be tried right away. */
+export const DEMO_WALLET_START = 25_000;
+
+function freshWallet(): DemoWallet {
+  return { enabled: true, settings: DEFAULT_FEE_SETTINGS, balances: {}, frozen: [], transactions: [] };
 }
 
 function freshState(): DemoState {
@@ -1273,5 +1312,227 @@ export class DemoBackend implements Backend {
     this.requireAdmin(this.load());
     if (file.size > MAX_PROMO_IMAGE_BYTES / 4) throw new BackendError("image_too_large");
     return readAsDataUrl(file);
+  }
+
+  // Wallet ------------------------------------------------------------------------
+
+  private wallet(state: DemoState): DemoWallet {
+    return state.wallet ?? freshWallet();
+  }
+
+  private balance(w: DemoWallet, userId: string): number {
+    return w.balances[userId] ?? DEMO_WALLET_START;
+  }
+
+  private walletAccess(state: DemoState): Profile {
+    const profile = this.requireProfile(state);
+    if (!this.wallet(state).enabled && profile.role !== "admin") throw new BackendError("wallet_disabled");
+    return profile;
+  }
+
+  private findWalletUser(state: DemoState, contact: string): AdminUser {
+    const parsed = parseContact(contact);
+    if (!parsed) throw new BackendError(contact.includes("@") ? "invalid_contact" : "phone_not_allowed");
+    const user = (state.users ?? demoUsers(new Date())).find((u) => (parsed.kind === "phone" ? u.phone : u.email) === parsed.value);
+    if (!user) throw new BackendError("recipient_not_found");
+    return user;
+  }
+
+  async myWallet(): Promise<WalletView> {
+    const state = this.load();
+    const profile = this.walletAccess(state);
+    const w = this.wallet(state);
+    const transfer = w.settings.find((s) => s.product === "transfer") ?? DEFAULT_FEE_SETTINGS[0];
+    const mine = w.transactions.filter((t) => t.userId === profile.id);
+    const { day, month } = periodStarts();
+    const sent = mine.filter((t) => t.type === "transfer" && t.attribute === "send" && t.status === "success");
+    const contact = profile.phone ?? profile.email;
+    return {
+      enabled: w.enabled,
+      testMode: !w.enabled,
+      balanceXof: this.balance(w, profile.id),
+      frozen: w.frozen.includes(profile.id),
+      transfer,
+      usage: {
+        todayXof: sent.filter((t) => t.createdAt >= day).reduce((n, t) => n + t.amountXof, 0),
+        monthXof: sent.filter((t) => t.createdAt >= month).reduce((n, t) => n + t.amountXof, 0),
+      },
+      receiveCode: contact ? receivePayload(contact) : null,
+      transactions: mine.slice(0, 50),
+    };
+  }
+
+  async findWalletRecipient(contact: string): Promise<WalletRecipient> {
+    const state = this.load();
+    const profile = this.walletAccess(state);
+    const user = this.findWalletUser(state, contact);
+    if (user.id === profile.id) throw new BackendError("self_transfer");
+    return { label: personLabel(user) };
+  }
+
+  async sendMoney(input: SendMoneyInput): Promise<WalletTransaction> {
+    const state = this.load();
+    const profile = this.walletAccess(state);
+    const w = this.wallet(state);
+    const done = w.transactions.find((t) => t.userId === profile.id && t.key === input.idempotencyKey);
+    if (done) return done;
+    const amount = parseAmount(input.amountXof);
+    if (amount === null) throw new BackendError("invalid_amount");
+    const recipient = this.findWalletUser(state, input.contact);
+    if (recipient.id === profile.id) throw new BackendError("self_transfer");
+    const pinOf = state.pins?.[profile.phone ?? profile.email ?? ""];
+    if (!validPinFormat(input.pin) || (pinOf !== undefined && pinOf !== input.pin)) throw new BackendError("invalid_pin");
+    const view = await this.myWallet();
+    if (!view.transfer.isActive) throw new BackendError("wallet_disabled");
+    const problem = checkLimits(amount, view.transfer, view.usage);
+    if (problem) throw new BackendError(problem);
+    if (view.frozen) throw new BackendError("wallet_frozen");
+    if (w.frozen.includes(recipient.id)) throw new BackendError("recipient_not_found");
+    const fee = quoteFee(amount, view.transfer);
+    const before = this.balance(w, profile.id);
+    if (before < fee.payableXof) throw new BackendError("insufficient_balance");
+    const after = before - fee.payableXof;
+    const received = this.balance(w, recipient.id) + amount;
+    const now = new Date().toISOString();
+    const trxId = newTrxId("transfer");
+    const remark = input.remark?.trim().slice(0, WALLET_REMARK_MAX) || null;
+    const me = (state.users ?? []).find((u) => u.id === profile.id) ?? { ...profile };
+    const send: DemoWallet["transactions"][number] = {
+      id: crypto.randomUUID(),
+      trxId,
+      type: "transfer",
+      attribute: "send",
+      status: "success",
+      amountXof: amount,
+      feeXof: fee.feeXof,
+      totalXof: fee.payableXof,
+      balanceAfterXof: after,
+      counterparty: personLabel(recipient),
+      remark,
+      createdAt: now,
+      userId: profile.id,
+      userLabel: [profile.fullName, profile.phone ?? profile.email].filter(Boolean).join(" · "),
+      adminId: null,
+      key: input.idempotencyKey,
+    };
+    const receive: DemoWallet["transactions"][number] = {
+      ...send,
+      id: crypto.randomUUID(),
+      attribute: "received",
+      feeXof: 0,
+      totalXof: amount,
+      balanceAfterXof: received,
+      counterparty: personLabel(me),
+      userId: recipient.id,
+      userLabel: [recipient.fullName, recipient.phone ?? recipient.email].filter(Boolean).join(" · "),
+      key: undefined,
+    };
+    this.save({
+      ...state,
+      wallet: {
+        ...w,
+        balances: { ...w.balances, [profile.id]: after, [recipient.id]: received },
+        transactions: [send, receive, ...w.transactions].slice(0, 500),
+      },
+    });
+    return send;
+  }
+
+  async adminWallet(filter: { type?: string; userId?: string } = {}): Promise<AdminWallet> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const w = this.wallet(state);
+    const users = state.users ?? demoUsers(new Date());
+    const ids = new Set([...users.map((u) => u.id), ...Object.keys(w.balances)]);
+    return {
+      enabled: w.enabled,
+      settings: w.settings,
+      totals: {
+        balancesXof: [...ids].reduce((n, id) => n + this.balance(w, id), 0),
+        wallets: ids.size,
+        feesXof: w.transactions.filter((t) => t.status === "success").reduce((n, t) => n + t.feeXof, 0),
+        transactions: new Set(w.transactions.map((t) => t.trxId)).size,
+      },
+      transactions: w.transactions
+        .filter((t) => (!filter.type || t.type === filter.type) && (!filter.userId || t.userId === filter.userId))
+        .map((t) => {
+          const copy = { ...t };
+          delete copy.key;
+          return copy;
+        }),
+    };
+  }
+
+  async setWalletEnabled(enabled: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    this.save(
+      withAudit({ ...state, wallet: { ...this.wallet(state), enabled } }, { table: "wallets", action: "update", rowId: "wallet_enabled", changes: { enabled } }),
+    );
+  }
+
+  async saveWalletFees(setting: WalletFeeSetting) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const s = validFeeSetting(setting);
+    if (!s) throw new BackendError("unknown", "bad_request");
+    const w = this.wallet(state);
+    this.save(
+      withAudit(
+        { ...state, wallet: { ...w, settings: w.settings.map((x) => (x.product === s.product ? s : x)) } },
+        { table: "wallets", action: "update", rowId: `fees:${s.product}`, changes: { ...s } },
+      ),
+    );
+  }
+
+  async adjustWallet(input: WalletAdjustInput): Promise<WalletTransaction> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const amount = parseAmount(input.amountXof);
+    if (amount === null) throw new BackendError("invalid_amount");
+    const remark = input.remark.trim().slice(0, WALLET_REMARK_MAX);
+    if (!remark) throw new BackendError("unknown", "bad_request");
+    const user = this.findWalletUser(state, input.contact);
+    const w = this.wallet(state);
+    const after = this.balance(w, user.id) + (input.direction === "add" ? amount : -amount);
+    if (after < 0) throw new BackendError("insufficient_balance");
+    const tx: AdminWalletTransaction = {
+      id: crypto.randomUUID(),
+      trxId: newTrxId("admin_adjust"),
+      type: "admin_adjust",
+      attribute: input.direction === "add" ? "received" : "send",
+      status: "success",
+      amountXof: amount,
+      feeXof: 0,
+      totalXof: amount,
+      balanceAfterXof: after,
+      counterparty: null,
+      remark,
+      createdAt: new Date().toISOString(),
+      userId: user.id,
+      userLabel: [user.fullName, user.phone ?? user.email].filter(Boolean).join(" · "),
+      adminId: state.profile?.id ?? null,
+    };
+    this.save(
+      withAudit(
+        { ...state, wallet: { ...w, balances: { ...w.balances, [user.id]: after }, transactions: [tx, ...w.transactions].slice(0, 500) } },
+        { table: "wallets", action: "insert", rowId: tx.id, userId: user.id, changes: { direction: input.direction, amount_xof: amount, remark } },
+      ),
+    );
+    return tx;
+  }
+
+  async setWalletFrozen(contact: string, frozen: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const user = this.findWalletUser(state, contact);
+    const w = this.wallet(state);
+    const list = w.frozen.filter((id) => id !== user.id);
+    this.save(
+      withAudit(
+        { ...state, wallet: { ...w, frozen: frozen ? [...list, user.id] : list } },
+        { table: "wallets", action: "update", rowId: user.id, userId: user.id, changes: { status: frozen ? "frozen" : "active" } },
+      ),
+    );
   }
 }

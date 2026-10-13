@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { DemoBackend, DEMO_CODE, HOSTED_DEMO } from "@/lib/backend";
 import { format } from "@/lib/i18n/format";
 import { useApp } from "./app-provider";
@@ -11,11 +12,13 @@ export function Header() {
   const { t, locale, setLocale } = useI18n();
   const { backend, profile } = useApp();
   const pathname = usePathname();
+  const walletShown = useWalletShown();
 
   const links: { href: string; label: string; show: boolean }[] = [
     { href: "/", label: t.nav.map, show: true },
     { href: "/reservations", label: t.nav.reservations, show: !!profile },
     { href: "/colis", label: t.nav.parcels, show: !!profile },
+    { href: "/portefeuille", label: t.nav.wallet, show: !!profile && walletShown },
     { href: "/compte", label: t.nav.account, show: !!profile },
     { href: "/operator", label: t.nav.operator, show: profile?.role === "operator" || profile?.role === "admin" },
     { href: "/admin", label: t.nav.admin, show: profile?.role === "admin" },
@@ -86,4 +89,23 @@ export function Header() {
       </div>
     </header>
   );
+}
+
+/** The wallet link only appears once the module is on (admins see it while testing). Checked once per login. */
+function useWalletShown(): boolean {
+  const { backend, profile } = useApp();
+  const [shown, setShown] = useState<{ userId: string; shown: boolean } | null>(null);
+  const userId = profile?.id ?? null;
+  useEffect(() => {
+    if (!userId) return;
+    let active = true;
+    backend.myWallet().then(
+      () => active && setShown({ userId, shown: true }),
+      () => active && setShown({ userId, shown: false }),
+    );
+    return () => {
+      active = false;
+    };
+  }, [backend, userId]);
+  return !!userId && shown?.userId === userId && shown.shown;
 }

@@ -77,6 +77,8 @@ import {
 import type { Env } from "./env";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
+import { adjustBalance, adminWallet, findRecipient, getWallet, saveFeeSetting, sendMoney, setWalletEnabled, setWalletFrozen } from "./wallet";
+import type { WalletFeeSetting } from "../src/lib/wallet";
 
 // Rows as stored in D1 (snake_case, booleans as 0/1, JSON as text).
 
@@ -920,6 +922,26 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
   ["GET", /^\/api\/stations\/([\w-]+)\/reservations$/, (c, [id]) => stationReservations(c, id)],
   ["GET", /^\/api\/promotions\/current$/, (c) => currentPromotion(c)],
+  // Wallet (worker/wallet.ts)
+  ["GET", /^\/api\/wallet$/, async (c) => getWallet(c.env, await c.requireUser())],
+  ["GET", /^\/api\/wallet\/recipient$/, async (c) => findRecipient(c.env, await c.requireUser(), c.url.searchParams.get("contact"))],
+  ["POST", /^\/api\/wallet\/send$/, async (c) => sendMoney(c.env, await c.requireUser(), c.request)],
+  ["GET", /^\/api\/admin\/wallet$/, async (c) => {
+    await c.requireAdmin();
+    return adminWallet(c.env, c.url);
+  }],
+  ["POST", /^\/api\/admin\/wallet\/enabled$/, async (c) => {
+    const admin = await c.requireAdmin();
+    const { enabled } = await readJson<{ enabled?: boolean }>(c.request);
+    return setWalletEnabled(c.env, admin, !!enabled);
+  }],
+  ["POST", /^\/api\/admin\/wallet\/fees$/, async (c) => saveFeeSetting(c.env, await c.requireAdmin(), await readJson<WalletFeeSetting>(c.request))],
+  ["POST", /^\/api\/admin\/wallet\/adjust$/, async (c) => adjustBalance(c.env, await c.requireAdmin(), c.request)],
+  ["POST", /^\/api\/admin\/wallet\/freeze$/, async (c) => {
+    const admin = await c.requireAdmin();
+    const { contact, frozen } = await readJson<{ contact?: string; frozen?: boolean }>(c.request);
+    return setWalletFrozen(c.env, admin, contact, !!frozen);
+  }],
   ["GET", /^\/api\/payments\/mine$/, async (c) => myPayments(c.env, await c.requireUser())],
   ["POST", /^\/api\/payments$/, async (c) => startPayment(c.env, await c.requireUser(), c.request)],
   ["POST", /^\/api\/payments\/([\w-]+)\/refresh$/, async (c, [id]) => refreshPayment(c.env, await c.requireUser(), id)],
