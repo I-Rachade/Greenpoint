@@ -66,14 +66,19 @@ import {
   personLabel,
   quoteFee,
   receivePayload,
+  TOPUP_MAX_XOF,
+  TOPUP_MIN_XOF,
+  TOPUP_NETWORK_LABEL,
   validFeeSetting,
   WALLET_REMARK_MAX,
   type AdminWallet,
   type AdminWalletTransaction,
   type SendMoneyInput,
+  type TopupInput,
   type WalletAdjustInput,
   type WalletFeeSetting,
   type WalletRecipient,
+  type WalletTopup,
   type WalletTransaction,
   type WalletView,
 } from "../wallet";
@@ -126,10 +131,16 @@ interface DemoWallet {
   frozen: string[];
   /** Ledger, newest first, with the idempotency key of each payment. */
   transactions: (AdminWalletTransaction & { key?: string })[];
+  /** Simulated Flooz/T-Money top-ups; confirmed on the first status check. */
+  topups?: (WalletTopup & { userId: string })[];
 }
 
 /** Starting balance of every demo wallet, so sending money can be tried right away. */
 export const DEMO_WALLET_START = 25_000;
+
+function demoTopupView(t: WalletTopup): WalletTopup {
+  return { id: t.id, amountXof: t.amountXof, network: t.network, status: t.status, failureReason: t.failureReason, createdAt: t.createdAt, paidAt: t.paidAt };
+}
 
 function freshWallet(): DemoWallet {
   return { enabled: true, settings: DEFAULT_FEE_SETTINGS, balances: {}, frozen: [], transactions: [] };
@@ -1358,6 +1369,7 @@ export class DemoBackend implements Backend {
         monthXof: sent.filter((t) => t.createdAt >= month).reduce((n, t) => n + t.amountXof, 0),
       },
       receiveCode: contact ? receivePayload(contact) : null,
+      topupAvailable: true,
       transactions: mine.slice(0, 50),
     };
   }
@@ -1483,6 +1495,70 @@ export class DemoBackend implements Backend {
         { table: "wallets", action: "update", rowId: `fees:${s.product}`, changes: { ...s } },
       ),
     );
+  }
+
+  async startTopup(input: TopupInput): Promise<WalletTopup> {
+    const state = this.load();
+    const profile = this.walletAccess(state);
+    const amount = parseAmount(input.amountXof);
+    if (amount === null) throw new BackendError("invalid_amount");
+    if (amount < TOPUP_MIN_XOF) throw new BackendError("amount_too_small");
+    if (amount > TOPUP_MAX_XOF) throw new BackendError("amount_too_large");
+    if (!normalizeTogoPhone(input.phone)) throw new BackendError("phone_not_allowed");
+    const topup: WalletTopup & { userId: string } = {
+      id: crypto.randomUUID(),
+      amountXof: amount,
+      network: input.network,
+      status: "pending",
+      failureReason: null,
+      createdAt: new Date().toISOString(),
+      paidAt: null,
+      userId: profile.id,
+    };
+    const w = this.wallet(state);
+    this.save({ ...state, wallet: { ...w, topups: [topup, ...(w.topups ?? [])].slice(0, 100) } });
+    return demoTopupView(topup);
+  }
+
+  async refreshTopup(id: string): Promise<WalletTopup> {
+    const state = this.load();
+    const profile = this.walletAccess(state);
+    const w = this.wallet(state);
+    const topup = (w.topups ?? []).find((t) => t.id === id && t.userId === profile.id);
+    if (!topup) throw new BackendError("unknown", "not_found");
+    let done = topup;
+    if (topup.status === "pending") {
+      const now = new Date().toISOString();
+      done = { ...topup, status: "succeeded", paidAt: now };
+      const after = this.balance(w, profile.id) + topup.amountXof;
+      const tx: AdminWalletTransaction = {
+        id: crypto.randomUUID(),
+        trxId: newTrxId("topup"),
+        type: "topup",
+        attribute: "received",
+        status: "success",
+        amountXof: topup.amountXof,
+        feeXof: 0,
+        totalXof: topup.amountXof,
+        balanceAfterXof: after,
+        counterparty: TOPUP_NETWORK_LABEL[topup.network],
+        remark: null,
+        createdAt: now,
+        userId: profile.id,
+        userLabel: [profile.fullName, profile.phone ?? profile.email].filter(Boolean).join(" · "),
+        adminId: null,
+      };
+      this.save({
+        ...state,
+        wallet: {
+          ...w,
+          balances: { ...w.balances, [profile.id]: after },
+          transactions: [tx, ...w.transactions].slice(0, 500),
+          topups: (w.topups ?? []).map((t) => (t.id === id ? done : t)),
+        },
+      });
+    }
+    return demoTopupView(done);
   }
 
   async adjustWallet(input: WalletAdjustInput): Promise<WalletTransaction> {

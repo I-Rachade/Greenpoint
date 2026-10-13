@@ -1,6 +1,7 @@
 import { normalizeTogoPhone } from "../src/lib/phone";
 import type { Profile } from "../src/lib/types";
 import type { Env } from "./env";
+import { TOPUP_IDENTIFIER_PREFIX, topupCallback } from "./wallet-topups";
 import { ApiError, nowIso, readJson, uuid } from "./http";
 import {
   PAYMENT_NETWORKS,
@@ -237,6 +238,7 @@ export async function paymentCallback(env: Env, request: Request): Promise<Respo
   }
   const identifier = await readIdentifier(request);
   if (!identifier) return new Response("bad request", { status: 400 });
+  if (identifier.startsWith(TOPUP_IDENTIFIER_PREFIX)) return topupCallback(env, identifier);
 
   const p = await env.DB.prepare("select * from payments where identifier = ?").bind(identifier).first<PaymentRow>();
   // Unknown or already settled: acknowledge so the provider stops retrying.

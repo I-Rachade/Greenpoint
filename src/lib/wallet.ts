@@ -6,7 +6,8 @@
 
 export type WalletTxType =
   | "transfer" // user -> user (spec: TRANSFER-MONEY)
-  | "admin_adjust"; // correction by an admin (spec: ADD-SUBTRACT-BALANCE)
+  | "admin_adjust" // correction by an admin (spec: ADD-SUBTRACT-BALANCE)
+  | "topup"; // paid in from Flooz or T-Money (spec: ADD-MONEY)
 
 /** Direction from the owner's point of view; a transfer has one row per side with the same trxId. */
 export type WalletTxAttribute = "send" | "received";
@@ -41,7 +42,7 @@ export const WALLET_MAX_AMOUNT = 100_000_000;
 export const WALLET_REMARK_MAX = 120;
 
 /** Prefix of the transaction number per type (spec 1.3.1). */
-const TRX_PREFIX: Record<WalletTxType, string> = { transfer: "SM", admin_adjust: "AB" };
+const TRX_PREFIX: Record<WalletTxType, string> = { transfer: "SM", admin_adjust: "AB", topup: "AM" };
 
 /** Transaction number shown to people: prefix + 8 digits 1-9 (unique per side in the database). */
 export function newTrxId(type: WalletTxType, random: () => number = Math.random): string {
@@ -87,6 +88,8 @@ export interface WalletView {
   usage: WalletUsage;
   /** What to put into a QR code so others can send to this user. */
   receiveCode: string | null;
+  /** False while no real Flooz/T-Money provider is set up (admins can still test with the simulation). */
+  topupAvailable: boolean;
   transactions: WalletTransaction[];
 }
 
@@ -103,6 +106,42 @@ export interface SendMoneyInput {
   idempotencyKey: string;
   remark?: string | null;
 }
+
+/** Bounds of one top-up from Flooz or T-Money. */
+export const TOPUP_MIN_XOF = 100;
+export const TOPUP_MAX_XOF = 500_000;
+
+export type TopupNetwork = "flooz" | "tmoney";
+export type TopupStatus = "pending" | "succeeded" | "failed" | "expired" | "cancelled";
+
+/** A top-up from the user's Flooz or T-Money account. The wallet is credited once the provider confirms it. */
+export interface WalletTopup {
+  id: string;
+  amountXof: number;
+  network: TopupNetwork;
+  status: TopupStatus;
+  failureReason: string | null;
+  createdAt: string;
+  paidAt: string | null;
+}
+
+export interface TopupInput {
+  amountXof: number;
+  network: TopupNetwork;
+  /** The Flooz/T-Money number that pays, +228… */
+  phone: string;
+}
+
+/**
+ * Pre-selects the network from a +228 number (same prefixes as worker/payment-providers.ts):
+ * Togocom T-Money 70–73, 90–93; Moov Africa Flooz 78, 79, 96–99. The person can always change it.
+ */
+export function guessTopupNetwork(phone: string | null | undefined): TopupNetwork {
+  const prefix = /^\+228(\d{2})\d{6}$/.exec(phone ?? "")?.[1];
+  return prefix && ["78", "79", "96", "97", "98", "99"].includes(prefix) ? "flooz" : "tmoney";
+}
+
+export const TOPUP_NETWORK_LABEL: Record<TopupNetwork, string> = { flooz: "Flooz", tmoney: "T-Money" };
 
 /** One line in the backoffice ledger (both sides of every booking). */
 export interface AdminWalletTransaction extends WalletTransaction {

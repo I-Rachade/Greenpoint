@@ -487,6 +487,8 @@ export async function deleteAccount(
     env.DB.prepare("delete from otp_codes where phone in (?, ?)").bind(profile.phone ?? "", profile.email ?? ""),
     // Only an empty wallet goes; if money arrived meanwhile, the user delete below fails and nothing changes.
     env.DB.prepare("delete from wallets where user_id = ? and balance_xof = 0").bind(profile.id),
+    // Top-ups stay on record (accounting) without the paying number.
+    env.DB.prepare("update wallet_topups set phone = null where user_id = ?").bind(profile.id),
     // Other people's history keeps the booking but no longer names this person.
     env.DB.prepare("update wallet_transactions set counterparty_label = null where counterparty_user_id = ?").bind(profile.id),
     env.DB.prepare("delete from users where id = ?").bind(profile.id),
