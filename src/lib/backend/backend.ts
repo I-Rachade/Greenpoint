@@ -14,6 +14,7 @@ import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
+import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
 import type { Promotion, PromotionInput } from "../promo";
 import type {
   AdminGreenpoint,
@@ -23,6 +24,22 @@ import type {
   GreenpointRewardInput,
   GreenpointView,
 } from "../greenpoint";
+import type {
+  AdminDrivers,
+  DeliveryJob,
+  DriverApplication,
+  DriverAtStation,
+  DriverDecision,
+  DriverDocument,
+  DriverHome,
+  DriverSettings,
+  FleetVehicleInput,
+  HomePoint,
+  PickupBooking,
+  StationDrivers,
+} from "../drivers";
+import type { FleetStats, FleetView } from "../fleet";
+import type { LatLng } from "../geo";
 import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
 
 /** Where a code goes: by SMS to the phone number or by e-mail. */
@@ -64,6 +81,24 @@ export type BackendErrorCode =
   | "parcel_not_found"
   | "parcel_wrong_status"
   | "code_locked"
+  | "parcel_with_driver"
+  | "not_a_driver"
+  | "phone_required"
+  | "driver_busy"
+  | "driver_not_found"
+  | "too_far"
+  | "cash_limit"
+  | "outside_area"
+  | "job_not_found"
+  | "job_wrong_status"
+  | "wait_longer"
+  | "photo_missing"
+  | "vehicle_unavailable"
+  | "vehicle_too_small"
+  | "has_other_role"
+  | "no_vehicle"
+  | "documents_missing"
+  | "balance_changed"
   | "invalid_webhook"
   | "rate_limited"
   | "payment_not_offered"
@@ -74,6 +109,7 @@ export type BackendErrorCode =
   | "wallet_frozen"
   | "insufficient_balance"
   | "recipient_not_found"
+  | "account_not_found"
   | "self_transfer"
   | "invalid_amount"
   | "amount_too_small"
@@ -86,6 +122,7 @@ export type BackendErrorCode =
   | "redemption_open"
   | "not_enough_points"
   | "greenpoint_daily_limit"
+  | "greenpoint_fleet_driver"
   | "unknown";
 
 export class BackendError extends Error {
@@ -131,7 +168,7 @@ export interface Backend {
   /** Deletes the signed-in user's account for good, after checking the code. */
   deleteAccount(channel: CodeChannel, code: string): Promise<void>;
 
-  // Rider
+  // Customer
   myReservations(): Promise<Reservation[]>;
   reserve(stationId: string, type: ReservationType): Promise<Reservation>;
   cancelReservation(id: string): Promise<void>;
@@ -140,8 +177,16 @@ export interface Backend {
   staffStations(): Promise<StationView[]>;
   updateStatus(stationId: string, patch: StatusPatch): Promise<void>;
   stationReservations(stationId: string): Promise<Reservation[]>;
-  /** Needs the rider's pickup code; also takes the battery or slot off the station's counter. */
+  /** Needs the customer's pickup code; also takes the battery or slot off the station's counter. */
   completeReservation(id: string, pickupCode: string): Promise<void>;
+
+  // Operator accounts (see src/lib/operators.ts)
+  /** The operators the signed-in person runs, their stations and staff. */
+  ownerView(): Promise<OwnerView>;
+  /** Makes the account with this phone number or e-mail address staff of one of the operator's stations. */
+  ownerAddStaff(stationId: string, contact: string): Promise<void>;
+  ownerRemoveStaff(stationId: string, userId: string): Promise<void>;
+  ownerSaveStation(stationId: string, input: OwnerStationInput): Promise<void>;
 
   // Admin
   listOperators(): Promise<Operator[]>;
@@ -154,6 +199,13 @@ export interface Backend {
   assignStaff(stationId: string, userId: string): Promise<void>;
   unassignStaff(stationId: string, userId: string): Promise<void>;
   setStationActive(stationId: string, active: boolean): Promise<void>;
+  /** Operators with their stations count and the accounts that run them. */
+  adminOperators(): Promise<AdminOperator[]>;
+  /** Creates a partner operator (`id` null) or renames one. */
+  saveOperator(id: string | null, input: OperatorInput): Promise<void>;
+  /** Lets the account with this phone number or e-mail address run the operator. */
+  addOperatorOwner(operatorId: string, contact: string): Promise<void>;
+  removeOperatorOwner(operatorId: string, userId: string): Promise<void>;
 
   // Connected sockets (admins only; see src/lib/iot/devices.ts)
   listDevices(): Promise<Device[]>;
@@ -195,6 +247,61 @@ export interface Backend {
   saveParcelSizes(sizes: ParcelSizeTier[]): Promise<void>;
   /** A parcel in storage was handed out after all, or auctioned. */
   closeStoredParcel(id: string, outcome: "released" | "auctioned"): Promise<void>;
+
+  // Drivers (see src/lib/drivers.ts)
+  /** The signed-in user's driver page: application, current trip, history and cash. */
+  driverHome(): Promise<DriverHome>;
+  /** Applies to drive one of our vehicles (again, after a refusal). */
+  applyDriver(input: DriverApplication): Promise<void>;
+  /** A photo of the ID card, the licence or the applicant (shrunk in the app first). */
+  uploadDriverDocument(kind: DriverDocument, image: Blob): Promise<void>;
+  /** Joins the line at a station; the position proves the driver is there. */
+  joinDriverQueue(stationId: string, position: LatLng | null): Promise<void>;
+  leaveDriverQueue(): Promise<void>;
+  acceptJob(id: string): Promise<void>;
+  /** The trip goes to the next in line; the driver goes to the back. */
+  declineJob(id: string): Promise<void>;
+  /** Pickup at home: measured and paid; the parcel gets its tracking number. */
+  collectPickup(id: string, measures: ParcelMeasures): Promise<DeliveryJob>;
+  arriveAtDoor(id: string): Promise<void>;
+  uploadDeliveryPhoto(id: string, image: Blob): Promise<void>;
+  /** Hands the parcel over at the door for the recipient's pickup code. */
+  deliverJob(id: string, code: string): Promise<void>;
+  /** Nobody there after the waiting time: back to the station. */
+  failDelivery(id: string): Promise<void>;
+  /** Trips the signed-in customer booked. */
+  myJobs(): Promise<DeliveryJob[]>;
+  bookPickup(input: PickupBooking): Promise<DeliveryJob>;
+  /** The recipient has a waiting parcel brought home; the driver gets the pickup right. */
+  bookDelivery(parcelId: string, home: HomePoint): Promise<DeliveryJob>;
+  /** Customer (before the driver has the parcel) or admin. */
+  cancelJob(id: string): Promise<void>;
+  /** Station staff: drivers in line and parcels drivers take or bring. */
+  stationDrivers(stationId: string): Promise<StationDrivers>;
+  /** Station staff scanned a driver's QR code (or typed the code). */
+  driverAtStation(stationId: string, badge: string): Promise<DriverAtStation>;
+  handToDriver(stationId: string, badge: string, jobId: string): Promise<void>;
+  receiveFromDriver(stationId: string, badge: string, jobId: string): Promise<void>;
+  /** Daily settlement for the balance staff saw. */
+  settleDriver(stationId: string, badge: string, amountFcfa: number): Promise<void>;
+  /** Backoffice: drivers, vehicles, trips and prices (admins only). */
+  adminDrivers(): Promise<AdminDrivers>;
+  reviewDriver(userId: string, decision: DriverDecision): Promise<void>;
+  saveFleetVehicle(id: string | null, input: FleetVehicleInput): Promise<void>;
+  saveDriverSettings(settings: DriverSettings): Promise<void>;
+  assignJob(jobId: string, driverId: string): Promise<void>;
+  /** A displayable URL for a private photo (documents, door photos); admins only. */
+  driverFileUrl(key: string): Promise<string>;
+  /** Backoffice: links a driver to a fleet manager by phone or e-mail; null unlinks. */
+  setDriverManager(driverId: string, contact: string | null): Promise<void>;
+
+  // Fleet managers (see src/lib/fleet.ts)
+  /** The manager's drivers and the trips nobody has yet. */
+  fleetView(): Promise<FleetView>;
+  /** Trips, takings, cash and charging of the manager's drivers; days as YYYY-MM-DD. */
+  fleetStats(from: string, to: string): Promise<FleetStats>;
+  /** Gives an open trip to one of the manager's drivers; the driver confirms as usual. */
+  fleetAssign(jobId: string, driverId: string): Promise<void>;
 
   // Partner API (see src/lib/partners.ts)
   /** Parcels other apps booked for drop-off at this station (its staff). */

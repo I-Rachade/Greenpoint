@@ -8,6 +8,17 @@ import {
   type ChargingPointInfo,
 } from "../src/lib/admin/types";
 import type { CodeChannel } from "../src/lib/backend/backend";
+import { parseContact } from "../src/lib/contact";
+import {
+  OPERATOR_NAME_MAX,
+  type AdminOperator,
+  type OperatorInput,
+  type OperatorPerson,
+  type OwnerStationInput,
+  type OwnerView,
+} from "../src/lib/operators";
+import { normalizeTogoPhone } from "../src/lib/phone";
+import { personLabel } from "../src/lib/wallet";
 import { MAX_PROMO_IMAGE_BYTES, pickPromotion, safeImage, safeLink, type Promotion, type PromotionInput } from "../src/lib/promo";
 import {
   MAX_UNUSED_RESERVATIONS_PER_DAY,
@@ -64,6 +75,37 @@ import {
   saveSizes,
   stationParcels,
 } from "./parcels";
+import {
+  acceptJob,
+  adminDrivers,
+  applyDriver,
+  arriveAtDoor,
+  assignJob,
+  bookDelivery,
+  bookPickup,
+  cancelJob,
+  collectPickup,
+  declineJob,
+  deliverJob,
+  driverAtStation,
+  driverFile,
+  driverHome,
+  failDelivery,
+  handToDriver,
+  joinQueue,
+  leaveQueue,
+  myJobs,
+  receiveFromDriver,
+  reviewDriver,
+  saveDriverSettings,
+  saveFleetVehicle,
+  settleDriver,
+  stationDrivers,
+  uploadDriverDocument,
+  uploadProof,
+} from "./drivers";
+import type { DriverApplication, DriverDecision, FleetVehicleInput, PickupBooking } from "../src/lib/drivers";
+import { fleetAssign, fleetStats, fleetView, setDriverManager } from "./fleet";
 import type { PartnerInput } from "../src/lib/partners";
 import { PARTNER_API_BASE } from "../src/lib/partners";
 import {
@@ -80,6 +122,7 @@ import {
 import type { Env } from "./env";
 import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setParcelsEnabled } from "./features";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
+import { DB_CUSTOMER, roleFromDb, roleToDb } from "./roles";
 import { refreshTopup, startTopup } from "./wallet-topups";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
 import { adjustBalance, adminWallet, findRecipient, getWallet, saveFeeSetting, sendMoney, setWalletEnabled, setWalletFrozen } from "./wallet";
@@ -155,7 +198,7 @@ interface PromotionRow {
   updated_at: string;
 }
 
-const ROLES: UserRole[] = ["rider", "operator", "fleet_manager", "admin"];
+const ROLES: UserRole[] = ["customer", "operator", "fleet_manager", "admin"];
 
 function toStationView(r: StationRow): StationView & { isActive: boolean } {
   let vehicleTypes: StationView["vehicleTypes"] = [];
@@ -262,10 +305,17 @@ class Ctx {
     return user;
   }
 
+  /** Station staff, someone who runs the station's operator, or an admin. */
   async isStaffOf(user: Profile, stationId: string): Promise<boolean> {
     if (user.role === "admin") return true;
+    // Station rights come with the role; assignments of anyone else count for nothing.
+    if (user.role !== "operator") return false;
     const row = await this.db
-      .prepare("select 1 from station_staff where station_id = ? and user_id = ?")
+      .prepare(
+        `select 1 from stations s where s.id = ?1 and (
+           exists (select 1 from station_staff where station_id = s.id and user_id = ?2)
+           or exists (select 1 from operator_owners where operator_id = s.operator_id and user_id = ?2))`,
+      )
       .bind(stationId, user.id)
       .first();
     return !!row;
@@ -316,7 +366,7 @@ function int(value: unknown): number {
   return Math.floor(n);
 }
 
-// Riders --------------------------------------------------------------------
+// Customers --------------------------------------------------------------------
 
 async function reserve(c: Ctx, stationId: string, type: ReservationType): Promise<Reservation> {
   const user = await c.requireUser();
@@ -355,7 +405,7 @@ async function reserve(c: Ctx, stationId: string, type: ReservationType): Promis
   const expires = new Date(Date.now() + RESERVATION_MINUTES * 60_000).toISOString();
   let inserted: D1Result;
   try {
-    // The availability check and the insert are one statement, so two riders
+    // The availability check and the insert are one statement, so two customers
     // cannot take the last battery at once. Stations with connected sockets count
     // their outlets that reported in the last minutes instead of the staff counter.
     inserted = await c.db
@@ -409,7 +459,7 @@ async function cancelReservation(c: Ctx, id: string) {
   const own = r.user_id === user.id;
   if (!own && user.role !== "admin") throw new ApiError("forbidden", 403);
   if (r.status !== "active") throw new ApiError("reservation_not_active");
-  // Cancelled by the team: does not count against the rider's limits.
+  // Cancelled by the team: does not count against the customer's limits.
   const reason = own ? null : "admin";
   await c.db.batch([
     c.db
@@ -427,8 +477,10 @@ async function cancelReservation(c: Ctx, id: string) {
 async function staffStations(c: Ctx) {
   const user = await c.requireUser();
   if (user.role === "admin") return c.stations("where s.is_active = 1");
+  if (user.role !== "operator") return [];
   return c.stations(
-    "where s.is_active = 1 and s.id in (select station_id from station_staff where user_id = ?2)",
+    `where s.is_active = 1 and (s.id in (select station_id from station_staff where user_id = ?2)
+       or s.operator_id in (select operator_id from operator_owners where user_id = ?2))`,
     user.id,
   );
 }
@@ -457,7 +509,7 @@ async function updateStatus(c: Ctx, stationId: string, patch: { isOpen?: boolean
   if (Object.keys(changes).length) {
     statements.push(c.audit(user.id, "station_status", "update", stationId, changes, { stationId }));
   }
-  // Closing a station cancels its active reservations, so riders do not ride there for nothing.
+  // Closing a station cancels its active reservations, so customers do not ride there for nothing.
   if (before.is_open && !after.is_open) {
     const { results } = await c.db
       .prepare("select id, user_id from reservations where station_id = ? and status = 'active'")
@@ -485,7 +537,7 @@ async function stationReservations(c: Ctx, stationId: string) {
     .prepare("select * from reservations where station_id = ? order by created_at desc limit 50")
     .bind(stationId)
     .all<ReservationRow>();
-  // Staff never see pickup codes: the rider tells them at the station.
+  // Staff never see pickup codes: the customer tells them at the station.
   return results.map((r) => toReservation(r, false));
 }
 
@@ -501,7 +553,7 @@ async function completeReservation(c: Ctx, id: string, pickupCode: string) {
     .bind(id)
     .run();
   if (!done.meta.changes) throw new ApiError("reservation_not_active");
-  // The battery or slot the rider took comes off the counter, so the map does not show it as free again.
+  // The battery or slot the customer took comes off the counter, so the map does not show it as free again.
   const column = r.type === "battery" ? "full_batteries" : "free_slots";
   // The rider's CO2 and greenpoints for this swap or charge (worker/greenpoint.ts).
   const earned = await earnStatement(c.db, { userId: r.user_id, type: r.type, stationId: r.station_id, reservationId: id, createdBy: user.id });
@@ -626,7 +678,7 @@ async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
         phone: string | null;
         email: string | null;
         full_name: string | null;
-        role: UserRole;
+        role: string;
         created_at: string;
         last_sign_in_at: string | null;
       }>(),
@@ -646,7 +698,7 @@ async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
       phone: u.phone,
       email: u.email,
       fullName: u.full_name,
-      role: u.role,
+      role: roleFromDb(u.role),
       createdAt: u.created_at,
       lastSignInAt: u.last_sign_in_at,
     })),
@@ -702,17 +754,67 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
   const admin = await c.requireAdmin();
   if (!ROLES.includes(role)) throw new ApiError("bad_request");
   if (userId === admin.id) throw new ApiError("forbidden", 403);
-  const before = await c.db.prepare("select role from users where id = ?").bind(userId).first<{ role: UserRole }>();
-  if (!before) throw new ApiError("forbidden", 403);
-  if (before.role === role) return;
+  const row = await c.db.prepare("select role from users where id = ?").bind(userId).first<{ role: string }>();
+  if (!row) throw new ApiError("forbidden", 403);
+  const before = roleFromDb(row.role);
+  if (before === role) return;
+  // Menu and rights follow the role: leaving "operator" ends every station assignment and operator account.
+  const [staff, owned] =
+    role === "operator"
+      ? [[], []]
+      : await Promise.all([
+          c.db.prepare("select station_id from station_staff where user_id = ?").bind(userId).all<{ station_id: string }>().then((r) => r.results),
+          c.db.prepare("select operator_id from operator_owners where user_id = ?").bind(userId).all<{ operator_id: string }>().then((r) => r.results),
+        ]);
+  // Leaving "fleet_manager" ends the links to the drivers.
+  const managed =
+    role === "fleet_manager"
+      ? []
+      : (await c.db.prepare("select driver_id from fleet_manager_drivers where manager_id = ?").bind(userId).all<{ driver_id: string }>()).results;
   await c.db.batch([
-    c.db.prepare("update users set role = ? where id = ?").bind(role, userId),
-    c.audit(admin.id, "profiles", "update", userId, { role: [before.role, role] }, { userId }),
+    c.db.prepare("update users set role = ? where id = ?").bind(roleToDb(role), userId),
+    c.audit(admin.id, "profiles", "update", userId, { role: [before, role] }, { userId }),
+    ...(staff.length ? [c.db.prepare("delete from station_staff where user_id = ?").bind(userId)] : []),
+    ...staff.map((s) => c.audit(admin.id, "station_staff", "delete", `${s.station_id}:${userId}`, {}, { stationId: s.station_id, userId })),
+    ...(owned.length ? [c.db.prepare("delete from operator_owners where user_id = ?").bind(userId)] : []),
+    ...owned.map((o) => c.audit(admin.id, "operator_owners", "delete", `${o.operator_id}:${userId}`, { operator_id: o.operator_id }, { userId })),
+    ...managed.map((d) => c.db.prepare("delete from fleet_manager_drivers where driver_id = ?").bind(d.driver_id)),
+    ...managed.map((d) => c.audit(admin.id, "fleet_manager_drivers", "delete", d.driver_id, { manager_id: userId }, { userId: d.driver_id })),
   ]);
 }
 
+/** Whoever gets station work becomes "operator" (customers only; admins stay admins), so the menu and rights match. */
+const promoteToOperator = (c: Ctx, userId: string) =>
+  c.db.prepare("update users set role = 'operator' where id = ? and role = ?").bind(userId, DB_CUSTOMER);
+
+/** One role per person: a fleet manager would lose their drivers (worker/fleet.ts). */
+async function refuseOtherRole(c: Ctx, userId: string) {
+  const row = await c.db.prepare("select role from users where id = ?").bind(userId).first<{ role: string }>();
+  if (row?.role === "fleet_manager") throw new ApiError("has_other_role");
+}
+
+/** Whoever has no station and runs no operator any more goes back to customer. */
+const demoteIfIdle = (c: Ctx, userId: string) =>
+  c.db
+    .prepare(
+      `update users set role = ?2 where id = ?1 and role = 'operator'
+         and not exists (select 1 from station_staff where user_id = ?1)
+         and not exists (select 1 from operator_owners where user_id = ?1)`,
+    )
+    .bind(userId, DB_CUSTOMER);
+
 async function assignStaff(c: Ctx, stationId: string, userId: string) {
   const admin = await c.requireAdmin();
+  await addStaff(c, admin.id, stationId, userId);
+}
+
+async function unassignStaff(c: Ctx, stationId: string, userId: string) {
+  const admin = await c.requireAdmin();
+  await removeStaff(c, admin.id, stationId, userId);
+}
+
+async function addStaff(c: Ctx, actorId: string, stationId: string, userId: string) {
+  await refuseOtherRole(c, userId);
   const inserted = await c.db
     .prepare("insert or ignore into station_staff (station_id, user_id) values (?, ?)")
     .bind(stationId, userId)
@@ -720,26 +822,212 @@ async function assignStaff(c: Ctx, stationId: string, userId: string) {
   if (!inserted.meta.changes) return;
   // The role follows the assignment.
   await c.db.batch([
-    c.audit(admin.id, "station_staff", "insert", `${stationId}:${userId}`, {}, { stationId, userId }),
-    c.db.prepare("update users set role = 'operator' where id = ? and role = 'rider'").bind(userId),
+    c.audit(actorId, "station_staff", "insert", `${stationId}:${userId}`, {}, { stationId, userId }),
+    promoteToOperator(c, userId),
   ]);
 }
 
-async function unassignStaff(c: Ctx, stationId: string, userId: string) {
-  const admin = await c.requireAdmin();
+async function removeStaff(c: Ctx, actorId: string, stationId: string, userId: string) {
   const deleted = await c.db
     .prepare("delete from station_staff where station_id = ? and user_id = ?")
     .bind(stationId, userId)
     .run();
   if (!deleted.meta.changes) return;
   await c.db.batch([
-    c.audit(admin.id, "station_staff", "delete", `${stationId}:${userId}`, {}, { stationId, userId }),
+    c.audit(actorId, "station_staff", "delete", `${stationId}:${userId}`, {}, { stationId, userId }),
+    demoteIfIdle(c, userId),
+  ]);
+}
+
+// Operator accounts ---------------------------------------------------------
+
+interface PersonRow {
+  id: string;
+  phone: string | null;
+  email: string | null;
+  full_name: string | null;
+}
+
+const person = (u: PersonRow): OperatorPerson => ({
+  userId: u.id,
+  label: personLabel({ fullName: u.full_name, phone: u.phone, email: u.email }),
+});
+
+/** The account with this phone number or e-mail address. */
+async function findAccount(c: Ctx, rawContact: unknown): Promise<PersonRow> {
+  const text = String(rawContact ?? "");
+  const contact = parseContact(text);
+  if (!contact) throw new ApiError(text.includes("@") ? "invalid_contact" : "phone_not_allowed");
+  const row = await c.db
+    .prepare(`select id, phone, email, full_name from users where ${contact.kind === "phone" ? "phone" : "email"} = ?`)
+    .bind(contact.value)
+    .first<PersonRow>();
+  if (!row) throw new ApiError("account_not_found", 404);
+  return row;
+}
+
+/** Someone who runs the operator of this station (or an admin). */
+async function requireOwnerOf(c: Ctx, stationId: string): Promise<Profile> {
+  const user = await c.requireUser();
+  if (user.role === "admin") return user;
+  if (user.role !== "operator") throw new ApiError("forbidden", 403);
+  const row = await c.db
+    .prepare("select 1 from stations s join operator_owners o on o.operator_id = s.operator_id where s.id = ? and o.user_id = ?")
+    .bind(stationId, user.id)
+    .first();
+  if (!row) throw new ApiError("forbidden", 403);
+  return user;
+}
+
+async function ownerView(c: Ctx): Promise<OwnerView> {
+  const user = await c.requireUser();
+  if (user.role !== "operator" && user.role !== "admin") throw new ApiError("forbidden", 403);
+  const mine = "(select operator_id from operator_owners where user_id = ?1)";
+  const [operators, staff] = await Promise.all([
+    c.db
+      .prepare(`select id, name, is_own from operators where id in ${mine} order by name`)
+      .bind(user.id)
+      .all<{ id: string; name: string; is_own: number }>(),
     c.db
       .prepare(
-        "update users set role = 'rider' where id = ?1 and role = 'operator' and not exists (select 1 from station_staff where user_id = ?1)",
+        `select ss.station_id, u.id, u.phone, u.email, u.full_name from station_staff ss
+         join users u on u.id = ss.user_id join stations s on s.id = ss.station_id
+         where s.operator_id in ${mine} order by u.full_name, u.phone, u.email`,
       )
-      .bind(userId),
+      .bind(user.id)
+      .all<PersonRow & { station_id: string }>(),
   ]);
+  if (!operators.results.length) throw new ApiError("forbidden", 403);
+  return {
+    operators: operators.results.map((o) => ({ id: o.id, name: o.name, isOwn: !!o.is_own })),
+    stations: await c.stations(
+      "where s.is_active = 1 and s.operator_id in (select operator_id from operator_owners where user_id = ?2)",
+      user.id,
+    ),
+    staff: staff.results.map((r) => ({ stationId: r.station_id, ...person(r) })),
+  };
+}
+
+async function ownerAddStaff(c: Ctx, stationId: string, contact: unknown) {
+  const owner = await requireOwnerOf(c, stationId);
+  const account = await findAccount(c, contact);
+  await addStaff(c, owner.id, stationId, account.id);
+}
+
+async function ownerRemoveStaff(c: Ctx, stationId: string, userId: string) {
+  const owner = await requireOwnerOf(c, stationId);
+  await removeStaff(c, owner.id, stationId, userId);
+}
+
+/** Opening hours and phone, the details that change in daily business. */
+async function ownerSaveStation(c: Ctx, stationId: string, input: OwnerStationInput) {
+  const owner = await requireOwnerOf(c, stationId);
+  const before = await c.db
+    .prepare("select opening_hours, phone from stations where id = ?")
+    .bind(stationId)
+    .first<{ opening_hours: string; phone: string | null }>();
+  if (!before) throw new ApiError("station_not_found", 404);
+  const after = {
+    opening_hours: String(input?.openingHours ?? "").trim().slice(0, 200),
+    phone: String(input?.phone ?? "").trim().slice(0, 40) || null,
+  };
+  const changes = diff(before, after);
+  if (!Object.keys(changes).length) return;
+  await c.db.batch([
+    c.db.prepare("update stations set opening_hours = ?, phone = ? where id = ?").bind(after.opening_hours, after.phone, stationId),
+    c.audit(owner.id, "stations", "update", stationId, changes, { stationId }),
+  ]);
+}
+
+async function adminOperators(c: Ctx): Promise<AdminOperator[]> {
+  await c.requireAdmin();
+  const [operators, owners] = await Promise.all([
+    c.db
+      .prepare(
+        `select o.id, o.name, o.is_own, o.contact_phone, (select count(*) from stations s where s.operator_id = o.id) as station_count
+         from operators o order by o.name`,
+      )
+      .all<{ id: string; name: string; is_own: number; contact_phone: string | null; station_count: number }>(),
+    c.db
+      .prepare(
+        `select oo.operator_id, u.id, u.phone, u.email, u.full_name from operator_owners oo
+         join users u on u.id = oo.user_id order by oo.created_at`,
+      )
+      .all<PersonRow & { operator_id: string }>(),
+  ]);
+  return operators.results.map((o) => ({
+    id: o.id,
+    name: o.name,
+    isOwn: !!o.is_own,
+    contactPhone: o.contact_phone,
+    stationCount: o.station_count,
+    owners: owners.results.filter((r) => r.operator_id === o.id).map(person),
+  }));
+}
+
+/** Creates a partner operator (`id` null) or renames one; whether it is our own never changes here. */
+async function saveOperator(c: Ctx, id: string | null, input: OperatorInput): Promise<{ id: string }> {
+  const admin = await c.requireAdmin();
+  const name = String(input?.name ?? "").trim().replace(/\s+/g, " ");
+  if (!name || name.length > OPERATOR_NAME_MAX) throw new ApiError("bad_request");
+  const rawPhone = String(input?.contactPhone ?? "").trim();
+  const contactPhone = rawPhone ? normalizeTogoPhone(rawPhone) : null;
+  if (rawPhone && !contactPhone) throw new ApiError("phone_not_allowed");
+  if (!id) {
+    const newId = uuid();
+    await c.db.batch([
+      c.db
+        .prepare("insert into operators (id, name, is_own, contact_phone, created_at) values (?, ?, 0, ?, ?)")
+        .bind(newId, name, contactPhone, nowIso()),
+      c.audit(admin.id, "operators", "insert", newId, { name, contact_phone: contactPhone }),
+    ]);
+    return { id: newId };
+  }
+  const before = await c.db
+    .prepare("select name, contact_phone from operators where id = ?")
+    .bind(id)
+    .first<{ name: string; contact_phone: string | null }>();
+  if (!before) throw new ApiError("not_found", 404);
+  const changes = diff(before, { name, contact_phone: contactPhone });
+  if (Object.keys(changes).length) {
+    await c.db.batch([
+      c.db.prepare("update operators set name = ?, contact_phone = ? where id = ?").bind(name, contactPhone, id),
+      c.audit(admin.id, "operators", "update", id, changes),
+    ]);
+  }
+  return { id };
+}
+
+async function addOperatorOwner(c: Ctx, operatorId: string, contact: unknown) {
+  const admin = await c.requireAdmin();
+  const operator = await c.db.prepare("select 1 from operators where id = ?").bind(operatorId).first();
+  if (!operator) throw new ApiError("not_found", 404);
+  const account = await findAccount(c, contact);
+  await refuseOtherRole(c, account.id);
+  const inserted = await c.db
+    .prepare("insert or ignore into operator_owners (operator_id, user_id, created_at) values (?, ?, ?)")
+    .bind(operatorId, account.id, nowIso())
+    .run();
+  if (inserted.meta.changes) {
+    await c.db.batch([
+      c.audit(admin.id, "operator_owners", "insert", `${operatorId}:${account.id}`, { operator_id: operatorId }, { userId: account.id }),
+      promoteToOperator(c, account.id),
+    ]);
+  }
+}
+
+async function removeOperatorOwner(c: Ctx, operatorId: string, userId: string) {
+  const admin = await c.requireAdmin();
+  const deleted = await c.db
+    .prepare("delete from operator_owners where operator_id = ? and user_id = ?")
+    .bind(operatorId, userId)
+    .run();
+  if (deleted.meta.changes) {
+    await c.db.batch([
+      c.audit(admin.id, "operator_owners", "delete", `${operatorId}:${userId}`, { operator_id: operatorId }, { userId }),
+      demoteIfIdle(c, userId),
+    ]);
+  }
 }
 
 async function setStationActive(c: Ctx, stationId: string, active: boolean) {
@@ -973,6 +1261,47 @@ const ROUTES: [string, RegExp, Handler][] = [
     },
   ],
   ["GET", /^\/api\/staff\/stations$/, (c) => staffStations(c)],
+  ["GET", /^\/api\/owner$/, (c) => ownerView(c)],
+  [
+    "POST",
+    /^\/api\/owner\/staff$/,
+    async (c) => {
+      const { stationId, contact } = await readJson<{ stationId: string; contact: string }>(c.request);
+      return ownerAddStaff(c, String(stationId), contact);
+    },
+  ],
+  [
+    "DELETE",
+    /^\/api\/owner\/staff$/,
+    async (c) => {
+      const { stationId, userId } = await readJson<{ stationId: string; userId: string }>(c.request);
+      return ownerRemoveStaff(c, String(stationId), String(userId));
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/owner\/stations\/([\w-]+)$/,
+    async (c, [id]) => ownerSaveStation(c, id, await readJson<OwnerStationInput>(c.request)),
+  ],
+  ["GET", /^\/api\/admin\/operators$/, (c) => adminOperators(c)],
+  [
+    "POST",
+    /^\/api\/admin\/operators$/,
+    async (c) => {
+      const { id, input } = await readJson<{ id: string | null; input: OperatorInput }>(c.request);
+      return saveOperator(c, id ? String(id) : null, input);
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/admin\/operators\/([\w-]+)\/owners$/,
+    async (c, [id]) => addOperatorOwner(c, id, (await readJson<{ contact: string }>(c.request)).contact),
+  ],
+  [
+    "DELETE",
+    /^\/api\/admin\/operators\/([\w-]+)\/owners\/([\w-]+)$/,
+    (c, [id, userId]) => removeOperatorOwner(c, id, userId),
+  ],
   [
     "PATCH",
     /^\/api\/stations\/([\w-]+)\/status$/,
@@ -1098,6 +1427,81 @@ const ROUTES: [string, RegExp, Handler][] = [
     },
   ],
   ["POST", /^\/api\/admin\/parcel-sizes$/, async (c) => saveSizes(c, (await readJson<{ sizes: unknown }>(c.request)).sizes)],
+  // Drivers (worker/drivers.ts)
+  // Fleet managers (worker/fleet.ts)
+  ["GET", /^\/api\/fleet$/, (c) => fleetView(c)],
+  ["GET", /^\/api\/fleet\/stats$/, (c) => fleetStats(c, c.url.searchParams.get("from") ?? "", c.url.searchParams.get("to") ?? "")],
+  ["POST", /^\/api\/fleet\/jobs\/([\w-]+)\/assign$/, async (c, [id]) => fleetAssign(c, id, String((await readJson<{ driverId: string }>(c.request)).driverId))],
+  ["POST", /^\/api\/admin\/drivers\/([\w-]+)\/manager$/, async (c, [id]) => setDriverManager(c, id, (await readJson<{ contact: string | null }>(c.request)).contact)],
+  ["GET", /^\/api\/driver$/, (c) => driverHome(c)],
+  ["POST", /^\/api\/driver\/apply$/, async (c) => applyDriver(c, await readJson<DriverApplication>(c.request))],
+  ["POST", /^\/api\/driver\/documents\/(id|license|portrait)$/, (c, [kind]) => uploadDriverDocument(c, kind, c.request)],
+  [
+    "POST",
+    /^\/api\/driver\/queue$/,
+    async (c) => {
+      const { stationId, position } = await readJson<{ stationId: string; position: unknown }>(c.request);
+      return joinQueue(c, String(stationId), position);
+    },
+  ],
+  ["DELETE", /^\/api\/driver\/queue$/, (c) => leaveQueue(c)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/accept$/, (c, [id]) => acceptJob(c, id)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/decline$/, (c, [id]) => declineJob(c, id)],
+  [
+    "POST",
+    /^\/api\/driver\/jobs\/([\w-]+)\/collect$/,
+    async (c, [id]) => collectPickup(c, id, (await readJson<{ measures: ParcelMeasures }>(c.request)).measures),
+  ],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/door$/, (c, [id]) => arriveAtDoor(c, id)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/photo$/, (c, [id]) => uploadProof(c, id, c.request)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/deliver$/, async (c, [id]) => deliverJob(c, id, (await readJson<{ code: string }>(c.request)).code)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/absent$/, (c, [id]) => failDelivery(c, id)],
+  ["GET", /^\/api\/jobs\/mine$/, (c) => myJobs(c)],
+  ["POST", /^\/api\/jobs\/pickup$/, async (c) => bookPickup(c, await readJson<PickupBooking>(c.request))],
+  ["POST", /^\/api\/parcels\/([\w-]+)\/delivery$/, async (c, [id]) => bookDelivery(c, id, (await readJson<{ home: unknown }>(c.request)).home)],
+  ["POST", /^\/api\/jobs\/([\w-]+)\/cancel$/, (c, [id]) => cancelJob(c, id)],
+  ["GET", /^\/api\/stations\/([\w-]+)\/drivers$/, (c, [id]) => stationDrivers(c, id)],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/drivers\/scan$/,
+    async (c, [id]) => driverAtStation(c, id, (await readJson<{ badge: string }>(c.request)).badge),
+  ],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/drivers\/(handover|receive)$/,
+    async (c, [id, action]) => {
+      const { badge, jobId } = await readJson<{ badge: string; jobId: string }>(c.request);
+      return action === "handover" ? handToDriver(c, id, badge, String(jobId)) : receiveFromDriver(c, id, badge, String(jobId));
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/drivers\/settle$/,
+    async (c, [id]) => {
+      const { badge, amount } = await readJson<{ badge: string; amount: number }>(c.request);
+      return settleDriver(c, id, badge, amount);
+    },
+  ],
+  ["GET", /^\/api\/admin\/drivers$/, (c) => adminDrivers(c)],
+  [
+    "POST",
+    /^\/api\/admin\/drivers\/([\w-]+)\/review$/,
+    async (c, [id]) => reviewDriver(c, id, await readJson<DriverDecision>(c.request)),
+  ],
+  [
+    "POST",
+    /^\/api\/admin\/fleet$/,
+    async (c) => {
+      const { id, input } = await readJson<{ id: string | null; input: FleetVehicleInput }>(c.request);
+      return saveFleetVehicle(c, id ? String(id) : null, input);
+    },
+  ],
+  ["POST", /^\/api\/admin\/driver-settings$/, async (c) => saveDriverSettings(c, (await readJson<{ settings: unknown }>(c.request)).settings)],
+  [
+    "POST",
+    /^\/api\/admin\/jobs\/([\w-]+)\/assign$/,
+    async (c, [id]) => assignJob(c, id, String((await readJson<{ driverId: string }>(c.request)).driverId)),
+  ],
   [
     "POST",
     /^\/api\/admin\/stations$/,
@@ -1193,6 +1597,10 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     // Sockets authenticate with their own key, not a user session.
     if (url.pathname === "/api/devices/events") return await handleDeviceEvents(request, env);
     if (url.pathname === "/api/devices/commands") return await handleDeviceCommands(request, env);
+    // Private photos of drivers and door handovers: admins only, read as a file.
+    const fileMatch = /^\/api\/admin\/driver-files\/((?:drivers|proofs)\/[\w/.-]+)$/.exec(url.pathname);
+    if (fileMatch && request.method === "GET") return await driverFile(c, fileMatch[1]);
+
     if (url.pathname === "/api/devices/xingke") return await handleXingkeCallback(request, env);
     // Other apps authenticate with their API key (worker/partners.ts).
     const partnerApi = url.pathname.startsWith(`${PARTNER_API_BASE}/`) || url.pathname === PARTNER_API_BASE;

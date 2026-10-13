@@ -102,7 +102,7 @@ async function applyStatus(env: Env, actor: string | null, p: PaymentRow, s: Pro
   return updated;
 }
 
-/** POST /api/payments { reservationId, network, phone }: ask the rider's wallet for the money. */
+/** POST /api/payments { reservationId, network, phone }: ask the customer's wallet for the money. */
 export async function startPayment(env: Env, user: Profile, request: Request): Promise<Payment> {
   const body = await readJson<{ reservationId?: unknown; network?: unknown; phone?: unknown }>(request);
   const network = body.network as PaymentNetwork;
@@ -207,7 +207,7 @@ export async function refreshPayment(env: Env, user: Profile, id: string): Promi
   }
 }
 
-/** GET /api/payments/mine: the rider's payments, newest first. */
+/** GET /api/payments/mine: the customer's payments, newest first. */
 export async function myPayments(env: Env, user: Profile): Promise<Payment[]> {
   const { results } = await env.DB.prepare("select * from payments where user_id = ? order by created_at desc limit 50")
     .bind(user.id)

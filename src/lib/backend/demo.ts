@@ -59,7 +59,41 @@ import {
   type StationBooking,
 } from "../partners";
 import { normalizeTogoPhone } from "../phone";
+import {
+  balanceOf,
+  BUSY_JOB_STATUSES,
+  DEFAULT_DRIVER_SETTINGS,
+  driverEarning,
+  fareFor,
+  FLEET_VEHICLE_TYPES,
+  inServiceArea,
+  nearestStation,
+  newDriverCode,
+  parseDriverBadge,
+  pickDriver,
+  validPoint,
+  validSettings,
+  vehicleFits,
+  type AdminDrivers,
+  type DeliveryJob,
+  type Driver,
+  type DriverApplication,
+  type DriverAtStation,
+  type DriverDecision,
+  type DriverDocument,
+  type DriverHome,
+  type DriverSettings,
+  type FleetVehicle,
+  type FleetVehicleInput,
+  type HomePoint,
+  type JobStatus,
+  type LedgerEntry,
+  type PickupBooking,
+  type StationDrivers,
+} from "../drivers";
+import { distanceMeters, type LatLng } from "../geo";
 import { parseContact } from "../contact";
+import { fleetRange, jobForManager, managesFleet, type FleetStats, type FleetView } from "../fleet";
 import {
   checkLimits,
   DEFAULT_FEE_SETTINGS,
@@ -95,6 +129,7 @@ import {
   REDEEM_CODE_MINUTES,
   rewardAvailable,
   treesFor,
+  tripGrams,
   validFactors,
   validRewardInput,
   type AdminGreenpoint,
@@ -106,6 +141,7 @@ import {
   type GreenpointRewardInput,
   type GreenpointView,
 } from "../greenpoint";
+import { OPERATOR_NAME_MAX, type AdminOperator, type OperatorInput, type OwnerStationInput, type OwnerView } from "../operators";
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 
 const STORAGE_KEY = "poinderecharge-demo-v3";
@@ -113,7 +149,7 @@ const STORAGE_KEY = "poinderecharge-demo-v3";
 export const DEMO_CODE = "123456";
 /**
  * True when this build was made by Cloudflare (see next.config.ts) but set to the
- * demo backend. Visitors then see a clear notice and can only try the rider view.
+ * demo backend. Visitors then see a clear notice and can only try the customer view.
  */
 export const HOSTED_DEMO = process.env.NEXT_PUBLIC_HOSTED_BUILD === "1" && process.env.NEXT_PUBLIC_BACKEND === "demo";
 
@@ -139,6 +175,15 @@ interface DemoState {
   parcelDepots?: ParcelDepot[];
   parcelSizes?: ParcelSizeTier[];
   parcelCodeFailures?: { stationId: string; at: string }[];
+  /** Drivers (see src/lib/drivers.ts). */
+  drivers?: DemoDriver[];
+  fleet?: FleetVehicle[];
+  jobs?: DemoJob[];
+  driverQueue?: { driverId: string; stationId: string; since: string }[];
+  ledger?: DemoLedger[];
+  driverSettings?: DriverSettings;
+  /** Driver documents and door photos as data URLs (demo only). */
+  driverFiles?: Record<string, string>;
   /** Partner API: partners and bookings waiting for drop-off (demo only, no API calls). */
   partners?: Partner[];
   bookings?: (StationBooking & { partnerId: string; fromStationId: string })[];
@@ -146,6 +191,12 @@ interface DemoState {
   wallet?: DemoWallet;
   /** greenpoint (demo only). */
   greenpoint?: DemoGreenpoint;
+  /** Fleet managers: which manager each linked driver belongs to (missing = nobody). */
+  fleetLinks?: { driverId: string; managerId: string }[];
+  /** Operator accounts: who runs which operator (missing = nobody). */
+  operatorOwners?: { operatorId: string; userId: string }[];
+  /** Contact phones of operators, set in the backoffice. */
+  operatorPhones?: Record<string, string | null>;
   /** Parcel module switch of the backoffice (missing = on). */
   parcelsEnabled?: boolean;
   /** Demo PINs by phone number or e-mail address (stored in clear: demo only). */
@@ -174,7 +225,7 @@ interface DemoGreenpoint {
   factors: GreenpointFactors;
   rewards: GreenpointReward[];
   /** Ledger, newest first. */
-  ledger: (GreenpointEntry & { userId: string; reservationId: string | null })[];
+  ledger: (GreenpointEntry & { userId: string; reservationId: string | null; jobId?: string })[];
   redemptions: (GreenpointRedemption & { userId: string; rewardId: string; status: "open" | "used" | "cancelled" })[];
   vehicles: Record<string, VehicleType>;
 }
@@ -251,6 +302,42 @@ function seedDevices(): Device[] {
       createdAt: "2026-10-01T08:00:00.000Z",
       points: demoSocketPoints(stationId, externalId, outlets, free),
     })),
+  ];
+}
+
+interface DemoDriver {
+  userId: string;
+  status: Driver["status"];
+  fullName: string;
+  phone: string | null;
+  idNumber: string;
+  licenseNumber: string;
+  wantedType: Driver["wantedType"];
+  documents: Driver["documents"];
+  vehicleId: string | null;
+  code: string;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
+/** A trip as the demo keeps it: the view (driver filled in on reading) plus bookkeeping. */
+interface DemoJob extends Omit<DeliveryJob, "driver" | "trackingNo"> {
+  customerUserId: string | null;
+  driverId: string | null;
+  driverStationId: string | null;
+  declined: string[];
+}
+
+interface DemoLedger extends LedgerEntry {
+  driverId: string;
+}
+
+/** Three of our vehicles, so drivers can be approved right away. */
+function seedFleet(): FleetVehicle[] {
+  return [
+    { id: "veh-moto", type: "moto", plate: "TG 1001 AA", isActive: true },
+    { id: "veh-tricycle", type: "tricycle", plate: "TG 2002 BB", isActive: true },
+    { id: "veh-cargo", type: "cargo_tricycle", plate: "TG 3003 CC", isActive: true },
   ];
 }
 
@@ -352,6 +439,28 @@ function readAsDataUrl(file: File): Promise<string> {
 
 type AuditInput = Pick<AuditEntry, "table" | "action" | "rowId" | "changes"> &
   Partial<Pick<AuditEntry, "stationId" | "userId">>;
+
+/** Operators this demo account runs. */
+function ownedOperators(state: DemoState, userId: string): string[] {
+  return (state.operatorOwners ?? []).filter((x) => x.userId === userId).map((x) => x.operatorId);
+}
+
+/** Whoever gets station work becomes "operator" (customers only; admins stay admins). */
+function promoted(state: DemoState, userId: string) {
+  const users = state.users ?? demoUsers(new Date());
+  // One role per person: a fleet manager would lose their drivers.
+  if (users.find((u) => u.id === userId)?.role === "fleet_manager") throw new BackendError("has_other_role");
+  return users.map((u) => (u.id === userId && u.role === "customer" ? { ...u, role: "operator" as const } : u));
+}
+
+/** Whoever has no station and runs no operator any more goes back to customer. */
+function demotedIfIdle(state: DemoState, userId: string) {
+  const busy =
+    (state.staff ?? DEMO_STAFF).some((a) => a.userId === userId) || (state.operatorOwners ?? []).some((x) => x.userId === userId);
+  return (state.users ?? demoUsers(new Date())).map((u) =>
+    u.id === userId && u.role === "operator" && !busy ? { ...u, role: "customer" as const } : u,
+  );
+}
 
 /** Appends an activity log entry, like the Worker does on Cloudflare. */
 function withAudit(state: DemoState, entry: AuditInput): DemoState {
@@ -472,19 +581,26 @@ export class DemoBackend implements Backend {
     };
   }
 
+  /** The profile with its driver status, as the Worker sends it. */
+  private profileOf(state: DemoState): Profile | null {
+    if (!state.profile) return null;
+    const driver = (state.drivers ?? []).find((d) => d.userId === state.profile!.id);
+    return { ...state.profile, driverStatus: driver?.status ?? null };
+  }
+
   async getProfile() {
-    return this.load().profile;
+    return this.profileOf(this.load());
   }
 
   onAuthChange(callback: (profile: Profile | null) => void) {
-    return this.subscribe(() => callback(this.load().profile));
+    return this.subscribe(() => callback(this.profileOf(this.load())));
   }
 
   async sendCode() {
     // Nothing is sent in demo mode; the code is always DEMO_CODE.
   }
 
-  async register(contact: string, code: string, pin: string, demoRole: UserRole = "rider") {
+  async register(contact: string, code: string, pin: string, demoRole: UserRole = "customer") {
     if (!validPinFormat(pin)) throw new BackendError("bad_pin");
     if (weakPin(pin)) throw new BackendError("weak_pin");
     if (code.trim() !== DEMO_CODE) throw new BackendError("invalid_code");
@@ -493,13 +609,13 @@ export class DemoBackend implements Backend {
     return this.signInAs(contact, demoRole);
   }
 
-  async signIn(contact: string, pin: string, demoRole: UserRole = "rider") {
+  async signIn(contact: string, pin: string, demoRole: UserRole = "customer") {
     if (!validPinFormat(pin) || this.load().pins?.[contact] !== pin) throw new BackendError("invalid_pin");
     return this.signInAs(contact, demoRole);
   }
 
   private signInAs(contact: string, demoRole: UserRole) {
-    if (HOSTED_DEMO && demoRole !== "rider") throw new BackendError("forbidden");
+    if (HOSTED_DEMO && demoRole !== "customer") throw new BackendError("forbidden");
     const state = this.load();
     const users = state.users ?? demoUsers(new Date());
     const known = users.find((u) => u.id === `demo-${demoRole}`);
@@ -510,6 +626,7 @@ export class DemoBackend implements Backend {
       email: isEmail ? contact : null,
       fullName: known?.fullName ?? null,
       role: demoRole,
+      ownerOf: ownedOperators(state, `demo-${demoRole}`),
     };
     const signedIn: AdminUser = {
       ...profile,
@@ -638,10 +755,15 @@ export class DemoBackend implements Backend {
   async staffStations() {
     const state = this.load();
     const profile = this.requireProfile(state);
-    if (profile.role !== "operator" && profile.role !== "admin") throw new BackendError("forbidden");
-    // Demo staff run every own station; admins see all.
+    // Menu and rights follow the role, like on Cloudflare.
+    if (profile.role !== "operator" && profile.role !== "admin") return [];
+    const owned = new Set(profile.ownerOf ?? []);
+    // Demo staff run every own station, operator accounts their operator's stations; admins see all.
     const active = this.activeStations(state);
-    const stations = profile.role === "admin" ? active : active.filter((s) => s.isOwn);
+    const stations =
+      profile.role === "admin"
+        ? active
+        : active.filter((s) => owned.has(s.operatorId) || (profile.role === "operator" && s.isOwn));
     return this.views(state, stations);
   }
 
@@ -679,7 +801,7 @@ export class DemoBackend implements Backend {
   }
 
   async stationReservations(stationId: string) {
-    // Staff never see the pickup code; the rider shows it.
+    // Staff never see the pickup code; the customer shows it.
     return this.load()
       .reservations.filter((r) => r.stationId === stationId)
       .map((r) => ({ ...r, pickupCode: undefined }))
@@ -824,48 +946,208 @@ export class DemoBackend implements Backend {
     const users = state.users ?? demoUsers(new Date());
     const before = users.find((u) => u.id === userId);
     if (!before) throw new BackendError("unknown", "user not found");
-    this.save(
-      withAudit(
-        { ...state, users: users.map((u) => (u.id === userId ? { ...u, role } : u)) },
-        { table: "profiles", action: "update", rowId: userId, userId, changes: { role: [before.role, role] } },
-      ),
+    if (before.role === role) return;
+    let next = withAudit(
+      { ...state, users: users.map((u) => (u.id === userId ? { ...u, role } : u)) },
+      { table: "profiles", action: "update", rowId: userId, userId, changes: { role: [before.role, role] } },
     );
+    // Leaving "operator" ends every station assignment and operator account, like on Cloudflare.
+    if (role !== "operator") {
+      for (const a of (state.staff ?? DEMO_STAFF).filter((x) => x.userId === userId)) {
+        next = withAudit(
+          { ...next, staff: (next.staff ?? DEMO_STAFF).filter((x) => x !== a) },
+          { table: "station_staff", action: "delete", rowId: `${a.stationId}:${userId}`, stationId: a.stationId, userId, changes: {} },
+        );
+      }
+      for (const o of (state.operatorOwners ?? []).filter((x) => x.userId === userId)) {
+        next = withAudit(
+          { ...next, operatorOwners: (next.operatorOwners ?? []).filter((x) => x !== o) },
+          { table: "operator_owners", action: "delete", rowId: `${o.operatorId}:${userId}`, userId, changes: { operator_id: o.operatorId } },
+        );
+      }
+    }
+    // Leaving "fleet_manager" ends the links to the drivers.
+    if (role !== "fleet_manager") {
+      for (const l of (state.fleetLinks ?? []).filter((x) => x.managerId === userId)) {
+        next = withAudit(
+          { ...next, fleetLinks: (next.fleetLinks ?? []).filter((x) => x !== l) },
+          { table: "fleet_manager_drivers", action: "delete", rowId: l.driverId, userId: l.driverId, changes: { manager_id: userId } },
+        );
+      }
+    }
+    this.save(next);
   }
 
   async assignStaff(stationId: string, userId: string) {
     const state = this.load();
     this.requireAdmin(state);
+    this.save(this.withStaff(state, stationId, userId));
+  }
+
+  private withStaff(state: DemoState, stationId: string, userId: string): DemoState {
     const staff = state.staff ?? DEMO_STAFF;
-    if (staff.some((a) => a.stationId === stationId && a.userId === userId)) return;
-    this.save(
-      withAudit(
-        {
-          ...state,
-          staff: [...staff, { stationId, userId }],
-          // The role follows the assignment, like sync_staff_role() in SQL.
-          users: (state.users ?? demoUsers(new Date())).map((u) =>
-            u.id === userId && u.role === "rider" ? { ...u, role: "operator" as const } : u,
-          ),
-        },
-        { table: "station_staff", action: "insert", rowId: `${stationId}:${userId}`, stationId, userId, changes: {} },
-      ),
+    if (staff.some((a) => a.stationId === stationId && a.userId === userId)) return state;
+    return withAudit(
+      {
+        ...state,
+        staff: [...staff, { stationId, userId }],
+        // The role follows the assignment, like on Cloudflare.
+        users: promoted(state, userId),
+      },
+      { table: "station_staff", action: "insert", rowId: `${stationId}:${userId}`, stationId, userId, changes: {} },
     );
   }
 
   async unassignStaff(stationId: string, userId: string) {
     const state = this.load();
     this.requireAdmin(state);
+    this.save(this.withoutStaff(state, stationId, userId));
+  }
+
+  private withoutStaff(state: DemoState, stationId: string, userId: string): DemoState {
     const staff = (state.staff ?? DEMO_STAFF).filter((a) => !(a.stationId === stationId && a.userId === userId));
-    const stillStaff = staff.some((a) => a.userId === userId);
-    const users = (state.users ?? demoUsers(new Date())).map((u) =>
-      u.id === userId && u.role === "operator" && !stillStaff ? { ...u, role: "rider" as const } : u,
+    return withAudit(
+      { ...state, staff, users: demotedIfIdle({ ...state, staff }, userId) },
+      { table: "station_staff", action: "delete", rowId: `${stationId}:${userId}`, stationId, userId, changes: {} },
     );
+  }
+
+  // Operator accounts --------------------------------------------------------
+
+  /** The signed-in operator account (admins too), and the operators it may manage. */
+  private requireOwnerOf(state: DemoState, stationId: string): Profile {
+    const profile = this.requireProfile(state);
+    if (profile.role === "admin") return profile;
+    if (profile.role !== "operator") throw new BackendError("forbidden");
+    const station = state.stations.find((s) => s.id === stationId);
+    if (!station || !ownedOperators(state, profile.id).includes(station.operatorId)) throw new BackendError("forbidden");
+    return profile;
+  }
+
+  private label(state: DemoState, userId: string) {
+    const u = (state.users ?? demoUsers(new Date())).find((x) => x.id === userId);
+    return { userId, label: u ? personLabel(u) : "?" };
+  }
+
+  private accountByContact(state: DemoState, contact: string) {
+    const parsed = parseContact(contact);
+    if (!parsed) throw new BackendError(contact.includes("@") ? "invalid_contact" : "phone_not_allowed");
+    const user = (state.users ?? demoUsers(new Date())).find((u) =>
+      parsed.kind === "phone" ? u.phone === parsed.value : u.email === parsed.value,
+    );
+    if (!user) throw new BackendError("account_not_found");
+    return user;
+  }
+
+  async ownerView(): Promise<OwnerView> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const owned = new Set(ownedOperators(state, profile.id));
+    if ((profile.role !== "operator" && profile.role !== "admin") || !owned.size) throw new BackendError("forbidden");
+    const stations = this.activeStations(state).filter((s) => owned.has(s.operatorId));
+    const ids = new Set(stations.map((s) => s.id));
+    return {
+      operators: state.operators.filter((o) => owned.has(o.id)),
+      stations: this.views(state, stations),
+      staff: (state.staff ?? DEMO_STAFF)
+        .filter((a) => ids.has(a.stationId))
+        .map((a) => ({ stationId: a.stationId, ...this.label(state, a.userId) })),
+    };
+  }
+
+  async ownerAddStaff(stationId: string, contact: string) {
+    const state = this.load();
+    this.requireOwnerOf(state, stationId);
+    this.save(this.withStaff(state, stationId, this.accountByContact(state, contact).id));
+  }
+
+  async ownerRemoveStaff(stationId: string, userId: string) {
+    const state = this.load();
+    this.requireOwnerOf(state, stationId);
+    this.save(this.withoutStaff(state, stationId, userId));
+  }
+
+  async ownerSaveStation(stationId: string, input: OwnerStationInput) {
+    const state = this.load();
+    this.requireOwnerOf(state, stationId);
+    const openingHours = input.openingHours.trim().slice(0, 200);
+    const phone = input.phone?.trim().slice(0, 40) || null;
     this.save(
       withAudit(
-        { ...state, staff, users },
-        { table: "station_staff", action: "delete", rowId: `${stationId}:${userId}`, stationId, userId, changes: {} },
+        { ...state, stations: state.stations.map((s) => (s.id === stationId ? { ...s, openingHours, phone } : s)) },
+        { table: "stations", action: "update", rowId: stationId, stationId, changes: { opening_hours: openingHours, phone } },
       ),
     );
+  }
+
+  async adminOperators(): Promise<AdminOperator[]> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const owners = state.operatorOwners ?? [];
+    return [...state.operators]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((o) => ({
+        ...o,
+        contactPhone: state.operatorPhones?.[o.id] ?? null,
+        stationCount: state.stations.filter((s) => s.operatorId === o.id).length,
+        owners: owners.filter((x) => x.operatorId === o.id).map((x) => this.label(state, x.userId)),
+      }));
+  }
+
+  async saveOperator(id: string | null, input: OperatorInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const name = input.name.trim().replace(/\s+/g, " ");
+    if (!name || name.length > OPERATOR_NAME_MAX) throw new BackendError("unknown", "invalid name");
+    const contactPhone = input.contactPhone?.trim() ? normalizeTogoPhone(input.contactPhone) : null;
+    if (input.contactPhone?.trim() && !contactPhone) throw new BackendError("phone_not_allowed");
+    const operatorId = id ?? `demo-op-${Date.now()}`;
+    const operators = id
+      ? state.operators.map((o) => (o.id === id ? { ...o, name } : o))
+      : [...state.operators, { id: operatorId, name, isOwn: false }];
+    this.save(
+      withAudit(
+        {
+          ...state,
+          operators,
+          // Station names carry the operator name, like the join on Cloudflare.
+          stations: state.stations.map((s) => (s.operatorId === operatorId ? { ...s, operatorName: name } : s)),
+          operatorPhones: { ...state.operatorPhones, [operatorId]: contactPhone },
+        },
+        { table: "operators", action: id ? "update" : "insert", rowId: operatorId, changes: { name, contact_phone: contactPhone } },
+      ),
+    );
+  }
+
+  async addOperatorOwner(operatorId: string, contact: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!state.operators.some((o) => o.id === operatorId)) throw new BackendError("unknown", "operator not found");
+    const user = this.accountByContact(state, contact);
+    const owners = state.operatorOwners ?? [];
+    if (owners.some((x) => x.operatorId === operatorId && x.userId === user.id)) return;
+    this.saveOwners(
+      { ...state, users: promoted(state, user.id) },
+      [...owners, { operatorId, userId: user.id }],
+      { table: "operator_owners", action: "insert", rowId: `${operatorId}:${user.id}`, userId: user.id, changes: { operator_id: operatorId } },
+    );
+  }
+
+  async removeOperatorOwner(operatorId: string, userId: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const operatorOwners = (state.operatorOwners ?? []).filter((x) => !(x.operatorId === operatorId && x.userId === userId));
+    this.saveOwners(
+      { ...state, users: demotedIfIdle({ ...state, operatorOwners }, userId) },
+      operatorOwners,
+      { table: "operator_owners", action: "delete", rowId: `${operatorId}:${userId}`, userId, changes: { operator_id: operatorId } },
+    );
+  }
+
+  private saveOwners(state: DemoState, operatorOwners: { operatorId: string; userId: string }[], audit: AuditInput) {
+    const next = { ...state, operatorOwners };
+    const profile = state.profile && { ...state.profile, ownerOf: ownedOperators(next, state.profile.id) };
+    this.save(withAudit({ ...next, profile }, audit));
   }
 
   async setStationActive(stationId: string, active: boolean) {
@@ -1002,6 +1284,7 @@ export class DemoBackend implements Backend {
     return {
       depots: (state.parcelDepots ?? seedDepots()).filter((d) => this.activeDepot(state, d.stationId)),
       sizes: state.parcelSizes ?? DEFAULT_PARCEL_SIZES,
+      driverSettings: state.driverSettings ?? DEFAULT_DRIVER_SETTINGS,
     };
   }
 
@@ -1038,7 +1321,7 @@ export class DemoBackend implements Backend {
       phone,
       email: null,
       fullName: name,
-      role: "rider",
+      role: "customer",
       createdAt: new Date().toISOString(),
       lastSignInAt: null,
     };
@@ -1084,7 +1367,15 @@ export class DemoBackend implements Backend {
       pickedUpAt: null,
       pickupDeadline: null,
       lockerNo: null,
+      express: !!input.express,
+      deliveryStatus: null,
+      jobId: null,
     };
+    if (input.express) {
+      const job = this.newExpressJob(state, parcel);
+      parcel.jobId = job.id;
+      state = { ...state, jobs: [job, ...(state.jobs ?? [])] };
+    }
     this.saveParcels(state, [parcel, ...this.parcelsOf(state)], {
       table: "parcels",
       action: "insert",
@@ -1093,6 +1384,7 @@ export class DemoBackend implements Backend {
       userId: sender.userId,
       changes: { tracking_no: parcel.trackingNo, to_station_id: parcel.toStationId, size: tier.size, price_fcfa: tier.priceFcfa, created_by: staff.id },
     });
+    if (input.express) this.dispatch();
     return parcel;
   }
 
@@ -1101,7 +1393,7 @@ export class DemoBackend implements Backend {
     this.requireStaff(state);
     const parcels = this.parcelsOf(state);
     const chosen = parcels.filter((p) => ids.includes(p.id));
-    if (chosen.length !== ids.length || chosen.some((p) => p.fromStationId !== stationId || p.status !== "deposited")) {
+    if (chosen.length !== ids.length || chosen.some((p) => p.fromStationId !== stationId || p.status !== "deposited" || p.express)) {
       throw new BackendError("parcel_wrong_status");
     }
     const now = new Date().toISOString();
@@ -1117,7 +1409,7 @@ export class DemoBackend implements Backend {
     this.requireStaff(state);
     const parcels = this.parcelsOf(state);
     const chosen = parcels.filter((p) => ids.includes(p.id));
-    if (chosen.length !== ids.length || chosen.some((p) => p.toStationId !== stationId || p.status !== "in_transit")) {
+    if (chosen.length !== ids.length || chosen.some((p) => p.toStationId !== stationId || p.status !== "in_transit" || p.express)) {
       throw new BackendError("parcel_wrong_status");
     }
     const now = new Date();
@@ -1158,13 +1450,18 @@ export class DemoBackend implements Backend {
             (!input.trackingNo || p.trackingNo === input.trackingNo),
         )
       : undefined;
+    if (parcel?.deliveryStatus === "out_for_delivery") throw new BackendError("parcel_with_driver");
     if (!parcel) {
       this.save({ ...state, parcelCodeFailures: [...failures, { stationId, at: new Date().toISOString() }] });
       throw new BackendError("wrong_pickup_code");
     }
     const done: Parcel = { ...parcel, status: "picked_up", pickedUpAt: new Date().toISOString(), pickupCode: undefined };
+    // The recipient came in person after booking a home delivery: the trip is off.
+    const jobs = (state.jobs ?? []).map((j) =>
+      j.parcelId === parcel.id && ["open", "assigned", "accepted"].includes(j.status) ? { ...j, status: "cancelled" as const } : j,
+    );
     this.saveParcels(
-      state,
+      { ...state, jobs },
       parcels.map((p) => (p.id === parcel.id ? done : p)),
       { table: "parcels", action: "update", rowId: parcel.id, stationId, changes: { status: ["arrived", "picked_up"] } },
     );
@@ -1183,6 +1480,7 @@ export class DemoBackend implements Backend {
       parcels.map((p) => (p.id === id ? { ...p, status: "cancelled" as const } : p)),
       { table: "parcels", action: "update", rowId: id, stationId: parcel.fromStationId, changes: { status: ["deposited", "cancelled"] } },
     );
+    if (parcel.jobId) this.cancelJobs(this.load(), (j) => j.parcelId === id);
   }
 
   async resendPickupCode(id: string) {
@@ -1265,6 +1563,691 @@ export class DemoBackend implements Backend {
     );
   }
 
+  // Drivers ---------------------------------------------------------------------
+
+  private settingsOf(state: DemoState): DriverSettings {
+    return state.driverSettings ?? DEFAULT_DRIVER_SETTINGS;
+  }
+
+  private depotPoints(state: DemoState) {
+    return state.stations.filter((st) => this.activeDepot(state, st.id));
+  }
+
+  private stationAt(state: DemoState, id: string | null): LatLng | null {
+    return state.stations.find((st) => st.id === id) ?? null;
+  }
+
+  private balanceOfDriver(state: DemoState, driverId: string): number {
+    return balanceOf((state.ledger ?? []).filter((e) => e.driverId === driverId));
+  }
+
+  private busyJob(state: DemoState, driverId: string): DemoJob | null {
+    return (state.jobs ?? []).find((j) => j.driverId === driverId && BUSY_JOB_STATUSES.includes(j.status)) ?? null;
+  }
+
+  private viewJob(state: DemoState, j: DemoJob): DeliveryJob {
+    const driver = (state.drivers ?? []).find((d) => d.userId === j.driverId);
+    const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === driver?.vehicleId);
+    const parcel = (state.parcels ?? []).find((p) => p.id === j.parcelId);
+    return {
+      id: j.id,
+      kind: j.kind,
+      status: j.status,
+      parcelId: j.parcelId,
+      trackingNo: parcel?.trackingNo ?? null,
+      fromStationId: j.fromStationId,
+      toStationId: j.toStationId,
+      home: j.home,
+      size: j.size,
+      weightKg: j.weightKg,
+      content: j.content,
+      distanceM: j.distanceM,
+      fareFcfa: j.fareFcfa,
+      collectFcfa: j.collectFcfa,
+      recipient: j.recipient,
+      declaredValue: j.declaredValue,
+      driver: driver ? { name: driver.fullName, phone: driver.phone, plate: vehicle?.plate ?? null, vehicleType: vehicle?.type ?? null } : null,
+      customerName: j.customerName,
+      createdAt: j.createdAt,
+      assignedAt: j.assignedAt,
+      acceptedAt: j.acceptedAt,
+      pickedUpAt: j.pickedUpAt,
+      atDoorAt: j.atDoorAt,
+      doneAt: j.doneAt,
+      proofKey: j.proofKey,
+    };
+  }
+
+  private viewDriver(state: DemoState, d: DemoDriver, withCode: boolean): Driver {
+    const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === d.vehicleId) ?? null;
+    const queue = state.driverQueue ?? [];
+    const mine = queue.find((q) => q.driverId === d.userId);
+    const settled = (state.ledger ?? []).filter((e) => e.driverId === d.userId && e.kind === "settlement");
+    return {
+      userId: d.userId,
+      status: d.status,
+      fullName: d.fullName,
+      phone: d.phone,
+      idNumber: d.idNumber,
+      licenseNumber: d.licenseNumber,
+      wantedType: d.wantedType,
+      vehicle,
+      documents: d.documents,
+      ...(withCode ? { code: d.code } : {}),
+      createdAt: d.createdAt,
+      reviewedAt: d.reviewedAt,
+      balanceFcfa: this.balanceOfDriver(state, d.userId),
+      lastSettledAt: settled.map((e) => e.at).sort().pop() ?? null,
+      queue: mine
+        ? {
+            stationId: mine.stationId,
+            since: mine.since,
+            position: queue.filter((q) => q.stationId === mine.stationId && q.since <= mine.since).length,
+          }
+        : null,
+    };
+  }
+
+  private newJob(fields: Partial<DemoJob> & Pick<DemoJob, "kind" | "size" | "distanceM" | "fareFcfa">): DemoJob {
+    return {
+      id: crypto.randomUUID(),
+      status: "open",
+      parcelId: null,
+      fromStationId: null,
+      toStationId: null,
+      home: null,
+      weightKg: null,
+      content: "",
+      collectFcfa: 0,
+      recipient: null,
+      declaredValue: null,
+      customerName: null,
+      createdAt: new Date().toISOString(),
+      assignedAt: null,
+      acceptedAt: null,
+      pickedUpAt: null,
+      atDoorAt: null,
+      doneAt: null,
+      proofKey: null,
+      customerUserId: null,
+      driverId: null,
+      driverStationId: null,
+      declined: [],
+      ...fields,
+    };
+  }
+
+  private newExpressJob(state: DemoState, parcel: Parcel): DemoJob {
+    const from = this.stationAt(state, parcel.fromStationId);
+    const to = this.stationAt(state, parcel.toStationId);
+    const distanceM = from && to ? Math.round(distanceMeters(from, to)) : 0;
+    return this.newJob({
+      kind: "express",
+      parcelId: parcel.id,
+      fromStationId: parcel.fromStationId,
+      toStationId: parcel.toStationId,
+      size: parcel.size,
+      weightKg: parcel.measures.weightKg,
+      content: parcel.content,
+      distanceM,
+      fareFcfa: fareFor(distanceM, true, this.settingsOf(state)),
+    });
+  }
+
+  /** Same rules as dispatch() in worker/drivers.ts. */
+  private dispatch() {
+    const state = this.load();
+    const s = this.settingsOf(state);
+    const stale = new Date(Date.now() - s.acceptMinutes * 60_000).toISOString();
+    let jobs = (state.jobs ?? []).map((j) =>
+      j.status === "assigned" && j.assignedAt && j.assignedAt < stale
+        ? { ...j, status: "open" as const, driverId: null, assignedAt: null, declined: [...j.declined, j.driverId ?? ""] }
+        : j,
+    );
+    let queue = [...(state.driverQueue ?? [])];
+    const drivers = state.drivers ?? [];
+    const fleet = state.fleet ?? seedFleet();
+    const stations = this.depotPoints(state);
+    const tiers = state.parcelSizes ?? DEFAULT_PARCEL_SIZES;
+    for (const job of [...jobs].filter((j) => j.status === "open").sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+      const start = job.kind === "pickup" ? job.home : this.stationAt(state, job.fromStationId);
+      if (!start) continue;
+      const entries = queue
+        .filter((q) => !job.declined.includes(q.driverId))
+        .map((q) => {
+          const d = drivers.find((x) => x.userId === q.driverId);
+          const v = fleet.find((x) => x.id === d?.vehicleId);
+          return d?.status === "active" && v?.isActive ? { ...q, vehicleType: v.type } : null;
+        })
+        .filter((q) => q !== null);
+      const weight = job.weightKg ?? tiers.find((t) => t.size === job.size)?.maxWeightKg ?? 50;
+      const pick = pickDriver(start, entries, stations, (type) => vehicleFits(type, job.size, weight, s));
+      if (!pick) continue;
+      queue = queue.filter((q) => q.driverId !== pick.driverId);
+      jobs = jobs.map((j) =>
+        j.id === job.id ? { ...j, status: "assigned" as const, driverId: pick.driverId, driverStationId: pick.stationId, assignedAt: new Date().toISOString() } : j,
+      );
+    }
+    if (JSON.stringify(jobs) !== JSON.stringify(state.jobs ?? []) || queue.length !== (state.driverQueue ?? []).length) {
+      this.save({ ...state, jobs, driverQueue: queue });
+    }
+  }
+
+  private saveJobs(state: DemoState, jobs: DemoJob[], audit?: AuditInput, extra: Partial<DemoState> = {}) {
+    const next = { ...state, jobs, ...extra };
+    this.save(audit ? withAudit(next, audit) : next);
+  }
+
+  private updateJob(state: DemoState, id: string, from: JobStatus[], patch: Partial<DemoJob>): DemoJob[] {
+    const job = (state.jobs ?? []).find((j) => j.id === id);
+    if (!job) throw new BackendError("job_not_found");
+    if (!from.includes(job.status)) throw new BackendError("job_wrong_status");
+    return (state.jobs ?? []).map((j) => (j.id === id ? { ...j, ...patch } : j));
+  }
+
+  private cancelJobs(state: DemoState, which: (j: DemoJob) => boolean) {
+    const cancellable: JobStatus[] = ["open", "assigned", "accepted"];
+    const hit = (state.jobs ?? []).filter((j) => which(j) && cancellable.includes(j.status));
+    if (!hit.length) return;
+    const jobs = (state.jobs ?? []).map((j) => (hit.includes(j) ? { ...j, status: "cancelled" as const, doneAt: new Date().toISOString() } : j));
+    const parcels = (state.parcels ?? []).map((p) => {
+      const job = hit.find((j) => j.parcelId === p.id);
+      if (!job) return p;
+      if (job.kind === "delivery" && p.deliveryStatus === "booked") return { ...p, deliveryStatus: null };
+      if (job.kind === "express" && p.status === "deposited") return { ...p, express: false };
+      return p;
+    });
+    const back = hit.filter((j) => j.driverId && j.driverStationId).map((j) => ({ driverId: j.driverId!, stationId: j.driverStationId!, since: new Date().toISOString() }));
+    this.save(
+      withAudit(
+        { ...state, jobs, parcels, driverQueue: [...(state.driverQueue ?? []).filter((q) => !back.some((b) => b.driverId === q.driverId)), ...back] },
+        { table: "delivery_jobs", action: "update", rowId: hit.map((j) => j.id).join(","), changes: { status: ["open", "cancelled"] } },
+      ),
+    );
+  }
+
+  private demoDriver(state: DemoState): { profile: Profile; driver: DemoDriver } {
+    const profile = this.requireProfile(state);
+    const driver = (state.drivers ?? []).find((d) => d.userId === profile.id);
+    if (!driver || driver.status !== "active") throw new BackendError("not_a_driver");
+    return { profile, driver };
+  }
+
+  private myDemoJob(state: DemoState, id: string): { driver: DemoDriver; job: DemoJob } {
+    const { driver } = this.demoDriver(state);
+    const job = (state.jobs ?? []).find((j) => j.id === id && j.driverId === driver.userId);
+    if (!job) throw new BackendError("job_not_found");
+    return { driver, job };
+  }
+
+  private ledgerEntry(driverId: string, kind: LedgerEntry["kind"], amountFcfa: number, jobId: string | null, stationId: string | null): DemoLedger {
+    return { id: crypto.randomUUID(), at: new Date().toISOString(), driverId, kind, amountFcfa, jobId, stationId };
+  }
+
+  async driverHome(): Promise<DriverHome> {
+    this.dispatch();
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const settings = this.settingsOf(state);
+    const d = (state.drivers ?? []).find((x) => x.userId === profile.id);
+    if (!d) return { driver: null, job: null, history: [], ledger: [], settings };
+    const mine = (state.jobs ?? []).filter((j) => j.driverId === profile.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const busy = mine.find((j) => BUSY_JOB_STATUSES.includes(j.status));
+    return {
+      driver: this.viewDriver(state, d, true),
+      job: busy ? this.viewJob(state, busy) : null,
+      history: mine.filter((j) => j !== busy).slice(0, 30).map((j) => this.viewJob(state, j)),
+      ledger: (state.ledger ?? []).filter((e) => e.driverId === profile.id).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 100),
+      settings,
+    };
+  }
+
+  async applyDriver(input: DriverApplication) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    if (!profile.phone) throw new BackendError("phone_required");
+    const text = (v: string, min: number) => {
+      const t = (v ?? "").trim();
+      if (t.length < min || t.length > (min === 2 ? 80 : 40)) throw new BackendError("unknown", "invalid field");
+      return t;
+    };
+    const fields = { fullName: text(input.fullName, 2), idNumber: text(input.idNumber, 3), licenseNumber: text(input.licenseNumber, 3), wantedType: input.wantedType };
+    const existing = (state.drivers ?? []).find((d) => d.userId === profile.id);
+    if (existing && (existing.status === "active" || existing.status === "suspended")) throw new BackendError("forbidden");
+    const driver: DemoDriver = existing
+      ? { ...existing, ...fields, status: "pending" }
+      : { userId: profile.id, status: "pending", phone: profile.phone, documents: {}, vehicleId: null, code: newDriverCode(), createdAt: new Date().toISOString(), reviewedAt: null, ...fields };
+    this.save(
+      withAudit(
+        { ...state, drivers: [driver, ...(state.drivers ?? []).filter((d) => d.userId !== profile.id)] },
+        { table: "drivers", action: existing ? "update" : "insert", rowId: profile.id, userId: profile.id, changes: { status: "pending", wanted_type: fields.wantedType } },
+      ),
+    );
+  }
+
+  async uploadDriverDocument(kind: DriverDocument, image: Blob) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const driver = (state.drivers ?? []).find((d) => d.userId === profile.id);
+    if (!driver || (driver.status !== "pending" && driver.status !== "rejected")) throw new BackendError("forbidden");
+    if (image.size > MAX_PROMO_IMAGE_BYTES / 4) throw new BackendError("image_too_large");
+    const key = `drivers/${profile.id}/${kind}-${Date.now().toString(36)}.jpg`;
+    const url = await readAsDataUrl(image as File);
+    const fresh = this.load();
+    const files = { ...fresh.driverFiles };
+    const old = driver.documents[kind];
+    if (old) delete files[old];
+    files[key] = url;
+    this.save({
+      ...fresh,
+      driverFiles: files,
+      drivers: (fresh.drivers ?? []).map((d) => (d.userId === profile.id ? { ...d, documents: { ...d.documents, [kind]: key } } : d)),
+    });
+  }
+
+  async joinDriverQueue(stationId: string, position: LatLng | null) {
+    const state = this.load();
+    const { driver } = this.demoDriver(state);
+    const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === driver.vehicleId);
+    if (!vehicle?.isActive) throw new BackendError("no_vehicle");
+    if (this.busyJob(state, driver.userId)) throw new BackendError("driver_busy");
+    if (this.balanceOfDriver(state, driver.userId) >= this.settingsOf(state).cashLimitFcfa) throw new BackendError("cash_limit");
+    if (!this.activeDepot(state, stationId)) throw new BackendError("depot_inactive");
+    // The demo runs anywhere, so it does not check that the driver is at the station.
+    void position;
+    const queue = state.driverQueue ?? [];
+    if (queue.find((q) => q.driverId === driver.userId)?.stationId !== stationId) {
+      this.save({ ...state, driverQueue: [...queue.filter((q) => q.driverId !== driver.userId), { driverId: driver.userId, stationId, since: new Date().toISOString() }] });
+    }
+    this.dispatch();
+  }
+
+  async leaveDriverQueue() {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    this.save({ ...state, driverQueue: (state.driverQueue ?? []).filter((q) => q.driverId !== profile.id) });
+  }
+
+  async acceptJob(id: string) {
+    const state = this.load();
+    const { job } = this.myDemoJob(state, id);
+    this.saveJobs(state, this.updateJob(state, job.id, ["assigned"], { status: "accepted", acceptedAt: new Date().toISOString() }));
+  }
+
+  async declineJob(id: string) {
+    const state = this.load();
+    const { driver, job } = this.myDemoJob(state, id);
+    const jobs = this.updateJob(state, job.id, ["assigned"], { status: "open", driverId: null, assignedAt: null, declined: [...job.declined, driver.userId] });
+    const queue = (state.driverQueue ?? []).filter((q) => q.driverId !== driver.userId);
+    if (job.driverStationId) queue.push({ driverId: driver.userId, stationId: job.driverStationId, since: new Date().toISOString() });
+    this.saveJobs(state, jobs, undefined, { driverQueue: queue });
+    this.dispatch();
+  }
+
+  async collectPickup(id: string, measures: ParcelMeasures): Promise<DeliveryJob> {
+    let state = this.load();
+    const { driver, job } = this.myDemoJob(state, id);
+    if (job.kind !== "pickup" || job.status !== "accepted" || !job.home || !job.toStationId || !job.recipient) throw new BackendError("job_wrong_status");
+    const tier = sizeFor(measures, state.parcelSizes ?? DEFAULT_PARCEL_SIZES);
+    if (!tier) throw new BackendError("parcel_too_large");
+    const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === driver.vehicleId);
+    if (!vehicle || !vehicleFits(vehicle.type, tier.size, measures.weightKg, this.settingsOf(state))) throw new BackendError("vehicle_too_small");
+    const from = nearestStation(job.home, this.depotPoints(state).filter((st) => st.id !== job.toStationId));
+    if (!from) throw new BackendError("depot_inactive");
+    const recipient = this.demoAccount(state, job.recipient.phone, job.recipient.name);
+    state = recipient.state;
+    const now = new Date().toISOString();
+    const collect = tier.priceFcfa + job.fareFcfa;
+    const parcel: Parcel = {
+      id: crypto.randomUUID(),
+      trackingNo: newTrackingNo(),
+      fromStationId: from.id,
+      toStationId: job.toStationId,
+      sender: { userId: job.customerUserId, phone: job.home.phone, name: job.customerName },
+      recipient: { userId: recipient.userId, phone: job.recipient.phone, name: job.recipient.name },
+      content: job.content,
+      declaredValue: job.declaredValue,
+      measures,
+      size: tier.size,
+      priceFcfa: tier.priceFcfa,
+      paymentMethod: "cash_driver",
+      paidAt: now,
+      status: "in_transit",
+      createdAt: now,
+      inTransitAt: now,
+      arrivedAt: null,
+      pickedUpAt: null,
+      pickupDeadline: null,
+      lockerNo: null,
+      express: true,
+      deliveryStatus: null,
+      jobId: job.id,
+    };
+    const jobs = this.updateJob(state, job.id, ["accepted"], {
+      status: "picked_up",
+      pickedUpAt: now,
+      parcelId: parcel.id,
+      size: tier.size,
+      weightKg: measures.weightKg,
+      collectFcfa: collect,
+    });
+    this.saveJobs(
+      state,
+      jobs,
+      { table: "parcels", action: "insert", rowId: parcel.id, stationId: from.id, userId: job.customerUserId, changes: { tracking_no: parcel.trackingNo, size: tier.size, collect_fcfa: collect } },
+      { parcels: [parcel, ...(state.parcels ?? [])], ledger: [this.ledgerEntry(driver.userId, "collected", collect, job.id, null), ...(state.ledger ?? [])] },
+    );
+    const saved = this.load();
+    return this.viewJob(saved, (saved.jobs ?? []).find((j) => j.id === job.id)!);
+  }
+
+  async arriveAtDoor(id: string) {
+    const state = this.load();
+    const { job } = this.myDemoJob(state, id);
+    if (job.kind !== "delivery") throw new BackendError("job_wrong_status");
+    this.saveJobs(state, this.updateJob(state, job.id, ["picked_up"], { status: "at_door", atDoorAt: new Date().toISOString() }));
+  }
+
+  async uploadDeliveryPhoto(id: string, image: Blob) {
+    const state = this.load();
+    const { job } = this.myDemoJob(state, id);
+    if (job.kind !== "delivery" || !["picked_up", "at_door"].includes(job.status)) throw new BackendError("job_wrong_status");
+    if (image.size > MAX_PROMO_IMAGE_BYTES / 4) throw new BackendError("image_too_large");
+    const key = `proofs/${job.id}-${Date.now().toString(36)}.jpg`;
+    const url = await readAsDataUrl(image as File);
+    const fresh = this.load();
+    const files = { ...fresh.driverFiles };
+    if (job.proofKey) delete files[job.proofKey];
+    files[key] = url;
+    this.save({ ...fresh, driverFiles: files, jobs: (fresh.jobs ?? []).map((j) => (j.id === job.id ? { ...j, proofKey: key } : j)) });
+  }
+
+  async deliverJob(id: string, code: string) {
+    const state = this.load();
+    const { driver, job } = this.myDemoJob(state, id);
+    if (job.kind !== "delivery" || !["picked_up", "at_door"].includes(job.status)) throw new BackendError("job_wrong_status");
+    if (!job.proofKey) throw new BackendError("photo_missing");
+    const lockKey = `job:${job.id}`;
+    const since = Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000;
+    const failures = (state.parcelCodeFailures ?? []).filter((f) => f.stationId === lockKey && new Date(f.at).getTime() > since);
+    if (failures.length >= PARCEL_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    const parcel = (state.parcels ?? []).find((p) => p.id === job.parcelId);
+    const input = parsePickupInput(code);
+    if (!parcel || !input || input.code !== parcel.pickupCode) {
+      this.save({ ...state, parcelCodeFailures: [...(state.parcelCodeFailures ?? []), { stationId: lockKey, at: new Date().toISOString() }] });
+      throw new BackendError("wrong_pickup_code");
+    }
+    const now = new Date().toISOString();
+    const jobs = this.updateJob(state, job.id, ["picked_up", "at_door"], { status: "done", doneAt: now });
+    this.saveJobs(
+      state,
+      jobs,
+      { table: "parcels", action: "update", rowId: parcel.id, userId: parcel.recipient.userId, changes: { status: ["arrived", "picked_up"], delivery_status: ["out_for_delivery", "delivered"] } },
+      {
+        parcels: (state.parcels ?? []).map((p) =>
+          p.id === parcel.id ? { ...p, status: "picked_up" as const, pickedUpAt: now, pickupCode: undefined, deliveryStatus: "delivered" as const } : p,
+        ),
+        greenpoint: this.tripGreenpoint(state, driver.userId, job, job.fromStationId),
+        ledger: [
+          this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null),
+          this.ledgerEntry(driver.userId, "earning", driverEarning(job.fareFcfa, this.settingsOf(state)), job.id, null),
+          ...(state.ledger ?? []),
+        ],
+      },
+    );
+  }
+
+  async failDelivery(id: string) {
+    const state = this.load();
+    const { job } = this.myDemoJob(state, id);
+    if (job.kind !== "delivery" || job.status !== "at_door" || !job.atDoorAt) throw new BackendError("job_wrong_status");
+    if (Date.now() - new Date(job.atDoorAt).getTime() < this.settingsOf(state).waitMinutes * 60_000) throw new BackendError("wait_longer");
+    this.saveJobs(state, this.updateJob(state, job.id, ["at_door"], { status: "returning" }));
+  }
+
+  async myJobs(): Promise<DeliveryJob[]> {
+    const state = this.load();
+    if (!state.profile) return [];
+    return (state.jobs ?? [])
+      .filter((j) => j.customerUserId === state.profile!.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((j) => this.viewJob(state, j));
+  }
+
+  private cleanHome(home: HomePoint): HomePoint {
+    if (!validPoint(home)) throw new BackendError("unknown", "no position");
+    if (!inServiceArea(home)) throw new BackendError("outside_area");
+    const phone = normalizeTogoPhone(home.phone ?? "");
+    if (!phone) throw new BackendError("phone_not_allowed");
+    return { lat: home.lat, lng: home.lng, note: (home.note ?? "").trim().slice(0, 300), phone };
+  }
+
+  async bookPickup(input: PickupBooking): Promise<DeliveryJob> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const home = this.cleanHome(input.home);
+    if (!this.activeDepot(state, input.toStationId)) throw new BackendError("depot_inactive");
+    const recipientPhone = normalizeTogoPhone(input.recipientPhone ?? "");
+    if (!recipientPhone) throw new BackendError("phone_not_allowed");
+    const content = (input.content ?? "").trim().slice(0, 300);
+    if (!content) throw new BackendError("unknown", "content missing");
+    const tier = (state.parcelSizes ?? DEFAULT_PARCEL_SIZES).find((t) => t.size === input.size);
+    if (!tier) throw new BackendError("parcel_too_large");
+    const to = this.stationAt(state, input.toStationId)!;
+    const distanceM = Math.round(distanceMeters(home, to));
+    const fare = fareFor(distanceM, false, this.settingsOf(state));
+    const job = this.newJob({
+      kind: "pickup",
+      toStationId: input.toStationId,
+      home,
+      size: tier.size,
+      weightKg: tier.maxWeightKg,
+      content,
+      declaredValue: input.declaredValue ?? null,
+      recipient: { phone: recipientPhone, name: input.recipientName?.trim() || null },
+      distanceM,
+      fareFcfa: fare,
+      collectFcfa: tier.priceFcfa + fare,
+      customerUserId: profile.id,
+      customerName: profile.fullName,
+    });
+    this.saveJobs(state, [job, ...(state.jobs ?? [])], {
+      table: "delivery_jobs",
+      action: "insert",
+      rowId: job.id,
+      stationId: input.toStationId,
+      userId: profile.id,
+      changes: { kind: "pickup", fare_fcfa: fare },
+    });
+    this.dispatch();
+    const saved = this.load();
+    return this.viewJob(saved, (saved.jobs ?? []).find((j) => j.id === job.id)!);
+  }
+
+  async bookDelivery(parcelId: string, input: HomePoint): Promise<DeliveryJob> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const home = this.cleanHome(input);
+    const parcel = this.parcelsOf(state).find((p) => p.id === parcelId);
+    if (!parcel) throw new BackendError("parcel_not_found");
+    const isRecipient = parcel.recipient.userId === profile.id || (!!profile.phone && parcel.recipient.phone === profile.phone);
+    if (!isRecipient) throw new BackendError("forbidden");
+    if (parcel.status !== "arrived" || (parcel.deliveryStatus && parcel.deliveryStatus !== "failed")) throw new BackendError("parcel_wrong_status");
+    const from = this.stationAt(state, parcel.toStationId)!;
+    const distanceM = Math.round(distanceMeters(from, home));
+    const fare = fareFor(distanceM, false, this.settingsOf(state));
+    const job = this.newJob({
+      kind: "delivery",
+      parcelId: parcel.id,
+      fromStationId: parcel.toStationId,
+      home,
+      size: parcel.size,
+      weightKg: parcel.measures.weightKg,
+      content: parcel.content,
+      distanceM,
+      fareFcfa: fare,
+      collectFcfa: fare,
+      customerUserId: profile.id,
+      customerName: parcel.recipient.name ?? profile.fullName,
+    });
+    this.saveJobs(
+      state,
+      [job, ...(state.jobs ?? [])],
+      { table: "parcels", action: "update", rowId: parcel.id, stationId: parcel.toStationId, userId: profile.id, changes: { delivery_status: [parcel.deliveryStatus ?? null, "booked"] } },
+      { parcels: (state.parcels ?? []).map((p) => (p.id === parcel.id ? { ...p, deliveryStatus: "booked" as const, jobId: job.id } : p)) },
+    );
+    this.dispatch();
+    const saved = this.load();
+    return this.viewJob(saved, (saved.jobs ?? []).find((j) => j.id === job.id)!);
+  }
+
+  async cancelJob(id: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const job = (state.jobs ?? []).find((j) => j.id === id);
+    if (!job) throw new BackendError("job_not_found");
+    if (profile.role !== "admin" && job.customerUserId !== profile.id) throw new BackendError("forbidden");
+    if (!["open", "assigned", "accepted"].includes(job.status)) throw new BackendError("job_wrong_status");
+    this.cancelJobs(state, (j) => j.id === id);
+  }
+
+  async stationDrivers(stationId: string): Promise<StationDrivers> {
+    this.dispatch();
+    const state = this.load();
+    this.requireStaff(state);
+    const jobs = state.jobs ?? [];
+    const drivers = state.drivers ?? [];
+    const fleet = state.fleet ?? seedFleet();
+    return {
+      queue: (state.driverQueue ?? [])
+        .filter((q) => q.stationId === stationId)
+        .sort((a, b) => a.since.localeCompare(b.since))
+        .map((q) => {
+          const d = drivers.find((x) => x.userId === q.driverId);
+          const v = fleet.find((x) => x.id === d?.vehicleId);
+          return { driver: { name: d?.fullName ?? "?", phone: d?.phone ?? null, plate: v?.plate ?? null, vehicleType: v?.type ?? null }, since: q.since };
+        }),
+      outgoing: jobs
+        .filter((j) => j.fromStationId === stationId && (j.kind === "express" || j.kind === "delivery") && ["open", "assigned", "accepted"].includes(j.status))
+        .map((j) => this.viewJob(state, j)),
+      incoming: jobs
+        .filter(
+          (j) =>
+            (j.toStationId === stationId && (j.kind === "express" || j.kind === "pickup") && j.status === "picked_up") ||
+            (j.fromStationId === stationId && j.kind === "delivery" && j.status === "returning"),
+        )
+        .map((j) => this.viewJob(state, j)),
+    };
+  }
+
+  private byBadge(state: DemoState, badge: string): DemoDriver {
+    const code = parseDriverBadge(badge);
+    const driver = (state.drivers ?? []).find((d) => d.code === code && d.status === "active");
+    if (!code || !driver) throw new BackendError("driver_not_found");
+    return driver;
+  }
+
+  private stationJobs(state: DemoState, stationId: string, driverId: string) {
+    const job = this.busyJob(state, driverId);
+    const handOver =
+      job && job.fromStationId === stationId && (job.kind === "express" || job.kind === "delivery") && ["assigned", "accepted"].includes(job.status) ? job : null;
+    const receive =
+      job &&
+      ((job.status === "picked_up" && job.toStationId === stationId && (job.kind === "express" || job.kind === "pickup")) ||
+        (job.status === "returning" && job.fromStationId === stationId && job.kind === "delivery"))
+        ? job
+        : null;
+    return { handOver, receive };
+  }
+
+  async driverAtStation(stationId: string, badge: string): Promise<DriverAtStation> {
+    const state = this.load();
+    this.requireStaff(state);
+    const d = this.byBadge(state, badge);
+    const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === d.vehicleId);
+    const { handOver, receive } = this.stationJobs(state, stationId, d.userId);
+    return {
+      driver: { userId: d.userId, name: d.fullName, phone: d.phone, plate: vehicle?.plate ?? null, vehicleType: vehicle?.type ?? null },
+      balanceFcfa: this.balanceOfDriver(state, d.userId),
+      handOver: handOver ? this.viewJob(state, handOver) : null,
+      receive: receive ? this.viewJob(state, receive) : null,
+    };
+  }
+
+  async handToDriver(stationId: string, badge: string, jobId: string) {
+    const state = this.load();
+    this.requireStaff(state);
+    const d = this.byBadge(state, badge);
+    const { handOver: job } = this.stationJobs(state, stationId, d.userId);
+    if (!job || job.id !== jobId) throw new BackendError("job_wrong_status");
+    const now = new Date().toISOString();
+    const parcels = (state.parcels ?? []).map((p) => {
+      if (p.id !== job.parcelId) return p;
+      if (job.kind === "express") {
+        if (p.status !== "deposited") throw new BackendError("parcel_wrong_status");
+        return { ...p, status: "in_transit" as const, inTransitAt: now };
+      }
+      if (p.status !== "arrived" || p.deliveryStatus !== "booked") throw new BackendError("parcel_wrong_status");
+      return { ...p, deliveryStatus: "out_for_delivery" as const };
+    });
+    this.saveJobs(
+      state,
+      this.updateJob(state, job.id, ["assigned", "accepted"], { status: "picked_up", pickedUpAt: now, acceptedAt: job.acceptedAt ?? now }),
+      { table: "delivery_jobs", action: "update", rowId: job.id, stationId, userId: d.userId, changes: { status: [job.status, "picked_up"] } },
+      { parcels },
+    );
+  }
+
+  async receiveFromDriver(stationId: string, badge: string, jobId: string) {
+    const state = this.load();
+    this.requireStaff(state);
+    const d = this.byBadge(state, badge);
+    const { receive: job } = this.stationJobs(state, stationId, d.userId);
+    if (!job || job.id !== jobId) throw new BackendError("job_wrong_status");
+    const now = new Date();
+    if (job.status === "returning") {
+      this.saveJobs(
+        state,
+        this.updateJob(state, job.id, ["returning"], { status: "failed", doneAt: now.toISOString() }),
+        { table: "delivery_jobs", action: "update", rowId: job.id, stationId, userId: d.userId, changes: { status: ["returning", "failed"] } },
+        { parcels: (state.parcels ?? []).map((p) => (p.id === job.parcelId ? { ...p, deliveryStatus: "failed" as const } : p)) },
+      );
+      return;
+    }
+    const taken = new Set((state.parcels ?? []).filter((p) => p.toStationId === stationId && p.status === "arrived").map((p) => p.pickupCode));
+    let code: string;
+    do code = String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0");
+    while (taken.has(code));
+    const deadline = new Date(now.getTime() + PARCEL_PICKUP_DAYS * 86_400_000).toISOString();
+    this.saveJobs(
+      state,
+      this.updateJob(state, job.id, ["picked_up"], { status: "done", doneAt: now.toISOString() }),
+      { table: "delivery_jobs", action: "update", rowId: job.id, stationId, userId: d.userId, changes: { status: ["picked_up", "done"] } },
+      {
+        parcels: (state.parcels ?? []).map((p) =>
+          p.id === job.parcelId ? { ...p, status: "arrived" as const, arrivedAt: now.toISOString(), pickupDeadline: deadline, pickupCode: code } : p,
+        ),
+        ledger: [this.ledgerEntry(d.userId, "earning", driverEarning(job.fareFcfa, this.settingsOf(state)), job.id, stationId), ...(state.ledger ?? [])],
+        greenpoint: this.tripGreenpoint(state, d.userId, job, stationId),
+      },
+    );
+  }
+
+  async settleDriver(stationId: string, badge: string, amountFcfa: number) {
+    const state = this.load();
+    this.requireStaff(state);
+    const d = this.byBadge(state, badge);
+    const current = this.balanceOfDriver(state, d.userId);
+    if (amountFcfa !== current) throw new BackendError("balance_changed");
+    if (current === 0) return;
+    this.save(
+      withAudit(
+        { ...state, ledger: [this.ledgerEntry(d.userId, "settlement", current, null, stationId), ...(state.ledger ?? [])] },
+        { table: "driver_ledger", action: "insert", rowId: d.userId, stationId, userId: d.userId, changes: { settlement: current } },
+      ),
+    );
+  }
+
   // Partner API ---------------------------------------------------------------
 
   private bookingsOf(state: DemoState) {
@@ -1337,6 +2320,259 @@ export class DemoBackend implements Backend {
         { table: "partners", action: before ? "update" : "insert", rowId: saved.id, changes: before ? diff(before, saved) : fields },
       ),
     );
+  }
+
+  async adminDrivers(): Promise<AdminDrivers> {
+    this.dispatch();
+    const state = this.load();
+    this.requireAdmin(state);
+    return {
+      drivers: (state.drivers ?? []).map((d) => {
+        const link = (state.fleetLinks ?? []).find((l) => l.driverId === d.userId);
+        return { ...this.viewDriver(state, d, true), manager: link ? this.label(state, link.managerId) : null };
+      }),
+      vehicles: state.fleet ?? seedFleet(),
+      jobs: [...(state.jobs ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 500).map((j) => this.viewJob(state, j)),
+      settings: this.settingsOf(state),
+    };
+  }
+
+  async reviewDriver(userId: string, decision: DriverDecision) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const d = (state.drivers ?? []).find((x) => x.userId === userId);
+    if (!d) throw new BackendError("driver_not_found");
+    const fleet = state.fleet ?? seedFleet();
+    const busy = this.busyJob(state, userId);
+    const vehicleFree = (id: string) => {
+      if (!fleet.find((v) => v.id === id)?.isActive || (state.drivers ?? []).some((x) => x.vehicleId === id && x.userId !== userId)) {
+        throw new BackendError("vehicle_unavailable");
+      }
+    };
+    const now = new Date().toISOString();
+    let next: DemoDriver = d;
+    let queue = state.driverQueue ?? [];
+    let jobs = state.jobs ?? [];
+    switch (decision.action) {
+      case "approve":
+        if (d.status !== "pending" && d.status !== "rejected") throw new BackendError("forbidden");
+        if (!d.documents.id || !d.documents.license || !d.documents.portrait) throw new BackendError("documents_missing");
+        vehicleFree(decision.vehicleId);
+        next = { ...d, status: "active", vehicleId: decision.vehicleId, reviewedAt: now };
+        break;
+      case "reject":
+        if (d.status !== "pending") throw new BackendError("forbidden");
+        next = { ...d, status: "rejected", reviewedAt: now };
+        break;
+      case "suspend":
+        if (d.status !== "active") throw new BackendError("forbidden");
+        if (busy && !["assigned", "accepted"].includes(busy.status)) throw new BackendError("driver_busy");
+        if (busy) jobs = jobs.map((j) => (j.id === busy.id ? { ...j, status: "open" as const, driverId: null, assignedAt: null, acceptedAt: null } : j));
+        queue = queue.filter((q) => q.driverId !== userId);
+        next = { ...d, status: "suspended", reviewedAt: now };
+        break;
+      case "reactivate":
+        if (d.status !== "suspended") throw new BackendError("forbidden");
+        next = { ...d, status: "active", reviewedAt: now };
+        break;
+      case "vehicle":
+        if (busy) throw new BackendError("driver_busy");
+        if (decision.vehicleId) vehicleFree(decision.vehicleId);
+        else queue = queue.filter((q) => q.driverId !== userId);
+        next = { ...d, vehicleId: decision.vehicleId };
+        break;
+    }
+    this.save(
+      withAudit(
+        { ...state, drivers: (state.drivers ?? []).map((x) => (x.userId === userId ? next : x)), driverQueue: queue, jobs, fleet },
+        { table: "drivers", action: "update", rowId: userId, userId, changes: diff(d, next) },
+      ),
+    );
+  }
+
+  async saveFleetVehicle(id: string | null, input: FleetVehicleInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!FLEET_VEHICLE_TYPES.includes(input.type)) throw new BackendError("unknown", "type");
+    const plate = (input.plate ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+    if (plate.length < 2 || plate.length > 20) throw new BackendError("unknown", "plate");
+    const fleet = state.fleet ?? seedFleet();
+    if (fleet.some((v) => v.plate === plate && v.id !== id)) throw new BackendError("vehicle_unavailable");
+    const before = id ? fleet.find((v) => v.id === id) : undefined;
+    if (id && !before) throw new BackendError("unknown", "vehicle");
+    const saved: FleetVehicle = { id: id ?? `veh-${Date.now().toString(36)}`, type: input.type, plate, isActive: input.isActive };
+    const users = new Set((state.drivers ?? []).filter((d) => d.vehicleId === saved.id).map((d) => d.userId));
+    this.save(
+      withAudit(
+        {
+          ...state,
+          fleet: before ? fleet.map((v) => (v.id === id ? saved : v)) : [...fleet, saved],
+          driverQueue: saved.isActive ? state.driverQueue : (state.driverQueue ?? []).filter((q) => !users.has(q.driverId)),
+        },
+        { table: "fleet_vehicles", action: before ? "update" : "insert", rowId: saved.id, changes: before ? diff(before, saved) : { type: saved.type, plate } },
+      ),
+    );
+  }
+
+  async saveDriverSettings(settings: DriverSettings) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!validSettings(settings)) throw new BackendError("unknown", "settings");
+    this.save(
+      withAudit(
+        { ...state, driverSettings: settings },
+        { table: "driver_settings", action: "update", rowId: "settings", changes: diff(this.settingsOf(state), settings) },
+      ),
+    );
+  }
+
+  async assignJob(jobId: string, driverId: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const job = (state.jobs ?? []).find((j) => j.id === jobId);
+    if (!job) throw new BackendError("job_not_found");
+    if (!["open", "assigned", "accepted"].includes(job.status)) throw new BackendError("job_wrong_status");
+    this.handJob(state, job, driverId, "admin");
+  }
+
+  /** Same rules as handJob() in worker/drivers.ts. */
+  private handJob(state: DemoState, job: DemoJob, driverId: string, by: "admin" | "fleet") {
+    const d = (state.drivers ?? []).find((x) => x.userId === driverId);
+    const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === d?.vehicleId);
+    if (!d || d.status !== "active" || !vehicle?.isActive) throw new BackendError("driver_not_found");
+    if (this.busyJob(state, driverId)) throw new BackendError("driver_busy");
+    const weight = job.weightKg ?? (state.parcelSizes ?? DEFAULT_PARCEL_SIZES).find((t) => t.size === job.size)?.maxWeightKg ?? 50;
+    if (!vehicleFits(vehicle.type, job.size, weight, this.settingsOf(state))) throw new BackendError("vehicle_too_small");
+    const queued = (state.driverQueue ?? []).find((q) => q.driverId === driverId);
+    this.saveJobs(
+      state,
+      (state.jobs ?? []).map((j) =>
+        j.id === job.id
+          ? { ...j, status: "assigned" as const, driverId, driverStationId: queued?.stationId ?? null, assignedAt: new Date().toISOString(), acceptedAt: null }
+          : j,
+      ),
+      { table: "delivery_jobs", action: "update", rowId: job.id, userId: driverId, changes: { status: [job.status, "assigned"], by } },
+      { driverQueue: (state.driverQueue ?? []).filter((q) => q.driverId !== driverId) },
+    );
+  }
+
+  async setDriverManager(driverId: string, contact: string | null) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!(state.drivers ?? []).some((d) => d.userId === driverId)) throw new BackendError("driver_not_found");
+    const links = state.fleetLinks ?? [];
+    const before = links.find((l) => l.driverId === driverId);
+    const rest = links.filter((l) => l.driverId !== driverId);
+    let users = state.users ?? demoUsers(new Date());
+    let next: DemoState = state;
+    if (before) {
+      // A manager left without drivers goes back to customer.
+      const idle = !rest.some((l) => l.managerId === before.managerId);
+      users = users.map((u) => (u.id === before.managerId && u.role === "fleet_manager" && idle ? { ...u, role: "customer" as const } : u));
+      next = withAudit(
+        { ...next, fleetLinks: rest, users },
+        { table: "fleet_manager_drivers", action: "delete", rowId: driverId, userId: driverId, changes: { manager_id: before.managerId } },
+      );
+    }
+    if (contact?.trim()) {
+      const account = this.accountByContact(state, contact);
+      if (account.id === driverId) throw new BackendError("forbidden");
+      if (!["customer", "fleet_manager", "admin"].includes(account.role)) throw new BackendError("has_other_role");
+      if (before?.managerId === account.id) return;
+      users = users.map((u) => (u.id === account.id && u.role === "customer" ? { ...u, role: "fleet_manager" as const } : u));
+      next = withAudit(
+        { ...next, fleetLinks: [...rest, { driverId, managerId: account.id }], users },
+        { table: "fleet_manager_drivers", action: "insert", rowId: driverId, userId: driverId, changes: { manager_id: account.id } },
+      );
+    }
+    if (next !== state) this.save(next);
+  }
+
+  private managedDrivers(state: DemoState): DemoDriver[] {
+    const profile = this.requireProfile(state);
+    if (!managesFleet(profile)) throw new BackendError("forbidden");
+    const drivers = state.drivers ?? [];
+    if (profile.role === "admin") return drivers.filter((d) => d.status === "active" || d.status === "suspended");
+    const mine = new Set((state.fleetLinks ?? []).filter((l) => l.managerId === profile.id).map((l) => l.driverId));
+    return drivers.filter((d) => mine.has(d.userId));
+  }
+
+  async fleetView(): Promise<FleetView> {
+    this.dispatch();
+    const state = this.load();
+    const drivers = this.managedDrivers(state).sort((a, b) => a.fullName.localeCompare(b.fullName));
+    return {
+      drivers: drivers.map((d) => {
+        const view = this.viewDriver(state, d, false);
+        const job = this.busyJob(state, d.userId);
+        return {
+          userId: d.userId,
+          fullName: d.fullName,
+          phone: d.phone,
+          status: d.status,
+          vehicle: view.vehicle,
+          balanceFcfa: view.balanceFcfa,
+          queue: view.queue,
+          job: job ? jobForManager(this.viewJob(state, job)) : null,
+        };
+      }),
+      openJobs: (state.jobs ?? [])
+        .filter((j) => j.status === "open")
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .slice(0, 100)
+        .map((j) => jobForManager(this.viewJob(state, j))),
+      settings: this.settingsOf(state),
+    };
+  }
+
+  async fleetStats(from: string, to: string): Promise<FleetStats> {
+    const state = this.load();
+    const drivers = this.managedDrivers(state);
+    const range = fleetRange(from, to);
+    if (!range) throw new BackendError("unknown", "period");
+    const inRange = (at: string | null) => !!at && at >= range.start && at < range.end;
+    return {
+      from,
+      to,
+      drivers: drivers.map((d) => {
+        const jobs = (state.jobs ?? []).filter((j) => j.driverId === d.userId && inRange(j.doneAt));
+        const done = jobs.filter((j) => j.status === "done");
+        const ledger = (state.ledger ?? []).filter((e) => e.driverId === d.userId && inRange(e.at));
+        const sum = (kind: LedgerEntry["kind"]) => ledger.filter((e) => e.kind === kind).reduce((n, e) => n + e.amountFcfa, 0);
+        const visits = state.reservations.filter((r) => r.userId === d.userId && r.status === "completed" && inRange(r.createdAt));
+        return {
+          userId: d.userId,
+          tripsDone: done.length,
+          tripsFailed: jobs.filter((j) => j.status === "failed").length,
+          fareFcfa: done.reduce((n, j) => n + j.fareFcfa, 0),
+          earningFcfa: sum("earning"),
+          collectedFcfa: sum("collected"),
+          settledFcfa: sum("settlement"),
+          batterySwaps: visits.filter((r) => r.type === "battery").length,
+          chargingSlots: visits.filter((r) => r.type === "slot").length,
+          // The demo has no app payments.
+          chargingPaidFcfa: 0,
+        };
+      }),
+    };
+  }
+
+  async fleetAssign(jobId: string, driverId: string) {
+    this.dispatch();
+    const state = this.load();
+    if (!this.managedDrivers(state).some((d) => d.userId === driverId)) throw new BackendError("driver_not_found");
+    const job = (state.jobs ?? []).find((j) => j.id === jobId);
+    if (!job) throw new BackendError("job_not_found");
+    if (job.status !== "open") throw new BackendError("job_wrong_status");
+    this.handJob(state, job, driverId, "fleet");
+  }
+
+  async driverFileUrl(key: string): Promise<string> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const url = state.driverFiles?.[key];
+    if (!url) throw new BackendError("unknown", "file");
+    return url;
   }
 
   private updatePartner(state: DemoState, id: string, change: (p: Partner) => Partner) {
@@ -1741,7 +2977,32 @@ export class DemoBackend implements Backend {
   // greenpoint (demo) ----------------------------------------------------------
 
   private gp(state: DemoState): DemoGreenpoint {
-    return state.greenpoint ?? freshGreenpoint();
+    const g = state.greenpoint ?? freshGreenpoint();
+    // Demo states saved before driver trips counted lack the km factors.
+    return { ...g, factors: validFactors(g.factors) ?? DEFAULT_FACTORS };
+  }
+
+  /** The driver's CO2 and greenpoints for a finished trip (as tripStatement in the Worker). */
+  private tripGreenpoint(state: DemoState, driverId: string, job: DemoJob, stationId: string | null): DemoGreenpoint {
+    const g = this.gp(state);
+    const driver = (state.drivers ?? []).find((d) => d.userId === driverId);
+    const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === driver?.vehicleId);
+    if (!vehicle || g.ledger.some((l) => l.jobId === job.id)) return g;
+    const grams = tripGrams(job.distanceM, vehicle.type, g.factors);
+    const entry = {
+      id: crypto.randomUUID(),
+      userId: driverId,
+      reservationId: null,
+      jobId: job.id,
+      kind: "delivery" as const,
+      co2Grams: grams,
+      points: pointsFor(grams),
+      vehicle: null,
+      stationName: state.stations.find((s) => s.id === stationId)?.name ?? null,
+      rewardTitle: null,
+      createdAt: new Date().toISOString(),
+    };
+    return { ...g, ledger: [entry, ...g.ledger].slice(0, 500) };
   }
 
   /** Adds a swap or charge to the ledger, unless the daily limit is reached (as earnStatement in the Worker). */
@@ -1753,6 +3014,8 @@ export class DemoBackend implements Backend {
     const today = dayStart();
     const earnedToday = g.ledger.filter((l) => l.userId === input.userId && l.points > 0 && l.kind !== "admin_adjust" && l.createdAt >= today).length;
     if (earnedToday >= MAX_EARNINGS_PER_DAY) return state;
+    // Drivers on one of our vehicles earn per km instead.
+    if ((state.drivers ?? []).some((d) => d.userId === input.userId && d.status === "active" && d.vehicleId)) return state;
     if (input.reservationId && g.ledger.some((l) => l.reservationId === input.reservationId)) return state;
     const vehicle = input.vehicle ?? g.vehicles[input.userId] ?? "scooter";
     const grams = g.factors.batteryGrams[vehicle];

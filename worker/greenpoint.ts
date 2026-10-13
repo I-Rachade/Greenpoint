@@ -9,6 +9,7 @@ import {
   REDEEM_CODE_MINUTES,
   rewardAvailable,
   treesFor,
+  tripGrams,
   validFactors,
   validRewardInput,
   type AdminGreenpoint,
@@ -21,6 +22,7 @@ import {
   type GreenpointView,
 } from "../src/lib/greenpoint";
 import { offersCharging, offersSwap } from "../src/lib/availability";
+import type { FleetVehicleType } from "../src/lib/drivers";
 import { VEHICLE_TYPES, type Profile, type ReservationType, type VehicleType } from "../src/lib/types";
 import { personLabel } from "../src/lib/wallet";
 import type { Env } from "./env";
@@ -131,11 +133,47 @@ async function earnedToday(db: D1Database, userId: string): Promise<number> {
  * earned MAX_EARNINGS_PER_DAY times today. Callers put it into the same batch as
  * the completion, so both are written or neither.
  */
+/**
+ * Drivers on one of our vehicles earn per km instead (tripStatement); swaps and
+ * charges of their account would count the same battery twice.
+ */
+async function drivesFleetVehicle(db: D1Database, userId: string): Promise<boolean> {
+  const row = await db
+    .prepare("select 1 from drivers where user_id = ? and status = 'active' and vehicle_id is not null")
+    .bind(userId)
+    .first();
+  return !!row;
+}
+
+/**
+ * The ledger row for a driver's finished trip: CO2 per km by the vehicle they drive.
+ * Callers put it into the batch that closes the trip. Null without a vehicle.
+ */
+export async function tripStatement(
+  db: D1Database,
+  input: { driverId: string; jobId: string; distanceMeters: number; stationId: string | null; createdBy: string | null },
+): Promise<D1PreparedStatement | null> {
+  const vehicle = await db
+    .prepare("select v.type from drivers d join fleet_vehicles v on v.id = d.vehicle_id where d.user_id = ?")
+    .bind(input.driverId)
+    .first<{ type: FleetVehicleType }>();
+  if (!vehicle) return null;
+  const grams = tripGrams(input.distanceMeters, vehicle.type, await getFactors(db));
+  // "or ignore": a trip earns once (unique index on job_id).
+  return db
+    .prepare(
+      `insert or ignore into greenpoint_ledger (id, user_id, kind, co2_grams, points, vehicle, station_id, job_id, distance_m, created_by, created_at)
+       values (?, ?, 'delivery', ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(uuid(), input.driverId, grams, pointsFor(grams), vehicle.type, input.stationId, input.jobId, input.distanceMeters, input.createdBy, nowIso());
+}
+
 export async function earnStatement(
   db: D1Database,
   input: { userId: string; type: ReservationType; stationId: string; reservationId?: string | null; createdBy: string | null; vehicle?: VehicleType },
 ): Promise<{ statement: D1PreparedStatement; co2Grams: number; points: number } | null> {
   if ((await earnedToday(db, input.userId)) >= MAX_EARNINGS_PER_DAY) return null;
+  if (await drivesFleetVehicle(db, input.userId)) return null;
   const vehicle = input.vehicle ?? (await vehicleOf(db, input.userId));
   const grams = (await getFactors(db)).batteryGrams[vehicle];
   const kind: GreenpointKind = input.reservationId ? (input.type === "battery" ? "swap" : "charge") : "visit";
@@ -289,6 +327,7 @@ export async function recordVisit(env: Env, user: Profile, isStaffOf: StaffCheck
   if (!rider) throw new ApiError("recipient_not_found", 404);
   // Staff never credit themselves.
   if (rider.id === user.id) throw new ApiError("own_reservation");
+  if (await drivesFleetVehicle(db, rider.id)) throw new ApiError("greenpoint_fleet_driver");
 
   const earned = await earnStatement(db, { userId: rider.id, type, stationId, createdBy: user.id, vehicle });
   if (!earned) throw new ApiError("greenpoint_daily_limit");

@@ -1,18 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { useDateTime } from "@/components/backoffice/shared";
+import { Pill, useDateTime } from "@/components/backoffice/shared";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { pickupQrPayload, type Parcel, type ParcelInfo } from "@/lib/parcels";
 import type { StationView } from "@/lib/types";
 import { useApp } from "../app-provider";
+import { BookDelivery, BookPickup, MyJobs } from "../drivers/customer-jobs";
 import { useI18n } from "../i18n-provider";
 import { QrImage } from "./qr-image";
 import { ParcelStatusPill } from "./status";
 import { SlipDialog } from "./slip-dialog";
 
-function ParcelCard({ parcel: p, stations, onSlip }: { parcel: Parcel; stations: StationView[]; onSlip: () => void }) {
+function ParcelCard({ parcel: p, stations, info, onSlip }: { parcel: Parcel; stations: StationView[]; info: ParcelInfo; onSlip: () => void }) {
   const { t } = useI18n();
   const when = useDateTime();
   const station = (id: string) => stations.find((s) => s.id === id);
@@ -24,6 +25,8 @@ function ParcelCard({ parcel: p, stations, onSlip }: { parcel: Parcel; stations:
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-mono font-semibold">{p.trackingNo}</span>
         <ParcelStatusPill status={p.status} />
+        {p.express && <Pill tone="blue">{t.drivers.staff.expressBadge}</Pill>}
+        {p.deliveryStatus && <Pill tone={p.deliveryStatus === "failed" ? "red" : "blue"}>{t.drivers.delivery[p.deliveryStatus]}</Pill>}
         <span className="ml-auto text-xs text-zinc-500">{received ? t.parcels.received : t.parcels.sent}</span>
       </div>
       <div className="text-sm text-zinc-700 dark:text-zinc-300">
@@ -46,6 +49,9 @@ function ParcelCard({ parcel: p, stations, onSlip }: { parcel: Parcel; stations:
             <div className="text-xs text-zinc-500">{t.parcels.showCode}</div>
           </div>
         </div>
+      )}
+      {received && p.status === "arrived" && (!p.deliveryStatus || p.deliveryStatus === "failed") && (
+        <BookDelivery parcel={p} station={to} info={info} />
       )}
       {!received && (
         <button type="button" onClick={onSlip} className="text-sm text-gp-green-dark underline dark:text-gp-green">
@@ -108,11 +114,11 @@ function SendInfo({ info, stations }: { info: ParcelInfo; stations: StationView[
 export function MyParcels() {
   const { t } = useI18n();
   const { backend } = useApp();
-  const { data } = useLiveQuery(() => Promise.all([backend.myParcels(), backend.listStations(), backend.parcelInfo()]));
+  const { data } = useLiveQuery(() => Promise.all([backend.myParcels(), backend.listStations(), backend.parcelInfo(), backend.myJobs()]));
   const [slip, setSlip] = useState<Parcel | null>(null);
 
   if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
-  const [parcels, stations, info] = data;
+  const [parcels, stations, info, jobs] = data;
   // Parcels to pick up first.
   const sorted = [...parcels].sort(
     (a, b) => Number(b.status === "arrived" && b.direction === "received") - Number(a.status === "arrived" && a.direction === "received"),
@@ -123,12 +129,14 @@ export function MyParcels() {
       <h1 className="text-2xl font-semibold">{t.parcels.title}</h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.parcels.intro}</p>
       <SendInfo info={info} stations={stations} />
+      <BookPickup info={info} stations={stations} />
+      <MyJobs jobs={jobs} stations={stations} />
       {sorted.length === 0 ? (
         <p className="text-sm text-zinc-500">{t.parcels.empty}</p>
       ) : (
         <ul className="space-y-3">
           {sorted.map((p) => (
-            <ParcelCard key={p.id} parcel={p} stations={stations} onSlip={() => setSlip(p)} />
+            <ParcelCard key={p.id} parcel={p} stations={stations} info={info} onSlip={() => setSlip(p)} />
           ))}
         </ul>
       )}

@@ -5,6 +5,7 @@ import type { GreenpointReceipt, GreenpointRedemption, GreenpointView } from "..
 import type { Reservation } from "../src/lib/types";
 import { handleApi } from "./api";
 import type { Env } from "./env";
+import { tripStatement } from "./greenpoint";
 import { sha256 } from "./http";
 
 // greenpoint: CO2 and points for swaps and charges, staff visits, reward codes.
@@ -169,5 +170,26 @@ describe("greenpoint", () => {
     expect(admin.rewards.map((r) => r.title)).toContain("Jus offert");
     expect(admin.totals.co2Grams).toBe(1000);
     expect((await call(env, "kofi", "GET", "/api/greenpoint/total")).body).toEqual({ co2Grams: 1000 });
+  });
+
+  it("gives drivers CO2 per km on our vehicles, and no points for the fleet's batteries", async () => {
+    const { env, db } = await setup();
+    const now = new Date().toISOString();
+    db.exec(`
+      insert into fleet_vehicles (id, type, plate, created_at) values ('v1', 'tricycle', 'TG-1234', '${now}');
+      insert into drivers (user_id, status, full_name, id_number, license_number, wanted_type, vehicle_id, code, created_at)
+        values ('kofi', 'active', 'Kofi Mensah', 'ID123', 'LIC123', 'tricycle', 'v1', 'K1', '${now}');
+    `);
+    const d1 = env.DB;
+    const trip = await tripStatement(d1, { driverId: "kofi", jobId: "job-1", distanceMeters: 12_500, stationId: "st", createdBy: "kofi" });
+    await trip!.run();
+    // The same trip again earns nothing.
+    await (await tripStatement(d1, { driverId: "kofi", jobId: "job-1", distanceMeters: 12_500, stationId: "st", createdBy: "kofi" }))!.run();
+    const view = await mine(env);
+    expect(view.co2Grams).toBe(750);
+    expect(view.points).toBe(7);
+    expect(view.history[0]).toMatchObject({ kind: "delivery", vehicle: "tricycle" });
+    expect((await visit(env, { contact: "+22896123456", service: "swap" })).body).toEqual({ error: "greenpoint_fleet_driver" });
+    expect(await tripStatement(d1, { driverId: "staff", jobId: "job-2", distanceMeters: 1000, stationId: null, createdBy: null })).toBeNull();
   });
 });

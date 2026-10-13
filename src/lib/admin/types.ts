@@ -45,6 +45,7 @@ export type AuditTable =
   | "stations"
   | "station_status"
   | "station_staff"
+  | "operator_owners"
   | "reservations"
   | "charging_points"
   | "promotions"
@@ -52,16 +53,23 @@ export type AuditTable =
   | "parcels"
   | "parcel_depots"
   | "parcel_sizes"
+  | "drivers"
+  | "fleet_vehicles"
+  | "delivery_jobs"
+  | "driver_ledger"
+  | "driver_settings"
   | "partners"
   | "partner_api_keys"
   | "partner_bookings"
-  | "wallets";
+  | "wallets"
+  | "fleet_manager_drivers";
 
 export const AUDIT_TABLES: AuditTable[] = [
   "reservations",
   "station_status",
   "stations",
   "station_staff",
+  "operator_owners",
   "profiles",
   "charging_points",
   "operators",
@@ -70,6 +78,12 @@ export const AUDIT_TABLES: AuditTable[] = [
   "parcels",
   "parcel_depots",
   "parcel_sizes",
+  "drivers",
+  "fleet_vehicles",
+  "delivery_jobs",
+  "driver_ledger",
+  "driver_settings",
+  "fleet_manager_drivers",
   "partners",
   "partner_api_keys",
   "partner_bookings",

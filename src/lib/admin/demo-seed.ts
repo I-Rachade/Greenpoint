@@ -10,10 +10,10 @@ export function demoUsers(now: Date): AdminUser[] {
     { id: "demo-admin", phone: "+22890000001", email: null, fullName: "Admin démo", role: "admin", createdAt: daysAgo(60), lastSignInAt: null },
     { id: "demo-operator", phone: "+22890000002", email: null, fullName: "Kossi (Grand Marché)", role: "operator", createdAt: daysAgo(45), lastSignInAt: daysAgo(0.2) },
     { id: "demo-operator-2", phone: "+22890000003", email: null, fullName: "Afi", role: "operator", createdAt: daysAgo(20), lastSignInAt: daysAgo(9) },
-    { id: "demo-rider", phone: "+22890000004", email: null, fullName: null, role: "rider", createdAt: daysAgo(30), lastSignInAt: daysAgo(1) },
-    { id: "demo-u1", phone: "+22891111111", email: null, fullName: "Yao", role: "rider", createdAt: daysAgo(25), lastSignInAt: daysAgo(0.1) },
-    { id: "demo-u2", phone: "+22892222222", email: null, fullName: null, role: "rider", createdAt: daysAgo(12), lastSignInAt: daysAgo(2) },
-    { id: "demo-u3", phone: "+22893333333", email: null, fullName: "Ama", role: "rider", createdAt: daysAgo(3), lastSignInAt: daysAgo(0.5) },
+    { id: "demo-customer", phone: "+22890000004", email: null, fullName: null, role: "customer", createdAt: daysAgo(30), lastSignInAt: daysAgo(1) },
+    { id: "demo-u1", phone: "+22891111111", email: null, fullName: "Yao", role: "customer", createdAt: daysAgo(25), lastSignInAt: daysAgo(0.1) },
+    { id: "demo-u2", phone: "+22892222222", email: null, fullName: null, role: "customer", createdAt: daysAgo(12), lastSignInAt: daysAgo(2) },
+    { id: "demo-u3", phone: "+22893333333", email: null, fullName: "Ama", role: "customer", createdAt: daysAgo(3), lastSignInAt: daysAgo(0.5) },
     { id: "demo-fleet_manager", phone: "+22890000005", email: null, fullName: "Flotte Express", role: "fleet_manager", createdAt: daysAgo(8), lastSignInAt: null },
   ];
 }
@@ -26,7 +26,7 @@ export const DEMO_STAFF: StaffAssignment[] = [
   { stationId: "st-agoe", userId: "demo-operator" },
 ];
 
-/** Past reservations over the last two weeks, including a rider who never shows up. */
+/** Past reservations over the last two weeks, including a customer who never shows up. */
 export function demoHistory(now: Date): Reservation[] {
   const rows: [string, string, ReservationType, ReservationStatus, number][] = [
     // user, station, type, status, hours ago

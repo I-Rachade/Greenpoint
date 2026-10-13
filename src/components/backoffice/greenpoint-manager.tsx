@@ -5,6 +5,7 @@ import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { formatKg, type GreenpointFactors, type GreenpointReward, type GreenpointRewardInput } from "@/lib/greenpoint";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
+import { FLEET_VEHICLE_TYPES } from "@/lib/drivers";
 import { VEHICLE_TYPES } from "@/lib/types";
 import { card, field, Loading, Pill, Table, td, th, useDateTime } from "./shared";
 
@@ -158,6 +159,21 @@ function Factors({ factors, onSave }: { factors: GreenpointFactors; onSave: (f: 
           <input type="number" min={0} value={draft.kwhGrams} onChange={(e) => setDraft({ ...draft, kwhGrams: num(e.target.value) })} className={`${field} w-full`} />
           <span className="block text-xs text-zinc-500">{g.perKwh}</span>
         </label>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-5">
+        {FLEET_VEHICLE_TYPES.map((v) => (
+          <label key={v} className="space-y-1 text-sm">
+            <span className="block">{t.drivers.vehicle[v]}</span>
+            <input
+              type="number"
+              min={0}
+              value={draft.kmGrams[v]}
+              onChange={(e) => setDraft({ ...draft, kmGrams: { ...draft.kmGrams, [v]: num(e.target.value) } })}
+              className={`${field} w-full`}
+            />
+            <span className="block text-xs text-zinc-500">{g.perKm}</span>
+          </label>
+        ))}
       </div>
       <button type="submit" className="rounded-full bg-gp-green-dark px-4 py-1.5 text-sm font-medium text-white">
         {g.save}

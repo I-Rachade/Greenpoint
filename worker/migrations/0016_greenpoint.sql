@@ -2,8 +2,8 @@
 -- by riding electric instead of petrol; 100 g saved = 1 greenpoint, redeemed for
 -- free services, discounts and partner rewards. Never money: not bought, not paid
 -- out, not transferable, separate from the wallet. Rules: planung/greenpoint-nutzung.md;
--- code: worker/greenpoint.ts, src/lib/greenpoint.ts. Numbered 0015 because 0007
--- (drivers, PR #16) and 0014 (operator accounts, PR #25) are taken by open PRs.
+-- code: worker/greenpoint.ts, src/lib/greenpoint.ts. Numbered 0016: 0014 and 0015 are
+-- operator accounts and fleet managers.
 -- Only adds tables and a column, so it is safe to apply before the new Worker is deployed.
 -- Apply: npx wrangler d1 migrations apply DB --remote
 
@@ -13,23 +13,28 @@ alter table users add column greenpoint_vehicle text
 
 -- Every movement, so the balance and the CO2 total are sums and can be checked.
 -- kind: swap / charge (earned), visit (entered by staff without reservation),
--- redeem (points spent), admin_adjust (correction).
+-- delivery (a driver's trip on one of our vehicles, per km), redeem (points spent),
+-- admin_adjust (correction).
 create table greenpoint_ledger (
   id text primary key,
   user_id text not null references users (id) on delete cascade,
-  kind text not null check (kind in ('swap', 'charge', 'visit', 'redeem', 'admin_adjust')),
+  kind text not null check (kind in ('swap', 'charge', 'visit', 'delivery', 'redeem', 'admin_adjust')),
   co2_grams integer not null default 0 check (co2_grams >= 0),
   points integer not null,
   vehicle text,
   station_id text references stations (id) on delete set null,
   reservation_id text references reservations (id) on delete set null,
   redemption_id text,
+  job_id text,                      -- delivery_jobs (no foreign key: trips are kept apart)
+  distance_m integer,
   created_by text,
   created_at text not null
 );
 create index greenpoint_ledger_user_idx on greenpoint_ledger (user_id, created_at);
 -- A reservation earns once, even if completion runs twice.
 create unique index greenpoint_ledger_reservation on greenpoint_ledger (reservation_id) where reservation_id is not null;
+-- A trip earns once.
+create unique index greenpoint_ledger_job on greenpoint_ledger (job_id) where job_id is not null;
 -- A redemption takes its points once.
 create unique index greenpoint_ledger_redemption on greenpoint_ledger (redemption_id) where redemption_id is not null;
 
@@ -67,7 +72,7 @@ create unique index greenpoint_redemptions_one_open on greenpoint_redemptions (u
 
 -- CO2 factors (JSON, see DEFAULT_FACTORS in src/lib/greenpoint.ts); the backoffice changes them.
 insert or ignore into app_settings (key, value, updated_at) values
-  ('greenpoint_factors', '{"batteryGrams":{"scooter":1500,"moped":2000,"tricycle":4000,"ebike":500},"kwhGrams":1000}', '2026-10-13T00:00:00.000Z');
+  ('greenpoint_factors', '{"batteryGrams":{"scooter":1500,"moped":2000,"tricycle":4000,"ebike":500},"kwhGrams":1000,"kmGrams":{"moto":40,"tricycle":60,"cargo_tricycle":60}}', '2026-10-13T00:00:00.000Z');
 
 -- The main reward, decided on 2026-10-13: a free battery swap for 150 greenpoints.
 insert or ignore into greenpoint_rewards (id, title, description, cost_points, provider, created_at, updated_at) values

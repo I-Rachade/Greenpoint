@@ -10,7 +10,7 @@ export const PAYMENT_NETWORKS: PaymentNetwork[] = ["flooz", "tmoney"];
  * Mobile prefixes in Togo (first two of the eight digits after +228).
  * Togocom (T-Money): 70–73, 90–93. Moov Africa (Flooz): 78, 79, 96–99.
  * Numbers can be ported or new ranges opened, so the app only pre-selects the
- * network; the rider can always change it.
+ * network; the customer can always change it.
  */
 const NETWORK_PREFIXES: Record<PaymentNetwork, string[]> = {
   tmoney: ["70", "71", "72", "73", "90", "91", "92", "93"],
@@ -46,7 +46,7 @@ export interface ProviderStatus {
 /** What every payment provider (PayGate Global, later CinetPay, Semoa …) must offer. */
 export interface PaymentProvider {
   readonly name: string;
-  /** Asks the provider to send the payment request to the rider's phone. */
+  /** Asks the provider to send the payment request to the customer's phone. */
   start(request: StartRequest): Promise<{ providerReference?: string }>;
   /** Asks the provider for the current status. Callbacks are only a hint to call this. */
   fetchStatus(identifier: string): Promise<ProviderStatus>;

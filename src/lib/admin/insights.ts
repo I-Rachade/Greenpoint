@@ -6,9 +6,9 @@ import type { AdminSnapshot, AdminStation, ChargingPointInfo } from "./types";
 export const STALE_STATUS_HOURS = 2;
 /** Same rule as the app and live_free_points(): a socket silent this long is offline. */
 export const DEVICE_SILENT_MINUTES = 15;
-/** Reservations by one rider within 24 hours before we flag it (cancel/re-reserve loops). */
+/** Reservations by one customer within 24 hours before we flag it (cancel/re-reserve loops). */
 export const REPEAT_RESERVATIONS_PER_DAY = 3;
-/** Missed reservations (expired without showing up) within 7 days before we flag the rider. */
+/** Missed reservations (expired without showing up) within 7 days before we flag the customer. */
 export const NO_SHOWS_PER_WEEK = 2;
 
 const HOUR = 3_600_000;
@@ -41,7 +41,7 @@ export interface Kpis {
   holdingNow: number;
   reservations24h: number;
   reservations7d: number;
-  /** Share of last-7-day reservations that ended without the rider showing up (0..1), null if none ended. */
+  /** Share of last-7-day reservations that ended without the customer showing up (0..1), null if none ended. */
   noShowRate7d: number | null;
   /** Share that were completed (0..1), null if none ended. */
   completionRate7d: number | null;
@@ -52,7 +52,7 @@ export interface Kpis {
 export function computeKpis(snap: AdminSnapshot, now: Date): Kpis {
   const t = now.getTime();
   const active = snap.stations.filter((s) => s.isActive);
-  const usersByRole: Record<UserRole, number> = { rider: 0, operator: 0, fleet_manager: 0, admin: 0 };
+  const usersByRole: Record<UserRole, number> = { customer: 0, operator: 0, fleet_manager: 0, admin: 0 };
   for (const u of snap.users) usersByRole[u.role]++;
 
   const week = snap.reservations.filter((r) => t - new Date(r.createdAt).getTime() < 7 * DAY);
@@ -216,7 +216,7 @@ export function findAnomalies(snap: AdminSnapshot, now: Date): Finding[] {
   const assigned = new Set(snap.staff.map((a) => a.userId));
   for (const u of snap.users) {
     if (u.role === "operator" && !assigned.has(u.id)) add({ kind: "operator_without_station", userId: u.id });
-    if (u.role === "rider" && assigned.has(u.id)) add({ kind: "staff_without_role", userId: u.id });
+    if (u.role === "customer" && assigned.has(u.id)) add({ kind: "staff_without_role", userId: u.id });
   }
 
   return out.sort((a, b) => ORDER.indexOf(a.severity) - ORDER.indexOf(b.severity));

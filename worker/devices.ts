@@ -106,7 +106,7 @@ export function ingest(db: D1Database): Ingest {
         .bind(externalId, o.outlet)
         .first<{ id: string; status: ChargingPointStatus }>();
       if (!point) continue;
-      // A reserved outlet stays reserved while the device reports it free, so the rider's hold is not lost.
+      // A reserved outlet stays reserved while the device reports it free, so the customer's hold is not lost.
       const status = point.status === "reserved" && o.status === "free" ? point.status : (o.status ?? point.status);
       statements.push(
         db
@@ -119,7 +119,7 @@ export function ingest(db: D1Database): Ingest {
       if (o.status === "charging" && point.status !== "charging") plugIns++;
     }
 
-    // A rider plugged in: their slot reservation is used up, otherwise it would keep
+    // A customer plugged in: their slot reservation is used up, otherwise it would keep
     // holding a second outlet until it expires. The oldest ones are taken, since the
     // socket cannot tell who plugged in.
     if (plugIns) {

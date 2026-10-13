@@ -6,12 +6,18 @@
 // greenpoints are never money: not bought, not paid out, not transferable and
 // kept apart from the wallet. CO2 figures are estimates ("environ").
 
+import { FLEET_VEHICLE_TYPES, type FleetVehicleType } from "./drivers";
 import type { VehicleType } from "./types";
 
 /** 100 g of CO2 saved = 1 greenpoint. */
 export const GRAMS_PER_POINT = 100;
 /** A tree binds about 20 kg of CO2 a year; the app shows "equals X trees". */
 export const TREE_GRAMS_PER_YEAR = 20_000;
+/** Grams per km for a trip of `distanceMeters` (rounded down to whole grams). */
+export function tripGrams(distanceMeters: number, vehicle: FleetVehicleType, factors: GreenpointFactors): number {
+  return Math.floor((Math.max(0, distanceMeters) / 1000) * factors.kmGrams[vehicle]);
+}
+
 /** At most this many swaps or charges earn per person and day (all stations). */
 export const MAX_EARNINGS_PER_DAY = 3;
 /** How long a redemption code is valid. */
@@ -38,11 +44,16 @@ export interface GreenpointFactors {
   batteryGrams: Record<VehicleType, number>;
   /** Per measured kWh (connected sockets that report energy). */
   kwhGrams: number;
+  /** Per km a driver carries a parcel on one of our electric vehicles, by vehicle. */
+  kmGrams: Record<FleetVehicleType, number>;
 }
+
+
 
 export const DEFAULT_FACTORS: GreenpointFactors = {
   batteryGrams: { scooter: 1500, moped: 2000, tricycle: 4000, ebike: 500 },
   kwhGrams: 1000,
+  kmGrams: { moto: 40, tricycle: 60, cargo_tricycle: 60 },
 };
 
 /** Highest factor accepted, as a sanity bound (50 kg per battery). */
@@ -58,7 +69,14 @@ export function validFactors(input: unknown): GreenpointFactors | null {
     batteryGrams[v] = f.batteryGrams[v];
   }
   if (!ok(f.kwhGrams)) return null;
-  return { batteryGrams, kwhGrams: f.kwhGrams! };
+  // Factors saved before driver trips counted have no kmGrams: they get the defaults.
+  const km = (f.kmGrams ?? DEFAULT_FACTORS.kmGrams) as Partial<Record<FleetVehicleType, unknown>>;
+  const kmGrams = {} as Record<FleetVehicleType, number>;
+  for (const v of FLEET_VEHICLE_TYPES) {
+    if (!ok(km[v])) return null;
+    kmGrams[v] = km[v] as number;
+  }
+  return { batteryGrams, kwhGrams: f.kwhGrams!, kmGrams };
 }
 
 /** Reads stored factors; anything broken falls back to the defaults. */
@@ -91,7 +109,7 @@ export function treesFor(grams: number): number {
 }
 
 /** Where a person's CO2 and points come from. */
-export type GreenpointKind = "swap" | "charge" | "visit" | "redeem" | "admin_adjust";
+export type GreenpointKind = "swap" | "charge" | "visit" | "delivery" | "redeem" | "admin_adjust";
 
 export interface GreenpointEntry {
   id: string;

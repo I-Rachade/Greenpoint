@@ -9,7 +9,10 @@ import { format } from "@/lib/i18n/format";
 import { PARCEL_SIZES, sizeFor, type Parcel, type ParcelInfo, type ParcelInput } from "@/lib/parcels";
 import type { StationBooking } from "@/lib/partners";
 import type { StationView } from "@/lib/types";
+import { fareFor } from "@/lib/drivers";
+import { distanceMeters } from "@/lib/geo";
 import { useApp } from "../app-provider";
+import { StationDriversSection } from "../drivers/station-drivers";
 import { useI18n } from "../i18n-provider";
 import { canScanQr, QrScanner } from "./qr-scanner";
 import { SlipDialog } from "./slip-dialog";
@@ -136,6 +139,7 @@ function NewParcelForm({
   const [form, setForm] = useState(empty);
   const [checked, setChecked] = useState(false);
   const [paid, setPaid] = useState(false);
+  const [express, setExpress] = useState(false);
   const [busy, setBusy] = useState(false);
   const set = (key: keyof typeof empty) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const num = (v: string) => Number(v.replace(",", "."));
@@ -146,6 +150,9 @@ function NewParcelForm({
     .filter((d) => d.stationId !== station.id)
     .map((d) => stations.find((s) => s.id === d.stationId))
     .filter((s): s is StationView => !!s);
+  const to = destinations.find((s) => s.id === form.toStationId);
+  const fare = express && to ? fareFor(distanceMeters(station, to), true, info.driverSettings) : 0;
+  const total = tier ? tier.priceFcfa + fare : 0;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -161,12 +168,14 @@ function NewParcelForm({
       content: form.content,
       declaredValue: form.declaredValue ? Math.round(num(form.declaredValue)) : null,
       measures,
+      express,
     };
     try {
       const created = await backend.createParcel(station.id, parcel);
       setForm(empty);
       setChecked(false);
       setPaid(false);
+      setExpress(false);
       onCreated(created);
     } catch (err) {
       onError(errorMessage(err));
@@ -223,8 +232,21 @@ function NewParcelForm({
           <input className={input} inputMode="numeric" value={form.declaredValue} onChange={set("declaredValue")} />
         </label>
         <div className="flex items-end text-sm font-semibold" aria-live="polite">
-          {measured && (tier ? format(t.parcels.staff.computed, { size: tier.size, price: tier.priceFcfa }) : <span className="text-red-600">{t.parcels.staff.tooLarge}</span>)}
+          {measured &&
+            (tier ? (
+              fare ? (
+                format(t.drivers.staff.expressPrice, { parcel: tier.priceFcfa, fare, total })
+              ) : (
+                format(t.parcels.staff.computed, { size: tier.size, price: tier.priceFcfa })
+              )
+            ) : (
+              <span className="text-red-600">{t.parcels.staff.tooLarge}</span>
+            ))}
         </div>
+        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <input type="checkbox" checked={express} onChange={(e) => setExpress(e.target.checked)} />
+          {t.drivers.staff.express}
+        </label>
         <label className="flex items-center gap-2 text-sm sm:col-span-2">
           <input type="checkbox" required checked={checked} onChange={(e) => setChecked(e.target.checked)} />
           {t.parcels.staff.checkedContent}
@@ -232,7 +254,7 @@ function NewParcelForm({
         {tier && (
           <label className="flex items-center gap-2 text-sm sm:col-span-2">
             <input type="checkbox" required checked={paid} onChange={(e) => setPaid(e.target.checked)} />
-            {format(t.parcels.staff.cashReceived, { price: tier.priceFcfa })}
+            {format(t.parcels.staff.cashReceived, { price: total })}
           </label>
         )}
         <div className="sm:col-span-2">
@@ -444,8 +466,9 @@ function StationParcels({ station, stations, info }: { station: StationView; sta
 
   if (!hasDepot) return <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.parcels.staff.noDepot}</p>;
   const list = parcels ?? [];
-  const outgoing = list.filter((p) => p.fromStationId === station.id && p.status === "deposited");
-  const incoming = list.filter((p) => p.toStationId === station.id && p.status === "in_transit");
+  // Express parcels go with a driver (section below), not on the collection run.
+  const outgoing = list.filter((p) => p.fromStationId === station.id && p.status === "deposited" && !p.express);
+  const incoming = list.filter((p) => p.toStationId === station.id && p.status === "in_transit" && !p.express);
   const waiting = list.filter((p) => p.toStationId === station.id && p.status === "arrived");
   const history = list.filter((p) => !["deposited", "in_transit", "arrived"].includes(p.status)).slice(0, 30);
   const small = "rounded-full border border-black/15 px-2 py-0.5 text-xs dark:border-white/20";
@@ -545,6 +568,7 @@ function StationParcels({ station, stations, info }: { station: StationView; sta
                   {p.size} · {p.recipient.name ? `${p.recipient.name} · ` : ""}
                   {p.recipient.phone}
                 </span>
+                {p.deliveryStatus && <span className="text-xs text-blue-700 dark:text-blue-300">{t.drivers.delivery[p.deliveryStatus]}</span>}
                 <span className="flex-1" />
                 {p.pickupDeadline && <span className="text-xs text-zinc-500">{format(t.parcels.deadline, { date: when(p.pickupDeadline) })}</span>}
                 <button type="button" className={small} onClick={() => void run(() => backend.resendPickupCode(p.id), t.parcels.staff.resent)}>
@@ -555,6 +579,8 @@ function StationParcels({ station, stations, info }: { station: StationView; sta
           </ul>
         )}
       </Section>
+      <h2 className="pt-2 text-lg font-semibold">{t.drivers.staff.title}</h2>
+      <StationDriversSection station={station} stations={stations} />
       <Section title={t.parcels.staff.history}>
         {history.length === 0 ? (
           <p className="text-sm text-zinc-500">{t.parcels.staff.none}</p>

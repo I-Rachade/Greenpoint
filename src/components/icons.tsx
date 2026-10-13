@@ -203,3 +203,11 @@ export const InfoIcon = (p: IconProps) => (
     <path d="M12 11v5.5M12 7.8v.2" />
   </Svg>
 );
+
+export const ScooterIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="6" cy="17" r="2.5" />
+    <circle cx="18" cy="17" r="2.5" />
+    <path d="M8.5 17h6.5l2-7h-3M14 5h2l1 5M4 13h6l1.5 4" />
+  </Svg>
+);

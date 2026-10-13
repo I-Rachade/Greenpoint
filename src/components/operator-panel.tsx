@@ -44,7 +44,7 @@ function Counter({
   );
 }
 
-/** One active reservation: staff type the rider's pickup code to complete it. */
+/** One active reservation: staff type the customer's pickup code to complete it. */
 function ReservationRow({
   reservation: r,
   now,

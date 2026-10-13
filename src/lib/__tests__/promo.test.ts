@@ -63,7 +63,7 @@ describe("DemoBackend promotions", () => {
     expect(await backend.currentPromotion()).toBeNull();
     await expect(backend.listPromotions()).rejects.toMatchObject({ code: "not_authenticated" });
 
-    await backend.register("+22890123456", DEMO_CODE, "2580", "rider");
+    await backend.register("+22890123456", DEMO_CODE, "2580", "customer");
     await expect(backend.listPromotions()).rejects.toMatchObject({ code: "forbidden" });
 
     await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
