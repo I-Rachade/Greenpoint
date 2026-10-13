@@ -392,11 +392,12 @@ function ownedOperators(state: DemoState, userId: string): string[] {
   return (state.operatorOwners ?? []).filter((x) => x.userId === userId).map((x) => x.operatorId);
 }
 
-/** Whoever gets station work becomes "operator" (admins stay admins). */
+/** Whoever gets station work becomes "operator" (customers only; admins stay admins). */
 function promoted(state: DemoState, userId: string) {
-  return (state.users ?? demoUsers(new Date())).map((u) =>
-    u.id === userId && u.role !== "admin" && u.role !== "operator" ? { ...u, role: "operator" as const } : u,
-  );
+  const users = state.users ?? demoUsers(new Date());
+  // One role per person: a fleet manager would lose their drivers.
+  if (users.find((u) => u.id === userId)?.role === "fleet_manager") throw new BackendError("has_other_role");
+  return users.map((u) => (u.id === userId && u.role === "customer" ? { ...u, role: "operator" as const } : u));
 }
 
 /** Whoever has no station and runs no operator any more goes back to customer. */

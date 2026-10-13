@@ -1070,7 +1070,7 @@ export const en: Dictionary = {
     photo_missing: "Take the handover photo first.",
     vehicle_unavailable: "This vehicle is already assigned, out of service or exists already.",
     vehicle_too_small: "This parcel is too big or too heavy for this vehicle.",
-    has_other_role: "This account already has another role (station staff). Change its role under Users first.",
+    has_other_role: "This account already has another role (station staff or fleet manager). Change its role under Users first.",
     no_vehicle: "No vehicle is assigned to you.",
     documents_missing: "Document photos are missing.",
     balance_changed: "The balance changed. Scan again.",

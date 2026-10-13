@@ -206,6 +206,10 @@ describe("operator accounts", () => {
     expect((await call(env, "admin", "POST", "/api/admin/drivers/afi/manager", { contact: "90000004" })).status).toBe(200);
     expect(role("kossi")).toBe("fleet_manager");
     expect((await call(env, "kossi", "GET", "/api/fleet")).body).toMatchObject({ drivers: [{ userId: "afi" }] });
+    // One role per person: a fleet manager cannot get station work.
+    const op = (await call(env, "admin", "POST", "/api/admin/operators", { id: null, input: { name: "Togo Moto", contactPhone: null } })).body as { id: string };
+    expect((await call(env, "admin", "POST", `/api/admin/operators/${op.id}/owners`, { contact: "90000004" })).body).toMatchObject({ error: "has_other_role" });
+    expect(role("kossi")).toBe("fleet_manager");
     expect((await call(env, "admin", "POST", "/api/admin/users/kossi/role", { role: "customer" })).status).toBe(200);
     expect((await call(env, "kossi", "GET", "/api/fleet")).status).toBe(403);
     expect(db.prepare("select count(*) as n from fleet_manager_drivers").get()).toEqual({ n: 0 });

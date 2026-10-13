@@ -767,9 +767,15 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
   ]);
 }
 
-/** Whoever gets station work becomes "operator" (admins stay admins), so the menu and rights match. */
+/** Whoever gets station work becomes "operator" (customers only; admins stay admins), so the menu and rights match. */
 const promoteToOperator = (c: Ctx, userId: string) =>
-  c.db.prepare("update users set role = 'operator' where id = ? and role not in ('operator', 'admin')").bind(userId);
+  c.db.prepare("update users set role = 'operator' where id = ? and role = ?").bind(userId, DB_CUSTOMER);
+
+/** One role per person: a fleet manager would lose their drivers (worker/fleet.ts). */
+async function refuseOtherRole(c: Ctx, userId: string) {
+  const row = await c.db.prepare("select role from users where id = ?").bind(userId).first<{ role: string }>();
+  if (row?.role === "fleet_manager") throw new ApiError("has_other_role");
+}
 
 /** Whoever has no station and runs no operator any more goes back to customer. */
 const demoteIfIdle = (c: Ctx, userId: string) =>
@@ -792,6 +798,7 @@ async function unassignStaff(c: Ctx, stationId: string, userId: string) {
 }
 
 async function addStaff(c: Ctx, actorId: string, stationId: string, userId: string) {
+  await refuseOtherRole(c, userId);
   const inserted = await c.db
     .prepare("insert or ignore into station_staff (station_id, user_id) values (?, ?)")
     .bind(stationId, userId)
@@ -980,6 +987,7 @@ async function addOperatorOwner(c: Ctx, operatorId: string, contact: unknown) {
   const operator = await c.db.prepare("select 1 from operators where id = ?").bind(operatorId).first();
   if (!operator) throw new ApiError("not_found", 404);
   const account = await findAccount(c, contact);
+  await refuseOtherRole(c, account.id);
   const inserted = await c.db
     .prepare("insert or ignore into operator_owners (operator_id, user_id, created_at) values (?, ?, ?)")
     .bind(operatorId, account.id, nowIso())

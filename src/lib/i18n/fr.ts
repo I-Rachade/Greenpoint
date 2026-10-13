@@ -1070,7 +1070,7 @@ export const fr = {
     photo_missing: "Prenez d'abord la photo de la remise.",
     vehicle_unavailable: "Ce véhicule est déjà attribué, hors service ou existe déjà.",
     vehicle_too_small: "Ce colis est trop grand ou trop lourd pour ce véhicule.",
-    has_other_role: "Ce compte a déjà un autre rôle (personnel de station). Changez d'abord son rôle dans Utilisateurs.",
+    has_other_role: "Ce compte a déjà un autre rôle (personnel de station ou gestionnaire de flotte). Changez d'abord son rôle dans Utilisateurs.",
     no_vehicle: "Aucun véhicule ne vous est attribué.",
     documents_missing: "Il manque des photos de documents.",
     balance_changed: "Le solde a changé. Scannez à nouveau.",
