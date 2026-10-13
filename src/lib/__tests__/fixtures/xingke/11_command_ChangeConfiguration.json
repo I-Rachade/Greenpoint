@@ -1,0 +1,14 @@
+{
+  "messageId": "config-set-0001",
+  "action": "ChangeConfiguration",
+  "data": {
+    "volume": 6,
+    "floatChargingDuration": 5400,
+    "maxChargingDuration": 43200,
+    "statusNotificationInterval": 900,
+    "chargingStatusInterval": 900,
+    "temperatureLimit": 70,
+    "powerLimit": 500,
+    "offlineStopDuration": 3600
+  }
+}

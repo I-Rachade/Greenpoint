@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { canSwitch, commandRoute } from "../iot/devices";
 import {
@@ -156,5 +157,39 @@ describe("command routes", () => {
     expect(commandRoute({ externalId: "XK16-DEMO-000001", vendor: "Xingke", link: "vendor_cloud" })).toBe("xingke_cloud");
     expect(commandRoute({ externalId: "123456", vendor: "", link: "own_server" })).toBe("xingke_bridge");
     expect(canSwitch({ externalId: "70B3D57ED0000001", vendor: "LoRa", link: "lorawan" })).toBe(false);
+  });
+});
+
+// The vendor's JSON package (planung/xingke-two-wheeler-api-v1.0-en-json.zip), unchanged.
+const FIXTURES = new URL("./fixtures/xingke/", import.meta.url);
+const fixture = (name: string) => JSON.parse(readFileSync(new URL(name, FIXTURES), "utf8"));
+const eventFiles = readdirSync(FIXTURES).filter((f) => /^\d+_event_/.test(f));
+
+describe("vendor JSON examples", () => {
+  it("our commands match the vendor's start and stop examples", () => {
+    const start = fixture("01_command_RemoteStartTransaction.json");
+    expect(xingkeStartRequest(start.messageId, 1, start.data.transactionId)).toEqual(start);
+    const timed = fixture("03_command_RemoteStartTransaction.json");
+    expect(xingkeStartRequest(timed.messageId, 2, timed.data.transactionId, 3600)).toEqual(timed);
+    const stop = fixture("05_command_RemoteStopTransaction.json");
+    expect(xingkeStopRequest(stop.messageId, 1, stop.data.transactionId)).toEqual({ ...stop, data: { ...stop.data, stopSource: "Remote" } });
+  });
+
+  it.each(eventFiles)("reads %s", (file) => {
+    const cb = parseXingkeCallback(fixture(file));
+    const action = file.replace(/^\d+_event_|\.json$/g, "");
+    expect(cb.action).toBe(action);
+    const result = xingkeEffect(cb);
+    if (action === "CardPresented") expect(result).toBeNull();
+    else expect(result).not.toBeNull();
+  });
+
+  it("maps the example events as documented", () => {
+    const read = (name: string) => xingkeEffect(parseXingkeCallback(fixture(name)));
+    expect(read("19_event_ChargingStatusNotification.json")?.outlets).toEqual([{ outlet: 1, status: "charging", powerWatts: 261, energyWh: 1250 }]);
+    expect(read("20_event_ChargingStatusNotification.json")?.outlets).toEqual([{ outlet: 1, status: "done", powerWatts: 0, energyWh: 1500 }]);
+    expect(read("21_event_StatusNotification.json")?.outlets.map((o) => o.status)).toEqual(["free", "charging", "fault"]);
+    expect(read("27_event_FaultNotification.json")).toEqual({ outlets: [], allOutlets: "fault" });
+    expect(read("25_event_DeviceOffline.json")?.online).toBe(false);
   });
 });

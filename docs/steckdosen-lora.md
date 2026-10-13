@@ -117,7 +117,7 @@ Seit Oktober 2026 bietet Xingke eine Cloud-API an ("Xingke Unified API V1.0", `p
 | `DeviceOffline` | Ausgänge sofort offline, freie Plätze der Station neu gezählt |
 | `CardPresented` | nur gespeichert: die App führt keine Ladekarten, das Gerät bekommt keine Antwort |
 
-Noch offen bei Xingke: Produktionsadresse und Zugangsdaten, ob die Geräte-IDs Kleinbuchstaben enthalten, und ob `energy` pro Ladevorgang oder als Zählerstand gemeldet wird (die App zeigt den gemeldeten Wert). Beispiel-JSON und OpenAPI-Datei schickt der Hersteller noch.
+Noch offen bei Xingke: Produktionsadresse und Zugangsdaten, ob die Geräte-IDs Kleinbuchstaben enthalten, und ob `energy` pro Ladevorgang oder als Zählerstand gemeldet wird (die App zeigt den gemeldeten Wert). Die JSON-Beispiele, das JSON-Schema und die OpenAPI-Datei des Herstellers liegen unter `src/lib/__tests__/fixtures/xingke/`; die Tests prüfen unsere Befehle und Callbacks dagegen.
 
 ## Xingke-Protokoll V1.1 (über eine Brücke)
 
