@@ -45,6 +45,7 @@ import {
   stopOutlet,
 } from "./devices";
 import type { DeviceInput } from "../src/lib/iot/devices";
+import { handleXingkeCallback } from "./xingke";
 import type { ParcelDepotInput, ParcelInput, ParcelMeasures } from "../src/lib/parcels";
 import {
   adminParcels,
@@ -1086,9 +1087,9 @@ const ROUTES: [string, RegExp, Handler][] = [
     async (c, [encoded, outlet, action]) => {
       const admin = await c.requireAdmin();
       const device = decodeURIComponent(encoded);
-      if (action === "stop") return stopOutlet(c.db, device, Number(outlet), admin.id);
+      if (action === "stop") return stopOutlet(c.env, device, Number(outlet), admin.id);
       const { minutes } = await readJson<{ minutes?: number }>(c.request).catch(() => ({ minutes: undefined }));
-      return startOutlet(c.db, device, Number(outlet), admin.id, minutes);
+      return startOutlet(c.env, device, Number(outlet), admin.id, minutes);
     },
   ],
 ];
@@ -1104,6 +1105,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     // Sockets authenticate with their own key, not a user session.
     if (url.pathname === "/api/devices/events") return await handleDeviceEvents(request, env);
     if (url.pathname === "/api/devices/commands") return await handleDeviceCommands(request, env);
+    if (url.pathname === "/api/devices/xingke") return await handleXingkeCallback(request, env);
     // Other apps authenticate with their API key (worker/partners.ts).
     if (url.pathname.startsWith(`${PARTNER_API_BASE}/`) || url.pathname === PARTNER_API_BASE) return await handlePartnerApi(request, env);
     for (const [method, pattern, handler] of ROUTES) {

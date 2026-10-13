@@ -391,7 +391,7 @@ export const fr = {
       add: "Ajouter une prise",
       form: {
         externalId: "Identifiant de la prise",
-        externalIdHint: "DevEUI pour LoRaWAN, numéro à 6 chiffres pour une prise Xingke.",
+        externalIdHint: "DevEUI pour LoRaWAN. Prise Xingke : l'identifiant de la plateforme Xingke, avec « Cloud du fabricant » et le fabricant « Xingke ».",
         station: "Station",
         chooseStation: "Choisir une station",
         outlets: "Nombre de sorties",
@@ -724,6 +724,9 @@ export const fr = {
     weak_pin: "Code PIN trop simple. Évitez 0000 ou 1234.",
     invalid_device: "Identifiant de prise ou nombre de sorties invalide (1 à 16).",
     device_exists: "Cette prise est déjà enregistrée.",
+    device_offline: "La prise est hors ligne ou occupée. Réessayez dans un instant.",
+    device_command_failed: "La plateforme du fabricant n'a pas accepté la commande.",
+    device_not_configured: "La connexion à la plateforme du fabricant n'est pas encore configurée.",
     image_too_large: "Image trop lourde (2 Mo maximum, 500 Ko en mode démo).",
     depot_inactive: "Cette station ne prend pas de colis.",
     same_station: "La station d'arrivée doit être différente.",

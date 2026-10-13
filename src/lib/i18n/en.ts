@@ -391,7 +391,7 @@ export const en: Dictionary = {
       add: "Add socket",
       form: {
         externalId: "Socket id",
-        externalIdHint: "DevEUI for LoRaWAN, 6-digit number for a Xingke socket.",
+        externalIdHint: "DevEUI for LoRaWAN. Xingke socket: the device id from the Xingke platform, with \"Manufacturer cloud\" and manufacturer \"Xingke\".",
         station: "Station",
         chooseStation: "Choose a station",
         outlets: "Number of outlets",
@@ -724,6 +724,9 @@ export const en: Dictionary = {
     weak_pin: "PIN too simple. Avoid 0000 or 1234.",
     invalid_device: "Invalid socket id or number of outlets (1 to 16).",
     device_exists: "This socket is already registered.",
+    device_offline: "The socket is offline or busy. Try again shortly.",
+    device_command_failed: "The vendor platform did not accept the command.",
+    device_not_configured: "The connection to the vendor platform is not set up yet.",
     image_too_large: "Image too large (2 MB max, 500 KB in demo mode).",
     depot_inactive: "This station does not take parcels.",
     same_station: "The destination must be another station.",

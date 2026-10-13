@@ -52,7 +52,20 @@ export function outletLabel(externalId: string, outlet: number): string {
   return `${externalId.slice(-4)}-${outlet}`;
 }
 
-/** Only Xingke sockets (6-digit device number) can be switched on and off so far. */
-export function canSwitch(externalId: string): boolean {
-  return /^\d{6}$/.test(externalId);
+/**
+ * How we send commands to a socket:
+ * - `xingke_cloud`: the Xingke cloud API (link "vendor_cloud", vendor "Xingke"), see worker/xingke.ts.
+ * - `xingke_bridge`: text lines of protocol V1.1 queued for a bridge (6-digit device number).
+ * Other sockets only report and cannot be switched.
+ */
+export type CommandRoute = "xingke_cloud" | "xingke_bridge";
+
+export function commandRoute(device: Pick<Device, "externalId" | "vendor" | "link">): CommandRoute | null {
+  if (device.link === "vendor_cloud" && /xingke/i.test(device.vendor)) return "xingke_cloud";
+  if (/^\d{6}$/.test(device.externalId)) return "xingke_bridge";
+  return null;
+}
+
+export function canSwitch(device: Pick<Device, "externalId" | "vendor" | "link">): boolean {
+  return commandRoute(device) !== null;
 }

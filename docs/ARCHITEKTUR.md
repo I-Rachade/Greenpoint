@@ -27,7 +27,7 @@ Browser / Android-App (Next.js, statisch)  ──►  Cloudflare Worker "pointde
 | `station_staff` | welcher Nutzer welche Station melden darf |
 | `reservations` | Akku oder Ladeplatz, gültig 20 Minuten, mit 4-stelligem Abholcode (sieht nur der Fahrer) |
 | `charging_points` | einzelne Ladeplätze pro Station; bei vernetzten Steckdosen meldet das Gerät den Status |
-| `devices`, `device_messages`, `device_commands` | vernetzte Steckdosen (LoRa), ihre Rohmeldungen und Schaltbefehle, siehe [steckdosen-lora.md](steckdosen-lora.md) |
+| `devices`, `device_messages`, `device_commands`, `device_callbacks` | vernetzte Steckdosen (LoRa, Xingke-Cloud), ihre Rohmeldungen, Schaltbefehle und bereits verarbeiteten Callbacks, siehe [steckdosen-lora.md](steckdosen-lora.md) |
 | `payments` | Flooz/T-Money-Zahlungen pro Reservierung; Preise stehen an der Station (siehe [ZAHLUNGEN.md](ZAHLUNGEN.md)) |
 | `parcel_depots`, `parcel_sizes` | Paket-Depot pro Station und Größen/Preise (S–XL, bis 50 kg), im Backoffice pflegbar |
 | `parcels`, `parcel_events` | Pakete von Station A nach B: Absender/Empfänger per Telefon, Inhalt, Maße, Preis, Status (`deposited` → `in_transit` → `arrived` → `picked_up`, nach 7 Tagen `stored` → `released`/`auctioned`), 6-stelliger Abholcode (sieht nur der Empfänger) |

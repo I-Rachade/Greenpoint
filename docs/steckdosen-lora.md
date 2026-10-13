@@ -2,7 +2,7 @@
 
 poinderecharge kann den Status von vernetzten Ladesteckdosen live anzeigen, z. B. LoRa-Doppelsteckdosen zum Selbstladen von E-Scootern. Jeder Ausgang ist ein Ladeplatz (`charging_points`). Die Steckdose meldet, ob ein Ausgang frei ist, lädt, fertig ist oder gestört ist; die App zeigt das sofort auf der Stationsseite und zählt die freien Plätze automatisch.
 
-Steckdosen mit dem Xingke-Protokoll (Hersteller der Alibaba-Doppelsteckdose) lassen sich außerdem fernschalten: ein Admin schaltet einen Ausgang ein oder aus (siehe [Xingke](#xingke-protokoll)). Abrechnung pro Ladevorgang kommt in Phase 2 mit der Bezahlung. Hintergrund: `planung/lora-ladesteckdose.md`, Protokoll auf Englisch: `planung/xingke-16-port-protocol-v1.1-en.md` im Projektordner.
+Steckdosen mit dem Xingke-Protokoll (Hersteller der Alibaba-Doppelsteckdose) lassen sich außerdem fernschalten: ein Admin schaltet einen Ausgang ein oder aus, über die [Xingke-Cloud-API](#xingke-cloud-api) oder das [Textprotokoll](#xingke-protokoll-v11-über-eine-brücke). Abrechnung pro Ladevorgang kommt in Phase 2 mit der Bezahlung. Hintergrund: `planung/lora-ladesteckdose.md`, Protokoll auf Englisch: `planung/xingke-16-port-protocol-v1.1-en.md` im Projektordner.
 
 ## Aufbau
 
@@ -25,7 +25,8 @@ Steckdose --LoRa--> Gateway --4G--> Netzwerkserver (TTN / ChirpStack)
 - `src/lib/iot/device-events.ts`: liest die Formate (wird auch in den Tests geprüft).
 - `src/lib/iot/charging-points.ts`: "offline", wenn ein Gerät 15 Minuten nichts meldet.
 - `worker/migrations/0004_device_commands.sql`: Warteschlange für Schaltbefehle (`device_commands`).
-- `src/lib/iot/xingke-commands.ts`: baut die Xingke-Befehle (Ausgang ein/aus).
+- `src/lib/iot/xingke-commands.ts`: baut die Xingke-Befehle des Textprotokolls (Ausgang ein/aus).
+- `src/lib/iot/xingke-cloud.ts` und `worker/xingke.ts`: Befehle und Callbacks der Xingke-Cloud-API.
 
 ## Einrichten
 
@@ -82,7 +83,45 @@ function decodeUplink(input) {
 }
 ```
 
-## Xingke-Protokoll
+## Xingke-Cloud-API
+
+Seit Oktober 2026 bietet Xingke eine Cloud-API an ("Xingke Unified API V1.0", `planung/xingke-two-wheeler-api-v1.0-en.pdf`): JSON über HTTPS, ohne eigene Brücke. Die Steckdosen hängen an der Xingke-Plattform; wir schicken ihr Befehle, sie schickt uns die Ereignisse der Geräte.
+
+**Einrichten**
+
+1. Von Xingke bekommen: die API-Adresse (`apiHost`), unseren Zugangsschlüssel und die Geräte-ID jeder Steckdose.
+2. Am Worker `pointderecharge-app` setzen (Settings > Variables and Secrets):
+
+   | Name | Art | Wert |
+   |---|---|---|
+   | `XINGKE_API_HOST` | Text | Host ohne `https://`, z. B. `api.xingke.example` |
+   | `XINGKE_API_TOKEN` | Secret | unser Zugangsschlüssel für die Befehle |
+   | `XINGKE_CALLBACK_TOKEN` | Secret | langer Zufallswert, den Xingke bei jedem Callback als `Authorization: Bearer …` mitschickt |
+
+3. Xingke diese Callback-Adresse und den `XINGKE_CALLBACK_TOKEN` geben: `https://app.poinderecharge.com/api/devices/xingke`
+4. Migration `0011_xingke_cloud.sql` anwenden: `npx wrangler d1 migrations apply DB --remote`
+5. Im Backoffice unter **Prises connectées** die Steckdose anlegen: Geräte-ID genau wie bei Xingke (Groß-/Kleinschreibung zählt), Verbindung „Cloud du fabricant“, Hersteller „Xingke“ (wird bei dieser Verbindung vorausgefüllt), Zahl der Ausgänge. Nur mit Hersteller „Xingke“ und „Cloud du fabricant“ zeigt das Backoffice „Allumer“ und „Éteindre“.
+6. Empfehlung an Xingke bzw. per `ChangeConfiguration`: Statusmeldungen höchstens alle 5 Minuten (`statusNotificationInterval` 300). Ein Ausgang ohne Meldung seit 15 Minuten gilt als offline und wird nicht angeboten.
+
+**Befehle** (`worker/xingke.ts`): „Allumer“ schickt `RemoteStartTransaction` (bis voll, oder `{"minutes":60}` über die API für eine feste Dauer), „Éteindre“ `RemoteStopTransaction` mit der `transactionId` des letzten Starts dieses Ausgangs. Jeder Befehl steht in `device_commands` mit seiner `message_id`; HTTP 202 heißt nur „angenommen“, das Ergebnis kommt als Callback. Lehnt die Plattform ab, weil das Gerät offline oder beschäftigt ist, zeigt das Backoffice das an. Bei Zeitüberschreitung bleibt der Befehl offen, ein späteres Ergebnis schließt ihn noch.
+
+**Callbacks** (`POST /api/devices/xingke`): Jede Meldung wird in `device_messages` gespeichert und mit `{"code":"OK"}` bestätigt, Wiederholungen werden über `device_callbacks` erkannt und nur bestätigt.
+
+| `action` | Wirkung |
+|---|---|
+| `StatusNotification` | `Available` frei, `Charging` lädt, `Faulted` Störung; `Unknown` und nicht gemeldete Ausgänge bleiben wie sie sind |
+| `ChargingStatusNotification` | `Charging` lädt (Leistung in W, Energie von kWh in Wh); `Stopped` mit `Completed`/`BalanceDepleted` fertig, `NoLoad`/`PowerLossOrUnplugged` frei, Schutzabschaltungen Störung |
+| `FaultNotification` | `Connector`: dieser Ausgang gestört; `Device`: alle Ausgänge gestört bis zur nächsten Statusmeldung |
+| `CommandResult` | schließt den Befehl (`Succeeded`/`Sent` = `done`, `Failed` = `failed`, Code in `result`); ein später `Unknown` überschreibt kein bestätigtes Ergebnis. Start bestätigt = lädt, Stopp bestätigt = frei |
+| `DeviceOnline` | Lebenszeichen, Ausgänge wieder angeboten |
+| `DeviceOffline` | Ausgänge sofort offline, freie Plätze der Station neu gezählt |
+| `CardPresented` | nur gespeichert: die App führt keine Ladekarten, das Gerät bekommt keine Antwort |
+
+Noch offen bei Xingke: Produktionsadresse und Zugangsdaten, ob die Geräte-IDs Kleinbuchstaben enthalten, und ob `energy` pro Ladevorgang oder als Zählerstand gemeldet wird (die App zeigt den gemeldeten Wert). Beispiel-JSON und OpenAPI-Datei schickt der Hersteller noch.
+
+## Xingke-Protokoll V1.1 (über eine Brücke)
+
+Das ältere Textprotokoll bleibt für Geräte ohne Xingke-Cloud.
 
 Die Doppelsteckdose von Alibaba spricht das "Xingke 16-Port-Protokoll V1.1": Textzeilen wie `MOD:52;EID:123456;PORT:0000|0101;\r\n`. Wie die Zeilen übertragen werden (TCP, MQTT oder HTTP) sagt das Dokument nicht; das ist beim Hersteller offen. Ein Cloudflare Worker kann keinen TCP-Server betreiben, deshalb braucht es dafür eine kleine Brücke (Hersteller-Cloud oder eigener Server), die zwei Dinge tut:
 

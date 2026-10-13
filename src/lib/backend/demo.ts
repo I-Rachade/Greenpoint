@@ -853,8 +853,10 @@ export class DemoBackend implements Backend {
   async switchOutlet(externalId: string, outlet: number, on: boolean) {
     const state = this.load();
     this.requireAdmin(state);
-    if (!canSwitch(externalId)) throw new BackendError("forbidden");
-    const devices = (state.devices ?? seedDevices()).map((d) =>
+    const all = state.devices ?? seedDevices();
+    const device = all.find((d) => d.externalId === externalId);
+    if (!device || !canSwitch(device)) throw new BackendError("forbidden");
+    const devices = all.map((d) =>
       d.externalId !== externalId
         ? d
         : {
