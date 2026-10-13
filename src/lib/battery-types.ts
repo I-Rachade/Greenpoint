@@ -3,7 +3,7 @@ import type { StationView } from "./types";
 // Battery types: each motorbike brand (battery operator) has its own swap
 // batteries. A station's swap point swaps some of them; a swap point with no type
 // listed says nothing. Charging needs no type: the sockets take any battery.
-// Migration 0016_battery_types.sql.
+// Migration 0017_battery_types.sql.
 
 export interface BatteryType {
   id: string;

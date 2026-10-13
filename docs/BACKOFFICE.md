@@ -29,7 +29,7 @@ Eine Station ohne Tausch und Laden ist ein reiner Paketpunkt (`has_battery = 0`,
 
 ### Akku-Typen (Types de batterie)
 
-Jede Motorrad-Marke (Akku-Betreiber, z. B. Spiro oder Omnivoltaic) hat eigene Tausch-Akkus. Oben im Stations-Editor pflegt der Admin die Liste (Marke und Modell, abschaltbar), im Tauschpunkt jeder Station hakt er an, welche Typen dort getauscht werden (Tabellen `battery_types`, `station_battery_types`, Migration `0016_battery_types.sql`). Laden braucht keinen Typ: die Steckdosen laden jeden Akku. Die App zeigt die getauschten Typen in der Stationsansicht und filtert nach Marke; abgeschaltete Typen erscheinen dort nicht.
+Jede Motorrad-Marke (Akku-Betreiber, z. B. Spiro oder Omnivoltaic) hat eigene Tausch-Akkus. Oben im Stations-Editor pflegt der Admin die Liste (Marke und Modell, abschaltbar), im Tauschpunkt jeder Station hakt er an, welche Typen dort getauscht werden (Tabellen `battery_types`, `station_battery_types`, Migration `0017_battery_types.sql`). Laden braucht keinen Typ: die Steckdosen laden jeden Akku. Die App zeigt die getauschten Typen in der Stationsansicht und filtert nach Marke; abgeschaltete Typen erscheinen dort nicht.
 
 ## Auffälligkeiten („À vérifier“)
 
