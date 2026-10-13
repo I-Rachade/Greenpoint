@@ -6,12 +6,15 @@ import { HOSTED_DEMO } from "@/lib/backend";
 import { CONTACT_EMAIL } from "@/lib/config";
 import { useErrorMessage } from "@/lib/hooks";
 import { LEGAL_PATHS } from "@/lib/legal/content";
-import { parseContact, type Contact } from "@/lib/contact";
+import { normalizeEmail, type Contact } from "@/lib/contact";
+import { DEFAULT_PHONE_COUNTRY, PHONE_COUNTRIES, phoneWithCountry } from "@/lib/countries";
 import { format } from "@/lib/i18n/format";
 import { PIN_LENGTH } from "@/lib/pin";
 import type { Profile, UserRole } from "@/lib/types";
 import { useApp } from "./app-provider";
+import { CountryPicker } from "./country-picker";
 import { useI18n } from "./i18n-provider";
+import { MailIcon, PhoneIcon } from "./icons";
 import { LegalLinks } from "./legal-links";
 import { OtpInput } from "./otp-input";
 
@@ -26,6 +29,9 @@ const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["rider"] : ["rider", "operator", "
  */
 type Mode = "pin" | "register" | "reset";
 
+/** Whether the person signs in with a phone number or an e-mail address. */
+type Method = Contact["kind"];
+
 const digits = (value: string, max: number) => value.replace(/\D/g, "").slice(0, max);
 
 export function LoginForm() {
@@ -34,7 +40,10 @@ export function LoginForm() {
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const [mode, setMode] = useState<Mode>("pin");
-  const [contactInput, setContactInput] = useState("");
+  const [method, setMethod] = useState<Method>("phone");
+  const [country, setCountry] = useState(DEFAULT_PHONE_COUNTRY);
+  const [phoneInput, setPhoneInput] = useState("");
+  const [emailInput, setEmailInput] = useState("");
   /** Number or address the code was sent to; set once the code is on its way. */
   const [codeSentTo, setCodeSentTo] = useState<Contact | null>(null);
   const [code, setCode] = useState("");
@@ -57,9 +66,14 @@ export function LoginForm() {
   }
 
   function contactOrError(): Contact | null {
-    const contact = parseContact(contactInput);
-    if (!contact) setError(t.login.invalidContact);
-    return contact;
+    if (method === "email") {
+      const email = normalizeEmail(emailInput);
+      if (!email) setError(t.login.invalidEmail);
+      return email ? { kind: "email", value: email } : null;
+    }
+    const phone = phoneWithCountry(country, phoneInput);
+    if (!phone) setError(t.login.invalidPhone);
+    return phone ? { kind: "phone", value: phone } : null;
   }
 
   async function run(action: () => Promise<void>) {
@@ -76,7 +90,8 @@ export function LoginForm() {
 
   function done(profile: Profile) {
     // Next.js keeps this page's state for back navigation, so start fresh next time.
-    setContactInput("");
+    setPhoneInput("");
+    setEmailInput("");
     switchMode("pin");
     router.push(profile.role === "operator" ? "/operator" : profile.role === "admin" ? "/admin" : "/");
   }
@@ -117,24 +132,75 @@ export function LoginForm() {
   const button = "w-full rounded-full bg-gp-green-dark px-4 py-3 font-semibold text-white shadow-sm disabled:opacity-50";
   const link = "w-full text-sm font-medium text-gp-green-dark dark:text-gp-green";
 
-  // One field for both: anything with "@" is an e-mail address (see lib/contact.ts).
-  const contactField = (
-    <label className="block space-y-1.5">
-      <span className="text-sm font-medium">{t.login.contact}</span>
-      <input
-        className={input}
-        type="text"
-        inputMode="email"
-        autoComplete="username"
-        autoCapitalize="none"
-        spellCheck={false}
-        placeholder={t.login.contactPlaceholder}
-        value={contactInput}
-        onChange={(e) => setContactInput(e.target.value)}
-        required
-      />
-    </label>
+  // Phone or e-mail: the switch picks which field is shown; both keep what was typed.
+  const methodSwitch = (
+    <div role="radiogroup" aria-label={t.login.method} className="grid grid-cols-2 gap-2">
+      {(
+        [
+          ["phone", t.login.byPhone, PhoneIcon],
+          ["email", t.login.byEmail, MailIcon],
+        ] as const
+      ).map(([value, label, Icon]) => (
+        <button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={method === value}
+          onClick={() => {
+            setMethod(value);
+            setError(null);
+          }}
+          className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors ${
+            method === value
+              ? "border-gp-green-dark bg-gp-green-dark/10 text-gp-green-dark dark:border-gp-green dark:bg-gp-green/10 dark:text-gp-green"
+              : "border-gp-border text-gp-muted dark:border-white/15 dark:text-zinc-400"
+          }`}
+        >
+          <Icon size={18} />
+          {label}
+        </button>
+      ))}
+    </div>
   );
+
+  const contactField =
+    method === "phone" ? (
+      <div className="space-y-1.5">
+        <label htmlFor="login-phone" className="block text-sm font-medium">
+          {t.login.phone}
+        </label>
+        <div className="flex gap-2">
+          <CountryPicker countries={PHONE_COUNTRIES} value={country} onChange={setCountry} />
+          <input
+            id="login-phone"
+            className={`${input} min-w-0 flex-1`}
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel-national"
+            placeholder={country.example}
+            value={phoneInput}
+            onChange={(e) => setPhoneInput(e.target.value)}
+            required
+          />
+        </div>
+      </div>
+    ) : (
+      <label className="block space-y-1.5">
+        <span className="text-sm font-medium">{t.login.email}</span>
+        <input
+          className={input}
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          autoCapitalize="none"
+          spellCheck={false}
+          placeholder={t.login.emailPlaceholder}
+          value={emailInput}
+          onChange={(e) => setEmailInput(e.target.value)}
+          required
+        />
+      </label>
+    );
 
   const pinField = (label: string, value: string, onChange: (v: string) => void, autoComplete: string) => (
     <label className="block space-y-1">
@@ -223,6 +289,7 @@ export function LoginForm() {
 
         {mode === "pin" ? (
           <form onSubmit={signIn} className="space-y-4">
+            {methodSwitch}
             {contactField}
             {pinField(t.login.pin, pin, setPin, "current-password")}
             {roleField}
@@ -237,6 +304,7 @@ export function LoginForm() {
           </form>
         ) : !codeSentTo ? (
           <form onSubmit={sendCode} className="space-y-4">
+            {methodSwitch}
             {contactField}
             {mode === "register" && (
               <label className="flex items-start gap-2 text-sm">
