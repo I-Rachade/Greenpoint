@@ -198,6 +198,27 @@ describe("operator accounts", () => {
     expect((await call(env, "kossi", "PATCH", `/api/stations/${lome}/status`, { isOpen: false })).status).toBe(200);
   });
 
+  it("ends a fleet manager's drivers when the admin changes the role", async () => {
+    const { db, env } = await setup();
+    db.prepare(
+      "insert into drivers (user_id, status, full_name, id_number, license_number, wanted_type, code, created_at) values ('afi', 'active', 'Afi', 'ID001', 'LIC001', 'moto', 'CODE0001', ?)",
+    ).run(new Date().toISOString());
+    expect((await call(env, "admin", "POST", "/api/admin/drivers/afi/manager", { contact: "90000004" })).status).toBe(200);
+    expect(role("kossi")).toBe("fleet_manager");
+    expect((await call(env, "kossi", "GET", "/api/fleet")).body).toMatchObject({ drivers: [{ userId: "afi" }] });
+    // One role per person: a fleet manager cannot get station work.
+    const op = (await call(env, "admin", "POST", "/api/admin/operators", { id: null, input: { name: "Togo Moto", contactPhone: null } })).body as { id: string };
+    expect((await call(env, "admin", "POST", `/api/admin/operators/${op.id}/owners`, { contact: "90000004" })).body).toMatchObject({ error: "has_other_role" });
+    expect(role("kossi")).toBe("fleet_manager");
+    expect((await call(env, "admin", "POST", "/api/admin/users/kossi/role", { role: "customer" })).status).toBe(200);
+    expect((await call(env, "kossi", "GET", "/api/fleet")).status).toBe(403);
+    expect(db.prepare("select count(*) as n from fleet_manager_drivers").get()).toEqual({ n: 0 });
+
+    function role(id: string) {
+      return (db.prepare("select role from users where id = ?").get(id) as { role: string }).role;
+    }
+  });
+
   it("takes the rights away when the admin removes the owner", async () => {
     const { env, operatorId, lome } = await withOperator();
     await call(env, "admin", "DELETE", `/api/admin/operators/${operatorId}/owners/yao`);

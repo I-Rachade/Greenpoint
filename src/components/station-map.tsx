@@ -9,7 +9,7 @@ import type { StationView } from "@/lib/types";
 import { AVAILABILITY_COLORS } from "./availability-badge";
 
 // Free vector tiles from OpenStreetMap data, no API key, commercial use allowed.
-const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
+export const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 
 interface Props {
   stations: StationView[];

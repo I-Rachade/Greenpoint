@@ -38,7 +38,7 @@ function keepFeatures(features: Features) {
 }
 
 function sameProfile(a: Profile | null, b: Profile | null): boolean {
-  return a === b || (!!a && !!b && a.id === b.id && a.role === b.role && a.phone === b.phone && a.email === b.email && a.fullName === b.fullName && (a.ownerOf ?? []).join() === (b.ownerOf ?? []).join());
+  return a === b || (!!a && !!b && a.id === b.id && a.role === b.role && a.phone === b.phone && a.email === b.email && a.fullName === b.fullName && a.driverStatus === b.driverStatus && (a.ownerOf ?? []).join() === (b.ownerOf ?? []).join());
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {

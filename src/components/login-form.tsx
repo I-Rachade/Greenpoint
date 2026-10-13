@@ -18,7 +18,7 @@ import { OtpInput } from "./otp-input";
 import { runsOperator } from "@/lib/operators";
 
 // On the public site the demo only offers the customer view (anyone could otherwise "log in" as admin).
-const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["customer"] : ["customer", "operator", "admin"];
+const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["customer"] : ["customer", "operator", "fleet_manager", "admin"];
 
 /**
  * "pin": everyday login with phone number or e-mail address, and PIN.

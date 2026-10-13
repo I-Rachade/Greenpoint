@@ -28,6 +28,7 @@ interface UserRow {
   role: string;
   /** Comma-separated operators this person runs (operator_owners). */
   owner_of?: string | null;
+  driver_status?: Profile["driverStatus"];
 }
 
 export function toProfile(u: UserRow): Profile {
@@ -38,6 +39,7 @@ export function toProfile(u: UserRow): Profile {
     fullName: u.full_name,
     role: roleFromDb(u.role),
     ownerOf: u.owner_of ? u.owner_of.split(",") : [],
+    driverStatus: u.driver_status ?? null,
   };
 }
 
@@ -256,7 +258,7 @@ function checkPinFormat(pin: string) {
   if (weakPin(pin)) throw new ApiError("weak_pin");
 }
 
-const USER_COLUMNS = `id, phone, email, full_name, role, ${ownerOf("users")}`;
+const USER_COLUMNS = `id, phone, email, full_name, role, ${ownerOf("users")}, (select status from drivers where drivers.user_id = users.id) as driver_status`;
 /** Column of users that holds this kind of contact. Fixed names only, never user input. */
 const contactColumn = (contact: Contact) => (contact.kind === "phone" ? "phone" : "email");
 
@@ -395,7 +397,9 @@ export async function currentUser(env: Env, request: Request): Promise<Profile |
   const token = bearer(request);
   if (!token) return null;
   const row = await env.DB.prepare(
-    `select u.id, u.phone, u.email, u.full_name, u.role, ${ownerOf("u")} from sessions s join users u on u.id = s.user_id where s.token_hash = ? and s.expires_at > ?`,
+    `select u.id, u.phone, u.email, u.full_name, u.role, ${ownerOf("u")}, d.status as driver_status from sessions s
+     join users u on u.id = s.user_id left join drivers d on d.user_id = u.id
+     where s.token_hash = ? and s.expires_at > ?`,
   )
     .bind(await sha256(token), nowIso())
     .first<UserRow>();

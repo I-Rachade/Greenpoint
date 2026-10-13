@@ -75,6 +75,37 @@ import {
   saveSizes,
   stationParcels,
 } from "./parcels";
+import {
+  acceptJob,
+  adminDrivers,
+  applyDriver,
+  arriveAtDoor,
+  assignJob,
+  bookDelivery,
+  bookPickup,
+  cancelJob,
+  collectPickup,
+  declineJob,
+  deliverJob,
+  driverAtStation,
+  driverFile,
+  driverHome,
+  failDelivery,
+  handToDriver,
+  joinQueue,
+  leaveQueue,
+  myJobs,
+  receiveFromDriver,
+  reviewDriver,
+  saveDriverSettings,
+  saveFleetVehicle,
+  settleDriver,
+  stationDrivers,
+  uploadDriverDocument,
+  uploadProof,
+} from "./drivers";
+import type { DriverApplication, DriverDecision, FleetVehicleInput, PickupBooking } from "../src/lib/drivers";
+import { fleetAssign, fleetStats, fleetView, setDriverManager } from "./fleet";
 import type { PartnerInput } from "../src/lib/partners";
 import { PARTNER_API_BASE } from "../src/lib/partners";
 import {
@@ -719,6 +750,11 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
           c.db.prepare("select station_id from station_staff where user_id = ?").bind(userId).all<{ station_id: string }>().then((r) => r.results),
           c.db.prepare("select operator_id from operator_owners where user_id = ?").bind(userId).all<{ operator_id: string }>().then((r) => r.results),
         ]);
+  // Leaving "fleet_manager" ends the links to the drivers.
+  const managed =
+    role === "fleet_manager"
+      ? []
+      : (await c.db.prepare("select driver_id from fleet_manager_drivers where manager_id = ?").bind(userId).all<{ driver_id: string }>()).results;
   await c.db.batch([
     c.db.prepare("update users set role = ? where id = ?").bind(roleToDb(role), userId),
     c.audit(admin.id, "profiles", "update", userId, { role: [before, role] }, { userId }),
@@ -726,12 +762,20 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
     ...staff.map((s) => c.audit(admin.id, "station_staff", "delete", `${s.station_id}:${userId}`, {}, { stationId: s.station_id, userId })),
     ...(owned.length ? [c.db.prepare("delete from operator_owners where user_id = ?").bind(userId)] : []),
     ...owned.map((o) => c.audit(admin.id, "operator_owners", "delete", `${o.operator_id}:${userId}`, { operator_id: o.operator_id }, { userId })),
+    ...managed.map((d) => c.db.prepare("delete from fleet_manager_drivers where driver_id = ?").bind(d.driver_id)),
+    ...managed.map((d) => c.audit(admin.id, "fleet_manager_drivers", "delete", d.driver_id, { manager_id: userId }, { userId: d.driver_id })),
   ]);
 }
 
-/** Whoever gets station work becomes "operator" (admins stay admins), so the menu and rights match. */
+/** Whoever gets station work becomes "operator" (customers only; admins stay admins), so the menu and rights match. */
 const promoteToOperator = (c: Ctx, userId: string) =>
-  c.db.prepare("update users set role = 'operator' where id = ? and role not in ('operator', 'admin')").bind(userId);
+  c.db.prepare("update users set role = 'operator' where id = ? and role = ?").bind(userId, DB_CUSTOMER);
+
+/** One role per person: a fleet manager would lose their drivers (worker/fleet.ts). */
+async function refuseOtherRole(c: Ctx, userId: string) {
+  const row = await c.db.prepare("select role from users where id = ?").bind(userId).first<{ role: string }>();
+  if (row?.role === "fleet_manager") throw new ApiError("has_other_role");
+}
 
 /** Whoever has no station and runs no operator any more goes back to customer. */
 const demoteIfIdle = (c: Ctx, userId: string) =>
@@ -754,6 +798,7 @@ async function unassignStaff(c: Ctx, stationId: string, userId: string) {
 }
 
 async function addStaff(c: Ctx, actorId: string, stationId: string, userId: string) {
+  await refuseOtherRole(c, userId);
   const inserted = await c.db
     .prepare("insert or ignore into station_staff (station_id, user_id) values (?, ?)")
     .bind(stationId, userId)
@@ -942,6 +987,7 @@ async function addOperatorOwner(c: Ctx, operatorId: string, contact: unknown) {
   const operator = await c.db.prepare("select 1 from operators where id = ?").bind(operatorId).first();
   if (!operator) throw new ApiError("not_found", 404);
   const account = await findAccount(c, contact);
+  await refuseOtherRole(c, account.id);
   const inserted = await c.db
     .prepare("insert or ignore into operator_owners (operator_id, user_id, created_at) values (?, ?, ?)")
     .bind(operatorId, account.id, nowIso())
@@ -1340,6 +1386,81 @@ const ROUTES: [string, RegExp, Handler][] = [
     },
   ],
   ["POST", /^\/api\/admin\/parcel-sizes$/, async (c) => saveSizes(c, (await readJson<{ sizes: unknown }>(c.request)).sizes)],
+  // Drivers (worker/drivers.ts)
+  // Fleet managers (worker/fleet.ts)
+  ["GET", /^\/api\/fleet$/, (c) => fleetView(c)],
+  ["GET", /^\/api\/fleet\/stats$/, (c) => fleetStats(c, c.url.searchParams.get("from") ?? "", c.url.searchParams.get("to") ?? "")],
+  ["POST", /^\/api\/fleet\/jobs\/([\w-]+)\/assign$/, async (c, [id]) => fleetAssign(c, id, String((await readJson<{ driverId: string }>(c.request)).driverId))],
+  ["POST", /^\/api\/admin\/drivers\/([\w-]+)\/manager$/, async (c, [id]) => setDriverManager(c, id, (await readJson<{ contact: string | null }>(c.request)).contact)],
+  ["GET", /^\/api\/driver$/, (c) => driverHome(c)],
+  ["POST", /^\/api\/driver\/apply$/, async (c) => applyDriver(c, await readJson<DriverApplication>(c.request))],
+  ["POST", /^\/api\/driver\/documents\/(id|license|portrait)$/, (c, [kind]) => uploadDriverDocument(c, kind, c.request)],
+  [
+    "POST",
+    /^\/api\/driver\/queue$/,
+    async (c) => {
+      const { stationId, position } = await readJson<{ stationId: string; position: unknown }>(c.request);
+      return joinQueue(c, String(stationId), position);
+    },
+  ],
+  ["DELETE", /^\/api\/driver\/queue$/, (c) => leaveQueue(c)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/accept$/, (c, [id]) => acceptJob(c, id)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/decline$/, (c, [id]) => declineJob(c, id)],
+  [
+    "POST",
+    /^\/api\/driver\/jobs\/([\w-]+)\/collect$/,
+    async (c, [id]) => collectPickup(c, id, (await readJson<{ measures: ParcelMeasures }>(c.request)).measures),
+  ],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/door$/, (c, [id]) => arriveAtDoor(c, id)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/photo$/, (c, [id]) => uploadProof(c, id, c.request)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/deliver$/, async (c, [id]) => deliverJob(c, id, (await readJson<{ code: string }>(c.request)).code)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/absent$/, (c, [id]) => failDelivery(c, id)],
+  ["GET", /^\/api\/jobs\/mine$/, (c) => myJobs(c)],
+  ["POST", /^\/api\/jobs\/pickup$/, async (c) => bookPickup(c, await readJson<PickupBooking>(c.request))],
+  ["POST", /^\/api\/parcels\/([\w-]+)\/delivery$/, async (c, [id]) => bookDelivery(c, id, (await readJson<{ home: unknown }>(c.request)).home)],
+  ["POST", /^\/api\/jobs\/([\w-]+)\/cancel$/, (c, [id]) => cancelJob(c, id)],
+  ["GET", /^\/api\/stations\/([\w-]+)\/drivers$/, (c, [id]) => stationDrivers(c, id)],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/drivers\/scan$/,
+    async (c, [id]) => driverAtStation(c, id, (await readJson<{ badge: string }>(c.request)).badge),
+  ],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/drivers\/(handover|receive)$/,
+    async (c, [id, action]) => {
+      const { badge, jobId } = await readJson<{ badge: string; jobId: string }>(c.request);
+      return action === "handover" ? handToDriver(c, id, badge, String(jobId)) : receiveFromDriver(c, id, badge, String(jobId));
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/drivers\/settle$/,
+    async (c, [id]) => {
+      const { badge, amount } = await readJson<{ badge: string; amount: number }>(c.request);
+      return settleDriver(c, id, badge, amount);
+    },
+  ],
+  ["GET", /^\/api\/admin\/drivers$/, (c) => adminDrivers(c)],
+  [
+    "POST",
+    /^\/api\/admin\/drivers\/([\w-]+)\/review$/,
+    async (c, [id]) => reviewDriver(c, id, await readJson<DriverDecision>(c.request)),
+  ],
+  [
+    "POST",
+    /^\/api\/admin\/fleet$/,
+    async (c) => {
+      const { id, input } = await readJson<{ id: string | null; input: FleetVehicleInput }>(c.request);
+      return saveFleetVehicle(c, id ? String(id) : null, input);
+    },
+  ],
+  ["POST", /^\/api\/admin\/driver-settings$/, async (c) => saveDriverSettings(c, (await readJson<{ settings: unknown }>(c.request)).settings)],
+  [
+    "POST",
+    /^\/api\/admin\/jobs\/([\w-]+)\/assign$/,
+    async (c, [id]) => assignJob(c, id, String((await readJson<{ driverId: string }>(c.request)).driverId)),
+  ],
   [
     "POST",
     /^\/api\/admin\/stations$/,
@@ -1435,6 +1556,10 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     // Sockets authenticate with their own key, not a user session.
     if (url.pathname === "/api/devices/events") return await handleDeviceEvents(request, env);
     if (url.pathname === "/api/devices/commands") return await handleDeviceCommands(request, env);
+    // Private photos of drivers and door handovers: admins only, read as a file.
+    const fileMatch = /^\/api\/admin\/driver-files\/((?:drivers|proofs)\/[\w/.-]+)$/.exec(url.pathname);
+    if (fileMatch && request.method === "GET") return await driverFile(c, fileMatch[1]);
+
     if (url.pathname === "/api/devices/xingke") return await handleXingkeCallback(request, env);
     // Other apps authenticate with their API key (worker/partners.ts).
     const partnerApi = url.pathname.startsWith(`${PARTNER_API_BASE}/`) || url.pathname === PARTNER_API_BASE;
