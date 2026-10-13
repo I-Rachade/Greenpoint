@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
@@ -12,37 +11,23 @@ import type { StationView } from "@/lib/types";
 import { fareFor } from "@/lib/drivers";
 import { distanceMeters } from "@/lib/geo";
 import { useApp } from "../app-provider";
+import { BackIcon } from "../icons";
 import { StationDriversSection } from "../drivers/station-drivers";
 import { useI18n } from "../i18n-provider";
 import { canScanQr, QrScanner } from "./qr-scanner";
 import { SlipDialog } from "./slip-dialog";
 import { ParcelStatusPill } from "./status";
 
-/** Switches between the station status page and the parcel page. */
-export function OperatorTabs() {
+/** Back to the station home with its two big buttons (status, parcels); only there while the parcel module is on. */
+export function OperatorBack() {
   const { t } = useI18n();
   const { features } = useApp();
-  const pathname = usePathname().replace(/\/$/, "");
   if (!features.parcels) return null;
-  const tabs = [
-    { href: "/operator", label: t.parcels.staff.tabStatus },
-    { href: "/operator/colis", label: t.parcels.staff.tabParcels },
-  ];
   return (
-    <nav className="flex gap-1 text-sm">
-      {tabs.map((tab) => (
-        <Link
-          key={tab.href}
-          href={tab.href}
-          aria-current={pathname === tab.href ? "page" : undefined}
-          className={`rounded-full px-3 py-1 ${
-            pathname === tab.href ? "bg-gp-forest text-white" : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          }`}
-        >
-          {tab.label}
-        </Link>
-      ))}
-    </nav>
+    <Link href="/operator" className="-ml-1 inline-flex items-center gap-1 text-sm text-gp-green-dark dark:text-gp-green">
+      <BackIcon size={18} />
+      {t.operator.back}
+    </Link>
   );
 }
 
@@ -485,6 +470,18 @@ function StationParcels({ station, stations, info }: { station: StationView; sta
           {notice}
         </p>
       )}
+      {/* Registering a parcel is the main job at the counter, so it comes first. */}
+      <NewParcelForm
+        station={station}
+        stations={stations}
+        info={info}
+        onError={setError}
+        onCreated={(parcel) => {
+          setNotice(format(t.parcels.staff.created, { no: parcel.trackingNo }));
+          setSlip(parcel);
+          reload();
+        }}
+      />
       <PickupBox
         stationId={station.id}
         onError={setError}
@@ -515,17 +512,6 @@ function StationParcels({ station, stations, info }: { station: StationView; sta
           </ul>
         </Section>
       )}
-      <NewParcelForm
-        station={station}
-        stations={stations}
-        info={info}
-        onError={setError}
-        onCreated={(parcel) => {
-          setNotice(format(t.parcels.staff.created, { no: parcel.trackingNo }));
-          setSlip(parcel);
-          reload();
-        }}
-      />
       <Section title={t.parcels.staff.outgoing} hint={t.parcels.staff.outgoingHint}>
         <BatchList
           parcels={outgoing}
@@ -617,7 +603,7 @@ export function StaffParcels() {
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
-      <OperatorTabs />
+      <OperatorBack />
       <h1 className="text-2xl font-semibold">{t.parcels.staff.title}</h1>
       {mine.length === 0 && <p className="text-sm">{allMine.length ? t.parcels.staff.noDepot : t.operator.noStations}</p>}
       {mine.length > 1 && (

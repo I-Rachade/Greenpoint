@@ -94,7 +94,6 @@ export function AccountPanel() {
             {features.parcels && managesFleet(profile) && <MenuLink href="/flotte" icon={ScooterIcon} label={t.nav.fleet} />}
             {runsOperator(profile) && <MenuLink href="/exploitant" icon={StoreIcon} label={t.nav.owner} />}
             {worksAtStations(profile) && <MenuLink href="/operator" icon={StoreIcon} label={t.nav.operator} />}
-            {worksAtStations(profile) && features.parcels && <MenuLink href="/operator/colis" icon={BoxIcon} label={t.nav.parcelCounter} />}
             {profile.role === "admin" && <MenuLink href="/admin" icon={ShieldIcon} label={t.nav.admin} />}
           </MenuGroup>
 

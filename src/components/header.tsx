@@ -31,7 +31,6 @@ export function Header() {
     { href: "/flotte", label: t.nav.fleet, show: profile?.role === "fleet_manager" && features.parcels },
     { href: "/exploitant", label: t.nav.owner, show: runsOperator(profile) },
     { href: "/operator", label: t.nav.operator, show: worksAtStations(profile) },
-    { href: "/operator/colis", label: t.nav.parcelCounter, show: worksAtStations(profile) && features.parcels },
     { href: "/admin", label: t.nav.admin, show: profile?.role === "admin" },
   ];
 
@@ -68,7 +67,7 @@ export function Header() {
                 key={l.href}
                 href={l.href}
                 className={`whitespace-nowrap rounded-full px-3 py-1 ${
-                  pathname === l.href || (l.href === "/admin" && pathname.startsWith("/admin/"))
+                  pathname === l.href || (l.href === "/admin" && pathname.startsWith("/admin/")) || (l.href === "/operator" && pathname.startsWith("/operator/"))
                     ? "bg-gp-green-dark text-white"
                     : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
                 }`}

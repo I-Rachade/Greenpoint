@@ -39,7 +39,9 @@ Für den echten Betrieb mit Datenbank und SMS-Login: siehe [docs/DEPLOYMENT.md](
 | `/` | alle | Karte, Liste nach Entfernung, Filter, Stationsdetails, Reservieren |
 | `/login` | alle | Login mit Telefonnummer und PIN; Registrierung und neue PIN per SMS-Code |
 | `/reservations` | angemeldete Nutzer | eigene Reservierungen mit Restzeit, stornieren |
-| `/operator` | Personal, Admin | Station öffnen/schließen, volle Akkus und freie Plätze melden, Reservierungen abschließen |
+| `/operator` | Personal, Admin | zwei große Knöpfe: „Statut“ und „Colis“ (ohne Paketmodul direkt der Status) |
+| `/operator/statut` | Personal, Admin | Station öffnen/schließen, volle Akkus und freie Plätze melden, Reservierungen abschließen |
+| `/operator/colis` | Personal, Admin | Paketschalter: Pakete annehmen, ausgeben, für die Abholung laden (nur Stationen mit Paket-Depot) |
 | `/admin` | Admin | Stationen anlegen und bearbeiten |
 | `/contact` | alle | Kontaktadresse |
 
