@@ -645,6 +645,8 @@ export const en: Dictionary = {
       chooseDestination: "Choose…",
       content: "Content (what is in the parcel)",
       declaredValue: "Declared value in FCFA (optional)",
+      size: "Parcel size",
+      sizeLimits: "up to {l}×{w}×{h} cm, {kg} kg",
       length: "Length (cm)",
       width: "Width (cm)",
       height: "Height (cm)",

@@ -15,7 +15,8 @@ import {
 import { directionsUrl, distanceMeters, formatDistance, type LatLng } from "@/lib/geo";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { sizeFor, type ParcelInfo } from "@/lib/parcels";
+import { measuresOf, type ParcelInfo, type ParcelSize } from "@/lib/parcels";
+import { SizePicker } from "../parcels/size-picker";
 import type { StationView } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "../app-provider";
@@ -240,21 +241,18 @@ function PickupCollect({ job, info, onDone }: { job: DeliveryJob; info: ParcelIn
   const { t } = useI18n();
   const { backend } = useApp();
   const { run, busy, status } = useAction();
-  const [m, setM] = useState({ lengthCm: "", widthCm: "", heightCm: "", weightKg: "" });
+  const [size, setSize] = useState<ParcelSize | null>(null);
   const [checked, setChecked] = useState(false);
   const [paid, setPaid] = useState(false);
-  const num = (v: string) => Number(v.replace(",", "."));
-  const measures = { lengthCm: num(m.lengthCm), widthCm: num(m.widthCm), heightCm: num(m.heightCm), weightKg: num(m.weightKg) };
-  const measured = Object.values(m).every(Boolean);
-  const tier = measured ? sizeFor(measures, info.sizes) : null;
+  const tier = info.sizes.find((x) => x.size === size) ?? null;
   const total = tier ? tier.priceFcfa + job.fareFcfa : 0;
-  const labels = { lengthCm: t.parcels.staff.length, widthCm: t.parcels.staff.width, heightCm: t.parcels.staff.height, weightKg: t.parcels.staff.weight };
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (!tier) return;
     let no = "";
     const ok = await run(async () => {
-      const updated = await backend.collectPickup(job.id, measures);
+      const updated = await backend.collectPickup(job.id, measuresOf(tier));
       no = updated.trackingNo ?? "";
     });
     if (ok) onDone(no);
@@ -263,21 +261,10 @@ function PickupCollect({ job, info, onDone }: { job: DeliveryJob; info: ParcelIn
   return (
     <form onSubmit={submit} className="space-y-3 rounded-lg bg-zinc-100 p-3 dark:bg-zinc-900">
       <h3 className="text-sm font-semibold">{t.drivers.page.measureTitle}</h3>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {(Object.keys(labels) as (keyof typeof labels)[]).map((key) => (
-          <label key={key} className="space-y-1 text-sm">
-            <span>{labels[key]}</span>
-            <input className={input} inputMode="decimal" required value={m[key]} onChange={(e) => setM((x) => ({ ...x, [key]: e.target.value }))} />
-          </label>
-        ))}
-      </div>
-      {measured && (
+      <SizePicker tiers={info.sizes} value={size} onChange={setSize} extraFcfa={job.fareFcfa} />
+      {tier && (
         <p className="text-sm font-semibold" aria-live="polite">
-          {tier ? (
-            format(t.drivers.page.measured, { size: tier.size, parcel: tier.priceFcfa, fare: job.fareFcfa, total })
-          ) : (
-            <span className="text-red-600">{t.drivers.page.tooLarge}</span>
-          )}
+          {format(t.drivers.page.measured, { size: tier.size, parcel: tier.priceFcfa, fare: job.fareFcfa, total })}
         </p>
       )}
       <label className="flex items-center gap-2 text-sm">

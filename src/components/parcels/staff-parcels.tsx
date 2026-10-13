@@ -5,7 +5,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { PARCEL_SIZES, sizeFor, type Parcel, type ParcelInfo, type ParcelInput } from "@/lib/parcels";
+import { measuresOf, PARCEL_SIZES, type Parcel, type ParcelInfo, type ParcelInput, type ParcelSize } from "@/lib/parcels";
 import type { StationBooking } from "@/lib/partners";
 import type { StationView } from "@/lib/types";
 import { fareFor } from "@/lib/drivers";
@@ -15,6 +15,7 @@ import { BackIcon } from "../icons";
 import { StationDriversSection } from "../drivers/station-drivers";
 import { useI18n } from "../i18n-provider";
 import { canScanQr, QrScanner } from "./qr-scanner";
+import { SizePicker } from "./size-picker";
 import { SlipDialog } from "./slip-dialog";
 import { ParcelStatusPill } from "./status";
 
@@ -103,7 +104,7 @@ function PickupBox({ stationId, onDone, onError }: { stationId: string; onDone: 
   );
 }
 
-const empty = { senderPhone: "", senderName: "", recipientPhone: "", recipientName: "", toStationId: "", content: "", declaredValue: "", lengthCm: "", widthCm: "", heightCm: "", weightKg: "" };
+const empty = { senderPhone: "", senderName: "", recipientPhone: "", recipientName: "", toStationId: "", content: "", declaredValue: "" };
 
 function NewParcelForm({
   station,
@@ -126,11 +127,10 @@ function NewParcelForm({
   const [paid, setPaid] = useState(false);
   const [express, setExpress] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [size, setSize] = useState<ParcelSize | null>(null);
   const set = (key: keyof typeof empty) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const num = (v: string) => Number(v.replace(",", "."));
-  const measures = { lengthCm: num(form.lengthCm), widthCm: num(form.widthCm), heightCm: num(form.heightCm), weightKg: num(form.weightKg) };
-  const measured = [form.lengthCm, form.widthCm, form.heightCm, form.weightKg].every(Boolean);
-  const tier = measured ? sizeFor(measures, info.sizes) : null;
+  const tier = info.sizes.find((x) => x.size === size) ?? null;
   const destinations = info.depots
     .filter((d) => d.stationId !== station.id)
     .map((d) => stations.find((s) => s.id === d.stationId))
@@ -152,12 +152,13 @@ function NewParcelForm({
       toStationId: form.toStationId,
       content: form.content,
       declaredValue: form.declaredValue ? Math.round(num(form.declaredValue)) : null,
-      measures,
+      measures: measuresOf(tier),
       express,
     };
     try {
       const created = await backend.createParcel(station.id, parcel);
       setForm(empty);
+      setSize(null);
       setChecked(false);
       setPaid(false);
       setExpress(false);
@@ -204,29 +205,18 @@ function NewParcelForm({
           <span>{t.parcels.staff.content}</span>
           <input className={input} required value={form.content} onChange={set("content")} maxLength={300} />
         </label>
-        <div className="grid grid-cols-2 gap-3 sm:col-span-2 sm:grid-cols-4">
-          {(["lengthCm", "widthCm", "heightCm", "weightKg"] as const).map((key) => (
-            <label key={key} className={label}>
-              <span>{t.parcels.staff[key === "lengthCm" ? "length" : key === "widthCm" ? "width" : key === "heightCm" ? "height" : "weight"]}</span>
-              <input className={input} inputMode="decimal" required value={form[key]} onChange={set(key)} />
-            </label>
-          ))}
+        <div className="sm:col-span-2">
+          <SizePicker tiers={info.sizes} value={size} onChange={setSize} />
         </div>
         <label className={label}>
           <span>{t.parcels.staff.declaredValue}</span>
           <input className={input} inputMode="numeric" value={form.declaredValue} onChange={set("declaredValue")} />
         </label>
         <div className="flex items-end text-sm font-semibold" aria-live="polite">
-          {measured &&
-            (tier ? (
-              fare ? (
-                format(t.drivers.staff.expressPrice, { parcel: tier.priceFcfa, fare, total })
-              ) : (
-                format(t.parcels.staff.computed, { size: tier.size, price: tier.priceFcfa })
-              )
-            ) : (
-              <span className="text-red-600">{t.parcels.staff.tooLarge}</span>
-            ))}
+          {tier &&
+            (fare
+              ? format(t.drivers.staff.expressPrice, { parcel: tier.priceFcfa, fare, total })
+              : format(t.parcels.staff.computed, { size: tier.size, price: tier.priceFcfa }))}
         </div>
         <label className="flex items-center gap-2 text-sm sm:col-span-2">
           <input type="checkbox" checked={express} onChange={(e) => setExpress(e.target.checked)} />
@@ -274,11 +264,8 @@ function BookedParcel({
   const [open, setOpen] = useState(false);
   const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);
-  const m = booking.measures;
-  const [form, setForm] = useState({ lengthCm: String(m.lengthCm), widthCm: String(m.widthCm), heightCm: String(m.heightCm), weightKg: String(m.weightKg) });
-  const num = (v: string) => Number(v.replace(",", "."));
-  const measures = { lengthCm: num(form.lengthCm), widthCm: num(form.widthCm), heightCm: num(form.heightCm), weightKg: num(form.weightKg) };
-  const tier = sizeFor(measures, info.sizes);
+  const [size, setSize] = useState<ParcelSize>(booking.size);
+  const tier = info.sizes.find((x) => x.size === size) ?? null;
   const bigger = tier && PARCEL_SIZES.indexOf(tier.size) > PARCEL_SIZES.indexOf(booking.size);
   const to = stations.find((s) => s.id === booking.toStationId)?.name ?? "?";
 
@@ -287,7 +274,8 @@ function BookedParcel({
     onError("");
     setBusy(true);
     try {
-      onAccepted(await backend.acceptBooking(station.id, booking.id, measures));
+      if (!tier) return;
+      onAccepted(await backend.acceptBooking(station.id, booking.id, measuresOf(tier)));
     } catch (err) {
       onError(errorMessage(err));
     } finally {
@@ -316,20 +304,7 @@ function BookedParcel({
       {open && (
         <form onSubmit={accept} className="space-y-2">
           <p className="text-xs font-medium">{t.parcels.staff.bookedMeasured}</p>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {(["lengthCm", "widthCm", "heightCm", "weightKg"] as const).map((key) => (
-              <label key={key} className="space-y-1 text-xs">
-                <span>{t.parcels.staff[key === "lengthCm" ? "length" : key === "widthCm" ? "width" : key === "heightCm" ? "height" : "weight"]}</span>
-                <input
-                  className={input}
-                  inputMode="decimal"
-                  required
-                  value={form[key]}
-                  onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-                />
-              </label>
-            ))}
-          </div>
+          <SizePicker tiers={info.sizes} value={size} onChange={setSize} />
           <p className="text-xs font-semibold" aria-live="polite">
             {!tier ? (
               <span className="text-red-600">{t.parcels.staff.tooLarge}</span>

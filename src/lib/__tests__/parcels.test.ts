@@ -3,6 +3,7 @@ import { DEMO_CODE, DemoBackend } from "../backend/demo";
 import {
   DEFAULT_PARCEL_SIZES,
   liabilityLimit,
+  measuresOf,
   newTrackingNo,
   normalizeTrackingNo,
   PARCEL_PICKUP_DAYS,
@@ -13,6 +14,10 @@ import {
 
 describe("parcel sizes and prices", () => {
   const m = (lengthCm: number, widthCm: number, heightCm: number, weightKg: number) => ({ lengthCm, widthCm, heightCm, weightKg });
+
+  it("turns a chosen size back into that same size, as the server computes it", () => {
+    for (const tier of DEFAULT_PARCEL_SIZES) expect(sizeFor(measuresOf(tier), DEFAULT_PARCEL_SIZES)?.size).toBe(tier.size);
+  });
 
   it("picks the smallest size that fits by dimensions and weight", () => {
     expect(sizeFor(m(25, 15, 10, 1), DEFAULT_PARCEL_SIZES)?.size).toBe("S");

@@ -77,6 +77,14 @@ export function validMeasures(m: ParcelMeasures): boolean {
   return values.every((v) => typeof v === "number" && Number.isFinite(v) && v > 0) && m.weightKg <= PARCEL_MAX_KG;
 }
 
+/**
+ * The measures sent when staff only choose a size: the tier's limits. The server
+ * then finds that same tier (sizeFor), so price and vehicle limits follow the size.
+ */
+export function measuresOf(tier: ParcelSizeTier): ParcelMeasures {
+  return { lengthCm: tier.maxLengthCm, widthCm: tier.maxWidthCm, heightCm: tier.maxHeightCm, weightKg: tier.maxWeightKg };
+}
+
 /** The smallest tier the parcel fits, or null when it is too big or too heavy. */
 export function sizeFor(m: ParcelMeasures, tiers: ParcelSizeTier[]): ParcelSizeTier | null {
   if (!validMeasures(m)) return null;

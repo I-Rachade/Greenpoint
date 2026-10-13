@@ -645,6 +645,8 @@ export const fr = {
       chooseDestination: "Choisir…",
       content: "Contenu (ce qu'il y a dans le colis)",
       declaredValue: "Valeur déclarée en FCFA (facultatif)",
+      size: "Taille du colis",
+      sizeLimits: "jusqu'à {l}×{w}×{h} cm, {kg} kg",
       length: "Longueur (cm)",
       width: "Largeur (cm)",
       height: "Hauteur (cm)",
