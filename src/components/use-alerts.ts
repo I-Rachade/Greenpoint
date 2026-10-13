@@ -13,19 +13,19 @@ import { useI18n } from "./i18n-provider";
  */
 export function useAlerts(): { alerts: Alert[] | null; unread: number; isRead: (id: string) => boolean; markAllRead: () => void } {
   const { t } = useI18n();
-  const { backend, profile } = useApp();
+  const { backend, profile, features } = useApp();
   const now = useNow(60_000);
   const [readIds, markRead] = useReadAlerts();
   const { data } = useLiveQuery(async () => {
     if (!profile) return null;
     const [reservations, parcels, stations, promotion] = await Promise.all([
       backend.myReservations().catch(() => []),
-      backend.myParcels().catch(() => []),
+      features.parcels ? backend.myParcels().catch(() => []) : [],
       backend.listStations().catch(() => []),
       backend.currentPromotion().catch(() => null),
     ]);
     return { reservations, parcels, stations, promotion };
-  }, profile?.id ?? "");
+  }, `${profile?.id ?? ""}:${features.parcels}`);
 
   const alerts = useMemo(() => {
     if (!data) return null;

@@ -486,6 +486,7 @@ export const en: Dictionary = {
   },
   parcels: {
     title: "My parcels",
+    unavailable: "Sending parcels is not available at the moment.",
     intro: "Send a parcel from one poinderecharge station to another. Hand it in at the counter; the recipient picks it up with a code.",
     sent: "Sent",
     received: "For you",
@@ -590,6 +591,13 @@ export const en: Dictionary = {
     admin: {
       title: "Parcels",
       intro: "Parcel depots per station, prices, and every parcel.",
+      module: "Parcel module",
+      moduleOn: "On: shown in the app",
+      moduleOff: "Off: hidden everywhere",
+      turnOn: "Turn on",
+      turnOff: "Turn off",
+      confirmOff: "Turn the parcel module off? Parcels disappear from the app and from station staff, the partner API answers \"not_found\", and reminders and webhooks stop. Parcels already recorded stay visible here.",
+      offHint: "The module is off. Customers, station staff and partner apps see nothing of parcels. You can prepare depots and prices here before turning it back on.",
       kpiOpen: "Under way",
       kpiWaiting: "Waiting for pickup",
       kpiStored: "In storage",

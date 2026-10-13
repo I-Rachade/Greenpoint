@@ -486,6 +486,7 @@ export const fr = {
   },
   parcels: {
     title: "Mes colis",
+    unavailable: "L'envoi de colis n'est pas disponible pour le moment.",
     intro: "Envoyez un colis d'une station poinderecharge à une autre. Déposez-le au comptoir, le destinataire le retire avec son code.",
     sent: "Envoyé",
     received: "Pour vous",
@@ -590,6 +591,13 @@ export const fr = {
     admin: {
       title: "Colis",
       intro: "Dépôts de colis par station, tarifs et suivi de tous les colis.",
+      module: "Module colis",
+      moduleOn: "Activé : visible dans l'app",
+      moduleOff: "Désactivé : caché partout",
+      turnOn: "Activer",
+      turnOff: "Désactiver",
+      confirmOff: "Désactiver le module colis ? Le menu Colis disparaît de l'app et du compte du personnel, l'API partenaires répond « not_found », et les rappels et webhooks s'arrêtent. Les colis déjà enregistrés restent visibles ici.",
+      offHint: "Le module est désactivé. Les clients, le personnel et les apps partenaires ne voient plus rien des colis. Vous pouvez préparer dépôts et tarifs ici avant de le réactiver.",
       kpiOpen: "En cours",
       kpiWaiting: "À retirer",
       kpiStored: "En entrepôt",

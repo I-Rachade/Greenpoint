@@ -12,7 +12,7 @@ import { useAlerts } from "./use-alerts";
 
 export function Header() {
   const { t, locale, setLocale } = useI18n();
-  const { backend, profile } = useApp();
+  const { backend, profile, features } = useApp();
   const pathname = usePathname();
   const walletShown = useWalletShown();
   const { unread } = useAlerts();
@@ -22,7 +22,7 @@ export function Header() {
     { href: "/stations", label: t.ui.tabs.stations, show: true },
     { href: "/favoris", label: t.ui.tabs.favorites, show: true },
     { href: "/reservations", label: t.nav.reservations, show: !!profile },
-    { href: "/colis", label: t.nav.parcels, show: !!profile },
+    { href: "/colis", label: t.nav.parcels, show: !!profile && features.parcels },
     { href: "/portefeuille", label: t.nav.wallet, show: !!profile && walletShown },
     { href: "/compte", label: t.nav.account, show: !!profile },
     { href: "/operator", label: t.nav.operator, show: profile?.role === "operator" || profile?.role === "admin" },

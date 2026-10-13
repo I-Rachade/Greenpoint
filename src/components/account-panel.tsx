@@ -32,7 +32,7 @@ const link = "text-sm text-gp-green-dark underline disabled:opacity-50 dark:text
  */
 export function AccountPanel() {
   const { t } = useI18n();
-  const { backend, profile, ready } = useApp();
+  const { backend, profile, ready, features } = useApp();
   const walletShown = useWalletShown();
   const [deleted, setDeleted] = useState(false);
   const a = t.ui.account;
@@ -83,7 +83,7 @@ export function AccountPanel() {
 
           <MenuGroup title={a.menu}>
             <MenuLink href="/reservations" icon={TicketIcon} label={t.nav.reservations} />
-            <MenuLink href="/colis" icon={BoxIcon} label={t.nav.parcels} />
+            {features.parcels && <MenuLink href="/colis" icon={BoxIcon} label={t.nav.parcels} />}
             {walletShown && <MenuLink href="/portefeuille" icon={WalletIcon} label={t.nav.wallet} />}
             {(profile.role === "operator" || profile.role === "admin") && (
               <MenuLink href="/operator" icon={StoreIcon} label={t.nav.operator} />

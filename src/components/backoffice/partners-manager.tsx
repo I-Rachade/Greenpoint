@@ -7,6 +7,7 @@ import { useI18n } from "@/components/i18n-provider";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { Partner, PartnerEventLog, PartnerInput } from "@/lib/partners";
+import { ParcelsModuleSwitch } from "./parcels-manager";
 import { card, field, Loading, Pill, Table, td, th, useDateTime } from "./shared";
 
 const button = "rounded-full bg-gp-green-dark px-3 py-1 text-xs text-white disabled:opacity-30";
@@ -249,6 +250,7 @@ export function PartnersManager() {
           {t.partners.docs}
         </Link>
       </div>
+      <ParcelsModuleSwitch />
       {message && (
         <p role="status" className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>
           {message.text}

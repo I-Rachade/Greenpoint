@@ -9,6 +9,7 @@ import type {
   UserRole,
 } from "../types";
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
@@ -148,6 +149,12 @@ export interface Backend {
   deleteDevice(externalId: string): Promise<void>;
   /** Switches an outlet on (until full) or off; only where `canSwitch`. */
   switchOutlet(externalId: string, outlet: number, on: boolean): Promise<void>;
+
+  // Modules (see src/lib/features.ts)
+  /** Which modules are switched on. Public. */
+  features(): Promise<Features>;
+  /** Backoffice: switches the parcel module on or off for everyone (admins only). */
+  setParcelsEnabled(enabled: boolean): Promise<void>;
 
   // Parcel depot (see src/lib/parcels.ts)
   /** Stations that take parcels, and the prices. Public. */

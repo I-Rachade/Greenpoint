@@ -1,5 +1,6 @@
 import { handleApi } from "./api";
 import type { Env } from "./env";
+import { parcelsEnabled } from "./features";
 import { corsHeaders } from "./http";
 import { runParcelDeadlines } from "./parcels";
 import { runPartnerDeadlines, runPartnerEvents } from "./partners";
@@ -27,11 +28,17 @@ export default {
     for (const [key, value] of Object.entries(cors)) response.headers.set(key, value);
     return response;
   },
-  /** Crons in wrangler.jsonc: every minute partner webhooks, daily parcel reminders and returns. */
+  /**
+   * Crons in wrangler.jsonc: every minute partner webhooks, daily parcel reminders and returns.
+   * Nothing runs while the parcel module is switched off; it catches up once it is back on.
+   */
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    if (controller.cron === DAILY_CRON) {
-      ctx.waitUntil(runParcelDeadlines(env).then(() => runPartnerDeadlines(env)));
-    }
-    ctx.waitUntil(runPartnerEvents(env));
+    ctx.waitUntil(
+      parcelsEnabled(env).then(async (on) => {
+        if (!on) return;
+        if (controller.cron === DAILY_CRON) await runParcelDeadlines(env).then(() => runPartnerDeadlines(env));
+        await runPartnerEvents(env);
+      }),
+    );
   },
 } satisfies ExportedHandler<Env>;
