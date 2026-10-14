@@ -37,9 +37,8 @@ import {
   type QueueEntry,
   type RideBooking,
   type CourierBooking,
-  type RideVehicleType,
-  RIDE_VEHICLE_TYPES,
-  maxPassengers,
+  type BookableVehicleType,
+  BOOKABLE_VEHICLE_TYPES,
   withAllVehicles,
   jobFits,
   type StationDrivers,
@@ -198,9 +197,9 @@ export function toVehicle(r: { id: string; type: FleetVehicleType; plate: string
 }
 
 /** Ride vehicles we have at least one active vehicle of; customers cannot book the others yet. */
-export async function rideVehicles(db: D1Database): Promise<RideVehicleType[]> {
+export async function bookableVehicles(db: D1Database): Promise<BookableVehicleType[]> {
   const { results } = await db.prepare("select distinct type from fleet_vehicles where is_active = 1").all<{ type: FleetVehicleType }>();
-  return RIDE_VEHICLE_TYPES.filter((type) => results.some((r) => r.type === type));
+  return BOOKABLE_VEHICLE_TYPES.filter((type) => results.some((r) => r.type === type));
 }
 
 // Settings -----------------------------------------------------------------------
@@ -1022,16 +1021,13 @@ function cleanDropoff(input: unknown): { lat: number; lng: number; note: string 
   return { lat: d.lat, lng: d.lng, note: String(d.note ?? "").trim().slice(0, 300) };
 }
 
-/** A customer books a driver to take them (and others, as seats allow) from A to B on the vehicle they picked. */
+/** A customer books a driver to take them (and others, as seats allow) from A to B. Not offered in the app at the moment. */
 export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
   const pickup = cleanHome(input?.pickup);
   const d = cleanDropoff(input?.dropoff);
-  const vehicleType = input?.vehicleType;
-  if (!RIDE_VEHICLE_TYPES.includes(vehicleType)) throw new ApiError("bad_request");
-  if (!(await rideVehicles(c.db)).includes(vehicleType)) throw new ApiError("ride_vehicle_soon");
   const passengers = Number(input?.passengers);
-  if (!Number.isInteger(passengers) || passengers < 1 || passengers > Math.min(maxPassengers(vehicleType), MAX_PASSENGERS)) throw new ApiError("bad_request");
+  if (!Number.isInteger(passengers) || passengers < 1 || passengers > MAX_PASSENGERS) throw new ApiError("bad_request");
   const open = await c.db
     .prepare(`select 1 from delivery_jobs where customer_user_id = ? and kind = 'ride' and status not in ('done', 'failed', 'cancelled')`)
     .bind(user.id)
@@ -1045,8 +1041,8 @@ export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<Delive
     c.db
       .prepare(
         `insert into delivery_jobs (id, kind, status, customer_user_id, customer_name, home_lat, home_lng, home_note, home_phone,
-         dropoff_lat, dropoff_lng, dropoff_note, passengers, vehicle_type, size, distance_m, fare_fcfa, collect_fcfa, created_at)
-         values (?, 'ride', 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'S', ?, ?, ?, ?)`,
+         dropoff_lat, dropoff_lng, dropoff_note, passengers, size, distance_m, fare_fcfa, collect_fcfa, created_at)
+         values (?, 'ride', 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'S', ?, ?, ?, ?)`,
       )
       .bind(
         id,
@@ -1060,19 +1056,21 @@ export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<Delive
         d.lng,
         d.note,
         passengers,
-        vehicleType,
         distance,
         fare,
         fare,
         nowIso(),
       ),
-    c.audit(user.id, "delivery_jobs", "insert", id, { kind: "ride", passengers, vehicle_type: vehicleType, fare_fcfa: fare }, { userId: user.id }),
+    c.audit(user.id, "delivery_jobs", "insert", id, { kind: "ride", passengers, fare_fcfa: fare }, { userId: user.id }),
   ]);
   await dispatch(c);
   return toJob(await loadJob(c.db, id));
 }
 
-/** Express parcel: a driver takes it at the sender's door and brings it straight to the recipient's door. */
+/**
+ * A driver takes a parcel at one place and brings it straight to its destination:
+ * "Envoi express" (any vehicle) or the "Courses" tab (only the vehicle picked there).
+ */
 export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
   const pickup = cleanHome(input?.pickup);
@@ -1084,6 +1082,13 @@ export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<
   if (!content) throw new ApiError("bad_request");
   if (!PARCEL_SIZES.includes(input?.size)) throw new ApiError("bad_request");
   const s = await driverSettings(c.db);
+  const weight = await maxWeight(c.db, input.size);
+  const vehicleType = input.vehicleType ?? null;
+  if (vehicleType) {
+    if (!BOOKABLE_VEHICLE_TYPES.includes(vehicleType)) throw new ApiError("bad_request");
+    if (!(await bookableVehicles(c.db)).includes(vehicleType)) throw new ApiError("vehicle_soon");
+    if (!vehicleFits(vehicleType, input.size, weight, s)) throw new ApiError("parcel_too_large");
+  }
   const distance = Math.round(distanceMeters(pickup, d));
   const fare = fareFor(distance, false, s);
   const id = uuid();
@@ -1091,8 +1096,8 @@ export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<
     c.db
       .prepare(
         `insert into delivery_jobs (id, kind, status, customer_user_id, customer_name, home_lat, home_lng, home_note, home_phone,
-         dropoff_lat, dropoff_lng, dropoff_note, size, weight_kg, content, recipient_phone, recipient_name, distance_m, fare_fcfa, collect_fcfa, created_at)
-         values (?, 'courier', 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         dropoff_lat, dropoff_lng, dropoff_note, size, weight_kg, content, recipient_phone, recipient_name, vehicle_type, distance_m, fare_fcfa, collect_fcfa, created_at)
+         values (?, 'courier', 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         id,
@@ -1106,16 +1111,17 @@ export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<
         d.lng,
         d.note,
         input.size,
-        await maxWeight(c.db, input.size),
+        weight,
         content,
         recipientPhone,
         cleanName(input.recipientName),
+        vehicleType,
         distance,
         fare,
         fare,
         nowIso(),
       ),
-    c.audit(user.id, "delivery_jobs", "insert", id, { kind: "courier", size: input.size, fare_fcfa: fare }, { userId: user.id }),
+    c.audit(user.id, "delivery_jobs", "insert", id, { kind: "courier", size: input.size, vehicle_type: vehicleType, fare_fcfa: fare }, { userId: user.id }),
   ]);
   await dispatch(c);
   return toJob(await loadJob(c.db, id));

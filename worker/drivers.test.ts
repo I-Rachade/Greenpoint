@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_DRIVER_SETTINGS, driverBadgePayload, driverEarning, fareFor, type FleetVehicleType, type RideVehicleType } from "../src/lib/drivers";
+import { DEFAULT_DRIVER_SETTINGS, driverBadgePayload, driverEarning, fareFor, type FleetVehicleType } from "../src/lib/drivers";
 import { distanceMeters } from "../src/lib/geo";
 import type { Profile } from "../src/lib/types";
 import {
@@ -367,22 +367,15 @@ describe("pickup at home", () => {
 
 describe("ride", () => {
   const DROPOFF = { lat: 6.2, lng: 1.19, note: "Marché d'Agoè" };
-  /** A test setup with a spare moto and tricycle in the fleet, so those rides can be booked. */
-  const setupWithFleet = async () => {
-    const t = setup();
-    await saveFleetVehicle(t.admin, null, { type: "moto", plate: "TG-SPARE-M", isActive: true });
-    await saveFleetVehicle(t.admin, null, { type: "tricycle", plate: "TG-SPARE-T", isActive: true });
-    return t;
-  };
 
   it("takes the customer from A to B and books the fare as cash collected", async () => {
-    const t = await setupWithFleet();
-    const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1, vehicleType: "moto" });
+    const t = setup();
+    const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1 });
     expect(booking).toMatchObject({ kind: "ride", status: "open", passengers: 1, dropoff: DROPOFF });
     expect(booking.fareFcfa).toBe(fareFor(distanceMeters(HOME, DROPOFF), false, DEFAULT_DRIVER_SETTINGS));
     expect(booking.collectFcfa).toBe(booking.fareFcfa);
     // One open ride at a time.
-    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1, vehicleType: "moto" })).rejects.toMatchObject({ code: "ride_open" });
+    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1 })).rejects.toMatchObject({ code: "ride_open" });
 
     const driver = await approvedDriver(t, "d1", "moto");
     await joinQueue(driver.me, B.id, B);
@@ -404,12 +397,12 @@ describe("ride", () => {
     expect(home.driver?.balanceFcfa).toBe(job.fareFcfa - driverEarning(job.fareFcfa, DEFAULT_DRIVER_SETTINGS));
     expect((await myJobs(t.sender))[0]).toMatchObject({ kind: "ride", status: "done" });
     // A new ride can be booked once the last one is over.
-    expect((await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1, vehicleType: "moto" })).status).toBe("open");
+    expect((await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1 })).status).toBe("open");
   });
 
   it("only offers rides to vehicles with a seat for every passenger", async () => {
-    const t = await setupWithFleet();
-    const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 3, vehicleType: "tricycle" });
+    const t = setup();
+    const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 3 });
     const moto = await approvedDriver(t, "d1", "moto");
     await joinQueue(moto.me, B.id, B);
     expect((await driverHome(moto.me)).job).toBeNull();
@@ -418,31 +411,11 @@ describe("ride", () => {
     expect((await driverHome(tricycle.me)).job?.id).toBe(booking.id);
   });
 
-  it("only offers rides to the kind of vehicle the customer picked", async () => {
-    const t = await setupWithFleet();
-    // No active car in the fleet yet: the car shows as "soon" and cannot be booked.
-    expect((await parcelInfo(t.sender)).rideVehicles).toEqual(["moto", "tricycle"]);
-    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1, vehicleType: "car" })).rejects.toMatchObject({ code: "ride_vehicle_soon" });
-    const car = await approvedDriver(t, "d2", "car");
-    expect((await parcelInfo(t.sender)).rideVehicles).toEqual(["moto", "tricycle", "car"]);
-    const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 4, vehicleType: "car" });
-    expect(booking.vehicleType).toBe("car");
-    const tricycle = await approvedDriver(t, "d1", "tricycle");
-    await joinQueue(tricycle.me, B.id, B);
-    expect((await driverHome(tricycle.me)).job).toBeNull();
-    await joinQueue(car.me, A.id, A);
-    expect((await driverHome(car.me)).job).toMatchObject({ id: booking.id, passengers: 4 });
-  });
-
   it("refuses bad bookings", async () => {
-    const t = await setupWithFleet();
-    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 4, vehicleType: "tricycle" })).rejects.toMatchObject({ code: "bad_request" });
-    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 2, vehicleType: "moto" })).rejects.toMatchObject({ code: "bad_request" });
-    await expect(
-      bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1, vehicleType: "cargo_tricycle" as RideVehicleType }),
-    ).rejects.toMatchObject({ code: "bad_request" });
-    await expect(bookRide(t.sender, { pickup: HOME, dropoff: { lat: 7.5, lng: 1.1, note: "" }, passengers: 1, vehicleType: "moto" })).rejects.toMatchObject({ code: "outside_area" });
-    await expect(bookRide(t.sender, { pickup: { ...HOME, phone: "" }, dropoff: DROPOFF, passengers: 1, vehicleType: "moto" })).rejects.toMatchObject({
+    const t = setup();
+    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 5 })).rejects.toMatchObject({ code: "bad_request" });
+    await expect(bookRide(t.sender, { pickup: HOME, dropoff: { lat: 7.5, lng: 1.1, note: "" }, passengers: 1 })).rejects.toMatchObject({ code: "outside_area" });
+    await expect(bookRide(t.sender, { pickup: { ...HOME, phone: "" }, dropoff: DROPOFF, passengers: 1 })).rejects.toMatchObject({
       code: "phone_not_allowed",
     });
   });
@@ -487,6 +460,24 @@ describe("express parcel door to door", () => {
     await expect(bookCourier(t.sender, { ...booking, dropoff: { ...DROPOFF, note: " " } })).rejects.toMatchObject({ code: "bad_request" });
     await expect(bookCourier(t.sender, { ...booking, content: "" })).rejects.toMatchObject({ code: "bad_request" });
     await expect(bookCourier(t.sender, { ...booking, dropoff: { lat: 7.5, lng: 1.1, note: "Loin" } })).rejects.toMatchObject({ code: "outside_area" });
+  });
+
+  it("ordered on the Courses tab, only goes to the vehicle picked there", async () => {
+    const t = setup();
+    // No active cargo tricycle yet: it shows as "soon" and cannot be ordered.
+    expect((await parcelInfo(t.sender)).bookableVehicles).toEqual([]);
+    await expect(bookCourier(t.sender, { ...booking, vehicleType: "cargo_tricycle" })).rejects.toMatchObject({ code: "vehicle_soon" });
+    const moto = await approvedDriver(t, "d1", "moto");
+    const cargo = await approvedDriver(t, "d2", "cargo_tricycle");
+    expect((await parcelInfo(t.sender)).bookableVehicles).toEqual(["moto", "cargo_tricycle"]);
+    // Too big for a moto.
+    await expect(bookCourier(t.sender, { ...booking, size: "XL", vehicleType: "moto" })).rejects.toMatchObject({ code: "parcel_too_large" });
+    const job = await bookCourier(t.sender, { ...booking, vehicleType: "cargo_tricycle" });
+    expect(job.vehicleType).toBe("cargo_tricycle");
+    await joinQueue(moto.me, A.id, A);
+    expect((await driverHome(moto.me)).job).toBeNull();
+    await joinQueue(cargo.me, B.id, B);
+    expect((await driverHome(cargo.me)).job?.id).toBe(job.id);
   });
 });
 

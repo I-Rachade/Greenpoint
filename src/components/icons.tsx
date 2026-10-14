@@ -295,12 +295,12 @@ export const QueueIcon = (p: IconProps) => (
   </Svg>
 );
 
-/** A passenger tricycle: one wheel in front, two behind, a roof. */
-export const TricycleIcon = (p: IconProps) => (
+/** A cargo tricycle: one wheel in front, a loading box over the two behind. */
+export const CargoTricycleIcon = (p: IconProps) => (
   <Svg {...p}>
     <circle cx="5" cy="17.5" r="2.2" />
-    <circle cx="18.5" cy="17.5" r="2.2" />
-    <path d="M7.2 17.5h9M10 17.5 12 10h8.5v7.5M12 6.5h8.5v3.5M8 10.5 5 17.5M6.5 10.5h3" />
+    <circle cx="17.5" cy="17.5" r="2.2" />
+    <path d="M7.2 17.5h8.1M11 7.5h10v7H11zM11 14.5 9 17.5M5 17.5 8 9.5h3M6.5 9.5h-2" />
   </Svg>
 );
 

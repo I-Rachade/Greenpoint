@@ -78,8 +78,8 @@ import {
   vehicleFits,
   jobFits,
   withAllVehicles,
-  RIDE_VEHICLE_TYPES,
-  maxPassengers,
+  BOOKABLE_VEHICLE_TYPES,
+  MAX_PASSENGERS,
   type AdminDrivers,
   type DeliveryJob,
   type Driver,
@@ -97,7 +97,7 @@ import {
   type PickupBooking,
   type RideBooking,
   type CourierBooking,
-  type RideVehicleType,
+  type BookableVehicleType,
   type DropoffPoint,
   type StationDrivers,
 } from "../drivers";
@@ -1363,13 +1363,13 @@ export class DemoBackend implements Backend {
       depots: (state.parcelDepots ?? seedDepots()).filter((d) => this.activeDepot(state, d.stationId)),
       sizes: state.parcelSizes ?? DEFAULT_PARCEL_SIZES,
       driverSettings: this.settingsOf(state),
-      rideVehicles: this.rideVehiclesOf(state),
+      bookableVehicles: this.bookableVehiclesOf(state),
     };
   }
 
-  private rideVehiclesOf(state: DemoState): RideVehicleType[] {
+  private bookableVehiclesOf(state: DemoState): BookableVehicleType[] {
     const fleet = (state.fleet ?? seedFleet()).filter((v) => v.isActive);
-    return RIDE_VEHICLE_TYPES.filter((type) => fleet.some((v) => v.type === type));
+    return BOOKABLE_VEHICLE_TYPES.filter((type) => fleet.some((v) => v.type === type));
   }
 
   async myParcels(): Promise<Parcel[]> {
@@ -2193,9 +2193,7 @@ export class DemoBackend implements Backend {
     const profile = this.requireProfile(state);
     const pickup = this.cleanHome(input.pickup);
     const d = this.cleanDropoff(input.dropoff);
-    if (!RIDE_VEHICLE_TYPES.includes(input.vehicleType)) throw new BackendError("unknown", "vehicle");
-    if (!this.rideVehiclesOf(state).includes(input.vehicleType)) throw new BackendError("ride_vehicle_soon");
-    if (!Number.isInteger(input.passengers) || input.passengers < 1 || input.passengers > maxPassengers(input.vehicleType)) throw new BackendError("unknown", "passengers");
+    if (!Number.isInteger(input.passengers) || input.passengers < 1 || input.passengers > MAX_PASSENGERS) throw new BackendError("unknown", "passengers");
     const done: JobStatus[] = ["done", "failed", "cancelled"];
     if ((state.jobs ?? []).some((j) => j.kind === "ride" && j.customerUserId === profile.id && !done.includes(j.status))) throw new BackendError("ride_open");
     const distanceM = Math.round(distanceMeters(pickup, d));
@@ -2205,7 +2203,6 @@ export class DemoBackend implements Backend {
       home: pickup,
       dropoff: d,
       passengers: input.passengers,
-      vehicleType: input.vehicleType,
       size: "S",
       distanceM,
       fareFcfa: fare,
@@ -2218,7 +2215,7 @@ export class DemoBackend implements Backend {
       action: "insert",
       rowId: job.id,
       userId: profile.id,
-      changes: { kind: "ride", passengers: input.passengers, vehicle_type: input.vehicleType, fare_fcfa: fare },
+      changes: { kind: "ride", passengers: input.passengers, fare_fcfa: fare },
     });
     this.dispatch();
     const saved = this.load();
@@ -2243,10 +2240,17 @@ export class DemoBackend implements Backend {
     if (!content) throw new BackendError("unknown", "content missing");
     const tier = (state.parcelSizes ?? DEFAULT_PARCEL_SIZES).find((t) => t.size === input.size);
     if (!tier) throw new BackendError("parcel_too_large");
+    const vehicleType = input.vehicleType ?? null;
+    if (vehicleType) {
+      if (!BOOKABLE_VEHICLE_TYPES.includes(vehicleType)) throw new BackendError("unknown", "vehicle");
+      if (!this.bookableVehiclesOf(state).includes(vehicleType)) throw new BackendError("vehicle_soon");
+      if (!vehicleFits(vehicleType, tier.size, tier.maxWeightKg, this.settingsOf(state))) throw new BackendError("parcel_too_large");
+    }
     const distanceM = Math.round(distanceMeters(pickup, dropoff));
     const fare = fareFor(distanceM, false, this.settingsOf(state));
     const job = this.newJob({
       kind: "courier",
+      vehicleType,
       home: pickup,
       dropoff,
       size: tier.size,
@@ -2264,7 +2268,7 @@ export class DemoBackend implements Backend {
       action: "insert",
       rowId: job.id,
       userId: profile.id,
-      changes: { kind: "courier", size: tier.size, fare_fcfa: fare },
+      changes: { kind: "courier", size: tier.size, vehicle_type: vehicleType, fare_fcfa: fare },
     });
     this.dispatch();
     const saved = this.load();

@@ -6,12 +6,12 @@ import { useDateTime } from "@/components/backoffice/shared";
 import {
   fareFor,
   inServiceArea,
-  maxPassengers,
+  vehicleFits,
   OPEN_JOB_STATUSES,
   type DeliveryJob,
   type DropoffPoint,
   type HomePoint,
-  type RideVehicleType,
+  type BookableVehicleType,
 } from "@/lib/drivers";
 import { distanceMeters, type LatLng } from "@/lib/geo";
 import { useErrorMessage, useNow } from "@/lib/hooks";
@@ -216,76 +216,12 @@ function DropoffFields({ value, onChange, title, hint, noteLabel }: { value: Dro
 
 const pinned = (p: { lat: number; lng: number }) => p.lat !== 0 || p.lng !== 0;
 
-/** The customer books a driver with the vehicle they picked to take them from A to B, paid in cash on arrival. */
-export function BookRide({ info, vehicle }: { info: ParcelInfo; vehicle: RideVehicleType }) {
-  const { t } = useI18n();
-  const { backend } = useApp();
-  const errorMessage = useErrorMessage();
-  const [pickup, setPickup] = useState(useEmptyHome());
-  const [dropoff, setDropoff] = useState<DropoffPoint>({ lat: 0, lng: 0, note: "" });
-  const [passengers, setPassengers] = useState(1);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const seats = maxPassengers(vehicle);
-  const ready = pinned(pickup) && pinned(dropoff) && inServiceArea(pickup) && inServiceArea(dropoff);
-  const fare = pinned(pickup) && pinned(dropoff) ? fareFor(distanceMeters(pickup, dropoff), false, info.driverSettings) : null;
-  const label = "space-y-1 text-sm";
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setError("");
-    setNotice("");
-    setBusy(true);
-    try {
-      await backend.bookRide({ pickup, dropoff, passengers: Math.min(passengers, seats), vehicleType: vehicle });
-      setNotice(t.drivers.customer.rideBooked);
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <section className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">
-      <h2 className="font-semibold">{t.drivers.customer.rideTitle}</h2>
-      <form onSubmit={submit} className="mt-3 space-y-3">
-        <p className="text-zinc-600 dark:text-zinc-400">{t.drivers.customer.rideIntro}</p>
-        <p className="font-medium">{format(t.drivers.customer.rideVehicle, { v: t.drivers.vehicle[vehicle] })}</p>
-        <HomeFields value={pickup} onChange={setPickup} title={t.drivers.customer.rideFrom} />
-        <DropoffFields
-          value={dropoff}
-          onChange={setDropoff}
-          title={t.drivers.customer.rideTo}
-          hint={t.drivers.customer.rideToHint}
-          noteLabel={t.drivers.customer.rideToNote}
-        />
-        {seats > 1 && (
-          <label className={label}>
-            <span>{t.drivers.customer.passengers}</span>
-            <select className={input} value={Math.min(passengers, seats)} onChange={(e) => setPassengers(Number(e.target.value))}>
-              {Array.from({ length: seats }, (_, i) => i + 1).map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-            <span className="block text-xs text-zinc-500">{format(t.drivers.customer.passengersHint, { n: seats })}</span>
-          </label>
-        )}
-        {fare !== null && <p className="font-semibold">{format(t.drivers.customer.rideEstimate, { fare })}</p>}
-        <button type="submit" className={primary} disabled={busy || !ready}>
-          {t.drivers.customer.rideBook}
-        </button>
-        <Notice error={error} notice={notice} />
-      </form>
-    </section>
-  );
-}
-
-/** Express parcel: a driver takes it at the sender's door and brings it straight to the recipient's door. */
-export function BookCourier({ info }: { info: ParcelInfo }) {
+/**
+ * A driver takes a parcel at one place and brings it straight to its destination.
+ * Without `vehicle`: "Envoi express" on the Colis tab, any vehicle that fits.
+ * With `vehicle`: the "Courses" tab, only that kind of vehicle and the sizes it carries.
+ */
+export function BookCourier({ info, vehicle }: { info: ParcelInfo; vehicle?: BookableVehicleType }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
@@ -298,6 +234,10 @@ export function BookCourier({ info }: { info: ParcelInfo }) {
   const set = (key: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const ready = pinned(pickup) && pinned(dropoff) && inServiceArea(pickup) && inServiceArea(dropoff);
   const fare = pinned(pickup) && pinned(dropoff) ? fareFor(distanceMeters(pickup, dropoff), false, info.driverSettings) : null;
+  const sizes = PARCEL_SIZES.filter((size) => {
+    const tier = info.sizes.find((x) => x.size === size);
+    return !vehicle || (tier && vehicleFits(vehicle, size, tier.maxWeightKg, info.driverSettings));
+  });
   const label = "space-y-1 text-sm";
 
   async function submit(e: FormEvent) {
@@ -307,6 +247,7 @@ export function BookCourier({ info }: { info: ParcelInfo }) {
     setBusy(true);
     try {
       await backend.bookCourier({
+        vehicleType: vehicle,
         pickup,
         dropoff,
         recipientPhone: form.recipientPhone,
@@ -325,9 +266,10 @@ export function BookCourier({ info }: { info: ParcelInfo }) {
 
   return (
     <section className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">
-      <h2 className="font-semibold">{t.drivers.customer.courierTitle}</h2>
+      <h2 className="font-semibold">{vehicle ? t.drivers.customer.orderTitle : t.drivers.customer.courierTitle}</h2>
       <form onSubmit={submit} className="mt-3 space-y-3">
-        <p className="text-zinc-600 dark:text-zinc-400">{t.drivers.customer.courierIntro}</p>
+        <p className="text-zinc-600 dark:text-zinc-400">{vehicle ? t.drivers.customer.orderIntro : t.drivers.customer.courierIntro}</p>
+        {vehicle && <p className="font-medium">{format(t.drivers.customer.orderVehicle, { v: t.ui.trips[vehicle] })}</p>}
         <HomeFields value={pickup} onChange={setPickup} title={t.drivers.customer.courierFrom} />
         <DropoffFields
           value={dropoff}
@@ -353,7 +295,7 @@ export function BookCourier({ info }: { info: ParcelInfo }) {
         <label className={label}>
           <span>{t.drivers.customer.size}</span>
           <select className={input} value={form.size} onChange={set("size")}>
-            {PARCEL_SIZES.map((size) => {
+            {sizes.map((size) => {
               const s = info.sizes.find((x) => x.size === size);
               return (
                 <option key={size} value={size}>

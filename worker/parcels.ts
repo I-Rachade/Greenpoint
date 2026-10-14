@@ -26,7 +26,7 @@ import {
 import type { DeliveryStatus } from "../src/lib/drivers";
 import type { Profile } from "../src/lib/types";
 import type { Env } from "./env";
-import { cancelParcelJob, createExpressJob, driverSettings, rideVehicles } from "./drivers";
+import { cancelParcelJob, createExpressJob, driverSettings, bookableVehicles } from "./drivers";
 import { ApiError, nowIso, randomDigits, uuid } from "./http";
 import { roleToDb } from "./roles";
 import { notifyPerson, type Message } from "./notify";
@@ -156,7 +156,7 @@ export async function sizes(db: D1Database): Promise<ParcelSizeTier[]> {
 
 /** Public: active depots and prices. */
 export async function parcelInfo(c: ParcelCtx): Promise<ParcelInfo> {
-  const [depots, tiers, driverSettingsValue, rideVehiclesValue] = await Promise.all([
+  const [depots, tiers, driverSettingsValue, bookableVehiclesValue] = await Promise.all([
     c.db
       .prepare(
         "select d.* from parcel_depots d join stations s on s.id = d.station_id where d.is_active = 1 and s.is_active = 1",
@@ -164,9 +164,9 @@ export async function parcelInfo(c: ParcelCtx): Promise<ParcelInfo> {
       .all<DepotRow>(),
     sizes(c.db),
     driverSettings(c.db),
-    rideVehicles(c.db),
+    bookableVehicles(c.db),
   ]);
-  return { depots: depots.results.map(toDepot), sizes: tiers, driverSettings: driverSettingsValue, rideVehicles: rideVehiclesValue };
+  return { depots: depots.results.map(toDepot), sizes: tiers, driverSettings: driverSettingsValue, bookableVehicles: bookableVehiclesValue };
 }
 
 export interface StationInfo {

@@ -2,8 +2,9 @@
 -- - fleet_vehicles.type and drivers.wanted_type gain 'car' (up to four passengers).
 -- - delivery_jobs.kind gains 'courier': a parcel from the sender's door (home_*)
 --   straight to the recipient's door (dropoff_*), paid in cash to the driver.
--- - delivery_jobs gains vehicle_type: the kind of vehicle a ride was booked for.
--- Code: worker/drivers.ts (bookRide, bookCourier).
+-- - delivery_jobs gains vehicle_type: the kind of vehicle a courier was ordered with
+--   on the "Courses" tab (null: any vehicle that fits).
+-- Code: worker/drivers.ts (bookCourier).
 --
 -- SQLite cannot change a check, so the three tables are rebuilt.
 -- delivery_jobs: no table has a foreign key to it (see 0018), so dropping it cascades nowhere.

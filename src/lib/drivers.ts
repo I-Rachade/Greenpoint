@@ -13,11 +13,11 @@ import { PARCEL_SIZES, type ParcelMeasures, type ParcelSize } from "./parcels";
  */
 export type FleetVehicleType = "moto" | "tricycle" | "cargo_tricycle" | "car";
 export const FLEET_VEHICLE_TYPES: FleetVehicleType[] = ["moto", "tricycle", "cargo_tricycle", "car"];
-/** What a customer can pick for a ride. */
-export type RideVehicleType = "moto" | "tricycle" | "car";
-export const RIDE_VEHICLE_TYPES: RideVehicleType[] = ["moto", "tricycle", "car"];
-/** The ride pages, one per vehicle a customer can pick: /courses/moto, /courses/tricycle, /courses/vehicule. */
-export const RIDE_SLUGS: Record<string, RideVehicleType> = { moto: "moto", tricycle: "tricycle", vehicule: "car" };
+/** What a customer can pick on the "Courses" tab to have a parcel carried. */
+export type BookableVehicleType = "moto" | "cargo_tricycle";
+export const BOOKABLE_VEHICLE_TYPES: BookableVehicleType[] = ["moto", "cargo_tricycle"];
+/** The "Courses" pages, one per vehicle a customer can pick: /courses/moto, /courses/tricycle-bagage. */
+export const VEHICLE_SLUGS: Record<string, BookableVehicleType> = { moto: "moto", "tricycle-bagage": "cargo_tricycle" };
 
 export type DriverStatus =
   | "pending" // applied in the app, waiting for the admin
@@ -139,14 +139,18 @@ export function vehicleFits(type: FleetVehicleType, size: ParcelSize, weightKg: 
   return PARCEL_SIZES.indexOf(size) <= PARCEL_SIZES.indexOf(limit.maxSize) && weightKg <= limit.maxWeightKg;
 }
 
-/** True when a vehicle of this type can take the trip: seats (and the type asked for) for rides, size and weight otherwise. */
+/**
+ * True when a vehicle of this type can take the trip: the type the customer
+ * picked, if any, and seats for rides, size and weight otherwise.
+ */
 export function jobFits(
   job: { kind: JobKind; vehicleType: FleetVehicleType | null; passengers: number | null; size: ParcelSize },
   type: FleetVehicleType,
   weightKg: number,
   s: DriverSettings,
 ): boolean {
-  if (job.kind === "ride") return (!job.vehicleType || type === job.vehicleType) && vehicleSeats(type, job.passengers ?? 1);
+  if (job.vehicleType && type !== job.vehicleType) return false;
+  if (job.kind === "ride") return vehicleSeats(type, job.passengers ?? 1);
   return vehicleFits(type, job.size, weightKg, s);
 }
 
@@ -370,15 +374,12 @@ export interface RideBooking {
   pickup: HomePoint;
   dropoff: DropoffPoint;
   passengers: number;
-  vehicleType: RideVehicleType;
 }
 
-/** Most passengers a ride on this kind of vehicle can book. */
-export function maxPassengers(type: RideVehicleType): number {
-  return Math.min(RIDE_SEATS[type], MAX_PASSENGERS);
-}
-
-/** Express parcel: picked up at the sender's door and brought straight to the recipient's door. */
+/**
+ * A parcel picked up at one place (A) and brought straight to its destination (B).
+ * Booked as "Envoi express" (any vehicle) or on the "Courses" tab (the vehicle picked there).
+ */
 export interface CourierBooking {
   pickup: HomePoint;
   dropoff: DropoffPoint;
@@ -386,6 +387,7 @@ export interface CourierBooking {
   recipientName?: string;
   content: string;
   size: ParcelSize;
+  vehicleType?: BookableVehicleType;
 }
 
 export type LedgerKind = "collected" | "earning" | "settlement";

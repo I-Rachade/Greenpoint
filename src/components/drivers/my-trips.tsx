@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import type { ComponentType } from "react";
-import type { RideVehicleType } from "@/lib/drivers";
+import { DEFAULT_DRIVER_SETTINGS, type BookableVehicleType } from "@/lib/drivers";
+import { format } from "@/lib/i18n/format";
 import { useLiveQuery } from "@/lib/hooks";
 import { useApp } from "../app-provider";
-import { BackIcon, CarIcon, ScooterIcon, TricycleIcon } from "../icons";
+import { BackIcon, CargoTricycleIcon, ScooterIcon } from "../icons";
 import { useI18n } from "../i18n-provider";
-import { BookRide, MyJobs } from "./customer-jobs";
+import { BookCourier, MyJobs } from "./customer-jobs";
 
 /** A big tile that leads to one way of getting or sending something; greyed out with `soon` until it is available. */
 export function ChoiceTile({
@@ -58,31 +59,38 @@ export function BackTo({ href }: { href: string }) {
   );
 }
 
-/** "Courses" tab: pick a vehicle, then book the ride on its page; your rides below. */
+/** "Courses" tab: pick a vehicle, then order the delivery on its page; your deliveries below. */
 export function MyTrips() {
   const { t } = useI18n();
   const { backend } = useApp();
   const { data } = useLiveQuery(() => Promise.all([backend.myJobs(), backend.listStations(), backend.parcelInfo()]));
-  const rides = data?.[0].filter((j) => j.kind === "ride") ?? [];
+  const orders = data?.[0].filter((j) => j.kind === "courier") ?? [];
+  const settings = data?.[2].driverSettings ?? DEFAULT_DRIVER_SETTINGS;
   // Until we know, every vehicle shows as available.
-  const soon = (type: RideVehicleType) => (data && !data[2].rideVehicles.includes(type) ? t.ui.trips.soon : undefined);
+  const soon = (type: BookableVehicleType) => (data && !data[2].bookableVehicles.includes(type) ? t.ui.trips.soon : undefined);
+  const hint = (type: BookableVehicleType) => {
+    const limit = settings.vehicles.find((v) => v.type === type);
+    return limit ? format(t.ui.trips.upTo, { size: limit.maxSize, kg: limit.maxWeightKg }) : "";
+  };
+  const tile = (type: BookableVehicleType, slug: string, icon: ComponentType<{ size?: number }>) => (
+    <ChoiceTile href={`/courses/${slug}`} icon={icon} label={t.ui.trips[type]} hint={hint(type)} soon={soon(type)} />
+  );
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
       <h1 className="text-2xl font-semibold">{t.ui.trips.title}</h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.ui.trips.intro}</p>
-      <div className="grid grid-cols-3 gap-3">
-        <ChoiceTile href="/courses/moto" icon={ScooterIcon} label={t.ui.trips.moto} hint={t.ui.trips.motoHint} soon={soon("moto")} />
-        <ChoiceTile href="/courses/tricycle" icon={TricycleIcon} label={t.ui.trips.tricycle} hint={t.ui.trips.tricycleHint} soon={soon("tricycle")} />
-        <ChoiceTile href="/courses/vehicule" icon={CarIcon} label={t.ui.trips.car} hint={t.ui.trips.carHint} soon={soon("car")} />
+      <div className="grid grid-cols-2 gap-3">
+        {tile("moto", "moto", ScooterIcon)}
+        {tile("cargo_tricycle", "tricycle-bagage", CargoTricycleIcon)}
       </div>
-      {data && <MyJobs jobs={rides} stations={data[1]} title={t.ui.trips.mine} />}
+      {data && <MyJobs jobs={orders} stations={data[1]} title={t.ui.trips.mine} />}
     </div>
   );
 }
 
-/** Books a ride on the vehicle picked on the "Courses" tab. */
-export function RidePage({ vehicle }: { vehicle: RideVehicleType }) {
+/** Orders a delivery with the vehicle picked on the "Courses" tab. */
+export function OrderPage({ vehicle }: { vehicle: BookableVehicleType }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const { data: info } = useLiveQuery(() => backend.parcelInfo());
@@ -91,10 +99,10 @@ export function RidePage({ vehicle }: { vehicle: RideVehicleType }) {
       <BackTo href="/courses" />
       {!info ? (
         <p className="text-sm text-zinc-500">{t.loading}</p>
-      ) : info.rideVehicles.includes(vehicle) ? (
-        <BookRide info={info} vehicle={vehicle} />
+      ) : info.bookableVehicles.includes(vehicle) ? (
+        <BookCourier info={info} vehicle={vehicle} />
       ) : (
-        <p className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">{t.errors.ride_vehicle_soon}</p>
+        <p className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">{t.errors.vehicle_soon}</p>
       )}
     </div>
   );

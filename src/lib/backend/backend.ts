@@ -102,7 +102,7 @@ export type BackendErrorCode =
   | "wait_longer"
   | "photo_missing"
   | "ride_open"
-  | "ride_vehicle_soon"
+  | "vehicle_soon"
   | "vehicle_unavailable"
   | "vehicle_too_small"
   | "has_other_role"
