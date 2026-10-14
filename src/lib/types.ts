@@ -28,6 +28,8 @@ export interface Station {
   batteryCapacity: number;
   openingHours: string;
   phone: string | null;
+  /** Charges with solar power: only here do swaps and charges earn greenpoints. */
+  isSolar: boolean;
   /** Photo URLs set in the backoffice; the first is the cover. Missing on data saved before photos existed. */
   photos?: string[];
   /** Places to rest and services at the station (see station-extras.ts). */
@@ -119,6 +121,8 @@ export interface StationInput {
   batteryCapacity: number;
   openingHours: string;
   phone: string | null;
+  /** Charges with solar power (greenpoints are only earned here). Left out: unchanged, false for a new station. */
+  isSolar?: boolean;
   /** Parcel counter and lockers, saved with the station. Left out: unchanged. */
   parcelDepot?: ParcelDepotInput;
   /** Ids of the battery types the swap point swaps, saved with the station. Left out: unchanged. */

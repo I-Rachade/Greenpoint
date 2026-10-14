@@ -22,10 +22,11 @@ import { AMENITIES, stationPhotos } from "@/lib/station-extras";
 import { RESERVATION_MINUTES, type ReservationType, type StationView } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
-import { BackIcon, BatteryIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, ShareIcon, StoreIcon } from "./icons";
+import { BackIcon, BatteryIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, ShareIcon, StoreIcon, SunIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { EvBadge, FavoriteButton, RestBadge } from "./station-card";
 import { AMENITY_ICONS, OpenBadge, RatingInline, useHoursLabel } from "./station-look";
+import { SolarBadge } from "./solar-badge";
 import { StationReviews } from "./station-reviews";
 
 const StationMap = dynamic(() => import("./station-map").then((m) => m.StationMap), { ssr: false });
@@ -260,6 +261,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
         <div className="-mt-3 flex flex-wrap items-center gap-1.5 text-xs">
           <RestBadge station={station} />
           <EvBadge station={station} />
+          {station.isSolar && <SolarBadge />}
           <span className="rounded-full bg-gp-green/10 px-2.5 py-0.5 font-medium text-gp-green-dark dark:text-gp-green">{t.kinds[station.kind]}</span>
           {station.vehicleTypes.map((v) => (
             <span key={v} className="rounded-full bg-gp-border/60 px-2.5 py-0.5 dark:bg-white/10">
@@ -267,6 +269,13 @@ export function StationDetail({ station, distance, onChanged }: Props) {
             </span>
           ))}
         </div>
+
+        {station.isSolar && station.kind !== "parcel" && (
+          <p className="-mt-3 flex items-start gap-2 rounded-2xl bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-400/10 dark:text-amber-200">
+            <SunIcon size={16} className="mt-0.5 shrink-0" />
+            {t.station.solarHint}
+          </p>
+        )}
 
         <Section title={L.amenities.title}>
           {amenities.length === 0 ? (

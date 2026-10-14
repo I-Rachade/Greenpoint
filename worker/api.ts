@@ -177,6 +177,8 @@ interface StationRow {
   reserved_batteries: number;
   /** Missing before migration 0013. */
   has_battery?: number;
+  /** Missing before migration 0019. */
+  is_solar?: number;
   depot_active: number | null;
   depot_counter: number | null;
   depot_lockers: number | null;
@@ -235,6 +237,7 @@ function toStationView(r: StationRow): StationView & { isActive: boolean } {
     batteryCapacity: r.battery_capacity,
     openingHours: r.opening_hours,
     phone: r.phone,
+    isSolar: !!r.is_solar,
     isActive: !!r.is_active,
     status: {
       stationId: r.id,
@@ -665,11 +668,12 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
   const types = input.batteryTypeIds
     ? await stationBatteryTypeStatements(c.db, stationId, input.batteryTypeIds, offersSwap(input.kind))
     : null;
-  // Photos and amenities: left out of the input means unchanged.
+  // Photos, amenities and the solar mark: left out of the input means unchanged (a new station is not solar).
   const extras = {
     // Data URLs are for the demo only; real photos live in R2.
     ...(input.photos ? { photos: JSON.stringify(cleanPhotos(input.photos).filter((u) => !u.startsWith("data:"))) } : {}),
     ...(input.amenities ? { amenities: JSON.stringify(cleanAmenities(input.amenities)) } : {}),
+    ...(input.isSolar !== undefined ? { is_solar: input.isSolar ? 1 : 0 } : {}),
   };
   const extraStatements = Object.entries(extras).map(([column, value]) =>
     c.db.prepare(`update stations set ${column} = ? where id = ?`).bind(value, stationId),
@@ -677,7 +681,7 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
   if (id) {
     const before = await c.db
       .prepare(
-        "select operator_id, name, address, lat, lng, kind, has_battery, vehicle_types, battery_capacity, opening_hours, phone, photos, amenities from stations where id = ?",
+        "select operator_id, name, address, lat, lng, kind, has_battery, vehicle_types, battery_capacity, opening_hours, phone, photos, amenities, is_solar from stations where id = ?",
       )
       .bind(id)
       .first<Record<string, unknown>>();

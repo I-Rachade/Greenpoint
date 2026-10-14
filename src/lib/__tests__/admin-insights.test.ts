@@ -20,6 +20,7 @@ function station(id: string, patch: Partial<AdminStation> = {}, status: Partial<
     vehicleTypes: ["scooter"],
     chargingSlots: 4,
     batteryCapacity: 10,
+    isSolar: false,
     openingHours: "",
     phone: null,
     isActive: true,

@@ -25,6 +25,7 @@ export const DEMO_STATIONS: Station[] = [
     batteryCapacity: 12,
     openingHours: "00:00-24:00",
     phone: null,
+    isSolar: true,
   },
   {
     id: "st-tokoin",
@@ -41,6 +42,7 @@ export const DEMO_STATIONS: Station[] = [
     batteryCapacity: 20,
     openingHours: "06:00-22:00",
     phone: null,
+    isSolar: false,
   },
   {
     id: "st-universite",
@@ -57,6 +59,7 @@ export const DEMO_STATIONS: Station[] = [
     batteryCapacity: 0,
     openingHours: "07:00-20:00",
     phone: null,
+    isSolar: true,
   },
   {
     id: "st-be",
@@ -73,6 +76,7 @@ export const DEMO_STATIONS: Station[] = [
     batteryCapacity: 10,
     openingHours: "06:30-21:30",
     phone: null,
+    isSolar: true,
   },
   {
     id: "st-agoe",
@@ -89,6 +93,7 @@ export const DEMO_STATIONS: Station[] = [
     batteryCapacity: 16,
     openingHours: "06:00-22:00",
     phone: null,
+    isSolar: false,
   },
   {
     id: "st-hedzranawoe",
@@ -105,6 +110,7 @@ export const DEMO_STATIONS: Station[] = [
     batteryCapacity: 0,
     openingHours: "08:00-19:00",
     phone: null,
+    isSolar: false,
   },
   {
     id: "st-deckon",
@@ -121,6 +127,7 @@ export const DEMO_STATIONS: Station[] = [
     batteryCapacity: 0,
     openingHours: "24h/24",
     phone: null,
+    isSolar: false,
   },
   {
     id: "st-colis-adewui",
@@ -137,6 +144,7 @@ export const DEMO_STATIONS: Station[] = [
     batteryCapacity: 0,
     openingHours: "06:00-22:00",
     phone: null,
+    isSolar: false,
   },
 ];
 

@@ -27,6 +27,7 @@ function station(overrides: Partial<StationView> = {}): StationView {
     vehicleTypes: ["scooter"],
     chargingSlots: 4,
     batteryCapacity: 10,
+    isSolar: false,
     openingHours: "",
     phone: null,
     status: { stationId: "s1", isOpen: true, freeSlots: 2, fullBatteries: 5, updatedAt: "" },

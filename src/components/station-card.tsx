@@ -12,6 +12,7 @@ import { offersParcels } from "@/lib/station-points";
 import type { StationView } from "@/lib/types";
 import { BatteryIcon, BenchIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, HeartIcon, NavigateIcon, PinIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
+import { SolarBadge } from "./solar-badge";
 import { OpenBadge, RatingInline, StationPhoto, useHoursLabel } from "./station-look";
 
 /** Link to the full station screen. */
@@ -166,6 +167,7 @@ export function StationCard({
             <OpenBadge station={station} />
             <RestBadge station={station} />
             <EvBadge station={station} />
+            {station.isSolar && <SolarBadge />}
           </div>
           <StockLine station={station} className="mt-1.5 text-gp-forest dark:text-zinc-200" />
         </div>
@@ -206,6 +208,7 @@ export function StationPhotoCard({ station, distance }: { station: StationView; 
         <OpenBadge station={station} />
         <RestBadge station={station} />
         <EvBadge station={station} />
+        {station.isSolar && <SolarBadge compact />}
         {(station.rating?.count ?? 0) > 0 && (
           <span className="ml-auto rounded-full bg-white/90 px-2 py-0.5 text-xs text-gp-forest shadow">
             <RatingInline station={station} />

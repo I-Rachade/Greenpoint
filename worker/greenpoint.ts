@@ -129,10 +129,14 @@ async function earnedToday(db: D1Database, userId: string): Promise<number> {
 }
 
 /**
- * The ledger row for a completed swap or charge, or null when the person already
- * earned MAX_EARNINGS_PER_DAY times today. Callers put it into the same batch as
- * the completion, so both are written or neither.
+ * Only stations the admin marked as solar give greenpoints for swaps and charges
+ * (decided 2026-10-14). Missing station = not solar.
  */
+async function isSolarStation(db: D1Database, stationId: string): Promise<boolean> {
+  const row = await db.prepare("select is_solar from stations where id = ?").bind(stationId).first<{ is_solar: number }>();
+  return !!row?.is_solar;
+}
+
 /**
  * Drivers on one of our vehicles earn per km instead (tripStatement); swaps and
  * charges of their account would count the same battery twice.
@@ -168,10 +172,16 @@ export async function tripStatement(
     .bind(uuid(), input.driverId, grams, pointsFor(grams), vehicle.type, input.stationId, input.jobId, input.distanceMeters, input.createdBy, nowIso());
 }
 
+/**
+ * The ledger row for a completed swap or charge, or null when the station does not
+ * charge with solar power or the person already earned MAX_EARNINGS_PER_DAY times
+ * today. Callers put it into the same batch as the completion, so both are written or neither.
+ */
 export async function earnStatement(
   db: D1Database,
   input: { userId: string; type: ReservationType; stationId: string; reservationId?: string | null; createdBy: string | null; vehicle?: VehicleType },
 ): Promise<{ statement: D1PreparedStatement; co2Grams: number; points: number } | null> {
+  if (!(await isSolarStation(db, input.stationId))) return null;
   if ((await earnedToday(db, input.userId)) >= MAX_EARNINGS_PER_DAY) return null;
   if (await drivesFleetVehicle(db, input.userId)) return null;
   const vehicle = input.vehicle ?? (await vehicleOf(db, input.userId));
@@ -312,10 +322,14 @@ export async function recordVisit(env: Env, user: Profile, isStaffOf: StaffCheck
   const vehicle = body.vehicle === undefined ? undefined : (body.vehicle as VehicleType);
   if (vehicle !== undefined && !VEHICLE_TYPES.includes(vehicle)) throw new ApiError("bad_request");
   const db = env.DB;
-  const station = await db.prepare("select kind, has_battery from stations where id = ?").bind(stationId).first<{ kind: "charging" | "swap" | "both"; has_battery: number }>();
+  const station = await db
+    .prepare("select kind, has_battery, is_solar from stations where id = ?")
+    .bind(stationId)
+    .first<{ kind: "charging" | "swap" | "both"; has_battery: number; is_solar: number }>();
   if (!station) throw new ApiError("station_not_found", 404);
   const offered = station.has_battery !== 0 && (type === "battery" ? offersSwap(station.kind) : offersCharging(station.kind));
   if (!offered) throw new ApiError("service_not_offered");
+  if (!station.is_solar) throw new ApiError("greenpoint_not_solar");
 
   const text = String(body.contact ?? "");
   const contact = parseContact(text);

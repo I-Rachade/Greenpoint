@@ -7,6 +7,7 @@ import { format } from "@/lib/i18n/format";
 import { formatKg, LEVEL_EMOJI, LEVELS, type GreenpointEntry, type GreenpointReward, type GreenpointView } from "@/lib/greenpoint";
 import { VEHICLE_TYPES, type VehicleType } from "@/lib/types";
 import { useApp } from "../app-provider";
+import { SunIcon } from "../icons";
 import { useI18n } from "../i18n-provider";
 
 const button = "rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-50";
@@ -37,6 +38,10 @@ export function GreenpointPanel() {
     <div className="mx-auto w-full max-w-md space-y-4 overflow-y-auto p-4 sm:p-6">
       <h1 className="text-2xl font-semibold">{t.greenpoint.title}</h1>
       <p className="text-sm text-gp-muted dark:text-zinc-400">{t.greenpoint.intro}</p>
+      <p className="flex items-start gap-2 rounded-2xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-400/10 dark:text-amber-200">
+        <SunIcon size={18} className="mt-0.5 shrink-0" />
+        {t.greenpoint.solarOnly}
+      </p>
       <Label view={data} />
       {message && (
         <p role="alert" className="text-sm text-red-600">

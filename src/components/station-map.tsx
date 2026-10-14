@@ -37,6 +37,28 @@ function markerElement(station: StationView, selected: boolean): HTMLElement {
     cursor: "pointer",
   });
   el.textContent = station.kind === "swap" ? "🔋" : station.kind === "parcel" ? "📦" : "⚡";
+  // Solar stations (they earn greenpoints) carry a small sun.
+  if (station.isSolar) {
+    el.setAttribute("aria-label", `${station.name} ☀`);
+    el.style.position = "relative";
+    const sun = document.createElement("span");
+    sun.textContent = "☀";
+    Object.assign(sun.style, {
+      position: "absolute",
+      top: "-9px",
+      right: "-9px",
+      width: "16px",
+      height: "16px",
+      borderRadius: "9999px",
+      background: "#fbbf24",
+      color: "#78350f",
+      fontSize: "11px",
+      lineHeight: "16px",
+      textAlign: "center",
+      boxShadow: "0 0 0 2px white",
+    });
+    el.appendChild(sun);
+  }
   return el;
 }
 

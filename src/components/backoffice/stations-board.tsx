@@ -8,6 +8,7 @@ import { offersCharging, offersSwap } from "@/lib/availability";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { card, indexSnapshot, Loading, Pill, Table, td, th, useAdminSnapshot, userLabel } from "./shared";
+import { SolarBadge } from "../solar-badge";
 
 /** Live status of every station (including deactivated ones), staff and connected sockets. */
 export function StationsBoard() {
@@ -62,7 +63,10 @@ export function StationsBoard() {
           return (
             <tr key={s.id} className={s.isActive ? "" : "opacity-60"}>
               <td className={td}>
-                <div className="font-medium">{s.name}</div>
+                <div className="flex items-center gap-1 font-medium">
+                  {s.name}
+                  {s.isSolar && <SolarBadge compact />}
+                </div>
                 <div className="text-xs text-zinc-500">{s.operatorName}</div>
               </td>
               <td className={td}>
