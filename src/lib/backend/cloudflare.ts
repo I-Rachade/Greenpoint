@@ -708,8 +708,9 @@ export class CloudflareBackend implements Backend {
 
   // Advertising popup ---------------------------------------------------------------
 
-  features() {
-    return this.call<Features>("GET", "/api/features");
+  async features(): Promise<Features> {
+    // A server from before the Lite switch only names parcels and drivers; the rest was on.
+    return { wallet: true, evChargers: true, lite: false, ...(await this.call<Partial<Features>>("GET", "/api/features")) } as Features;
   }
 
   async setParcelsEnabled(enabled: boolean) {
@@ -719,6 +720,11 @@ export class CloudflareBackend implements Backend {
 
   async setDriversEnabled(enabled: boolean) {
     await this.call("POST", "/api/admin/features/drivers", { enabled });
+    this.changed();
+  }
+
+  async setLiteEnabled(enabled: boolean) {
+    await this.call("POST", "/api/admin/features/lite", { enabled });
     this.changed();
   }
 

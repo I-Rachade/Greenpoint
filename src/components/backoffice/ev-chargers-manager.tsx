@@ -21,7 +21,7 @@ const inputOf = (c: EvCharger): EvChargerInput => ({
 /** Backoffice page to add electric car chargers and assign them to stations. */
 export function EvChargersManager() {
   const { t } = useI18n();
-  const { backend } = useApp();
+  const { backend, features } = useApp();
   const errorMessage = useErrorMessage();
   const { data: chargers, error, reload } = useLiveQuery(() => backend.listEvChargers());
   const { data: snap } = useAdminSnapshot();
@@ -77,6 +77,7 @@ export function EvChargersManager() {
         )}
       </div>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{b.intro}</p>
+      {features.lite && <p className="text-sm text-amber-700 dark:text-amber-300">{t.backoffice.lite.moduleHidden}</p>}
       {waiting > 0 && <p className="text-sm text-amber-700 dark:text-amber-400">{format(b.waiting, { n: waiting })}</p>}
       {message && (
         <p role={message.ok ? "status" : "alert"} className={`text-sm ${message.ok ? "text-gp-green-dark" : "text-red-600"}`}>

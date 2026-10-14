@@ -16,7 +16,7 @@ jobs:
       NEXT_PUBLIC_BACKEND: cloudflare
       NEXT_PUBLIC_API_URL: https://app.poinderecharge.com
       ANDROID_VERSION_CODE: ${{ github.run_number }}
-      ANDROID_VERSION_NAME: 1.0.${{ github.run_number }}
+      ANDROID_VERSION_NAME: 2.0.${{ github.run_number }}
       HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4

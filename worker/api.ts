@@ -130,7 +130,7 @@ import {
   stationBookings,
 } from "./partners";
 import type { Env } from "./env";
-import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setDriversEnabled, setParcelsEnabled } from "./features";
+import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setDriversEnabled, setLiteEnabled, setParcelsEnabled } from "./features";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 import { DB_CUSTOMER, roleFromDb, roleToDb } from "./roles";
 import { refreshTopup, startTopup } from "./wallet-topups";
@@ -721,14 +721,16 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
 
 /**
  * Active stations for the app, with the active battery types they swap. With the
- * parcel module off, parcel points are left out.
+ * parcel module off, parcel points are left out; in the Lite version, car chargers too.
  */
 async function publicStations(c: Ctx) {
-  const stations = (await c.stations("where s.is_active = 1")).map((s) => ({
+  const [all, features] = await Promise.all([c.stations("where s.is_active = 1"), getFeatures(c.env)]);
+  const stations = all.map((s) => ({
     ...s,
     batteryTypes: (s.batteryTypes ?? []).filter((t) => t.isActive),
+    evChargers: features.evChargers ? s.evChargers : [],
   }));
-  if (await parcelsEnabled(c.env)) return stations;
+  if (features.parcels) return stations;
   return stations.filter((s) => s.kind !== "parcel").map((s) => ({ ...s, parcelPoint: null }));
 }
 
@@ -1433,6 +1435,11 @@ const ROUTES: [string, RegExp, Handler][] = [
     const admin = await c.requireAdmin();
     const { enabled } = await readJson<{ enabled?: boolean }>(c.request);
     return setDriversEnabled(c.env, admin, !!enabled);
+  }],
+  ["POST", /^\/api\/admin\/features\/lite$/, async (c) => {
+    const admin = await c.requireAdmin();
+    const { enabled } = await readJson<{ enabled?: boolean }>(c.request);
+    return setLiteEnabled(c.env, admin, !!enabled);
   }],
   // Wallet (worker/wallet.ts)
   ["GET", /^\/api\/wallet$/, async (c) => getWallet(c.env, await c.requireUser())],

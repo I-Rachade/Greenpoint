@@ -14,6 +14,12 @@ Erreichbar unter `/admin`, nur für Nutzer mit Rolle `admin`. Alle Seiten aktual
 | **Publicité** `/admin/promotions` | Werbung, die beim Öffnen der App als Fenster erscheint: Titel, Text, Bild, optionaler Button mit Link, aktiv/inaktiv, Zeitraum; mit Vorschau |
 | **Chauffeurs** `/admin/drivers` | Fahrer-Bewerbungen mit Ausweis-, Führerschein- und Porträtfoto; Freigabe mit Zuteilung eines unserer Fahrzeuge, Ablehnen, Sperren; Kassenstand je Fahrer; alle Fahrten (manuell zuteilen, stornieren, Foto an der Tür); Fahrzeuge (Typ, Kennzeichen, in Betrieb); Preise und Regeln |
 
+## Version der App: Komplett oder Lite
+
+Oben im Tableau de bord schaltet „Version de l'app“ zwischen der kompletten App (Version 2.0) und der **Lite-Version** um. Lite zeigt nur Karte, Stationen, Reservierungen und Konto; Pakete, Fahrten („Courses“), Cashplus und Ladesäulen für Elektroautos verschwinden für alle Nutzer. Der Server sperrt die zugehörigen Schnittstellen ebenfalls, sodass auch ältere App-Versionen sie nicht mehr zeigen.
+
+Lite ist ein eigener Schalter (`app_settings.lite_mode`) und ändert die Modul-Schalter für Pakete, Fahrer und Portefeuille nicht. Wer Lite wieder ausschaltet, bekommt genau die Module zurück, die vorher an waren. Solange Lite an ist, zeigen die Seiten Colis, Chauffeurs, Portefeuille und Bornes VE einen Hinweis statt des Modul-Schalters; ihre Daten bleiben im Backoffice erreichbar. Jede Umschaltung steht im Aktivitätsprotokoll unter „Réglages de l'app“.
+
 ## Punkte einer Station
 
 Jede Station bietet einen oder mehrere dieser Punkte an, frei kombinierbar (`src/lib/station-points.ts`, Migration `0013_station_points.sql`):

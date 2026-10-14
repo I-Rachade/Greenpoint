@@ -106,7 +106,7 @@ function PhotoGallery({ station, scrollerRef }: { station: StationView; scroller
 export function StationDetail({ station, distance, onChanged }: Props) {
   const { t } = useI18n();
   const L = t.stationLook;
-  const { backend, profile } = useApp();
+  const { backend, profile, features } = useApp();
   const router = useRouter();
   const now = useNow();
   const relativeTime = useRelativeTime();
@@ -362,33 +362,35 @@ export function StationDetail({ station, distance, onChanged }: Props) {
           </Section>
         )}
 
-        <Section title={t.station.ev.title}>
-          <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm dark:border-white/10">
-            <p className="flex items-center gap-2 text-sm">
-              <span
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-                  evChargers.length > 0 ? "bg-gp-info/15 text-gp-info" : "bg-zinc-500/10 text-gp-muted"
-                }`}
-              >
-                <CarIcon size={17} />
-              </span>
-              {evChargers.length > 0 ? t.station.ev.yes : t.station.ev.no}
-            </p>
-            {evChargers.length > 0 && (
-              <ul className="mt-2 divide-y divide-gp-border text-sm dark:divide-white/10">
-                {evChargers.map((c) => (
-                  <li key={c.id} className="py-1.5">
-                    {format(t.station.ev.charger, {
-                      name: c.name,
-                      connector: t.backoffice.evChargers.connectors[c.connector],
-                      power: c.powerKw,
-                    })}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </Section>
+        {features.evChargers && (
+          <Section title={t.station.ev.title}>
+            <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm dark:border-white/10">
+              <p className="flex items-center gap-2 text-sm">
+                <span
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                    evChargers.length > 0 ? "bg-gp-info/15 text-gp-info" : "bg-zinc-500/10 text-gp-muted"
+                  }`}
+                >
+                  <CarIcon size={17} />
+                </span>
+                {evChargers.length > 0 ? t.station.ev.yes : t.station.ev.no}
+              </p>
+              {evChargers.length > 0 && (
+                <ul className="mt-2 divide-y divide-gp-border text-sm dark:divide-white/10">
+                  {evChargers.map((c) => (
+                    <li key={c.id} className="py-1.5">
+                      {format(t.station.ev.charger, {
+                        name: c.name,
+                        connector: t.backoffice.evChargers.connectors[c.connector],
+                        power: c.powerKw,
+                      })}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </Section>
+        )}
 
         {photos.length > 1 && (
           <Section title={L.morePhotos}>

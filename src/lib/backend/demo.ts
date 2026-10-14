@@ -42,7 +42,7 @@ import {
   type StaffAssignment,
 } from "../admin/types";
 import { validPinFormat, weakPin } from "../pin";
-import type { Features } from "../features";
+import { effectiveFeatures, type Features } from "../features";
 import { MAX_PROMO_IMAGE_BYTES, pickPromotion, type Promotion, type PromotionInput } from "../promo";
 import {
   DEFAULT_PARCEL_SIZES,
@@ -232,6 +232,8 @@ interface DemoState {
   parcelsEnabled?: boolean;
   /** Courses, express and trips at home; off until an admin switches it on (as in worker/features.ts). */
   driversEnabled?: boolean;
+  /** Lite version switch of the backoffice (missing = off, as in worker/features.ts). */
+  liteEnabled?: boolean;
   /** Demo PINs by phone number or e-mail address (stored in clear: demo only). */
   pins?: Record<string, string>;
   /** Customer reviews (missing = the example reviews). */
@@ -498,6 +500,11 @@ function demotedIfIdle(state: DemoState, userId: string) {
 }
 
 /** Appends an activity log entry, like the Worker does on Cloudflare. */
+/** The modules shown, as worker/features.ts works them out. */
+function demoFeatures(state: DemoState): Features {
+  return effectiveFeatures({ parcels: state.parcelsEnabled !== false, drivers: state.driversEnabled === true, lite: state.liteEnabled === true });
+}
+
 function withAudit(state: DemoState, entry: AuditInput): DemoState {
   const audit = state.audit ?? [];
   const row: AuditEntry = {
@@ -613,8 +620,10 @@ export class DemoBackend implements Backend {
       ...s,
       batteryTypes: (s.batteryTypes ?? []).filter((t) => t.isActive),
     }));
-    if (state.parcelsEnabled !== false) return views;
-    return views.filter((s) => s.kind !== "parcel").map((s) => ({ ...s, parcelPoint: null }));
+    const features = demoFeatures(state);
+    const shown = features.evChargers ? views : views.map((s) => ({ ...s, evChargers: [] }));
+    if (features.parcels) return shown;
+    return shown.filter((s) => s.kind !== "parcel").map((s) => ({ ...s, parcelPoint: null }));
   }
 
   private activeStations(state: DemoState): Station[] {
@@ -3065,7 +3074,7 @@ export class DemoBackend implements Backend {
 
   private walletAccess(state: DemoState): Profile {
     const profile = this.requireProfile(state);
-    if (!this.wallet(state).enabled && profile.role !== "admin") throw new BackendError("wallet_disabled");
+    if (!demoFeatures(state).wallet || (!this.wallet(state).enabled && profile.role !== "admin")) throw new BackendError("wallet_disabled");
     return profile;
   }
 
@@ -3205,8 +3214,7 @@ export class DemoBackend implements Backend {
   }
 
   async features(): Promise<Features> {
-    const state = this.load();
-    return { parcels: state.parcelsEnabled !== false, drivers: state.driversEnabled === true };
+    return demoFeatures(this.load());
   }
 
   async setDriversEnabled(enabled: boolean) {
@@ -3216,13 +3224,19 @@ export class DemoBackend implements Backend {
   }
 
   private requireDrivers(state: DemoState) {
-    if (state.driversEnabled !== true) throw new BackendError("drivers_soon");
+    if (!demoFeatures(state).drivers) throw new BackendError("drivers_soon");
   }
 
   async setParcelsEnabled(enabled: boolean) {
     const state = this.load();
     this.requireAdmin(state);
     this.save(withAudit({ ...state, parcelsEnabled: enabled }, { table: "parcels", action: "update", rowId: "parcels_enabled", changes: { enabled } }));
+  }
+
+  async setLiteEnabled(enabled: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    this.save(withAudit({ ...state, liteEnabled: enabled }, { table: "settings", action: "update", rowId: "lite_mode", changes: { enabled } }));
   }
 
   async setWalletEnabled(enabled: boolean) {

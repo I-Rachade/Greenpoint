@@ -135,11 +135,18 @@ export function ParcelsModuleSwitch() {
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-xs uppercase tracking-wide text-zinc-500">{a.module}</span>
         <Pill tone={on ? "green" : "amber"}>{on ? a.moduleOn : a.moduleOff}</Pill>
-        <button type="button" disabled={busy} onClick={toggle} className="text-sm text-gp-green-dark underline disabled:opacity-40 dark:text-gp-green">
-          {on ? a.turnOff : a.turnOn}
-        </button>
+        {/* Lite hides the module whatever its own switch says; it is switched back on the overview. */}
+        {!features.lite && (
+          <button type="button" disabled={busy} onClick={toggle} className="text-sm text-gp-green-dark underline disabled:opacity-40 dark:text-gp-green">
+            {on ? a.turnOff : a.turnOn}
+          </button>
+        )}
       </div>
-      {!on && <p className="text-sm text-amber-700 dark:text-amber-300">{a.offHint}</p>}
+      {features.lite ? (
+        <p className="text-sm text-amber-700 dark:text-amber-300">{t.backoffice.lite.moduleHidden}</p>
+      ) : (
+        !on && <p className="text-sm text-amber-700 dark:text-amber-300">{a.offHint}</p>
+      )}
       {error && <p className="text-sm text-red-600">{error}</p>}
     </section>
   );

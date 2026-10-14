@@ -297,6 +297,18 @@ export const fr = {
   },
   backoffice: {
     title: "Back-office",
+    lite: {
+      title: "Version de l'app",
+      full: "Complète",
+      lite: "Lite",
+      fullText: "Toutes les fonctions activées ici sont visibles dans l'app.",
+      liteText: "L'app ne montre que la carte, les stations, les réservations et le compte. Colis, courses, Cashplus et bornes voiture électrique sont masqués pour tous.",
+      turnOn: "Passer en version Lite",
+      turnOff: "Revenir à la version complète",
+      confirmOn: "Passer en version Lite ? Colis, courses, Cashplus et bornes voiture électrique disparaissent de l'app pour tous. Les données restent ici et tout revient en repassant à la version complète.",
+      confirmOff: "Revenir à la version complète ? Les modules activés ici redeviennent visibles dans l'app.",
+      moduleHidden: "Masqué par la version Lite (voir Vue d'ensemble).",
+    },
     nav: {
       overview: "Tableau de bord",
       stations: "Stations",
@@ -446,6 +458,7 @@ export const fr = {
         partner_api_keys: "Clé API",
         partner_bookings: "Réservation partenaire",
         wallets: "Portefeuille",
+        settings: "Réglages de l'app",
       },
       actions: { insert: "créé", update: "modifié", delete: "supprimé" },
       staffAdded: "attribué à",

@@ -51,7 +51,7 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
     { id: "charging", label: t.filter.charging },
     { id: "swap", label: t.filter.swap },
     ...(features.parcels ? [{ id: "parcel" as const, label: t.filter.parcel }] : []),
-    { id: "ev", label: t.filter.ev },
+    ...(features.evChargers ? [{ id: "ev" as const, label: t.filter.ev }] : []),
     { id: "favorites", label: t.ui.stations.favorites },
   ];
 
