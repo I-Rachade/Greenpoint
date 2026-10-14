@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { Pill, useDateTime } from "@/components/backoffice/shared";
 import { useLiveQuery } from "@/lib/hooks";
@@ -9,7 +10,7 @@ import type { StationView } from "@/lib/types";
 import { useApp } from "../app-provider";
 import { BookCourier, BookDelivery, BookPickup, MyJobs } from "../drivers/customer-jobs";
 import { BackTo, ChoiceTile } from "../drivers/my-trips";
-import { BoxFastIcon, StoreIcon } from "../icons";
+import { BoxFastIcon, ChevronIcon, InfoIcon, StoreIcon } from "../icons";
 import { useI18n } from "../i18n-provider";
 import { QrImage } from "./qr-image";
 import { ParcelStatusPill } from "./status";
@@ -64,52 +65,67 @@ function ParcelCard({ parcel: p, stations, info, onSlip }: { parcel: Parcel; sta
   );
 }
 
-/** How to send: stations with a depot, prices and terms. */
-function SendInfo({ info, stations, open }: { info: ParcelInfo; stations: StationView[]; open?: boolean }) {
+/** How to send at a station: steps, stations with a depot, prices and terms. */
+function SendInfo({ info, stations }: { info: ParcelInfo; stations: StationView[] }) {
   const { t } = useI18n();
   const depots = info.depots.map((d) => ({ ...d, station: stations.find((s) => s.id === d.stationId) })).filter((d) => d.station);
   return (
-    <details open={open} className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">
-      <summary className="cursor-pointer font-semibold">{t.parcels.howTo}</summary>
-      <div className="mt-3 space-y-3">
-        <p>{t.parcels.howToSteps}</p>
-        <div>
-          <h3 className="font-semibold">{t.parcels.depots}</h3>
-          {depots.length === 0 ? (
-            <p className="text-zinc-500">{t.parcels.noDepots}</p>
-          ) : (
-            <ul className="list-disc pl-5">
-              {depots.map((d) => (
-                <li key={d.stationId}>
-                  {d.station!.name}
-                  {d.note ? ` (${d.note})` : ""} · {d.station!.openingHours}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div>
-          <h3 className="font-semibold">{t.parcels.prices}</h3>
-          <ul>
-            {info.sizes.map((s) => (
-              <li key={s.size}>
-                <span className="font-medium">{s.size}</span> :{" "}
-                {format(t.parcels.upTo, { dims: `${s.maxLengthCm}×${s.maxWidthCm}×${s.maxHeightCm}`, kg: s.maxWeightKg })} ·{" "}
-                <span className="font-medium">{s.priceFcfa} FCFA</span>
+    <div className="space-y-4 text-sm">
+      <ol className="list-decimal space-y-1 pl-5">
+        {t.parcels.howToList.map((step) => (
+          <li key={step}>{step}</li>
+        ))}
+      </ol>
+      <div>
+        <h2 className="font-semibold">{t.parcels.depots}</h2>
+        {depots.length === 0 ? (
+          <p className="text-zinc-500">{t.parcels.noDepots}</p>
+        ) : (
+          <ul className="list-disc pl-5">
+            {depots.map((d) => (
+              <li key={d.stationId}>
+                {d.station!.name}
+                {d.note ? ` (${d.note})` : ""} · {d.station!.openingHours}
               </li>
             ))}
           </ul>
-        </div>
-        <div>
-          <h3 className="font-semibold">{t.parcels.rulesTitle}</h3>
-          <ul className="list-disc pl-5 text-zinc-600 dark:text-zinc-400">
-            {t.parcels.rules.map((rule) => (
-              <li key={rule}>{rule}</li>
-            ))}
-          </ul>
-        </div>
+        )}
       </div>
-    </details>
+      <div>
+        <h2 className="font-semibold">{t.parcels.prices}</h2>
+        <ul>
+          {info.sizes.map((s) => (
+            <li key={s.size}>
+              <span className="font-medium">{s.size}</span> :{" "}
+              {format(t.parcels.upTo, { dims: `${s.maxLengthCm}×${s.maxWidthCm}×${s.maxHeightCm}`, kg: s.maxWeightKg })} ·{" "}
+              <span className="font-medium">{s.priceFcfa} FCFA</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div>
+        <h2 className="font-semibold">{t.parcels.rulesTitle}</h2>
+        <ul className="list-disc pl-5 text-zinc-600 dark:text-zinc-400">
+          {t.parcels.rules.map((rule) => (
+            <li key={rule}>{rule}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+/** "Comment envoyer un colis", opened from the regular sending page. */
+export function HowToSend() {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { data } = useLiveQuery(() => Promise.all([backend.listStations(), backend.parcelInfo()]));
+  return (
+    <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
+      <BackTo href="/colis/regulier" />
+      <h1 className="text-2xl font-semibold">{t.parcels.howTo}</h1>
+      {data ? <SendInfo info={data[1]} stations={data[0]} /> : <p className="text-sm text-zinc-500">{t.loading}</p>}
+    </div>
   );
 }
 
@@ -174,8 +190,15 @@ export function RegularSend() {
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.parcels.regularIntro}</p>
       {data ? (
         <>
-          <SendInfo info={data[1]} stations={data[0]} open />
-          <BookPickup info={data[1]} stations={data[0]} />
+          <Link
+            href="/colis/regulier/comment"
+            className="flex items-center gap-3 rounded-xl border border-black/10 p-4 text-sm font-semibold text-gp-green-dark dark:border-white/10 dark:text-gp-green"
+          >
+            <InfoIcon size={22} />
+            <span className="flex-1">{t.parcels.howTo}</span>
+            <ChevronIcon size={18} />
+          </Link>
+          <BookPickup info={data[1]} stations={data[0]} open />
         </>
       ) : (
         <p className="text-sm text-zinc-500">{t.loading}</p>

@@ -602,7 +602,12 @@ export const fr = {
     showCode: "Présentez ce QR code ou ce code au comptoir.",
     slip: "Bon de dépôt",
     howTo: "Comment envoyer un colis",
-    howToSteps: "1. Apportez le colis à une station avec dépôt de colis. 2. Le personnel le mesure et le pèse, vous payez en espèces. 3. Vous recevez un bon de dépôt. 4. Le destinataire voit le colis et son code dans l'app dès l'arrivée.",
+    howToList: [
+      "Apportez le colis à une station avec dépôt de colis, ou faites-le enlever chez vous par un chauffeur.",
+      "Le personnel le mesure et le pèse, vous payez en espèces.",
+      "Vous recevez un bon de dépôt.",
+      "Le destinataire voit le colis et son code dans l'app dès l'arrivée, et le retire à la station.",
+    ],
     depots: "Stations avec dépôt de colis",
     noDepots: "Aucune station ne prend de colis pour le moment.",
     prices: "Tarifs",

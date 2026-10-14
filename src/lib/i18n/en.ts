@@ -602,7 +602,12 @@ export const en: Dictionary = {
     showCode: "Show this QR code or code at the counter.",
     slip: "Drop-off slip",
     howTo: "How to send a parcel",
-    howToSteps: "1. Bring the parcel to a station with a parcel depot. 2. Staff measure and weigh it; you pay cash. 3. You get a drop-off slip. 4. The recipient sees the parcel and its code in the app once it arrives.",
+    howToList: [
+      "Bring the parcel to a station with a parcel depot, or have a driver collect it at your home.",
+      "Staff measure and weigh it; you pay cash.",
+      "You get a drop-off slip.",
+      "The recipient sees the parcel and its code in the app once it arrives, and collects it at the station.",
+    ],
     depots: "Stations with a parcel depot",
     noDepots: "No station takes parcels yet.",
     prices: "Prices",
