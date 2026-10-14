@@ -16,6 +16,7 @@ import { formatDistance } from "@/lib/geo";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { allBrands } from "@/lib/battery-types";
+import { chargesEvs } from "@/lib/ev-chargers";
 import { offersParcels } from "@/lib/station-points";
 import { VEHICLE_TYPES, type VehicleType } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
@@ -94,6 +95,7 @@ export function StationFinder() {
                 <option value="charging">{t.filter.charging}</option>
                 <option value="swap">{t.filter.swap}</option>
                 {features.parcels && <option value="parcel">{t.filter.parcel}</option>}
+                <option value="ev">🚗 {t.filter.ev}</option>
               </select>
               {brands.length > 0 && (
                 <select
@@ -162,6 +164,7 @@ export function StationFinder() {
                           </span>
                         )}
                         {offersParcels(station) && <span>📦 {t.filter.parcel}</span>}
+                        {chargesEvs(station) && <span>🚗 {t.filter.ev}</span>}
                       </div>
                     </div>
                     {distance !== null && (

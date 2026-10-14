@@ -252,3 +252,48 @@ describe("battery types", () => {
     expect(s.batteryTypes!.map((t) => [t.name, t.fullBatteries])).toEqual([["72 V", 0], ["72 V", 4]]);
   });
 });
+
+describe("electric car chargers", () => {
+  const charger = (stationId: string | null, patch: Record<string, unknown> = {}) => ({
+    name: "Borne VE 1",
+    connector: "type2",
+    powerKw: 22,
+    stationId,
+    isActive: true,
+    ...patch,
+  });
+
+  it("adds a charger, then assigns it to a station that then charges electric cars", async () => {
+    const { env } = await setup();
+    await save(env, station("Mixte"));
+    const s = await byName(env, "Mixte");
+    expect(s.evChargers).toEqual([]);
+
+    // Added first without a station: nothing shows in the app yet.
+    const res = await call(env, "POST", "/api/admin/ev-chargers", { id: null, input: charger(null) });
+    expect(res.status).toBe(200);
+    const id = (res.body as { id: string }).id;
+    expect((await byName(env, "Mixte")).evChargers).toEqual([]);
+
+    await call(env, "POST", "/api/admin/ev-chargers", { id, input: charger(s.id) });
+    expect((await byName(env, "Mixte")).evChargers).toEqual([{ id, name: "Borne VE 1", connector: "type2", powerKw: 22 }]);
+    const all = (await call(env, "GET", "/api/admin/ev-chargers")).body as { id: string; stationId: string | null }[];
+    expect(all).toEqual([expect.objectContaining({ id, stationId: s.id })]);
+
+    // Switched off: gone from the app, still in the backoffice.
+    await call(env, "POST", "/api/admin/ev-chargers", { id, input: charger(s.id, { isActive: false }) });
+    expect((await byName(env, "Mixte")).evChargers).toEqual([]);
+    expect(((await call(env, "GET", "/api/admin/ev-chargers")).body as unknown[]).length).toBe(1);
+
+    expect((await call(env, "DELETE", `/api/admin/ev-chargers/${id}`)).status).toBe(200);
+    expect((await call(env, "GET", "/api/admin/ev-chargers")).body).toEqual([]);
+  });
+
+  it("refuses unknown stations and invalid chargers", async () => {
+    const { env } = await setup();
+    expect((await call(env, "POST", "/api/admin/ev-chargers", { id: null, input: charger("nope") })).body).toEqual({ error: "station_not_found" });
+    expect((await call(env, "POST", "/api/admin/ev-chargers", { id: null, input: charger(null, { connector: "schuko" }) })).status).toBe(400);
+    expect((await call(env, "POST", "/api/admin/ev-chargers", { id: null, input: charger(null, { powerKw: 0 }) })).status).toBe(400);
+    expect((await call(env, "POST", "/api/admin/ev-chargers", { id: null, input: charger(null, { name: " " }) })).status).toBe(400);
+  });
+});

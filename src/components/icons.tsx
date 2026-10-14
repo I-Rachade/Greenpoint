@@ -88,6 +88,15 @@ export const BoltIcon = (p: IconProps) => (
   </Svg>
 );
 
+/** Electric car (EV chargers). */
+export const CarIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5 16V11.5l1.6-4.2A2 2 0 0 1 8.5 6h7a2 2 0 0 1 1.9 1.3L19 11.5V16" />
+    <path d="M4 16h16v2a1 1 0 0 1-1 1h-1.5a1 1 0 0 1-1-1v-.5h-9v.5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z" />
+    <path d="M5 11.5h14M7.5 14h.01M16.5 14h.01" />
+  </Svg>
+);
+
 export const BatteryIcon = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="7" width="16" height="10" rx="2" />

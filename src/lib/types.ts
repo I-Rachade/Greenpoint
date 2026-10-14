@@ -1,4 +1,5 @@
 import type { StationBatteryType } from "./battery-types";
+import type { StationEvCharger } from "./ev-chargers";
 import type { ParcelDepotInput } from "./parcels";
 
 export type VehicleType = "scooter" | "tricycle" | "ebike" | "moped";
@@ -59,6 +60,8 @@ export interface StationView extends Station {
   parcelPoint?: ParcelPoint | null;
   /** Battery types the swap point swaps (active types only in the app). */
   batteryTypes?: StationBatteryType[];
+  /** Active electric car chargers assigned to the station (see ev-chargers.ts). */
+  evChargers?: StationEvCharger[];
 }
 
 export interface ParcelPoint {

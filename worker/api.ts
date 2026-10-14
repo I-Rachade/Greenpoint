@@ -1,6 +1,8 @@
 import { offersCharging, offersSwap, withinOpeningHours } from "../src/lib/availability";
 import { depotPoints, hasAnyPoint } from "../src/lib/station-points";
 import type { BatteryTypeInput } from "../src/lib/battery-types";
+import type { EvChargerInput } from "../src/lib/ev-chargers";
+import { deleteEvCharger, evChargersByStation, listEvChargers, saveEvCharger } from "./ev-chargers";
 import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements, typeBatteryStatements } from "./battery-types";
 import {
   ADMIN_HISTORY_DAYS,
@@ -347,9 +349,13 @@ class Ctx {
       .prepare(`${STATION_SELECT} ${where} order by s.name`)
       .bind(nowIso(), ...params)
       .all<StationRow>();
-    const [points, batteryTypes] = await Promise.all([chargingPointsByStation(this.db), batteryTypesByStation(this.db)]);
+    const [points, batteryTypes, evChargers] = await Promise.all([
+      chargingPointsByStation(this.db),
+      batteryTypesByStation(this.db),
+      evChargersByStation(this.db),
+    ]);
     return results.map((r) => {
-      const station = { ...toStationView(r), batteryTypes: batteryTypes.get(r.id) ?? [] };
+      const station = { ...toStationView(r), batteryTypes: batteryTypes.get(r.id) ?? [], evChargers: evChargers.get(r.id) ?? [] };
       const chargingPoints = points.get(r.id);
       return chargingPoints ? { ...station, chargingPoints } : station;
     });
@@ -1316,6 +1322,24 @@ const ROUTES: [string, RegExp, Handler][] = [
       const admin = await c.requireAdmin();
       const { id, input } = await readJson<{ id: string | null; input: BatteryTypeInput }>(c.request);
       return saveBatteryType(c, admin.id, id ?? null, input);
+    },
+  ],
+  ["GET", /^\/api\/admin\/ev-chargers$/, async (c) => (await c.requireAdmin(), listEvChargers(c.db))],
+  [
+    "POST",
+    /^\/api\/admin\/ev-chargers$/,
+    async (c) => {
+      const admin = await c.requireAdmin();
+      const { id, input } = await readJson<{ id: string | null; input: EvChargerInput }>(c.request);
+      return saveEvCharger(c, admin.id, id ? String(id) : null, input);
+    },
+  ],
+  [
+    "DELETE",
+    /^\/api\/admin\/ev-chargers\/([\w-]+)$/,
+    async (c, [id]) => {
+      const admin = await c.requireAdmin();
+      return deleteEvCharger(c, admin.id, id);
     },
   ],
   [

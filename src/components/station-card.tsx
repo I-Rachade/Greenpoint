@@ -6,10 +6,11 @@ import { formatDistance } from "@/lib/geo";
 import { format } from "@/lib/i18n/format";
 import { useFavorites } from "@/lib/prefs";
 import { brandFullBatteries, stationBrands } from "@/lib/battery-types";
+import { chargesEvs } from "@/lib/ev-chargers";
 import { offersParcels } from "@/lib/station-points";
 import type { StationView } from "@/lib/types";
 import { AvailabilityBadge } from "./availability-badge";
-import { BatteryIcon, BoltIcon, BoxIcon, HeartIcon, PinIcon } from "./icons";
+import { BatteryIcon, BoltIcon, BoxIcon, CarIcon, HeartIcon, PinIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 
 /** Link to the full station screen. */
@@ -101,6 +102,12 @@ export function StationCard({
             <span className="flex items-center gap-1 text-gp-muted dark:text-zinc-400" title={t.filter.parcel}>
               <BoxIcon size={14} />
               {station.parcelPoint!.lockers > 0 ? format(t.station.lockers, { n: station.parcelPoint!.lockers }) : t.filter.parcel}
+            </span>
+          )}
+          {chargesEvs(station) && (
+            <span className="flex items-center gap-1 font-medium text-gp-info" title={t.station.ev.yes}>
+              <CarIcon size={14} />
+              {t.station.ev.badge}
             </span>
           )}
           {distance !== null && <span className="ml-auto font-semibold text-gp-forest dark:text-zinc-100">{formatDistance(distance)}</span>}

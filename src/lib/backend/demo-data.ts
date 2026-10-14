@@ -1,4 +1,5 @@
 import type { BatteryType } from "../battery-types";
+import type { EvCharger } from "../ev-chargers";
 import type { ChargingPoint, Operator, Station, StationStatus } from "../types";
 
 // Example stations in Lomé (approximate positions).
@@ -212,3 +213,10 @@ export const DEMO_STATION_BATTERY_TYPES: Record<string, string[]> = {
   "st-be": ["bt-ovt-60"],
   "st-agoe": ["bt-ovt-60", "bt-ovt-72"],
 };
+
+/** Electric car chargers: two assigned to stations, one waiting to be assigned. */
+export const DEMO_EV_CHARGERS: EvCharger[] = [
+  { id: "ev-grand-marche-1", name: "Borne VE 1", connector: "type2", powerKw: 22, stationId: "st-grand-marche", isActive: true },
+  { id: "ev-agoe-1", name: "Borne rapide Agoè", connector: "ccs2", powerKw: 60, stationId: "st-agoe", isActive: true },
+  { id: "ev-stock-1", name: "Borne VE 3", connector: "type2", powerKw: 7.4, stationId: null, isActive: true },
+];

@@ -31,6 +31,10 @@ Eine Station ohne Tausch und Laden ist ein reiner Paketpunkt (`has_battery = 0`,
 
 Jede Motorrad-Marke (Akku-Betreiber, z. B. Spiro oder Omnivoltaic) hat eigene Tausch-Akkus. Oben im Stations-Editor pflegt der Admin die Liste (Marke und Modell, abschaltbar), im Tauschpunkt jeder Station hakt er an, welche Typen dort getauscht werden (Tabellen `battery_types`, `station_battery_types`, Migration `0017_battery_types.sql`). Pro Typ zählt das Stationspersonal die vollen Akkus (Spalte `station_battery_types.full_batteries`); der Gesamtwert der Station (`station_status.full_batteries`) ist dann ihre Summe. Laden braucht keinen Typ: die Steckdosen laden jeden Akku. Die App zeigt die getauschten Typen mit ihren vollen Akkus in der Stationsansicht und filtert nach Marke; abgeschaltete Typen erscheinen dort nicht.
 
+## Ladesäulen für Elektroautos („Bornes VE“)
+
+Unter `/admin/ev-chargers` legt der Admin Ladesäulen für Elektroautos an (Name, Stecker Type 2 / CCS2 / CHAdeMO / GB/T, Leistung in kW) und weist jede einer Station zu, direkt in der Liste über das Auswahlfeld. Eine Station mit mindestens einer aktiven zugewiesenen Säule zeigt in der App das Abzeichen „Voiture électrique“, ihre Säulen in der Stationsansicht und erscheint im Filter „Voiture électrique“. Nicht zugewiesene Säulen werden oben gezählt. Migration `0020_ev_chargers.sql`, Code `src/lib/ev-chargers.ts`, `worker/ev-chargers.ts`.
+
 ## Auffälligkeiten („À vérifier“)
 
 Berechnet in `src/lib/admin/insights.ts` (Tests in `src/lib/__tests__/admin-insights.test.ts`):

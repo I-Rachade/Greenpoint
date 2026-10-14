@@ -13,6 +13,7 @@ import {
   withinOpeningHours,
 } from "@/lib/availability";
 import { batteryTypeLabel } from "@/lib/battery-types";
+import { chargesEvs } from "@/lib/ev-chargers";
 import { directionsUrl, formatDistance } from "@/lib/geo";
 import { displayStatus, type ChargingPointDisplay } from "@/lib/iot/charging-points";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
@@ -20,7 +21,7 @@ import { format } from "@/lib/i18n/format";
 import { RESERVATION_MINUTES, type ReservationType, type StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { AvailabilityBadge } from "./availability-badge";
-import { BatteryIcon, BoltIcon, BoxIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, StoreIcon } from "./icons";
+import { BatteryIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, StoreIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { FavoriteButton } from "./station-card";
 
@@ -72,6 +73,7 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
   const points = station.chargingPoints ?? [];
   const connected = points.some((p) => p.deviceId !== null);
   const batteries = stockBatteries(station);
+  const evChargers = station.evChargers ?? [];
 
   const tile = (value: number, total: number, label: string, Icon: typeof BoltIcon) => (
     <div className="rounded-2xl bg-gp-green/10 p-3 dark:bg-gp-green/15">
@@ -132,6 +134,11 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
             {t.vehicles[v]}
           </span>
         ))}
+        {chargesEvs(station) && (
+          <span className="flex items-center gap-1 rounded-full bg-gp-info/15 px-2 py-0.5 font-medium text-gp-info">
+            <CarIcon size={13} /> {t.station.ev.badge}
+          </span>
+        )}
       </div>
 
       {battery && (
@@ -174,6 +181,25 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
         </div>
       )}
 
+      {evChargers.length > 0 && (
+        <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 dark:border-white/10">
+          <h3 className="flex items-center gap-2 text-sm font-semibold">
+            <CarIcon size={16} /> {t.station.ev.title}
+          </h3>
+          <ul className="mt-1 divide-y divide-gp-border text-sm dark:divide-white/10">
+            {evChargers.map((c) => (
+              <li key={c.id} className="py-1.5">
+                {format(t.station.ev.charger, {
+                  name: c.name,
+                  connector: t.backoffice.evChargers.connectors[c.connector],
+                  power: c.powerKw,
+                })}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {points.length > 0 && (
         <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 dark:border-white/10">
           <h3 className="text-sm font-semibold">{connected ? t.station.liveOutlets : t.station.outlets}</h3>
@@ -203,6 +229,7 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
           {infoRow(ClockIcon, t.station.openingHours, station.openingHours || "–")}
           {infoRow(PinIcon, t.ui.detail.address, station.address)}
           {infoRow(StoreIcon, t.station.operator, station.operatorName)}
+          {infoRow(CarIcon, t.station.ev.title, chargesEvs(station) ? t.station.ev.yes : t.station.ev.no)}
         </ul>
       </div>
 

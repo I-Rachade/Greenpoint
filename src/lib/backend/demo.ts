@@ -16,7 +16,7 @@ import {
   type VehicleType,
 } from "../types";
 import { BackendError, type Backend, type CodeChannel, type StatusPatch } from "./backend";
-import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, demoSocketPoints, initialDemoStatus, DEMO_BATTERY_TYPES, DEMO_STATION_BATTERY_TYPES } from "./demo-data";
+import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, demoSocketPoints, initialDemoStatus, DEMO_BATTERY_TYPES, DEMO_STATION_BATTERY_TYPES, DEMO_EV_CHARGERS } from "./demo-data";
 import { depotPoints, hasAnyPoint, kindFor } from "../station-points";
 import { validBatteryType, type BatteryType, type BatteryTypeInput } from "../battery-types";
 import { DEMO_STAFF, demoHistory, demoUsers } from "../admin/demo-seed";
@@ -147,6 +147,7 @@ import {
   type GreenpointView,
 } from "../greenpoint";
 import { OPERATOR_NAME_MAX, type AdminOperator, type OperatorInput, type OwnerStationInput, type OwnerView } from "../operators";
+import { validEvCharger, type EvCharger, type EvChargerInput } from "../ev-chargers";
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 
 const STORAGE_KEY = "poinderecharge-demo-v3";
@@ -179,6 +180,8 @@ interface DemoState {
   parcels?: Parcel[];
   parcelDepots?: ParcelDepot[];
   batteryTypes?: BatteryType[];
+  /** Electric car chargers, assigned to a station or not. */
+  evChargers?: EvCharger[];
   /** Battery types each station swaps, by station id. */
   stationBatteryTypes?: Record<string, string[]>;
   /** Full batteries per battery type, by station id then type id (default: the station's total spread over its types). */
@@ -554,6 +557,10 @@ export class DemoBackend implements Backend {
         .filter((t) => swapped.includes(t.id))
         .sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name))
         .map((t) => ({ ...t, fullBatteries: counts[t.id] ?? 0 }));
+      const evChargers = (state.evChargers ?? DEMO_EV_CHARGERS)
+        .filter((c) => c.stationId === s.id && c.isActive)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(({ id, name, connector, powerKw }) => ({ id, name, connector, powerKw }));
       return {
         ...s,
         chargingSlots,
@@ -563,6 +570,7 @@ export class DemoBackend implements Backend {
         chargingPoints,
         parcelPoint,
         batteryTypes,
+        evChargers,
       };
     });
   }
@@ -949,6 +957,55 @@ export class DemoBackend implements Backend {
           rowId: type.id,
           changes: before ? diff(before, type) : { brand: type.brand, name: type.name },
         },
+      ),
+    );
+  }
+
+  async listEvChargers() {
+    const state = this.load();
+    this.requireAdmin(state);
+    return [...(state.evChargers ?? DEMO_EV_CHARGERS)].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async saveEvCharger(id: string | null, input: EvChargerInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!validEvCharger(input)) throw new BackendError("unknown", "invalid charger");
+    if (input.stationId && !state.stations.some((s) => s.id === input.stationId)) throw new BackendError("station_not_found");
+    const chargers = state.evChargers ?? DEMO_EV_CHARGERS;
+    const charger: EvCharger = {
+      id: id ?? crypto.randomUUID(),
+      name: input.name.trim(),
+      connector: input.connector,
+      powerKw: Number(input.powerKw),
+      stationId: input.stationId || null,
+      isActive: input.isActive,
+    };
+    const before = chargers.find((c) => c.id === id);
+    this.save(
+      withAudit(
+        { ...state, evChargers: before ? chargers.map((c) => (c.id === id ? charger : c)) : [...chargers, charger] },
+        {
+          table: "ev_chargers",
+          action: before ? "update" : "insert",
+          rowId: charger.id,
+          stationId: charger.stationId ?? before?.stationId ?? null,
+          changes: before ? diff(before, charger) : { ...charger },
+        },
+      ),
+    );
+  }
+
+  async deleteEvCharger(id: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const chargers = state.evChargers ?? DEMO_EV_CHARGERS;
+    const before = chargers.find((c) => c.id === id);
+    if (!before) return;
+    this.save(
+      withAudit(
+        { ...state, evChargers: chargers.filter((c) => c !== before) },
+        { table: "ev_chargers", action: "delete", rowId: id, stationId: before.stationId, changes: { ...before } },
       ),
     );
   }
