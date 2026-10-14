@@ -521,4 +521,22 @@ describe("driver module switched off", () => {
     await expect(createParcel(t.admin, A.id, parcelInput(true))).rejects.toMatchObject(soon);
     expect((await createParcel(t.admin, A.id, parcelInput(false))).express).toBe(false);
   });
+
+  it("closes applications and the queue, but a driver finishes the trip under way", async () => {
+    const t = setup();
+    const driver = await approvedDriver(t, "d1");
+    await joinQueue(driver.me, A.id, A);
+    await createParcel(t.admin, A.id, parcelInput(true));
+    const job = (await driverHome(driver.me)).job!;
+    t.db.exec("update app_settings set value = '0' where key = 'drivers_enabled'");
+    const soon = { code: "drivers_soon" };
+
+    const newcomer = t.ctx(profile("d2", "+22893000002"));
+    await expect(applyDriver(newcomer, { fullName: "Chauffeur d2", idNumber: "ID12345", licenseNumber: "LIC9876", wantedType: "moto" })).rejects.toMatchObject(soon);
+    await expect(uploadDriverDocument(newcomer, "id", photo())).rejects.toMatchObject(soon);
+    await acceptJob(driver.me, job.id);
+    expect((await driverHome(driver.me)).job?.status).toBe("accepted");
+    t.db.exec(`update delivery_jobs set status = 'cancelled' where id = '${job.id}'`);
+    await expect(joinQueue(driver.me, A.id, A)).rejects.toMatchObject(soon);
+  });
 });

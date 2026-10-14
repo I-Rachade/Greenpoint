@@ -1983,6 +1983,7 @@ export class DemoBackend implements Backend {
   async applyDriver(input: DriverApplication) {
     const state = this.load();
     const profile = this.requireProfile(state);
+    this.requireDrivers(state);
     if (!profile.phone) throw new BackendError("phone_required");
     const text = (v: string, min: number) => {
       const t = (v ?? "").trim();
@@ -2006,6 +2007,7 @@ export class DemoBackend implements Backend {
   async uploadDriverDocument(kind: DriverDocument, image: Blob) {
     const state = this.load();
     const profile = this.requireProfile(state);
+    this.requireDrivers(state);
     const driver = (state.drivers ?? []).find((d) => d.userId === profile.id);
     if (!driver || (driver.status !== "pending" && driver.status !== "rejected")) throw new BackendError("forbidden");
     if (image.size > MAX_PROMO_IMAGE_BYTES / 4) throw new BackendError("image_too_large");
@@ -2026,6 +2028,7 @@ export class DemoBackend implements Backend {
   async joinDriverQueue(stationId: string, position: LatLng | null) {
     const state = this.load();
     const { driver } = this.demoDriver(state);
+    this.requireDrivers(state);
     const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === driver.vehicleId);
     if (!vehicle?.isActive) throw new BackendError("no_vehicle");
     if (this.busyJob(state, driver.userId)) throw new BackendError("driver_busy");

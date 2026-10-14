@@ -513,7 +513,7 @@ function History({ jobs, stations }: { jobs: DeliveryJob[]; stations: StationVie
 /** The driver page (/chauffeur): apply, then queue at a station and carry out trips. */
 export function DriverPanel() {
   const { t } = useI18n();
-  const { backend } = useApp();
+  const { backend, features } = useApp();
   const { data, error } = useLiveQuery(() => Promise.all([backend.driverHome(), backend.listStations(), backend.parcelInfo()]));
 
   if (error) return <p className="p-6 text-sm text-red-600">{t.errors.unknown}</p>;
@@ -521,8 +521,22 @@ export function DriverPanel() {
   const [home, stations, info] = data;
   const driver = home.driver;
 
+  const soon = <p className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">{t.drivers.page.soon}</p>;
   let body: ReactNode;
-  if (!driver || driver.status === "rejected") {
+  if (!features.drivers && !home.job) {
+    // Driver module off: no applications and no queue; a driver still sees what they earned.
+    body = (
+      <>
+        {soon}
+        {driver && driver.status !== "pending" && driver.status !== "rejected" && (
+          <>
+            <Balance home={home} />
+            <History jobs={home.history} stations={stations} />
+          </>
+        )}
+      </>
+    );
+  } else if (!driver || driver.status === "rejected") {
     body = (
       <>
         {driver && <p className="rounded-lg bg-amber-100 p-3 text-sm text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">{t.drivers.page.rejected}</p>}

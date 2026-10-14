@@ -795,6 +795,7 @@ export const en: Dictionary = {
     fcfa: "{n} FCFA",
     page: {
       title: "Driver",
+      soon: "Coming soon: driver applications and the queue open when trips launch.",
       intro: "Drive a poinderecharge motorbike, tricycle or cargo tricycle and carry customers and parcels across Lomé. You earn {pct}% of every trip, paid daily.",
       applyTitle: "Become a driver",
       fullName: "Full name (as on your ID)",
@@ -951,8 +952,8 @@ export const en: Dictionary = {
       turnOn: "Switch on",
       turnOff: "Switch off",
       confirmOn: "Switch the driver module on? Customers will be able to order trips, express parcels, pickups and home deliveries. Check that at least one active driver has a vehicle.",
-      confirmOff: "Switch the driver module off? Customers can no longer order a trip or send from where they are. Trips already under way go on.",
-      offHint: "The module is off. Regular sending at a station stays available. You can register drivers, vehicles and prices here before switching it on.",
+      confirmOff: "Switch the driver module off? Customers can no longer order a trip or send from where they are, and the driver area closes applications and the queue. Trips already under way go on.",
+      offHint: "The module is off. Regular sending at a station stays available. Driver applications and the queue are closed. You can prepare vehicles and prices here before switching it on.",
       applications: "Applications",
       drivers: "Drivers",
       statusLabel: { pending: "Pending", active: "Active", rejected: "Rejected", suspended: "Suspended" },

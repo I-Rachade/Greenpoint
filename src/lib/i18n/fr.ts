@@ -795,6 +795,7 @@ export const fr = {
     fcfa: "{n} FCFA",
     page: {
       title: "Chauffeur",
+      soon: "Bientôt disponible : les candidatures et la file d'attente des chauffeurs ouvriront avec le lancement des courses.",
       intro: "Conduisez une moto, un tricycle ou un tricycle cargo poinderecharge et transportez des clients et des colis dans Lomé. Vous gagnez {pct} % de chaque course, payés chaque jour.",
       applyTitle: "Devenir chauffeur",
       fullName: "Nom complet (comme sur la pièce d'identité)",
@@ -951,8 +952,8 @@ export const fr = {
       turnOn: "Activer",
       turnOff: "Désactiver",
       confirmOn: "Activer le module chauffeurs ? Les clients pourront commander des courses, des envois express, des enlèvements et des livraisons à domicile. Vérifiez qu'au moins un chauffeur actif a un véhicule.",
-      confirmOff: "Désactiver le module chauffeurs ? Les clients ne pourront plus commander de course ni d'envoi depuis leur position. Les courses déjà en cours continuent.",
-      offHint: "Le module est désactivé. L'envoi régulier en station reste disponible. Vous pouvez enregistrer chauffeurs, véhicules et tarifs ici avant de l'activer.",
+      confirmOff: "Désactiver le module chauffeurs ? Les clients ne pourront plus commander de course ni d'envoi depuis leur position, et l'espace chauffeur ferme les candidatures et la file d'attente. Les courses déjà en cours continuent.",
+      offHint: "Le module est désactivé. L'envoi régulier en station reste disponible. Candidatures et file d'attente des chauffeurs sont fermées. Vous pouvez préparer véhicules et tarifs ici avant de l'activer.",
       applications: "Candidatures",
       drivers: "Chauffeurs",
       statusLabel: { pending: "En attente", active: "Actif", rejected: "Refusé", suspended: "Suspendu" },

@@ -474,6 +474,7 @@ function cleanText(value: unknown, min: number, max: number): string {
 /** Applies (or applies again after a refusal) to drive one of our vehicles. */
 export async function applyDriver(c: ParcelCtx, input: DriverApplication) {
   const user = await c.requireUser();
+  await requireDrivers(c.db);
   if (!user.phone) throw new ApiError("phone_required");
   const fullName = cleanText(input?.fullName, 2, 80);
   const idNumber = cleanText(input?.idNumber, 3, 40);
@@ -532,6 +533,7 @@ const DOC_COLUMN: Record<DriverDocument, "id_doc_key" | "license_doc_key" | "por
 /** A photo of the ID card, the licence or the driver. Private: only admins see it. */
 export async function uploadDriverDocument(c: ParcelCtx, kind: string, request: Request) {
   const user = await c.requireUser();
+  await requireDrivers(c.db);
   const column = DOC_COLUMN[kind as DriverDocument];
   if (!column) throw new ApiError("bad_request");
   const row = await driverRow(c.db, user.id);
@@ -547,6 +549,7 @@ export async function uploadDriverDocument(c: ParcelCtx, kind: string, request: 
 
 export async function joinQueue(c: ParcelCtx, stationId: string, position: unknown) {
   const { user, row } = await requireDriver(c);
+  await requireDrivers(c.db);
   if (!row.vehicle_id || !row.v_active) throw new ApiError("no_vehicle");
   if (await currentJob(c.db, user.id)) throw new ApiError("driver_busy");
   const s = await driverSettings(c.db);
