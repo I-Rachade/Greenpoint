@@ -22,7 +22,17 @@ const SEND_TIMEOUT_MS = 10_000;
 /** Error codes of the vendor platform (section 5) that mean the device cannot take commands now. */
 const BUSY_CODES = new Set(["DEVICE_OFFLINE", "DEVICE_BUSY"]);
 
-export type SendResult = { ok: true } | { ok: false; code: string; uncertain: boolean };
+export type SendResult = { ok: true } | { ok: false; code: string; uncertain: boolean; detail?: string };
+
+/** The platform host as configured, tolerating a pasted "https://" or trailing slash. */
+export function xingkeHost(value: string): string {
+  return value.trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+}
+
+/** Our access credential, tolerating a pasted "Bearer " prefix. */
+export function xingkeToken(value: string): string {
+  return value.trim().replace(/^bearer\s+/i, "");
+}
 
 /**
  * Sends one command to the vendor platform. HTTP 202 (or 200 for a repeated
@@ -30,13 +40,13 @@ export type SendResult = { ok: true } | { ok: false; code: string; uncertain: bo
  */
 export async function sendXingkeCommand(env: Env, deviceRef: string, command: XingkeCommand, fetcher: typeof fetch = fetch): Promise<SendResult> {
   if (!env.XINGKE_API_HOST || !env.XINGKE_API_TOKEN) throw new ApiError("device_not_configured", 503);
-  const url = `https://${env.XINGKE_API_HOST}/openapi/v1/devices/${encodeURIComponent(deviceRef)}/commands`;
+  const url = `https://${xingkeHost(env.XINGKE_API_HOST)}/openapi/v1/devices/${encodeURIComponent(deviceRef)}/commands`;
   let response: Response;
   try {
     response = await fetcher(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${env.XINGKE_API_TOKEN}`,
+        Authorization: `Bearer ${xingkeToken(env.XINGKE_API_TOKEN)}`,
         "Content-Type": "application/json",
         Accept: "application/json",
       },
@@ -47,9 +57,11 @@ export async function sendXingkeCommand(env: Env, deviceRef: string, command: Xi
     // Timeout or network error: the command may have been accepted (section 5).
     return { ok: false, code: "DELIVERY_UNCERTAIN", uncertain: true };
   }
-  const body = (await response.json().catch(() => null)) as { code?: string } | null;
+  const body = (await response.json().catch(() => null)) as { code?: string; message?: string } | null;
   if (response.status === 202 || response.status === 200) return { ok: true };
-  return { ok: false, code: body?.code ?? `HTTP_${response.status}`, uncertain: response.status >= 500 };
+  // The platform's message says which field it rejected; kept for troubleshooting.
+  const detail = typeof body?.message === "string" ? body.message.slice(0, 300) : undefined;
+  return { ok: false, code: body?.code ?? `HTTP_${response.status}`, uncertain: response.status >= 500, detail };
 }
 
 /** Sends a command we stored as pending and records how the platform answered. */
@@ -64,7 +76,7 @@ export async function dispatchXingkeCommand(env: Env, deviceRef: string, command
   await env.DB.prepare(
     `update device_commands set status = ?, result = ?, sent_at = ?, done_at = ? where message_id = ?`,
   )
-    .bind(result.uncertain ? "sent" : "failed", result.code, now, result.uncertain ? null : now, command.messageId)
+    .bind(result.uncertain ? "sent" : "failed", result.detail ? `${result.code}: ${result.detail}` : result.code, now, result.uncertain ? null : now, command.messageId)
     .run();
   if (BUSY_CODES.has(result.code)) throw new ApiError("device_offline", 409);
   throw new ApiError("device_command_failed", 502);
