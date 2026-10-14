@@ -387,3 +387,28 @@ export const ParkingIcon = (p: IconProps) => (
     <path d="M9.5 17V7h3.5a3 3 0 0 1 0 6H9.5" />
   </Svg>
 );
+
+/** A cargo tricycle: one wheel in front, a loading box over the two behind. */
+export const CargoTricycleIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="5" cy="17.5" r="2.2" />
+    <circle cx="17.5" cy="17.5" r="2.2" />
+    <path d="M7.2 17.5h8.1M11 7.5h10v7H11zM11 14.5 9 17.5M5 17.5 8 9.5h3M6.5 9.5h-2" />
+  </Svg>
+);
+
+export const CarIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3.5 16.5v-4l2-5h13l2 5v4h-17ZM3.5 12.5h17" />
+    <circle cx="7.5" cy="16.5" r="1.8" />
+    <circle cx="16.5" cy="16.5" r="1.8" />
+  </Svg>
+);
+
+/** Express parcel: a box with speed lines. */
+export const BoxFastIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m14 4 7 3.5v9L14 20l-7-3.5v-9L14 4Z" />
+    <path d="m7 7.5 7 3.5 7-3.5M14 11v9M2 10h3M1.5 13.5H5M2.5 17H5" />
+  </Svg>
+);

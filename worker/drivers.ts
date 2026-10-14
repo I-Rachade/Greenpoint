@@ -1,5 +1,5 @@
 // Drivers: express trips between stations, pickups at a customer's home, home
-// deliveries, and rides (the customer themselves from A to B). Shared rules in src/lib/drivers.ts, plan in planung/fahrer.md.
+// deliveries, rides (the customer themselves from A to B) and couriers (a parcel door to door). Shared rules in src/lib/drivers.ts, plan in planung/fahrer.md.
 import {
   balanceOf,
   BUSY_JOB_STATUSES,
@@ -16,7 +16,6 @@ import {
   validPoint,
   validSettings,
   vehicleFits,
-  vehicleSeats,
   MAX_PASSENGERS,
   type AdminDrivers,
   type DeliveryJob,
@@ -37,6 +36,11 @@ import {
   type PickupBooking,
   type QueueEntry,
   type RideBooking,
+  type CourierBooking,
+  type BookableVehicleType,
+  BOOKABLE_VEHICLE_TYPES,
+  withAllVehicles,
+  jobFits,
   type StationDrivers,
 } from "../src/lib/drivers";
 import { distanceMeters, type LatLng } from "../src/lib/geo";
@@ -132,6 +136,7 @@ export interface JobRow {
   dropoff_lng: number | null;
   dropoff_note: string | null;
   passengers: number | null;
+  vehicle_type: FleetVehicleType | null;
   tracking_no: string | null;
   driver_name: string | null;
   driver_phone: string | null;
@@ -164,6 +169,7 @@ export function toJob(r: JobRow): DeliveryJob {
         : null,
     dropoff: r.dropoff_lat != null && r.dropoff_lng != null ? { lat: r.dropoff_lat, lng: r.dropoff_lng, note: r.dropoff_note ?? "" } : null,
     passengers: r.passengers,
+    vehicleType: r.vehicle_type ?? null,
     size: r.size,
     weightKg: r.weight_kg,
     content: r.content,
@@ -190,13 +196,19 @@ export function toVehicle(r: { id: string; type: FleetVehicleType; plate: string
   return { id: r.id, type: r.type, plate: r.plate, isActive: !!r.is_active };
 }
 
+/** Ride vehicles we have at least one active vehicle of; customers cannot book the others yet. */
+export async function bookableVehicles(db: D1Database): Promise<BookableVehicleType[]> {
+  const { results } = await db.prepare("select distinct type from fleet_vehicles where is_active = 1").all<{ type: FleetVehicleType }>();
+  return BOOKABLE_VEHICLE_TYPES.filter((type) => results.some((r) => r.type === type));
+}
+
 // Settings -----------------------------------------------------------------------
 
 export async function driverSettings(db: D1Database): Promise<DriverSettings> {
   const row = await db.prepare("select settings from driver_settings where id = 1").first<{ settings: string }>();
   if (!row) return DEFAULT_DRIVER_SETTINGS;
   try {
-    const parsed = JSON.parse(row.settings) as DriverSettings;
+    const parsed = withAllVehicles(JSON.parse(row.settings) as DriverSettings);
     return validSettings(parsed) ? parsed : DEFAULT_DRIVER_SETTINGS;
   } catch {
     return DEFAULT_DRIVER_SETTINGS;
@@ -330,6 +342,11 @@ async function currentJob(db: D1Database, driverId: string): Promise<JobRow | nu
   return db.prepare(`${JOB_SELECT} where j.driver_id = ? and j.status in ${BUSY_SQL}`).bind(driverId).first<JobRow>();
 }
 
+/** jobFits (src/lib/drivers.ts) for a row. */
+function rowFits(job: Pick<JobRow, "kind" | "vehicle_type" | "passengers" | "size">, type: FleetVehicleType, weightKg: number, s: DriverSettings): boolean {
+  return jobFits({ kind: job.kind, vehicleType: job.vehicle_type, passengers: job.passengers, size: job.size }, type, weightKg, s);
+}
+
 /** The heaviest a parcel of this size may weigh, for trips booked before it is weighed. */
 async function maxWeight(db: D1Database, size: ParcelSize): Promise<number> {
   return (await sizes(db)).find((t) => t.size === size)?.maxWeightKg ?? 50;
@@ -393,15 +410,12 @@ export async function dispatch(c: Pick<ParcelCtx, "db" | "audit">) {
   const points = new Map(stations.map((st) => [st.id, st]));
 
   for (const job of open) {
-    const fromHome = job.kind === "pickup" || job.kind === "ride";
+    const fromHome = job.kind === "pickup" || job.kind === "ride" || job.kind === "courier";
     const start = fromHome ? (job.home_lat != null ? { lat: job.home_lat, lng: job.home_lng! } : null) : points.get(job.from_station_id ?? "") ?? (await stationPoint(c.db, job.from_station_id));
     if (!start) continue;
     const declined = new Set(job.declined.split(",").filter(Boolean));
     const weight = job.weight_kg ?? (await maxWeight(c.db, job.size));
-    const fits =
-      job.kind === "ride"
-        ? (type: FleetVehicleType) => vehicleSeats(type, job.passengers ?? 1)
-        : (type: FleetVehicleType) => vehicleFits(type, job.size, weight, s);
+    const fits = (type: FleetVehicleType) => rowFits(job, type, weight, s);
     const pick = pickDriver(start, queue.filter((q) => !declined.has(q.driverId)), stations, fits);
     if (!pick) continue;
     queue = queue.filter((q) => q.driverId !== pick.driverId);
@@ -748,25 +762,37 @@ export async function failDelivery(c: ParcelCtx, jobId: string) {
   }
 }
 
-/** Ride: the customer got on at the start point. */
+/** Trips that go from point A to point B without a station: rides and couriers. */
+const POINT_TO_POINT: JobKind[] = ["ride", "courier"];
+
+/**
+ * Ride: the customer got on at the start point. Courier: the driver took the
+ * parcel at the sender's door and was paid the fare in cash there.
+ */
 export async function boardRide(c: ParcelCtx, jobId: string) {
   const { user, job } = await myJob(c, jobId);
-  if (job.kind !== "ride" || !(await moveJob(c.db, job.id, ["accepted"], "status = 'picked_up', picked_up_at = ?", nowIso()))) {
+  if (!POINT_TO_POINT.includes(job.kind) || !(await moveJob(c.db, job.id, ["accepted"], "status = 'picked_up', picked_up_at = ?", nowIso()))) {
     throw new ApiError("job_wrong_status");
   }
-  await jobAudit(c, user.id, job, { status: ["accepted", "picked_up"] }).run();
+  await c.db.batch([
+    ...(job.kind === "courier" ? [ledger(c, user.id, "collected", job.collect_fcfa, job.id, null, user.id)] : []),
+    jobAudit(c, user.id, job, { status: ["accepted", "picked_up"] }),
+  ]);
 }
 
-/** Ride: the customer got off at the end point and paid the fare in cash. */
+/**
+ * Ride: the customer got off at the end point and paid the fare in cash.
+ * Courier: the parcel was handed to the recipient (already paid at the start).
+ */
 export async function finishRide(c: ParcelCtx, jobId: string) {
   const { user, job } = await myJob(c, jobId);
-  if (job.kind !== "ride") throw new ApiError("job_wrong_status");
+  if (!POINT_TO_POINT.includes(job.kind)) throw new ApiError("job_wrong_status");
   const s = await driverSettings(c.db);
   if (!(await moveJob(c.db, job.id, ["picked_up"], "status = 'done', done_at = ?", nowIso()))) throw new ApiError("job_wrong_status");
   const trip = await tripStatement(c.db, { driverId: user.id, jobId: job.id, distanceMeters: job.distance_m, stationId: job.driver_station_id, createdBy: user.id });
   await c.db.batch([
     ...(trip ? [trip] : []),
-    ledger(c, user.id, "collected", job.collect_fcfa, job.id, null, user.id),
+    ...(job.kind === "ride" ? [ledger(c, user.id, "collected", job.collect_fcfa, job.id, null, user.id)] : []),
     ledger(c, user.id, "earning", driverEarning(job.fare_fcfa, s), job.id, null, user.id),
     jobAudit(c, user.id, job, { status: ["picked_up", "done"], collect_fcfa: job.collect_fcfa }),
   ]);
@@ -987,13 +1013,19 @@ export async function bookPickup(c: ParcelCtx, input: PickupBooking): Promise<De
   return toJob(await loadJob(c.db, id));
 }
 
-/** A customer books a driver to take them (and up to two others on a tricycle) from A to B. */
+/** Where a ride or courier ends: a pin in the service area and a description. */
+function cleanDropoff(input: unknown): { lat: number; lng: number; note: string } {
+  const d = input as { lat: number; lng: number; note?: unknown } | null;
+  if (!validPoint(d)) throw new ApiError("bad_request");
+  if (!inServiceArea(d)) throw new ApiError("outside_area");
+  return { lat: d.lat, lng: d.lng, note: String(d.note ?? "").trim().slice(0, 300) };
+}
+
+/** A customer books a driver to take them (and others, as seats allow) from A to B. Not offered in the app at the moment. */
 export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
   const pickup = cleanHome(input?.pickup);
-  const d = input?.dropoff;
-  if (!validPoint(d)) throw new ApiError("bad_request");
-  if (!inServiceArea(d)) throw new ApiError("outside_area");
+  const d = cleanDropoff(input?.dropoff);
   const passengers = Number(input?.passengers);
   if (!Number.isInteger(passengers) || passengers < 1 || passengers > MAX_PASSENGERS) throw new ApiError("bad_request");
   const open = await c.db
@@ -1022,7 +1054,7 @@ export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<Delive
         pickup.phone,
         d.lat,
         d.lng,
-        String((d as { note?: unknown }).note ?? "").trim().slice(0, 300),
+        d.note,
         passengers,
         distance,
         fare,
@@ -1030,6 +1062,66 @@ export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<Delive
         nowIso(),
       ),
     c.audit(user.id, "delivery_jobs", "insert", id, { kind: "ride", passengers, fare_fcfa: fare }, { userId: user.id }),
+  ]);
+  await dispatch(c);
+  return toJob(await loadJob(c.db, id));
+}
+
+/**
+ * A driver takes a parcel at one place and brings it straight to its destination:
+ * "Envoi express" (any vehicle) or the "Courses" tab (only the vehicle picked there).
+ */
+export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<DeliveryJob> {
+  const user = await c.requireUser();
+  const pickup = cleanHome(input?.pickup);
+  const d = cleanDropoff(input?.dropoff);
+  if (!d.note) throw new ApiError("bad_request");
+  const recipientPhone = normalizeTogoPhone(String(input?.recipientPhone ?? ""));
+  if (!recipientPhone) throw new ApiError("phone_not_allowed");
+  const content = String(input?.content ?? "").trim().slice(0, 300);
+  if (!content) throw new ApiError("bad_request");
+  if (!PARCEL_SIZES.includes(input?.size)) throw new ApiError("bad_request");
+  const s = await driverSettings(c.db);
+  const weight = await maxWeight(c.db, input.size);
+  const vehicleType = input.vehicleType ?? null;
+  if (vehicleType) {
+    if (!BOOKABLE_VEHICLE_TYPES.includes(vehicleType)) throw new ApiError("bad_request");
+    if (!(await bookableVehicles(c.db)).includes(vehicleType)) throw new ApiError("vehicle_soon");
+    if (!vehicleFits(vehicleType, input.size, weight, s)) throw new ApiError("parcel_too_large");
+  }
+  const distance = Math.round(distanceMeters(pickup, d));
+  const fare = fareFor(distance, false, s);
+  const id = uuid();
+  await c.db.batch([
+    c.db
+      .prepare(
+        `insert into delivery_jobs (id, kind, status, customer_user_id, customer_name, home_lat, home_lng, home_note, home_phone,
+         dropoff_lat, dropoff_lng, dropoff_note, size, weight_kg, content, recipient_phone, recipient_name, vehicle_type, distance_m, fare_fcfa, collect_fcfa, created_at)
+         values (?, 'courier', 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        id,
+        user.id,
+        user.fullName,
+        pickup.lat,
+        pickup.lng,
+        pickup.note,
+        pickup.phone,
+        d.lat,
+        d.lng,
+        d.note,
+        input.size,
+        weight,
+        content,
+        recipientPhone,
+        cleanName(input.recipientName),
+        vehicleType,
+        distance,
+        fare,
+        fare,
+        nowIso(),
+      ),
+    c.audit(user.id, "delivery_jobs", "insert", id, { kind: "courier", size: input.size, vehicle_type: vehicleType, fare_fcfa: fare }, { userId: user.id }),
   ]);
   await dispatch(c);
   return toJob(await loadJob(c.db, id));
@@ -1302,7 +1394,7 @@ export async function handJob(c: ParcelCtx, actorId: string, job: JobRow, driver
   if (!row || row.status !== "active" || !row.v_type || !row.v_active) throw new ApiError("driver_not_found");
   if (await currentJob(c.db, driverId)) throw new ApiError("driver_busy");
   const s = await driverSettings(c.db);
-  if (!vehicleFits(row.v_type, job.size, job.weight_kg ?? (await maxWeight(c.db, job.size)), s)) throw new ApiError("vehicle_too_small");
+  if (!rowFits(job, row.v_type, job.weight_kg ?? (await maxWeight(c.db, job.size)), s)) throw new ApiError("vehicle_too_small");
   if (job.status !== "open") await cancelOffer(c, job, actorId);
   const queued = await queueOf(c.db, driverId);
   if (!(await moveJob(c.db, job.id, ["open"], "status = 'assigned', driver_id = ?, driver_station_id = ?, assigned_at = ?", driverId, queued?.stationId ?? null, nowIso()))) {

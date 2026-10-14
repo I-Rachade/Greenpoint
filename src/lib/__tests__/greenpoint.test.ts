@@ -17,6 +17,11 @@ describe("greenpoint rules", () => {
     expect(parseFactors(JSON.stringify({ ...DEFAULT_FACTORS, kwhGrams: -1 }))).toEqual(DEFAULT_FACTORS);
   });
 
+  it("keeps factors saved before a vehicle type existed", () => {
+    const saved = { ...DEFAULT_FACTORS, kwhGrams: 900, kmGrams: { moto: 50, tricycle: 70, cargo_tricycle: 70 } };
+    expect(parseFactors(JSON.stringify(saved))).toEqual({ ...saved, kmGrams: { ...saved.kmGrams, car: DEFAULT_FACTORS.kmGrams.car } });
+  });
+
   it("needs a partner name for partner rewards", () => {
     const base = { title: "Jus", description: "", costPoints: 20, provider: "partner", partnerName: "", stock: null, validUntil: null, isActive: true };
     expect(validRewardInput(base)).toBeNull();

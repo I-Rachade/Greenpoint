@@ -28,6 +28,7 @@ import type {
   HomePoint,
   PickupBooking,
   RideBooking,
+  CourierBooking,
   StationDrivers,
 } from "../drivers";
 import type { ReviewInput, StationReview } from "../station-extras";
@@ -564,6 +565,12 @@ export class CloudflareBackend implements Backend {
 
   async bookRide(input: RideBooking) {
     const job = await this.call<DeliveryJob>("POST", "/api/jobs/ride", input);
+    this.changed();
+    return job;
+  }
+
+  async bookCourier(input: CourierBooking) {
+    const job = await this.call<DeliveryJob>("POST", "/api/jobs/courier", input);
     this.changed();
     return job;
   }

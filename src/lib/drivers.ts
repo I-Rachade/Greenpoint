@@ -1,6 +1,6 @@
 // Drivers: people who drive one of our vehicles and carry parcels express between
 // stations, pick them up at a customer's home or deliver them there, and take
-// customers themselves from one place to another (rides).
+// customers themselves (rides) or a parcel (couriers) from one place to another.
 // Shared by the app, the demo backend and the Worker. Plan: planung/fahrer.md.
 
 import { distanceMeters, LOME_CENTER, type LatLng } from "./geo";
@@ -9,9 +9,15 @@ import { PARCEL_SIZES, type ParcelMeasures, type ParcelSize } from "./parcels";
 /**
  * Our own vehicles; drivers never use their own. Moto: people or parcels, fast.
  * Tricycle: people (up to three) or parcels. Cargo tricycle: goods only.
+ * Car: people (up to four) or parcels.
  */
-export type FleetVehicleType = "moto" | "tricycle" | "cargo_tricycle";
-export const FLEET_VEHICLE_TYPES: FleetVehicleType[] = ["moto", "tricycle", "cargo_tricycle"];
+export type FleetVehicleType = "moto" | "tricycle" | "cargo_tricycle" | "car";
+export const FLEET_VEHICLE_TYPES: FleetVehicleType[] = ["moto", "tricycle", "cargo_tricycle", "car"];
+/** What a customer can pick on the "Courses" tab to have a parcel carried. */
+export type BookableVehicleType = "moto" | "cargo_tricycle";
+export const BOOKABLE_VEHICLE_TYPES: BookableVehicleType[] = ["moto", "cargo_tricycle"];
+/** The "Courses" pages, one per vehicle a customer can pick: /courses/moto, /courses/tricycle-bagage. */
+export const VEHICLE_SLUGS: Record<string, BookableVehicleType> = { moto: "moto", "tricycle-bagage": "cargo_tricycle" };
 
 export type DriverStatus =
   | "pending" // applied in the app, waiting for the admin
@@ -23,7 +29,8 @@ export type JobKind =
   | "express" // station A to station B, paid at the counter in A
   | "pickup" // a customer's home to station B, paid to the driver
   | "delivery" // station A to the recipient's home, paid to the driver at the door
-  | "ride"; // the customer themselves from point A to point B, paid to the driver on arrival
+  | "ride" // the customer themselves from point A to point B, paid to the driver on arrival
+  | "courier"; // a parcel from the sender's door (A) straight to the recipient's door (B), paid to the driver at A
 
 export type JobStatus =
   | "open" // no driver yet
@@ -80,11 +87,12 @@ export const DEFAULT_DRIVER_SETTINGS: DriverSettings = {
     { type: "moto", maxSize: "M", maxWeightKg: 20 },
     { type: "tricycle", maxSize: "L", maxWeightKg: 50 },
     { type: "cargo_tricycle", maxSize: "XL", maxWeightKg: 300 },
+    { type: "car", maxSize: "L", maxWeightKg: 100 },
   ],
 };
 
 /** Seats for customers on each vehicle type (the driver not counted). */
-export const RIDE_SEATS: Record<FleetVehicleType, number> = { moto: 1, tricycle: 3, cargo_tricycle: 0 };
+export const RIDE_SEATS: Record<FleetVehicleType, number> = { moto: 1, tricycle: 3, cargo_tricycle: 0, car: 4 };
 /** Most passengers one ride can book. */
 export const MAX_PASSENGERS = Math.max(...Object.values(RIDE_SEATS));
 
@@ -129,6 +137,31 @@ export function vehicleFits(type: FleetVehicleType, size: ParcelSize, weightKg: 
   const limit = s.vehicles.find((v) => v.type === type);
   if (!limit) return false;
   return PARCEL_SIZES.indexOf(size) <= PARCEL_SIZES.indexOf(limit.maxSize) && weightKg <= limit.maxWeightKg;
+}
+
+/**
+ * True when a vehicle of this type can take the trip: the type the customer
+ * picked, if any, and seats for rides, size and weight otherwise.
+ */
+export function jobFits(
+  job: { kind: JobKind; vehicleType: FleetVehicleType | null; passengers: number | null; size: ParcelSize },
+  type: FleetVehicleType,
+  weightKg: number,
+  s: DriverSettings,
+): boolean {
+  if (job.vehicleType && type !== job.vehicleType) return false;
+  if (job.kind === "ride") return vehicleSeats(type, job.passengers ?? 1);
+  return vehicleFits(type, job.size, weightKg, s);
+}
+
+/**
+ * Settings saved before a vehicle type existed lack its limits: they get the
+ * default ones, so saved prices are kept.
+ */
+export function withAllVehicles(s: DriverSettings): DriverSettings {
+  if (!s || !Array.isArray(s.vehicles)) return s;
+  const missing = DEFAULT_DRIVER_SETTINGS.vehicles.filter((d) => !s.vehicles.some((v) => v?.type === d.type));
+  return missing.length ? { ...s, vehicles: [...s.vehicles, ...missing] } : s;
 }
 
 export function validSettings(s: DriverSettings): boolean {
@@ -270,7 +303,7 @@ export interface HomePoint extends LatLng {
   phone: string;
 }
 
-/** Where a ride ends: a pin on the map and a description. */
+/** Where a ride or courier ends: a pin on the map and a description. */
 export interface DropoffPoint extends LatLng {
   note: string;
 }
@@ -294,12 +327,14 @@ export interface DeliveryJob {
   fromStationId: string | null;
   /** Destination station (express, pickup). */
   toStationId: string | null;
-  /** The customer's home: start of a pickup, end of a delivery. Rides: where the customer gets on. */
+  /** The customer's home: start of a pickup, end of a delivery. Rides: where the customer gets on. Couriers: the sender's door. */
   home: HomePoint | null;
-  /** Rides: where the customer gets off. */
+  /** Rides: where the customer gets off. Couriers: the recipient's door. */
   dropoff: DropoffPoint | null;
   /** Rides: how many people travel. */
   passengers: number | null;
+  /** Rides: the kind of vehicle the customer asked for (null: any). */
+  vehicleType: FleetVehicleType | null;
   /** Booked size (pickup) or the parcel's size. */
   size: ParcelSize;
   weightKg: number | null;
@@ -308,7 +343,7 @@ export interface DeliveryJob {
   fareFcfa: number;
   /** Cash the driver collects from the customer (0 for express). */
   collectFcfa: number;
-  /** Pickup bookings: who gets the parcel at station B. */
+  /** Pickup bookings: who gets the parcel at station B. Couriers: who gets it at the door. */
   recipient: { phone: string; name: string | null } | null;
   declaredValue: number | null;
   driver: JobDriver | null;
@@ -339,6 +374,20 @@ export interface RideBooking {
   pickup: HomePoint;
   dropoff: DropoffPoint;
   passengers: number;
+}
+
+/**
+ * A parcel picked up at one place (A) and brought straight to its destination (B).
+ * Booked as "Envoi express" (any vehicle) or on the "Courses" tab (the vehicle picked there).
+ */
+export interface CourierBooking {
+  pickup: HomePoint;
+  dropoff: DropoffPoint;
+  recipientPhone: string;
+  recipientName?: string;
+  content: string;
+  size: ParcelSize;
+  vehicleType?: BookableVehicleType;
 }
 
 export type LedgerKind = "collected" | "earning" | "settlement";
