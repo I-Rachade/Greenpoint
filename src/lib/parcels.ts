@@ -3,7 +3,7 @@
 // recipient picks up with a 6-digit code or the QR code in the app.
 // Shared by the app, the demo backend and the Worker. Plan: planung/paketdepot.md.
 
-import type { DeliveryStatus, DriverSettings } from "./drivers";
+import type { DeliveryStatus, DriverSettings, BookableVehicleType } from "./drivers";
 
 export type ParcelSize = "S" | "M" | "L" | "XL";
 export const PARCEL_SIZES: ParcelSize[] = ["S", "M", "L", "XL"];
@@ -220,6 +220,8 @@ export interface ParcelInfo {
   sizes: ParcelSizeTier[];
   /** Trip prices, so the app can show what a pickup or delivery costs. */
   driverSettings: DriverSettings;
+  /** Ride vehicles we have at least one active vehicle of; the others show as "soon". */
+  bookableVehicles: BookableVehicleType[];
 }
 
 /** Everything the backoffice parcel page needs. */

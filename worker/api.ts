@@ -87,6 +87,7 @@ import {
   bookDelivery,
   bookPickup,
   bookRide,
+  bookCourier,
   cancelJob,
   collectPickup,
   declineJob,
@@ -109,7 +110,7 @@ import {
   uploadDriverDocument,
   uploadProof,
 } from "./drivers";
-import type { DriverApplication, DriverDecision, FleetVehicleInput, PickupBooking, RideBooking } from "../src/lib/drivers";
+import type { DriverApplication, DriverDecision, FleetVehicleInput, PickupBooking, RideBooking, CourierBooking } from "../src/lib/drivers";
 import { fleetAssign, fleetStats, fleetView, setDriverManager } from "./fleet";
 import type { PartnerInput } from "../src/lib/partners";
 import { PARTNER_API_BASE } from "../src/lib/partners";
@@ -1495,6 +1496,7 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/jobs\/mine$/, (c) => myJobs(c)],
   ["POST", /^\/api\/jobs\/pickup$/, async (c) => bookPickup(c, await readJson<PickupBooking>(c.request))],
   ["POST", /^\/api\/jobs\/ride$/, async (c) => bookRide(c, await readJson<RideBooking>(c.request))],
+  ["POST", /^\/api\/jobs\/courier$/, async (c) => bookCourier(c, await readJson<CourierBooking>(c.request))],
   ["POST", /^\/api\/parcels\/([\w-]+)\/delivery$/, async (c, [id]) => bookDelivery(c, id, (await readJson<{ home: unknown }>(c.request)).home)],
   ["POST", /^\/api\/jobs\/([\w-]+)\/cancel$/, (c, [id]) => cancelJob(c, id)],
   ["GET", /^\/api\/stations\/([\w-]+)\/drivers$/, (c, [id]) => stationDrivers(c, id)],

@@ -38,6 +38,7 @@ import type {
   HomePoint,
   PickupBooking,
   RideBooking,
+  CourierBooking,
   StationDrivers,
 } from "../drivers";
 import type { FleetStats, FleetView } from "../fleet";
@@ -101,6 +102,7 @@ export type BackendErrorCode =
   | "wait_longer"
   | "photo_missing"
   | "ride_open"
+  | "vehicle_soon"
   | "vehicle_unavailable"
   | "vehicle_too_small"
   | "has_other_role"
@@ -289,6 +291,8 @@ export interface Backend {
   bookPickup(input: PickupBooking): Promise<DeliveryJob>;
   /** A driver takes the customer from A to B; one open ride at a time. */
   bookRide(input: RideBooking): Promise<DeliveryJob>;
+  /** Express parcel: a driver takes it at the sender's door straight to the recipient's door. */
+  bookCourier(input: CourierBooking): Promise<DeliveryJob>;
   /** The recipient has a waiting parcel brought home; the driver gets the pickup right. */
   bookDelivery(parcelId: string, home: HomePoint): Promise<DeliveryJob>;
   /** Customer (before the driver has the parcel) or admin. */
