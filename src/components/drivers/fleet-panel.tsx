@@ -50,7 +50,7 @@ function DriverCard({ d, stations }: { d: FleetDriver; stations: StationView[] }
       </div>
       {d.job && (
         <div className="flex flex-wrap items-center gap-2">
-          <JobStatusPill status={d.job.status} />
+          <JobStatusPill status={d.job.status} kind={d.job.kind} />
           <span>
             {d.job.trackingNo ? `${d.job.trackingNo} · ` : ""}
             {route(d.job, name)}

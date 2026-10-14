@@ -1,5 +1,5 @@
-// Drivers (phase 1): express trips between stations, pickups at a customer's home
-// and home deliveries. Shared rules in src/lib/drivers.ts, plan in planung/fahrer.md.
+// Drivers: express trips between stations, pickups at a customer's home, home
+// deliveries, and rides (the customer themselves from A to B). Shared rules in src/lib/drivers.ts, plan in planung/fahrer.md.
 import {
   balanceOf,
   BUSY_JOB_STATUSES,
@@ -16,6 +16,8 @@ import {
   validPoint,
   validSettings,
   vehicleFits,
+  vehicleSeats,
+  MAX_PASSENGERS,
   type AdminDrivers,
   type DeliveryJob,
   type Driver,
@@ -34,6 +36,7 @@ import {
   type LedgerEntry,
   type PickupBooking,
   type QueueEntry,
+  type RideBooking,
   type StationDrivers,
 } from "../src/lib/drivers";
 import { distanceMeters, type LatLng } from "../src/lib/geo";
@@ -125,6 +128,10 @@ export interface JobRow {
   at_door_at: string | null;
   done_at: string | null;
   proof_key: string | null;
+  dropoff_lat: number | null;
+  dropoff_lng: number | null;
+  dropoff_note: string | null;
+  passengers: number | null;
   tracking_no: string | null;
   driver_name: string | null;
   driver_phone: string | null;
@@ -155,6 +162,8 @@ export function toJob(r: JobRow): DeliveryJob {
       r.home_lat != null && r.home_lng != null
         ? { lat: r.home_lat, lng: r.home_lng, note: r.home_note ?? "", phone: r.home_phone ?? "" }
         : null,
+    dropoff: r.dropoff_lat != null && r.dropoff_lng != null ? { lat: r.dropoff_lat, lng: r.dropoff_lng, note: r.dropoff_note ?? "" } : null,
+    passengers: r.passengers,
     size: r.size,
     weightKg: r.weight_kg,
     content: r.content,
@@ -384,16 +393,16 @@ export async function dispatch(c: Pick<ParcelCtx, "db" | "audit">) {
   const points = new Map(stations.map((st) => [st.id, st]));
 
   for (const job of open) {
-    const start = job.kind === "pickup" ? (job.home_lat != null ? { lat: job.home_lat, lng: job.home_lng! } : null) : points.get(job.from_station_id ?? "") ?? (await stationPoint(c.db, job.from_station_id));
+    const fromHome = job.kind === "pickup" || job.kind === "ride";
+    const start = fromHome ? (job.home_lat != null ? { lat: job.home_lat, lng: job.home_lng! } : null) : points.get(job.from_station_id ?? "") ?? (await stationPoint(c.db, job.from_station_id));
     if (!start) continue;
     const declined = new Set(job.declined.split(",").filter(Boolean));
     const weight = job.weight_kg ?? (await maxWeight(c.db, job.size));
-    const pick = pickDriver(
-      start,
-      queue.filter((q) => !declined.has(q.driverId)),
-      stations,
-      (type) => vehicleFits(type, job.size, weight, s),
-    );
+    const fits =
+      job.kind === "ride"
+        ? (type: FleetVehicleType) => vehicleSeats(type, job.passengers ?? 1)
+        : (type: FleetVehicleType) => vehicleFits(type, job.size, weight, s);
+    const pick = pickDriver(start, queue.filter((q) => !declined.has(q.driverId)), stations, fits);
     if (!pick) continue;
     queue = queue.filter((q) => q.driverId !== pick.driverId);
     const now = nowIso();
@@ -739,6 +748,30 @@ export async function failDelivery(c: ParcelCtx, jobId: string) {
   }
 }
 
+/** Ride: the customer got on at the start point. */
+export async function boardRide(c: ParcelCtx, jobId: string) {
+  const { user, job } = await myJob(c, jobId);
+  if (job.kind !== "ride" || !(await moveJob(c.db, job.id, ["accepted"], "status = 'picked_up', picked_up_at = ?", nowIso()))) {
+    throw new ApiError("job_wrong_status");
+  }
+  await jobAudit(c, user.id, job, { status: ["accepted", "picked_up"] }).run();
+}
+
+/** Ride: the customer got off at the end point and paid the fare in cash. */
+export async function finishRide(c: ParcelCtx, jobId: string) {
+  const { user, job } = await myJob(c, jobId);
+  if (job.kind !== "ride") throw new ApiError("job_wrong_status");
+  const s = await driverSettings(c.db);
+  if (!(await moveJob(c.db, job.id, ["picked_up"], "status = 'done', done_at = ?", nowIso()))) throw new ApiError("job_wrong_status");
+  const trip = await tripStatement(c.db, { driverId: user.id, jobId: job.id, distanceMeters: job.distance_m, stationId: job.driver_station_id, createdBy: user.id });
+  await c.db.batch([
+    ...(trip ? [trip] : []),
+    ledger(c, user.id, "collected", job.collect_fcfa, job.id, null, user.id),
+    ledger(c, user.id, "earning", driverEarning(job.fare_fcfa, s), job.id, null, user.id),
+    jobAudit(c, user.id, job, { status: ["picked_up", "done"], collect_fcfa: job.collect_fcfa }),
+  ]);
+}
+
 // Station staff --------------------------------------------------------------------
 
 export async function stationDrivers(c: ParcelCtx, stationId: string): Promise<StationDrivers> {
@@ -954,6 +987,54 @@ export async function bookPickup(c: ParcelCtx, input: PickupBooking): Promise<De
   return toJob(await loadJob(c.db, id));
 }
 
+/** A customer books a driver to take them (and up to two others on a tricycle) from A to B. */
+export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<DeliveryJob> {
+  const user = await c.requireUser();
+  const pickup = cleanHome(input?.pickup);
+  const d = input?.dropoff;
+  if (!validPoint(d)) throw new ApiError("bad_request");
+  if (!inServiceArea(d)) throw new ApiError("outside_area");
+  const passengers = Number(input?.passengers);
+  if (!Number.isInteger(passengers) || passengers < 1 || passengers > MAX_PASSENGERS) throw new ApiError("bad_request");
+  const open = await c.db
+    .prepare(`select 1 from delivery_jobs where customer_user_id = ? and kind = 'ride' and status not in ('done', 'failed', 'cancelled')`)
+    .bind(user.id)
+    .first();
+  if (open) throw new ApiError("ride_open");
+  const s = await driverSettings(c.db);
+  const distance = Math.round(distanceMeters(pickup, d));
+  const fare = fareFor(distance, false, s);
+  const id = uuid();
+  await c.db.batch([
+    c.db
+      .prepare(
+        `insert into delivery_jobs (id, kind, status, customer_user_id, customer_name, home_lat, home_lng, home_note, home_phone,
+         dropoff_lat, dropoff_lng, dropoff_note, passengers, size, distance_m, fare_fcfa, collect_fcfa, created_at)
+         values (?, 'ride', 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'S', ?, ?, ?, ?)`,
+      )
+      .bind(
+        id,
+        user.id,
+        user.fullName,
+        pickup.lat,
+        pickup.lng,
+        pickup.note,
+        pickup.phone,
+        d.lat,
+        d.lng,
+        String((d as { note?: unknown }).note ?? "").trim().slice(0, 300),
+        passengers,
+        distance,
+        fare,
+        fare,
+        nowIso(),
+      ),
+    c.audit(user.id, "delivery_jobs", "insert", id, { kind: "ride", passengers, fare_fcfa: fare }, { userId: user.id }),
+  ]);
+  await dispatch(c);
+  return toJob(await loadJob(c.db, id));
+}
+
 /** The recipient of a parcel waiting at a station has it brought home; this hands the pickup right to the driver. */
 export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unknown): Promise<DeliveryJob> {
   const user = await c.requireUser();
@@ -1003,7 +1084,7 @@ export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unkn
   return toJob(await loadJob(c.db, id));
 }
 
-/** Trips the signed-in customer booked (pickups and home deliveries). */
+/** Trips the signed-in customer booked (pickups, home deliveries and rides). */
 export async function myJobs(c: ParcelCtx): Promise<DeliveryJob[]> {
   const user = await c.user();
   if (!user) return [];

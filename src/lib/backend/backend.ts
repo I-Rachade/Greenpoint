@@ -37,6 +37,7 @@ import type {
   FleetVehicleInput,
   HomePoint,
   PickupBooking,
+  RideBooking,
   StationDrivers,
 } from "../drivers";
 import type { FleetStats, FleetView } from "../fleet";
@@ -99,6 +100,7 @@ export type BackendErrorCode =
   | "job_wrong_status"
   | "wait_longer"
   | "photo_missing"
+  | "ride_open"
   | "vehicle_unavailable"
   | "vehicle_too_small"
   | "has_other_role"
@@ -278,9 +280,15 @@ export interface Backend {
   deliverJob(id: string, code: string): Promise<void>;
   /** Nobody there after the waiting time: back to the station. */
   failDelivery(id: string): Promise<void>;
+  /** Ride: the customer got on. */
+  boardRide(id: string): Promise<void>;
+  /** Ride: the customer got off and paid the fare. */
+  finishRide(id: string): Promise<void>;
   /** Trips the signed-in customer booked. */
   myJobs(): Promise<DeliveryJob[]>;
   bookPickup(input: PickupBooking): Promise<DeliveryJob>;
+  /** A driver takes the customer from A to B; one open ride at a time. */
+  bookRide(input: RideBooking): Promise<DeliveryJob>;
   /** The recipient has a waiting parcel brought home; the driver gets the pickup right. */
   bookDelivery(parcelId: string, home: HomePoint): Promise<DeliveryJob>;
   /** Customer (before the driver has the parcel) or admin. */

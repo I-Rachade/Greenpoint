@@ -317,7 +317,7 @@ function JobRow({ job, drivers, stationName, onReport }: { job: DeliveryJob; dri
         {job.collectFcfa > 0 && <div className="text-xs text-zinc-500">{job.collectFcfa}</div>}
       </td>
       <td className={td}>
-        <JobStatusPill status={job.status} />
+        <JobStatusPill status={job.status} kind={job.kind} />
         {job.driver && <div className="mt-1 text-xs">{job.driver.name}</div>}
         {job.proofKey && <DocLink fileKey={job.proofKey} label="📷" />}
       </td>

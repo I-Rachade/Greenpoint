@@ -365,6 +365,9 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
   if (job.kind === "express") {
     step = job.status === "picked_up" ? format(t.drivers.page.stepExpressBring, { to: name(job.toStationId) }) : format(t.drivers.page.stepExpress, { from: name(job.fromStationId), to: name(job.toStationId) });
     target = (job.status === "picked_up" ? station(job.toStationId) : station(job.fromStationId)) ?? null;
+  } else if (job.kind === "ride") {
+    step = job.status === "picked_up" ? format(t.drivers.page.stepRideDrive, { n: job.collectFcfa }) : t.drivers.page.stepRideGo;
+    target = job.status === "picked_up" ? job.dropoff : job.home;
   } else if (job.kind === "pickup") {
     step = job.status === "picked_up" ? format(t.drivers.page.stepPickupBring, { no: job.trackingNo ?? "", to: name(job.toStationId) }) : t.drivers.page.stepPickupGo;
     target = job.status === "picked_up" ? (station(job.toStationId) ?? null) : job.home;
@@ -401,7 +404,7 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
   return (
     <Card title={t.drivers.page.jobTitle}>
       <div className="flex flex-wrap items-center gap-2">
-        <JobStatusPill status={job.status} />
+        <JobStatusPill status={job.status} kind={job.kind} />
         {job.trackingNo && <span className="font-mono text-sm">{job.trackingNo}</span>}
       </div>
       <JobFacts job={job} route={route(job, name)} />
@@ -422,6 +425,16 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
       <p className="text-xs text-zinc-500">{format(t.drivers.page.earning, { n: driverEarning(job.fareFcfa, home.settings) })}</p>
       {job.kind === "pickup" && job.status === "accepted" && <PickupCollect job={job} info={info} onDone={(no) => setCollected(format(t.drivers.page.collected, { no }))} />}
       {job.kind === "delivery" && (job.status === "picked_up" || job.status === "at_door") && <DoorActions job={job} home={home} />}
+      {job.kind === "ride" && job.status === "accepted" && (
+        <button type="button" className={primary} disabled={busy} onClick={() => void run(() => backend.boardRide(job.id))}>
+          {t.drivers.page.boardButton}
+        </button>
+      )}
+      {job.kind === "ride" && job.status === "picked_up" && (
+        <button type="button" className={primary} disabled={busy} onClick={() => void run(() => backend.finishRide(job.id), t.drivers.page.finished)}>
+          {format(t.drivers.page.finishButton, { n: job.collectFcfa })}
+        </button>
+      )}
       <Notice error="" notice={collected} />
       {status}
     </Card>
@@ -434,11 +447,17 @@ function JobFacts({ job, route }: { job: DeliveryJob; route: string }) {
     <div className="text-sm text-zinc-700 dark:text-zinc-300">
       <div className="font-medium">{t.drivers.kind[job.kind]}</div>
       <div>{route}</div>
-      <div>
-        {t.parcels.size} {job.size}
-        {job.weightKg ? ` · ${job.weightKg} kg` : ""} · {formatDistance(job.distanceM)}
-        {job.content ? ` · ${job.content}` : ""}
-      </div>
+      {job.kind === "ride" ? (
+        <div>
+          {format(t.drivers.page.passengers, { n: job.passengers ?? 1 })} · {formatDistance(job.distanceM)}
+        </div>
+      ) : (
+        <div>
+          {t.parcels.size} {job.size}
+          {job.weightKg ? ` · ${job.weightKg} kg` : ""} · {formatDistance(job.distanceM)}
+          {job.content ? ` · ${job.content}` : ""}
+        </div>
+      )}
     </div>
   );
 }
@@ -457,7 +476,7 @@ function History({ jobs, stations }: { jobs: DeliveryJob[]; stations: StationVie
           <li key={j.id} className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-zinc-500">{when(j.createdAt)}</span>
             <span className="flex-1">{route(j, name)}</span>
-            <JobStatusPill status={j.status} />
+            <JobStatusPill status={j.status} kind={j.kind} />
             <span className="font-mono text-xs">{fcfa(j.fareFcfa)}</span>
           </li>
         ))}

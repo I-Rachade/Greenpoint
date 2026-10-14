@@ -76,6 +76,8 @@ import {
   validPoint,
   validSettings,
   vehicleFits,
+  vehicleSeats,
+  MAX_PASSENGERS,
   type AdminDrivers,
   type DeliveryJob,
   type Driver,
@@ -91,6 +93,7 @@ import {
   type JobStatus,
   type LedgerEntry,
   type PickupBooking,
+  type RideBooking,
   type StationDrivers,
 } from "../drivers";
 import { distanceMeters, type LatLng } from "../geo";
@@ -1669,6 +1672,8 @@ export class DemoBackend implements Backend {
       fromStationId: j.fromStationId,
       toStationId: j.toStationId,
       home: j.home,
+      dropoff: j.dropoff ?? null,
+      passengers: j.passengers ?? null,
       size: j.size,
       weightKg: j.weightKg,
       content: j.content,
@@ -1727,6 +1732,8 @@ export class DemoBackend implements Backend {
       fromStationId: null,
       toStationId: null,
       home: null,
+      dropoff: null,
+      passengers: null,
       weightKg: null,
       content: "",
       collectFcfa: 0,
@@ -1781,7 +1788,7 @@ export class DemoBackend implements Backend {
     const stations = this.depotPoints(state);
     const tiers = state.parcelSizes ?? DEFAULT_PARCEL_SIZES;
     for (const job of [...jobs].filter((j) => j.status === "open").sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
-      const start = job.kind === "pickup" ? job.home : this.stationAt(state, job.fromStationId);
+      const start = job.kind === "pickup" || job.kind === "ride" ? job.home : this.stationAt(state, job.fromStationId);
       if (!start) continue;
       const entries = queue
         .filter((q) => !job.declined.includes(q.driverId))
@@ -1792,7 +1799,9 @@ export class DemoBackend implements Backend {
         })
         .filter((q) => q !== null);
       const weight = job.weightKg ?? tiers.find((t) => t.size === job.size)?.maxWeightKg ?? 50;
-      const pick = pickDriver(start, entries, stations, (type) => vehicleFits(type, job.size, weight, s));
+      const pick = pickDriver(start, entries, stations, (type) =>
+        job.kind === "ride" ? vehicleSeats(type, job.passengers ?? 1) : vehicleFits(type, job.size, weight, s),
+      );
       if (!pick) continue;
       queue = queue.filter((q) => q.driverId !== pick.driverId);
       jobs = jobs.map((j) =>
@@ -2076,6 +2085,33 @@ export class DemoBackend implements Backend {
     this.saveJobs(state, this.updateJob(state, job.id, ["at_door"], { status: "returning" }));
   }
 
+  async boardRide(id: string) {
+    const state = this.load();
+    const { job } = this.myDemoJob(state, id);
+    if (job.kind !== "ride") throw new BackendError("job_wrong_status");
+    this.saveJobs(state, this.updateJob(state, job.id, ["accepted"], { status: "picked_up", pickedUpAt: new Date().toISOString() }));
+  }
+
+  async finishRide(id: string) {
+    const state = this.load();
+    const { driver, job } = this.myDemoJob(state, id);
+    if (job.kind !== "ride") throw new BackendError("job_wrong_status");
+    const jobs = this.updateJob(state, job.id, ["picked_up"], { status: "done", doneAt: new Date().toISOString() });
+    this.saveJobs(
+      state,
+      jobs,
+      { table: "delivery_jobs", action: "update", rowId: job.id, userId: driver.userId, changes: { status: ["picked_up", "done"], collect_fcfa: job.collectFcfa } },
+      {
+        greenpoint: this.tripGreenpoint(state, driver.userId, job, job.driverStationId),
+        ledger: [
+          this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null),
+          this.ledgerEntry(driver.userId, "earning", driverEarning(job.fareFcfa, this.settingsOf(state)), job.id, null),
+          ...(state.ledger ?? []),
+        ],
+      },
+    );
+  }
+
   async myJobs(): Promise<DeliveryJob[]> {
     const state = this.load();
     if (!state.profile) return [];
@@ -2129,6 +2165,42 @@ export class DemoBackend implements Backend {
       stationId: input.toStationId,
       userId: profile.id,
       changes: { kind: "pickup", fare_fcfa: fare },
+    });
+    this.dispatch();
+    const saved = this.load();
+    return this.viewJob(saved, (saved.jobs ?? []).find((j) => j.id === job.id)!);
+  }
+
+  async bookRide(input: RideBooking): Promise<DeliveryJob> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const pickup = this.cleanHome(input.pickup);
+    const d = input.dropoff;
+    if (!validPoint(d)) throw new BackendError("unknown", "no destination");
+    if (!inServiceArea(d)) throw new BackendError("outside_area");
+    if (!Number.isInteger(input.passengers) || input.passengers < 1 || input.passengers > MAX_PASSENGERS) throw new BackendError("unknown", "passengers");
+    const done: JobStatus[] = ["done", "failed", "cancelled"];
+    if ((state.jobs ?? []).some((j) => j.kind === "ride" && j.customerUserId === profile.id && !done.includes(j.status))) throw new BackendError("ride_open");
+    const distanceM = Math.round(distanceMeters(pickup, d));
+    const fare = fareFor(distanceM, false, this.settingsOf(state));
+    const job = this.newJob({
+      kind: "ride",
+      home: pickup,
+      dropoff: { lat: d.lat, lng: d.lng, note: (d.note ?? "").trim().slice(0, 300) },
+      passengers: input.passengers,
+      size: "S",
+      distanceM,
+      fareFcfa: fare,
+      collectFcfa: fare,
+      customerUserId: profile.id,
+      customerName: profile.fullName,
+    });
+    this.saveJobs(state, [job, ...(state.jobs ?? [])], {
+      table: "delivery_jobs",
+      action: "insert",
+      rowId: job.id,
+      userId: profile.id,
+      changes: { kind: "ride", passengers: input.passengers, fare_fcfa: fare },
     });
     this.dispatch();
     const saved = this.load();
