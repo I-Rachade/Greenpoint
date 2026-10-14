@@ -500,6 +500,7 @@ export async function deleteAccount(
     env.DB.prepare("delete from station_staff where user_id = ?").bind(profile.id),
     env.DB.prepare("delete from operator_owners where user_id = ?").bind(profile.id),
     env.DB.prepare("delete from reservations where user_id = ?").bind(profile.id),
+    env.DB.prepare("delete from station_reviews where user_id = ?").bind(profile.id),
     // Parcels stay on record (phone numbers included) but lose the link to the account.
     env.DB.prepare("update parcels set sender_user_id = null where sender_user_id = ?").bind(profile.id),
     env.DB.prepare("update parcels set recipient_user_id = null where recipient_user_id = ?").bind(profile.id),

@@ -88,15 +88,6 @@ export const BoltIcon = (p: IconProps) => (
   </Svg>
 );
 
-/** Electric car (EV chargers). */
-export const CarIcon = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M5 16V11.5l1.6-4.2A2 2 0 0 1 8.5 6h7a2 2 0 0 1 1.9 1.3L19 11.5V16" />
-    <path d="M4 16h16v2a1 1 0 0 1-1 1h-1.5a1 1 0 0 1-1-1v-.5h-9v.5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z" />
-    <path d="M5 11.5h14M7.5 14h.01M16.5 14h.01" />
-  </Svg>
-);
-
 export const BatteryIcon = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="7" width="16" height="10" rx="2" />
@@ -301,5 +292,123 @@ export const QueueIcon = (p: IconProps) => (
     <circle cx="12" cy="8" r="2" />
     <circle cx="19" cy="8" r="2" />
     <path d="M2 18v-2.5A2.5 2.5 0 0 1 4.5 13h1A2.5 2.5 0 0 1 8 15.5V18M9 18v-2.5a2.5 2.5 0 0 1 2.5-2.5h1a2.5 2.5 0 0 1 2.5 2.5V18M16 18v-2.5a2.5 2.5 0 0 1 2.5-2.5h1a2.5 2.5 0 0 1 2.5 2.5V18" />
+  </Svg>
+);
+
+export const StarIcon = ({ filled, ...p }: IconProps & { filled?: boolean }) => (
+  <Svg {...p} fill={filled ? "currentColor" : "none"}>
+    <path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.9L12 3.5Z" />
+  </Svg>
+);
+
+export const ShareIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="18" cy="5" r="2.5" />
+    <circle cx="6" cy="12" r="2.5" />
+    <circle cx="18" cy="19" r="2.5" />
+    <path d="m8.2 10.8 7.6-4.4M8.2 13.2l7.6 4.4" />
+  </Svg>
+);
+
+export const FilterIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 6h16M7 12h10M10 18h4" />
+  </Svg>
+);
+
+export const CameraIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 8h3l1.5-2h7L17 8h3v11H4V8Z" />
+    <circle cx="12" cy="13" r="3.5" />
+  </Svg>
+);
+
+export const TrashIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" />
+  </Svg>
+);
+
+export const BenchIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 9h16M4 13h16M6 13v6M18 13v6M6 9V6M18 9V6" />
+  </Svg>
+);
+
+export const UmbrellaIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 12a9 9 0 0 1 18 0H3ZM12 12v7a2 2 0 0 1-4 0M12 3v0.01" />
+  </Svg>
+);
+
+export const ToiletIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="7" cy="5" r="1.8" />
+    <circle cx="17" cy="5" r="1.8" />
+    <path d="M5 9h4v6H8v5H6v-5H5V9ZM17 9l3 7h-2v4h-2v-4h-2l3-7ZM12 4v16" />
+  </Svg>
+);
+
+export const DropIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 3.5S6 10 6 14a6 6 0 0 0 12 0c0-4-6-10.5-6-10.5Z" />
+  </Svg>
+);
+
+export const FoodIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M7 3v7a2 2 0 0 0 2 2v9M11 3v7a2 2 0 0 1-2 2M7 3v4M11 3v4M9 3v4M17 21V3c-2 1-3 4-3 8h3" />
+  </Svg>
+);
+
+export const CupIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5 9h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5V9ZM17 10h1.5a2.5 2.5 0 0 1 0 5H17M4 21h15M9 3c-1 1.5 1 2.5 0 4M13 3c-1 1.5 1 2.5 0 4" />
+  </Svg>
+);
+
+export const WifiIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.5 16a5 5 0 0 1 7 0" />
+    <circle cx="12" cy="19.5" r="1" fill="currentColor" />
+  </Svg>
+);
+
+export const PhoneBoltIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="6" y="2.5" width="12" height="19" rx="2.5" />
+    <path d="m12.5 7-2.5 5h4l-2.5 5" />
+  </Svg>
+);
+
+export const ParkingIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="3.5" width="17" height="17" rx="4" />
+    <path d="M9.5 17V7h3.5a3 3 0 0 1 0 6H9.5" />
+  </Svg>
+);
+
+/** A cargo tricycle: one wheel in front, a loading box over the two behind. */
+export const CargoTricycleIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="5" cy="17.5" r="2.2" />
+    <circle cx="17.5" cy="17.5" r="2.2" />
+    <path d="M7.2 17.5h8.1M11 7.5h10v7H11zM11 14.5 9 17.5M5 17.5 8 9.5h3M6.5 9.5h-2" />
+  </Svg>
+);
+
+export const CarIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3.5 16.5v-4l2-5h13l2 5v4h-17ZM3.5 12.5h17" />
+    <circle cx="7.5" cy="16.5" r="1.8" />
+    <circle cx="16.5" cy="16.5" r="1.8" />
+  </Svg>
+);
+
+/** Express parcel: a box with speed lines. */
+export const BoxFastIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m14 4 7 3.5v9L14 20l-7-3.5v-9L14 4Z" />
+    <path d="m7 7.5 7 3.5 7-3.5M14 11v9M2 10h3M1.5 13.5H5M2.5 17H5" />
   </Svg>
 );

@@ -7,7 +7,9 @@ import { format } from "@/lib/i18n/format";
 import { pickupQrPayload, type Parcel, type ParcelInfo } from "@/lib/parcels";
 import type { StationView } from "@/lib/types";
 import { useApp } from "../app-provider";
-import { BookDelivery } from "../drivers/customer-jobs";
+import { BookCourier, BookDelivery, BookPickup, MyJobs } from "../drivers/customer-jobs";
+import { BackTo, ChoiceTile, HowToList, InfoLink } from "../drivers/my-trips";
+import { BoxFastIcon, StoreIcon } from "../icons";
 import { useI18n } from "../i18n-provider";
 import { QrImage } from "./qr-image";
 import { ParcelStatusPill } from "./status";
@@ -62,63 +64,89 @@ function ParcelCard({ parcel: p, stations, info, onSlip }: { parcel: Parcel; sta
   );
 }
 
-/** How to send: stations with a depot, prices and terms. */
+/** How to send at a station: steps, stations with a depot, prices and terms. */
 function SendInfo({ info, stations }: { info: ParcelInfo; stations: StationView[] }) {
   const { t } = useI18n();
   const depots = info.depots.map((d) => ({ ...d, station: stations.find((s) => s.id === d.stationId) })).filter((d) => d.station);
   return (
-    <details className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">
-      <summary className="cursor-pointer font-semibold">{t.parcels.howTo}</summary>
-      <div className="mt-3 space-y-3">
-        <p>{t.parcels.howToSteps}</p>
-        <div>
-          <h3 className="font-semibold">{t.parcels.depots}</h3>
-          {depots.length === 0 ? (
-            <p className="text-zinc-500">{t.parcels.noDepots}</p>
-          ) : (
-            <ul className="list-disc pl-5">
-              {depots.map((d) => (
-                <li key={d.stationId}>
-                  {d.station!.name}
-                  {d.note ? ` (${d.note})` : ""} · {d.station!.openingHours}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div>
-          <h3 className="font-semibold">{t.parcels.prices}</h3>
-          <ul>
-            {info.sizes.map((s) => (
-              <li key={s.size}>
-                <span className="font-medium">{s.size}</span> :{" "}
-                {format(t.parcels.upTo, { dims: `${s.maxLengthCm}×${s.maxWidthCm}×${s.maxHeightCm}`, kg: s.maxWeightKg })} ·{" "}
-                <span className="font-medium">{s.priceFcfa} FCFA</span>
+    <div className="space-y-4 text-sm">
+      <HowToList steps={t.parcels.howToList} />
+      <div>
+        <h2 className="font-semibold">{t.parcels.depots}</h2>
+        {depots.length === 0 ? (
+          <p className="text-zinc-500">{t.parcels.noDepots}</p>
+        ) : (
+          <ul className="list-disc pl-5">
+            {depots.map((d) => (
+              <li key={d.stationId}>
+                {d.station!.name}
+                {d.note ? ` (${d.note})` : ""} · {d.station!.openingHours}
               </li>
             ))}
           </ul>
-        </div>
-        <div>
-          <h3 className="font-semibold">{t.parcels.rulesTitle}</h3>
-          <ul className="list-disc pl-5 text-zinc-600 dark:text-zinc-400">
-            {t.parcels.rules.map((rule) => (
-              <li key={rule}>{rule}</li>
-            ))}
-          </ul>
-        </div>
+        )}
       </div>
-    </details>
+      <div>
+        <h2 className="font-semibold">{t.parcels.prices}</h2>
+        <ul>
+          {info.sizes.map((s) => (
+            <li key={s.size}>
+              <span className="font-medium">{s.size}</span> :{" "}
+              {format(t.parcels.upTo, { dims: `${s.maxLengthCm}×${s.maxWidthCm}×${s.maxHeightCm}`, kg: s.maxWeightKg })} ·{" "}
+              <span className="font-medium">{s.priceFcfa} FCFA</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div>
+        <h2 className="font-semibold">{t.parcels.rulesTitle}</h2>
+        <ul className="list-disc pl-5 text-zinc-600 dark:text-zinc-400">
+          {t.parcels.rules.map((rule) => (
+            <li key={rule}>{rule}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }
 
+/** "Comment envoyer un colis", opened from the regular sending page. */
+export function HowToSend() {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { data } = useLiveQuery(() => Promise.all([backend.listStations(), backend.parcelInfo()]));
+  return (
+    <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
+      <BackTo href="/colis/regulier" />
+      <h1 className="text-2xl font-semibold">{t.parcels.howTo}</h1>
+      {data ? <SendInfo info={data[1]} stations={data[0]} /> : <p className="text-sm text-zinc-500">{t.loading}</p>}
+    </div>
+  );
+}
+
+/** "Colis" tab: two ways to send (at a station, or express door to door), then your parcels and their trips. */
 export function MyParcels() {
   const { t } = useI18n();
   const { backend } = useApp();
-  const { data } = useLiveQuery(() => Promise.all([backend.myParcels(), backend.listStations(), backend.parcelInfo()]));
+  const { data } = useLiveQuery(() => Promise.all([backend.myParcels(), backend.listStations(), backend.parcelInfo(), backend.myJobs()]));
   const [slip, setSlip] = useState<Parcel | null>(null);
 
-  if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
-  const [parcels, stations, info] = data;
+  const tiles = (
+    <div className="grid grid-cols-2 gap-3">
+      <ChoiceTile href="/colis/regulier" icon={StoreIcon} label={t.parcels.regular} hint={t.parcels.regularHint} />
+      <ChoiceTile href="/colis/express" icon={BoxFastIcon} label={t.parcels.express} hint={t.parcels.expressHint} />
+    </div>
+  );
+  if (!data) {
+    return (
+      <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
+        <h1 className="text-2xl font-semibold">{t.parcels.title}</h1>
+        {tiles}
+        <p className="text-sm text-zinc-500">{t.loading}</p>
+      </div>
+    );
+  }
+  const [parcels, stations, info, jobs] = data;
   // Parcels to pick up first.
   const sorted = [...parcels].sort(
     (a, b) => Number(b.status === "arrived" && b.direction === "received") - Number(a.status === "arrived" && a.direction === "received"),
@@ -128,7 +156,9 @@ export function MyParcels() {
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
       <h1 className="text-2xl font-semibold">{t.parcels.title}</h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.parcels.intro}</p>
-      <SendInfo info={info} stations={stations} />
+      {tiles}
+      <MyJobs jobs={jobs.filter((j) => j.kind !== "ride")} stations={stations} />
+      <h2 className="font-semibold">{t.parcels.mine}</h2>
       {sorted.length === 0 ? (
         <p className="text-sm text-zinc-500">{t.parcels.empty}</p>
       ) : (
@@ -139,6 +169,61 @@ export function MyParcels() {
         </ul>
       )}
       {slip && <SlipDialog parcel={slip} stations={stations} onClose={() => setSlip(null)} />}
+    </div>
+  );
+}
+
+/** Standard sending: hand the parcel in at a station (or have a driver bring it there); the recipient collects it at a station. */
+export function RegularSend() {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { data } = useLiveQuery(() => Promise.all([backend.listStations(), backend.parcelInfo()]));
+  return (
+    <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
+      <BackTo href="/colis" />
+      <h1 className="text-2xl font-semibold">{t.parcels.regular}</h1>
+      <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.parcels.regularIntro}</p>
+      {data ? (
+        <>
+          <InfoLink href="/colis/regulier/comment" label={t.parcels.howTo} />
+          <BookPickup info={data[1]} stations={data[0]} />
+        </>
+      ) : (
+        <p className="text-sm text-zinc-500">{t.loading}</p>
+      )}
+    </div>
+  );
+}
+
+/** Express sending: a driver takes the parcel at the sender's door straight to the recipient's door. */
+export function ExpressSend() {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { data: info } = useLiveQuery(() => backend.parcelInfo());
+  return (
+    <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
+      <BackTo href="/colis" />
+      <h1 className="text-2xl font-semibold">{t.parcels.express}</h1>
+      <InfoLink href="/colis/express/comment" label={t.parcels.expressHowTo} />
+      {info ? <BookCourier info={info} /> : <p className="text-sm text-zinc-500">{t.loading}</p>}
+    </div>
+  );
+}
+
+/** "Comment fonctionne l'envoi express", opened from the express sending page. */
+export function ExpressHowTo() {
+  const { t } = useI18n();
+  return (
+    <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
+      <BackTo href="/colis/express" />
+      <h1 className="text-2xl font-semibold">{t.parcels.expressHowTo}</h1>
+      <HowToList steps={t.parcels.expressHowToList} />
+      <h2 className="text-sm font-semibold">{t.parcels.rulesTitle}</h2>
+      <ul className="list-disc pl-5 text-sm text-zinc-600 dark:text-zinc-400">
+        {t.parcels.rules.map((rule) => (
+          <li key={rule}>{rule}</li>
+        ))}
+      </ul>
     </div>
   );
 }
