@@ -1,4 +1,5 @@
 import type { BatteryType } from "../battery-types";
+import type { EvCharger } from "../ev-chargers";
 import type { ChargingPoint, Operator, Station, StationStatus } from "../types";
 import type { Amenity } from "../station-extras";
 
@@ -256,3 +257,10 @@ export function demoReviews(now: Date): DemoReview[] {
     { id: "rv-8", stationId: "st-agoe", userId: "demo-u-4", authorName: "Mawuli K.", rating: 4, comment: "Grand parking, facile d'accès.", createdAt: daysAgo(5) },
   ];
 }
+
+/** Electric car chargers: two assigned to stations, one waiting to be assigned. */
+export const DEMO_EV_CHARGERS: EvCharger[] = [
+  { id: "ev-grand-marche-1", name: "Borne VE 1", connector: "type2", powerKw: 22, stationId: "st-grand-marche", isActive: true },
+  { id: "ev-agoe-1", name: "Borne rapide Agoè", connector: "ccs2", powerKw: 60, stationId: "st-agoe", isActive: true },
+  { id: "ev-stock-1", name: "Borne VE 3", connector: "type2", powerKw: 7.4, stationId: null, isActive: true },
+];

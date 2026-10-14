@@ -1,4 +1,5 @@
 import type { StationBatteryType } from "./battery-types";
+import type { StationEvCharger } from "./ev-chargers";
 import type { ParcelDepotInput } from "./parcels";
 import type { Amenity, StationRating } from "./station-extras";
 
@@ -66,6 +67,8 @@ export interface StationView extends Station {
   batteryTypes?: StationBatteryType[];
   /** Average stars and number of customer reviews. */
   rating?: StationRating;
+  /** Active electric car chargers assigned to the station (see ev-chargers.ts). */
+  evChargers?: StationEvCharger[];
 }
 
 export interface ParcelPoint {

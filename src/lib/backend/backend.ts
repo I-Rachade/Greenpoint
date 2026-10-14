@@ -11,6 +11,7 @@ import type {
   UserRole,
 } from "../types";
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { EvCharger, EvChargerInput } from "../ev-chargers";
 import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
@@ -216,6 +217,11 @@ export interface Backend {
   /** Battery types of the motorbike brands, including switched-off ones (admins only). */
   listBatteryTypes(): Promise<BatteryType[]>;
   saveBatteryType(id: string | null, input: BatteryTypeInput): Promise<void>;
+  /** Electric car chargers, assigned or not, including switched-off ones (admins only). */
+  listEvChargers(): Promise<EvCharger[]>;
+  /** Adds a charger (`id` null) or changes one, including the station it is assigned to. */
+  saveEvCharger(id: string | null, input: EvChargerInput): Promise<void>;
+  deleteEvCharger(id: string): Promise<void>;
 
   // Backoffice (admins only; see src/lib/admin)
   adminSnapshot(): Promise<AdminSnapshot>;

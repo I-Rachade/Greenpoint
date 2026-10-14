@@ -22,9 +22,9 @@ import { AMENITIES, stationPhotos } from "@/lib/station-extras";
 import { RESERVATION_MINUTES, type ReservationType, type StationView } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
-import { BackIcon, BatteryIcon, BoltIcon, BoxIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, ShareIcon, StoreIcon } from "./icons";
+import { BackIcon, BatteryIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, ShareIcon, StoreIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
-import { FavoriteButton, RestBadge } from "./station-card";
+import { EvBadge, FavoriteButton, RestBadge } from "./station-card";
 import { AMENITY_ICONS, OpenBadge, RatingInline, useHoursLabel } from "./station-look";
 import { StationReviews } from "./station-reviews";
 
@@ -164,6 +164,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
   const connected = points.some((p) => p.deviceId !== null);
   const amenities = AMENITIES.filter((a) => station.amenities?.includes(a));
   const photos = station.photos ?? [];
+  const evChargers = station.evChargers ?? [];
   // Both reserve buttons leave room for the route as an icon only.
   const twoReserve = battery && !!profile && swap && charging;
 
@@ -258,6 +259,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
 
         <div className="-mt-3 flex flex-wrap items-center gap-1.5 text-xs">
           <RestBadge station={station} />
+          <EvBadge station={station} />
           <span className="rounded-full bg-gp-green/10 px-2.5 py-0.5 font-medium text-gp-green-dark dark:text-gp-green">{t.kinds[station.kind]}</span>
           {station.vehicleTypes.map((v) => (
             <span key={v} className="rounded-full bg-gp-border/60 px-2.5 py-0.5 dark:bg-white/10">
@@ -350,6 +352,34 @@ export function StationDetail({ station, distance, onChanged }: Props) {
             {battery && isStale(station, now) && <p className="text-sm text-amber-700 dark:text-amber-400">{t.station.stale}</p>}
           </Section>
         )}
+
+        <Section title={t.station.ev.title}>
+          <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm dark:border-white/10">
+            <p className="flex items-center gap-2 text-sm">
+              <span
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                  evChargers.length > 0 ? "bg-gp-info/15 text-gp-info" : "bg-zinc-500/10 text-gp-muted"
+                }`}
+              >
+                <CarIcon size={17} />
+              </span>
+              {evChargers.length > 0 ? t.station.ev.yes : t.station.ev.no}
+            </p>
+            {evChargers.length > 0 && (
+              <ul className="mt-2 divide-y divide-gp-border text-sm dark:divide-white/10">
+                {evChargers.map((c) => (
+                  <li key={c.id} className="py-1.5">
+                    {format(t.station.ev.charger, {
+                      name: c.name,
+                      connector: t.backoffice.evChargers.connectors[c.connector],
+                      power: c.powerKw,
+                    })}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </Section>
 
         {photos.length > 1 && (
           <Section title={L.morePhotos}>
