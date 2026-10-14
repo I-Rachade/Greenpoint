@@ -7,7 +7,7 @@ import { format } from "@/lib/i18n/format";
 import { pickupQrPayload, type Parcel, type ParcelInfo } from "@/lib/parcels";
 import type { StationView } from "@/lib/types";
 import { useApp } from "../app-provider";
-import { BookDelivery, BookPickup, MyJobs } from "../drivers/customer-jobs";
+import { BookDelivery } from "../drivers/customer-jobs";
 import { useI18n } from "../i18n-provider";
 import { QrImage } from "./qr-image";
 import { ParcelStatusPill } from "./status";
@@ -114,11 +114,11 @@ function SendInfo({ info, stations }: { info: ParcelInfo; stations: StationView[
 export function MyParcels() {
   const { t } = useI18n();
   const { backend } = useApp();
-  const { data } = useLiveQuery(() => Promise.all([backend.myParcels(), backend.listStations(), backend.parcelInfo(), backend.myJobs()]));
+  const { data } = useLiveQuery(() => Promise.all([backend.myParcels(), backend.listStations(), backend.parcelInfo()]));
   const [slip, setSlip] = useState<Parcel | null>(null);
 
   if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
-  const [parcels, stations, info, jobs] = data;
+  const [parcels, stations, info] = data;
   // Parcels to pick up first.
   const sorted = [...parcels].sort(
     (a, b) => Number(b.status === "arrived" && b.direction === "received") - Number(a.status === "arrived" && a.direction === "received"),
@@ -129,8 +129,6 @@ export function MyParcels() {
       <h1 className="text-2xl font-semibold">{t.parcels.title}</h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.parcels.intro}</p>
       <SendInfo info={info} stations={stations} />
-      <BookPickup info={info} stations={stations} />
-      <MyJobs jobs={jobs} stations={stations} />
       {sorted.length === 0 ? (
         <p className="text-sm text-zinc-500">{t.parcels.empty}</p>
       ) : (

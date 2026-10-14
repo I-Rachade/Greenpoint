@@ -11,7 +11,8 @@ import { normalizeTogoPhone } from "@/lib/phone";
 import { LEGAL_PATHS } from "@/lib/legal/content";
 import { useApp } from "./app-provider";
 import { useWalletShown } from "./header";
-import { BoxIcon, GearIcon, HelpIcon, LeafIcon, LogoutIcon, ScooterIcon, ShieldIcon, StoreIcon, TicketIcon, UserIcon, WalletIcon } from "./icons";
+import { useAlerts } from "./use-alerts";
+import { BellIcon, GearIcon, HeartIcon, HelpIcon, LeafIcon, LogoutIcon, ScooterIcon, ShieldIcon, StoreIcon, TicketIcon, UserIcon, WalletIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { MenuButton, MenuGroup, MenuLink } from "./menu";
 import { PageTitle } from "./page-title";
@@ -36,6 +37,7 @@ export function AccountPanel() {
   const { t } = useI18n();
   const { backend, profile, ready, features } = useApp();
   const walletShown = useWalletShown();
+  const { unread } = useAlerts();
   const [deleted, setDeleted] = useState(false);
   const a = t.ui.account;
 
@@ -84,8 +86,9 @@ export function AccountPanel() {
           </section>
 
           <MenuGroup title={a.menu}>
+            <MenuLink href="/favoris" icon={HeartIcon} label={t.ui.tabs.favorites} />
+            <MenuLink href="/notifications" icon={BellIcon} label={t.ui.tabs.alerts} value={unread > 0 ? unread : undefined} />
             <MenuLink href="/reservations" icon={TicketIcon} label={t.nav.reservations} />
-            {features.parcels && <MenuLink href="/colis" icon={BoxIcon} label={t.nav.parcels} />}
             {walletShown && <MenuLink href="/portefeuille" icon={WalletIcon} label={t.nav.wallet} />}
             <MenuLink href="/greenpoint" icon={LeafIcon} label={t.nav.greenpoint} />
             {features.parcels && (
@@ -112,6 +115,7 @@ export function AccountPanel() {
       ) : (
         <>
           <MenuGroup>
+            <MenuLink href="/favoris" icon={HeartIcon} label={t.ui.tabs.favorites} />
             <MenuLink href="/parametres" icon={GearIcon} label={a.settings} />
             <MenuLink href={LEGAL_PATHS.privacy} icon={ShieldIcon} label={a.privacy} />
             <MenuLink href="/contact" icon={HelpIcon} label={a.help} />
