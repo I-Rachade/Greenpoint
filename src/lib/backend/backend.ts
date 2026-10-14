@@ -41,6 +41,7 @@ import type {
   StationDrivers,
 } from "../drivers";
 import type { FleetStats, FleetView } from "../fleet";
+import type { ReviewInput, StationReview } from "../station-extras";
 import type { LatLng } from "../geo";
 import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
 
@@ -131,6 +132,7 @@ export type BackendErrorCode =
   | "not_enough_points"
   | "greenpoint_daily_limit"
   | "greenpoint_fleet_driver"
+  | "invalid_review"
   | "unknown";
 
 export class BackendError extends Error {
@@ -175,6 +177,16 @@ export interface Backend {
   sendDeleteCode(channel: CodeChannel): Promise<void>;
   /** Deletes the signed-in user's account for good, after checking the code. */
   deleteAccount(channel: CodeChannel, code: string): Promise<void>;
+
+  // Reviews and photos (see src/lib/station-extras.ts)
+  /** Customer reviews of a station, newest first. Public; `isMine` marks the signed-in user's own. */
+  stationReviews(stationId: string): Promise<StationReview[]>;
+  /** Rates a station 1 to 5 stars with an optional comment; one review per customer and station (a new one replaces the old). */
+  saveReview(stationId: string, input: ReviewInput): Promise<void>;
+  /** The author deletes their review, or an admin removes one. */
+  deleteReview(id: string): Promise<void>;
+  /** Stores a station photo and returns its public URL (admins only). */
+  uploadStationPhoto(file: File): Promise<string>;
 
   // Customer
   myReservations(): Promise<Reservation[]>;

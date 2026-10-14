@@ -31,6 +31,12 @@ Eine Station ohne Tausch und Laden ist ein reiner Paketpunkt (`has_battery = 0`,
 
 Jede Motorrad-Marke (Akku-Betreiber, z. B. Spiro oder Omnivoltaic) hat eigene Tausch-Akkus. Oben im Stations-Editor pflegt der Admin die Liste (Marke und Modell, abschaltbar), im Tauschpunkt jeder Station hakt er an, welche Typen dort getauscht werden (Tabellen `battery_types`, `station_battery_types`, Migration `0017_battery_types.sql`). Pro Typ zählt das Stationspersonal die vollen Akkus (Spalte `station_battery_types.full_batteries`); der Gesamtwert der Station (`station_status.full_batteries`) ist dann ihre Summe. Laden braucht keinen Typ: die Steckdosen laden jeden Akku. Die App zeigt die getauschten Typen mit ihren vollen Akkus in der Stationsansicht und filtert nach Marke; abgeschaltete Typen erscheinen dort nicht.
 
+### Fotos, Rastplatz und Bewertungen
+
+Im Stations-Editor lädt der Admin bis zu 6 Fotos hoch (R2, Ordner `stations/`); das erste ist das Titelbild in der App, „Mettre en couverture“ macht ein anderes zum Titelbild. Ohne Foto zeigt die App eine Illustration (`public/station-photos/`). Darunter hakt er an, was die Station zum Ausruhen und an Diensten bietet (Bänke, Schatten, Toiletten, Trinkwasser, Essen, Getränke, WLAN, Handy laden, Laden, Parkplatz; `src/lib/station-extras.ts`). Hat eine Station Bänke, Schatten, Toiletten, Wasser, Essen oder Getränke, trägt sie in der App das Abzeichen „Point de repos“. Gespeichert in `stations.photos` und `stations.amenities` (JSON, Migration `0021_station_photos_reviews.sql`).
+
+Angemeldete Kunden bewerten eine Station mit 1 bis 5 Sternen und einem Kommentar (höchstens 500 Zeichen); pro Kunde und Station gibt es eine Bewertung, eine neue ersetzt die alte (Tabelle `station_reviews`). Die App zeigt Durchschnitt, Verteilung und die neuesten Bewertungen mit Vorname und Initiale. Im Stations-Editor sieht der Admin alle Bewertungen der Station und löscht beleidigende; das Löschen steht im Aktivitätsprotokoll.
+
 ## Auffälligkeiten („À vérifier“)
 
 Berechnet in `src/lib/admin/insights.ts` (Tests in `src/lib/__tests__/admin-insights.test.ts`):
