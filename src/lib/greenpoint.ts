@@ -53,7 +53,7 @@ export interface GreenpointFactors {
 export const DEFAULT_FACTORS: GreenpointFactors = {
   batteryGrams: { scooter: 1500, moped: 2000, tricycle: 4000, ebike: 500 },
   kwhGrams: 1000,
-  kmGrams: { moto: 40, tricycle: 60, cargo_tricycle: 60 },
+  kmGrams: { moto: 40, tricycle: 60, cargo_tricycle: 60, car: 120 },
 };
 
 /** Highest factor accepted, as a sanity bound (50 kg per battery). */
@@ -69,10 +69,14 @@ export function validFactors(input: unknown): GreenpointFactors | null {
     batteryGrams[v] = f.batteryGrams[v];
   }
   if (!ok(f.kwhGrams)) return null;
-  // Factors saved before driver trips counted have no kmGrams: they get the defaults.
+  // Factors saved before driver trips counted (or before a vehicle type existed) get the defaults.
   const km = (f.kmGrams ?? DEFAULT_FACTORS.kmGrams) as Partial<Record<FleetVehicleType, unknown>>;
   const kmGrams = {} as Record<FleetVehicleType, number>;
   for (const v of FLEET_VEHICLE_TYPES) {
+    if (km[v] === undefined) {
+      kmGrams[v] = DEFAULT_FACTORS.kmGrams[v];
+      continue;
+    }
     if (!ok(km[v])) return null;
     kmGrams[v] = km[v] as number;
   }

@@ -368,6 +368,9 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
   } else if (job.kind === "ride") {
     step = job.status === "picked_up" ? format(t.drivers.page.stepRideDrive, { n: job.collectFcfa }) : t.drivers.page.stepRideGo;
     target = job.status === "picked_up" ? job.dropoff : job.home;
+  } else if (job.kind === "courier") {
+    step = job.status === "picked_up" ? t.drivers.page.stepCourierDrive : format(t.drivers.page.stepCourierGo, { n: job.collectFcfa });
+    target = job.status === "picked_up" ? job.dropoff : job.home;
   } else if (job.kind === "pickup") {
     step = job.status === "picked_up" ? format(t.drivers.page.stepPickupBring, { no: job.trackingNo ?? "", to: name(job.toStationId) }) : t.drivers.page.stepPickupGo;
     target = job.status === "picked_up" ? (station(job.toStationId) ?? null) : job.home;
@@ -415,13 +418,18 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
             🧭 {t.drivers.page.directions}
           </a>
         )}
-        {job.home?.phone && job.status !== "returning" && (
+        {job.home?.phone && job.status !== "returning" && !(job.kind === "courier" && job.status === "picked_up") && (
           <a className={secondary} href={`tel:${job.home.phone}`}>
             📞 {t.drivers.page.call} {job.customerName ?? ""}
           </a>
         )}
+        {job.kind === "courier" && job.status === "picked_up" && job.recipient && (
+          <a className={secondary} href={`tel:${job.recipient.phone}`}>
+            📞 {t.drivers.page.call} {job.recipient.name ?? job.recipient.phone}
+          </a>
+        )}
       </div>
-      {job.collectFcfa > 0 && <p className="text-sm font-semibold">{format(t.drivers.page.collect, { n: job.collectFcfa })}</p>}
+      {job.collectFcfa > 0 && !(job.kind === "courier" && job.status === "picked_up") && <p className="text-sm font-semibold">{format(t.drivers.page.collect, { n: job.collectFcfa })}</p>}
       <p className="text-xs text-zinc-500">{format(t.drivers.page.earning, { n: driverEarning(job.fareFcfa, home.settings) })}</p>
       {job.kind === "pickup" && job.status === "accepted" && <PickupCollect job={job} info={info} onDone={(no) => setCollected(format(t.drivers.page.collected, { no }))} />}
       {job.kind === "delivery" && (job.status === "picked_up" || job.status === "at_door") && <DoorActions job={job} home={home} />}
@@ -433,6 +441,16 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
       {job.kind === "ride" && job.status === "picked_up" && (
         <button type="button" className={primary} disabled={busy} onClick={() => void run(() => backend.finishRide(job.id), t.drivers.page.finished)}>
           {format(t.drivers.page.finishButton, { n: job.collectFcfa })}
+        </button>
+      )}
+      {job.kind === "courier" && job.status === "accepted" && (
+        <button type="button" className={primary} disabled={busy} onClick={() => void run(() => backend.boardRide(job.id))}>
+          {format(t.drivers.page.courierPickButton, { n: job.collectFcfa })}
+        </button>
+      )}
+      {job.kind === "courier" && job.status === "picked_up" && (
+        <button type="button" className={primary} disabled={busy} onClick={() => void run(() => backend.finishRide(job.id), t.drivers.page.courierDone)}>
+          {t.drivers.page.courierDoneButton}
         </button>
       )}
       <Notice error="" notice={collected} />
@@ -456,6 +474,13 @@ function JobFacts({ job, route }: { job: DeliveryJob; route: string }) {
           {t.parcels.size} {job.size}
           {job.weightKg ? ` · ${job.weightKg} kg` : ""} · {formatDistance(job.distanceM)}
           {job.content ? ` · ${job.content}` : ""}
+          {job.kind === "courier" && job.recipient && (
+            <>
+              <br />
+              {t.drivers.customer.recipientPhone} : {job.recipient.name ? `${job.recipient.name} · ` : ""}
+              {job.recipient.phone}
+            </>
+          )}
         </div>
       )}
     </div>

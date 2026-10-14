@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_DRIVER_SETTINGS, driverBadgePayload, driverEarning, fareFor } from "../src/lib/drivers";
+import { DEFAULT_DRIVER_SETTINGS, driverBadgePayload, driverEarning, fareFor, type FleetVehicleType, type RideVehicleType } from "../src/lib/drivers";
 import { distanceMeters } from "../src/lib/geo";
 import type { Profile } from "../src/lib/types";
 import {
@@ -12,6 +12,7 @@ import {
   boardRide,
   bookPickup,
   bookRide,
+  bookCourier,
   cancelJob,
   collectPickup,
   declineJob,
@@ -100,7 +101,7 @@ const photo = () =>
 const profile = (id: string, phone: string): Profile => ({ id, phone, email: null, fullName: null, role: "customer" });
 
 /** A driver who applied, sent their photos and was approved with a vehicle of this type. */
-async function approvedDriver(t: ReturnType<typeof setup>, id: string, type: "moto" | "tricycle" | "cargo_tricycle" = "tricycle") {
+async function approvedDriver(t: ReturnType<typeof setup>, id: string, type: FleetVehicleType = "tricycle") {
   const me = t.ctx(profile(id, `+2289300000${id.slice(-1)}`));
   await applyDriver(me, { fullName: `Chauffeur ${id}`, idNumber: "ID12345", licenseNumber: "LIC9876", wantedType: type });
   for (const kind of ["id", "license", "portrait"]) await uploadDriverDocument(me, kind, photo());
@@ -369,12 +370,12 @@ describe("ride", () => {
 
   it("takes the customer from A to B and books the fare as cash collected", async () => {
     const t = setup();
-    const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1 });
+    const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1, vehicleType: "moto" });
     expect(booking).toMatchObject({ kind: "ride", status: "open", passengers: 1, dropoff: DROPOFF });
     expect(booking.fareFcfa).toBe(fareFor(distanceMeters(HOME, DROPOFF), false, DEFAULT_DRIVER_SETTINGS));
     expect(booking.collectFcfa).toBe(booking.fareFcfa);
     // One open ride at a time.
-    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1 })).rejects.toMatchObject({ code: "ride_open" });
+    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1, vehicleType: "moto" })).rejects.toMatchObject({ code: "ride_open" });
 
     const driver = await approvedDriver(t, "d1", "moto");
     await joinQueue(driver.me, B.id, B);
@@ -396,12 +397,12 @@ describe("ride", () => {
     expect(home.driver?.balanceFcfa).toBe(job.fareFcfa - driverEarning(job.fareFcfa, DEFAULT_DRIVER_SETTINGS));
     expect((await myJobs(t.sender))[0]).toMatchObject({ kind: "ride", status: "done" });
     // A new ride can be booked once the last one is over.
-    expect((await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1 })).status).toBe("open");
+    expect((await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1, vehicleType: "moto" })).status).toBe("open");
   });
 
   it("only offers rides to vehicles with a seat for every passenger", async () => {
     const t = setup();
-    const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 3 });
+    const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 3, vehicleType: "tricycle" });
     const moto = await approvedDriver(t, "d1", "moto");
     await joinQueue(moto.me, B.id, B);
     expect((await driverHome(moto.me)).job).toBeNull();
@@ -410,11 +411,71 @@ describe("ride", () => {
     expect((await driverHome(tricycle.me)).job?.id).toBe(booking.id);
   });
 
+  it("only offers rides to the kind of vehicle the customer picked", async () => {
+    const t = setup();
+    const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 4, vehicleType: "car" });
+    expect(booking.vehicleType).toBe("car");
+    const tricycle = await approvedDriver(t, "d1", "tricycle");
+    await joinQueue(tricycle.me, B.id, B);
+    expect((await driverHome(tricycle.me)).job).toBeNull();
+    const car = await approvedDriver(t, "d2", "car");
+    await joinQueue(car.me, A.id, A);
+    expect((await driverHome(car.me)).job).toMatchObject({ id: booking.id, passengers: 4 });
+  });
+
   it("refuses bad bookings", async () => {
     const t = setup();
-    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 4 })).rejects.toMatchObject({ code: "bad_request" });
-    await expect(bookRide(t.sender, { pickup: HOME, dropoff: { lat: 7.5, lng: 1.1, note: "" }, passengers: 1 })).rejects.toMatchObject({ code: "outside_area" });
-    await expect(bookRide(t.sender, { pickup: { ...HOME, phone: "" }, dropoff: DROPOFF, passengers: 1 })).rejects.toMatchObject({ code: "phone_not_allowed" });
+    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 4, vehicleType: "tricycle" })).rejects.toMatchObject({ code: "bad_request" });
+    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 2, vehicleType: "moto" })).rejects.toMatchObject({ code: "bad_request" });
+    await expect(
+      bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1, vehicleType: "cargo_tricycle" as RideVehicleType }),
+    ).rejects.toMatchObject({ code: "bad_request" });
+    await expect(bookRide(t.sender, { pickup: HOME, dropoff: { lat: 7.5, lng: 1.1, note: "" }, passengers: 1, vehicleType: "moto" })).rejects.toMatchObject({ code: "outside_area" });
+    await expect(bookRide(t.sender, { pickup: { ...HOME, phone: "" }, dropoff: DROPOFF, passengers: 1, vehicleType: "moto" })).rejects.toMatchObject({
+      code: "phone_not_allowed",
+    });
+  });
+});
+
+describe("express parcel door to door", () => {
+  const DROPOFF = { lat: 6.2, lng: 1.19, note: "Agoè, portail bleu" };
+  const booking = { pickup: HOME, dropoff: DROPOFF, recipientPhone: "92 00 00 00", recipientName: "Afi", content: "Clés", size: "S" as const };
+
+  it("is paid at the sender's door and handed to the recipient", async () => {
+    const t = setup();
+    const job = await bookCourier(t.sender, booking);
+    expect(job).toMatchObject({ kind: "courier", status: "open", dropoff: DROPOFF, recipient: { phone: "+22892000000", name: "Afi" }, content: "Clés" });
+    expect(job.collectFcfa).toBe(fareFor(distanceMeters(HOME, DROPOFF), false, DEFAULT_DRIVER_SETTINGS));
+
+    const driver = await approvedDriver(t, "d1", "moto");
+    await joinQueue(driver.me, B.id, B);
+    expect((await driverHome(driver.me)).job?.id).toBe(job.id);
+    await acceptJob(driver.me, job.id);
+    await boardRide(driver.me, job.id);
+    // Paid at the door: owed to us as soon as the driver has the parcel.
+    expect((await driverHome(driver.me)).driver?.balanceFcfa).toBe(job.fareFcfa);
+    await expect(cancelJob(t.sender, job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+    await finishRide(driver.me, job.id);
+    const home = await driverHome(driver.me);
+    expect(home.job).toBeNull();
+    expect(home.driver?.balanceFcfa).toBe(job.fareFcfa - driverEarning(job.fareFcfa, DEFAULT_DRIVER_SETTINGS));
+    expect((await myJobs(t.sender))[0]).toMatchObject({ kind: "courier", status: "done" });
+  });
+
+  it("only goes to vehicles big enough and refuses bad bookings", async () => {
+    const t = setup();
+    const job = await bookCourier(t.sender, { ...booking, size: "L" });
+    const moto = await approvedDriver(t, "d1", "moto");
+    await joinQueue(moto.me, B.id, B);
+    expect((await driverHome(moto.me)).job).toBeNull();
+    const car = await approvedDriver(t, "d2", "car");
+    await joinQueue(car.me, A.id, A);
+    expect((await driverHome(car.me)).job?.id).toBe(job.id);
+
+    await expect(bookCourier(t.sender, { ...booking, recipientPhone: "" })).rejects.toMatchObject({ code: "phone_not_allowed" });
+    await expect(bookCourier(t.sender, { ...booking, dropoff: { ...DROPOFF, note: " " } })).rejects.toMatchObject({ code: "bad_request" });
+    await expect(bookCourier(t.sender, { ...booking, content: "" })).rejects.toMatchObject({ code: "bad_request" });
+    await expect(bookCourier(t.sender, { ...booking, dropoff: { lat: 7.5, lng: 1.1, note: "Loin" } })).rejects.toMatchObject({ code: "outside_area" });
   });
 });
 
@@ -427,5 +488,14 @@ describe("settings", () => {
     expect(t.db.prepare("select changes from audit_log where table_name = 'driver_settings'").get()).toMatchObject({
       changes: JSON.stringify({ baseFcfa: [500, 600] }),
     });
+  });
+
+  it("keeps settings saved before cars existed and gives cars the default limits", async () => {
+    const t = setup();
+    const old = { ...DEFAULT_DRIVER_SETTINGS, baseFcfa: 700, vehicles: DEFAULT_DRIVER_SETTINGS.vehicles.filter((v) => v.type !== "car") };
+    t.db.prepare("insert or replace into driver_settings (id, settings, updated_at) values (1, ?, ?)").run(JSON.stringify(old), "2026-10-13T00:00:00.000Z");
+    const settings = (await adminDrivers(t.admin)).settings;
+    expect(settings.baseFcfa).toBe(700);
+    expect(settings.vehicles.find((v) => v.type === "car")).toEqual(DEFAULT_DRIVER_SETTINGS.vehicles.find((v) => v.type === "car"));
   });
 });

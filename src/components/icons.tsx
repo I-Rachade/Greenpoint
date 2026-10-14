@@ -294,3 +294,28 @@ export const QueueIcon = (p: IconProps) => (
     <path d="M2 18v-2.5A2.5 2.5 0 0 1 4.5 13h1A2.5 2.5 0 0 1 8 15.5V18M9 18v-2.5a2.5 2.5 0 0 1 2.5-2.5h1a2.5 2.5 0 0 1 2.5 2.5V18M16 18v-2.5a2.5 2.5 0 0 1 2.5-2.5h1a2.5 2.5 0 0 1 2.5 2.5V18" />
   </Svg>
 );
+
+/** A passenger tricycle: one wheel in front, two behind, a roof. */
+export const TricycleIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="5" cy="17.5" r="2.2" />
+    <circle cx="18.5" cy="17.5" r="2.2" />
+    <path d="M7.2 17.5h9M10 17.5 12 10h8.5v7.5M12 6.5h8.5v3.5M8 10.5 5 17.5M6.5 10.5h3" />
+  </Svg>
+);
+
+export const CarIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3.5 16.5v-4l2-5h13l2 5v4h-17ZM3.5 12.5h17" />
+    <circle cx="7.5" cy="16.5" r="1.8" />
+    <circle cx="16.5" cy="16.5" r="1.8" />
+  </Svg>
+);
+
+/** Express parcel: a box with speed lines. */
+export const BoxFastIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m14 4 7 3.5v9L14 20l-7-3.5v-9L14 4Z" />
+    <path d="m7 7.5 7 3.5 7-3.5M14 11v9M2 10h3M1.5 13.5H5M2.5 17H5" />
+  </Svg>
+);
