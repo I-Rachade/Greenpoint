@@ -97,6 +97,7 @@ import {
   type PickupBooking,
   type RideBooking,
   type CourierBooking,
+  type RideVehicleType,
   type DropoffPoint,
   type StationDrivers,
 } from "../drivers";
@@ -1361,8 +1362,14 @@ export class DemoBackend implements Backend {
     return {
       depots: (state.parcelDepots ?? seedDepots()).filter((d) => this.activeDepot(state, d.stationId)),
       sizes: state.parcelSizes ?? DEFAULT_PARCEL_SIZES,
-      driverSettings: state.driverSettings ?? DEFAULT_DRIVER_SETTINGS,
+      driverSettings: this.settingsOf(state),
+      rideVehicles: this.rideVehiclesOf(state),
     };
+  }
+
+  private rideVehiclesOf(state: DemoState): RideVehicleType[] {
+    const fleet = (state.fleet ?? seedFleet()).filter((v) => v.isActive);
+    return RIDE_VEHICLE_TYPES.filter((type) => fleet.some((v) => v.type === type));
   }
 
   async myParcels(): Promise<Parcel[]> {
@@ -2187,6 +2194,7 @@ export class DemoBackend implements Backend {
     const pickup = this.cleanHome(input.pickup);
     const d = this.cleanDropoff(input.dropoff);
     if (!RIDE_VEHICLE_TYPES.includes(input.vehicleType)) throw new BackendError("unknown", "vehicle");
+    if (!this.rideVehiclesOf(state).includes(input.vehicleType)) throw new BackendError("ride_vehicle_soon");
     if (!Number.isInteger(input.passengers) || input.passengers < 1 || input.passengers > maxPassengers(input.vehicleType)) throw new BackendError("unknown", "passengers");
     const done: JobStatus[] = ["done", "failed", "cancelled"];
     if ((state.jobs ?? []).some((j) => j.kind === "ride" && j.customerUserId === profile.id && !done.includes(j.status))) throw new BackendError("ride_open");

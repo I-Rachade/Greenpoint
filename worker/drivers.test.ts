@@ -35,7 +35,7 @@ import {
   uploadProof,
 } from "./drivers";
 import type { Env } from "./env";
-import { createParcel, markInTransit, pickUpParcel, type ParcelCtx } from "./parcels";
+import { createParcel, markInTransit, parcelInfo, pickUpParcel, type ParcelCtx } from "./parcels";
 import { fakeD1 } from "./test-d1";
 
 const OWN_OPERATOR = "00000000-0000-4000-8000-000000000001";
@@ -367,9 +367,16 @@ describe("pickup at home", () => {
 
 describe("ride", () => {
   const DROPOFF = { lat: 6.2, lng: 1.19, note: "Marché d'Agoè" };
+  /** A test setup with a spare moto and tricycle in the fleet, so those rides can be booked. */
+  const setupWithFleet = async () => {
+    const t = setup();
+    await saveFleetVehicle(t.admin, null, { type: "moto", plate: "TG-SPARE-M", isActive: true });
+    await saveFleetVehicle(t.admin, null, { type: "tricycle", plate: "TG-SPARE-T", isActive: true });
+    return t;
+  };
 
   it("takes the customer from A to B and books the fare as cash collected", async () => {
-    const t = setup();
+    const t = await setupWithFleet();
     const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1, vehicleType: "moto" });
     expect(booking).toMatchObject({ kind: "ride", status: "open", passengers: 1, dropoff: DROPOFF });
     expect(booking.fareFcfa).toBe(fareFor(distanceMeters(HOME, DROPOFF), false, DEFAULT_DRIVER_SETTINGS));
@@ -401,7 +408,7 @@ describe("ride", () => {
   });
 
   it("only offers rides to vehicles with a seat for every passenger", async () => {
-    const t = setup();
+    const t = await setupWithFleet();
     const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 3, vehicleType: "tricycle" });
     const moto = await approvedDriver(t, "d1", "moto");
     await joinQueue(moto.me, B.id, B);
@@ -412,19 +419,23 @@ describe("ride", () => {
   });
 
   it("only offers rides to the kind of vehicle the customer picked", async () => {
-    const t = setup();
+    const t = await setupWithFleet();
+    // No active car in the fleet yet: the car shows as "soon" and cannot be booked.
+    expect((await parcelInfo(t.sender)).rideVehicles).toEqual(["moto", "tricycle"]);
+    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1, vehicleType: "car" })).rejects.toMatchObject({ code: "ride_vehicle_soon" });
+    const car = await approvedDriver(t, "d2", "car");
+    expect((await parcelInfo(t.sender)).rideVehicles).toEqual(["moto", "tricycle", "car"]);
     const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 4, vehicleType: "car" });
     expect(booking.vehicleType).toBe("car");
     const tricycle = await approvedDriver(t, "d1", "tricycle");
     await joinQueue(tricycle.me, B.id, B);
     expect((await driverHome(tricycle.me)).job).toBeNull();
-    const car = await approvedDriver(t, "d2", "car");
     await joinQueue(car.me, A.id, A);
     expect((await driverHome(car.me)).job).toMatchObject({ id: booking.id, passengers: 4 });
   });
 
   it("refuses bad bookings", async () => {
-    const t = setup();
+    const t = await setupWithFleet();
     await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 4, vehicleType: "tricycle" })).rejects.toMatchObject({ code: "bad_request" });
     await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 2, vehicleType: "moto" })).rejects.toMatchObject({ code: "bad_request" });
     await expect(

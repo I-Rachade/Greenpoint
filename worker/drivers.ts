@@ -37,6 +37,7 @@ import {
   type QueueEntry,
   type RideBooking,
   type CourierBooking,
+  type RideVehicleType,
   RIDE_VEHICLE_TYPES,
   maxPassengers,
   withAllVehicles,
@@ -194,6 +195,12 @@ export function toJob(r: JobRow): DeliveryJob {
 
 export function toVehicle(r: { id: string; type: FleetVehicleType; plate: string; is_active: number }): FleetVehicle {
   return { id: r.id, type: r.type, plate: r.plate, isActive: !!r.is_active };
+}
+
+/** Ride vehicles we have at least one active vehicle of; customers cannot book the others yet. */
+export async function rideVehicles(db: D1Database): Promise<RideVehicleType[]> {
+  const { results } = await db.prepare("select distinct type from fleet_vehicles where is_active = 1").all<{ type: FleetVehicleType }>();
+  return RIDE_VEHICLE_TYPES.filter((type) => results.some((r) => r.type === type));
 }
 
 // Settings -----------------------------------------------------------------------
@@ -1022,6 +1029,7 @@ export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<Delive
   const d = cleanDropoff(input?.dropoff);
   const vehicleType = input?.vehicleType;
   if (!RIDE_VEHICLE_TYPES.includes(vehicleType)) throw new ApiError("bad_request");
+  if (!(await rideVehicles(c.db)).includes(vehicleType)) throw new ApiError("ride_vehicle_soon");
   const passengers = Number(input?.passengers);
   if (!Number.isInteger(passengers) || passengers < 1 || passengers > Math.min(maxPassengers(vehicleType), MAX_PASSENGERS)) throw new ApiError("bad_request");
   const open = await c.db
