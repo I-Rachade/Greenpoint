@@ -11,8 +11,9 @@ import { batteryTypeLabel, groupByBrand, type BatteryType } from "@/lib/battery-
 import { hasAnyPoint, kindFor } from "@/lib/station-points";
 import { VEHICLE_TYPES, type StationInput, type StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
-import { BatteryIcon, BoltIcon, BoxIcon } from "./icons";
+import { BatteryIcon, BoltIcon, BoxIcon, SunIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
+import { SolarBadge } from "./solar-badge";
 
 /** The form's view of a station: general fields plus each point switched on or off. */
 interface FormState {
@@ -54,6 +55,7 @@ function toInput(s: StationView): StationInput {
     batteryCapacity: s.batteryCapacity,
     openingHours: s.openingHours,
     phone: s.phone,
+    isSolar: s.isSolar,
   };
 }
 
@@ -230,6 +232,29 @@ function StationForm({
         />
       </label>
 
+      <section
+        className={`flex items-start gap-2 rounded-lg border p-3 sm:col-span-2 ${
+          form.input.isSolar ? "border-amber-400/60 bg-amber-50 dark:bg-amber-400/10" : "border-black/10 dark:border-white/10"
+        }`}
+      >
+        <span className="mt-0.5 text-amber-600">
+          <SunIcon size={18} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="font-medium">{p.solar}</div>
+          <p className="text-xs text-zinc-500">{p.solarHint}</p>
+        </div>
+        <label className="flex shrink-0 items-center gap-1 text-sm">
+          <input
+            type="checkbox"
+            className="accent-amber-600"
+            checked={!!form.input.isSolar}
+            onChange={(e) => set("isSolar", e.target.checked)}
+          />
+          {p.solarOn}
+        </label>
+      </section>
+
       <div className="space-y-2 sm:col-span-2">
         <div>
           <h3 className="text-sm font-semibold">{p.title}</h3>
@@ -391,6 +416,7 @@ function PointBadges({ station, sockets }: { station: StationView; sockets: Devi
   const outlets = sockets.reduce((n, d) => n + d.outlets, 0);
   return (
     <div className="mt-1 flex flex-wrap gap-1">
+      {station.isSolar && <SolarBadge />}
       {offersSwap(station.kind) && (
         <span className={pill}>
           <BatteryIcon size={12} /> {p.swap} · {station.batteryCapacity}
@@ -560,6 +586,7 @@ export function AdminStations() {
     batteryCapacity: 0,
     openingHours: "",
     phone: null,
+    isSolar: false,
   };
 
   return (

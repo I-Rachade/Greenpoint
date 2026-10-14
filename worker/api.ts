@@ -172,6 +172,8 @@ interface StationRow {
   reserved_batteries: number;
   /** Missing before migration 0013. */
   has_battery?: number;
+  /** Missing before migration 0019. */
+  is_solar?: number;
   depot_active: number | null;
   depot_counter: number | null;
   depot_lockers: number | null;
@@ -225,6 +227,7 @@ function toStationView(r: StationRow): StationView & { isActive: boolean } {
     batteryCapacity: r.battery_capacity,
     openingHours: r.opening_hours,
     phone: r.phone,
+    isSolar: !!r.is_solar,
     isActive: !!r.is_active,
     status: {
       stationId: r.id,
@@ -612,6 +615,9 @@ function stationRow(input: StationInput) {
   };
 }
 
+/** is_solar from the input; null when left out (update keeps it, insert takes 0). */
+const solarValue = (input: StationInput) => (input.isSolar === undefined ? null : input.isSolar ? 1 : 0);
+
 /** Charging places of station ?{station}: its connected outlets. */
 const CONNECTED_OUTLETS_SQL = (station: string) =>
   `(select count(*) from charging_points where station_id = ${station} and device_id is not null)`;
@@ -623,6 +629,7 @@ const CONNECTED_OUTLETS_SQL = (station: string) =>
 async function saveStation(c: Ctx, id: string | null, input: StationInput) {
   const admin = await c.requireAdmin();
   const row = stationRow(input);
+  const solar = solarValue(input);
   const depotInput = input.parcelDepot ?? null;
   const existingDepot = id
     ? await c.db.prepare("select is_active, has_counter, lockers from parcel_depots where station_id = ?").bind(id).first<{ is_active: number; has_counter: number | null; lockers: number }>()
@@ -641,7 +648,7 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
   if (id) {
     const before = await c.db
       .prepare(
-        "select operator_id, name, address, lat, lng, kind, has_battery, vehicle_types, battery_capacity, opening_hours, phone from stations where id = ?",
+        "select operator_id, name, address, lat, lng, kind, has_battery, vehicle_types, battery_capacity, opening_hours, phone, is_solar from stations where id = ?",
       )
       .bind(id)
       .first<Record<string, unknown>>();
@@ -650,10 +657,18 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
       c.db
         .prepare(
           `update stations set operator_id = ?, name = ?, address = ?, lat = ?, lng = ?, kind = ?, has_battery = ?, vehicle_types = ?,
-           battery_capacity = ?, opening_hours = ?, phone = ?, charging_slots = ${CONNECTED_OUTLETS_SQL("stations.id")} where id = ?`,
+           battery_capacity = ?, opening_hours = ?, phone = ?, is_solar = coalesce(?, is_solar),
+           charging_slots = ${CONNECTED_OUTLETS_SQL("stations.id")} where id = ?`,
         )
-        .bind(...Object.values(row), id),
-      c.audit(admin.id, "stations", "update", id, { ...diff(before, row), ...(types ? { battery_types: types.labels } : {}) }, { stationId: id }),
+        .bind(...Object.values(row), solar, id),
+      c.audit(
+        admin.id,
+        "stations",
+        "update",
+        id,
+        { ...diff(before, solar === null ? row : { ...row, is_solar: solar }), ...(types ? { battery_types: types.labels } : {}) },
+        { stationId: id },
+      ),
       ...(depotInput ? await depotStatements(c, admin.id, id, depotInput) : []),
       ...(types?.statements ?? []),
     ]);
@@ -664,14 +679,14 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
     c.db
       .prepare(
         `insert into stations (id, operator_id, name, address, lat, lng, kind, has_battery, vehicle_types,
-         battery_capacity, opening_hours, phone, charging_slots, is_active, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?)`,
+         battery_capacity, opening_hours, phone, is_solar, charging_slots, is_active, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?)`,
       )
-      .bind(newId, ...Object.values(row), now),
+      .bind(newId, ...Object.values(row), solar ?? 0, now),
     // No connected socket yet, so no free charging place.
     c.db
       .prepare("insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values (?, 1, 0, ?, ?)")
       .bind(newId, row.battery_capacity, now),
-    c.audit(admin.id, "stations", "insert", newId, { ...row, ...(types ? { battery_types: types.labels } : {}) }, { stationId: newId }),
+    c.audit(admin.id, "stations", "insert", newId, { ...row, is_solar: solar ?? 0, ...(types ? { battery_types: types.labels } : {}) }, { stationId: newId }),
     ...(depotInput ? await depotStatements(c, admin.id, newId, depotInput) : []),
     ...(types?.statements ?? []),
   ]);

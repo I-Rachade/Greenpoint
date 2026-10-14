@@ -120,6 +120,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "not_enough_points",
   "greenpoint_daily_limit",
   "greenpoint_fleet_driver",
+  "greenpoint_not_solar",
 ];
 
 /**

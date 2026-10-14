@@ -20,9 +20,10 @@ import { format } from "@/lib/i18n/format";
 import { RESERVATION_MINUTES, type ReservationType, type StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { AvailabilityBadge } from "./availability-badge";
-import { BatteryIcon, BoltIcon, BoxIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, StoreIcon } from "./icons";
+import { BatteryIcon, BoltIcon, BoxIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, StoreIcon, SunIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { FavoriteButton } from "./station-card";
+import { SolarBadge } from "./solar-badge";
 
 const OUTLET_COLORS: Record<ChargingPointDisplay, string> = {
   free: "bg-green-600",
@@ -126,6 +127,7 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <AvailabilityBadge value={stationAvailability(station)} />
+        {station.isSolar && <SolarBadge />}
         <span className="rounded-full bg-gp-border/60 px-2 py-0.5 dark:bg-white/10">{t.kinds[station.kind]}</span>
         {station.vehicleTypes.map((v) => (
           <span key={v} className="rounded-full bg-gp-border/60 px-2 py-0.5 dark:bg-white/10">
@@ -133,6 +135,13 @@ export function StationDetail({ station, distance, onClose, onChanged }: Props) 
           </span>
         ))}
       </div>
+
+      {station.isSolar && battery && (
+        <p className="flex items-start gap-2 rounded-2xl bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-400/10 dark:text-amber-200">
+          <SunIcon size={16} className="mt-0.5 shrink-0" />
+          {t.station.solarHint}
+        </p>
+      )}
 
       {battery && (
         <div className="grid grid-cols-2 gap-3">

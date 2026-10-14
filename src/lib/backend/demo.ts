@@ -886,6 +886,8 @@ export class DemoBackend implements Backend {
     }
     const station: Station = {
       ...fields,
+      // Left out: unchanged, as in the Worker.
+      isSolar: fields.isSolar ?? (id ? !!state.stations.find((s) => s.id === id)?.isSolar : false),
       id: id ?? crypto.randomUUID(),
       operatorName: operator.name,
       isOwn: operator.isOwn,
@@ -3148,11 +3150,12 @@ export class DemoBackend implements Backend {
     return { ...g, ledger: [entry, ...g.ledger].slice(0, 500) };
   }
 
-  /** Adds a swap or charge to the ledger, unless the daily limit is reached (as earnStatement in the Worker). */
+  /** Adds a swap or charge to the ledger, only at a solar station and below the daily limit (as earnStatement in the Worker). */
   private earn(
     state: DemoState,
     input: { userId: string; type: ReservationType; stationId: string; reservationId: string | null; vehicle?: VehicleType },
   ): DemoState {
+    if (!state.stations.find((s) => s.id === input.stationId)?.isSolar) return state;
     const g = this.gp(state);
     const today = dayStart();
     const earnedToday = g.ledger.filter((l) => l.userId === input.userId && l.points > 0 && l.kind !== "admin_adjust" && l.createdAt >= today).length;
@@ -3258,6 +3261,7 @@ export class DemoBackend implements Backend {
     if (!station) throw new BackendError("station_not_found");
     const offered = input.service === "swap" ? offersSwap(station.kind) : offersCharging(station.kind);
     if (!offered) throw new BackendError("service_not_offered");
+    if (!station.isSolar) throw new BackendError("greenpoint_not_solar");
     const rider = this.findWalletUser(state, input.contact);
     if (rider.id === profile.id) throw new BackendError("own_reservation");
     const next = this.earn(state, {

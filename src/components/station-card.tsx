@@ -11,6 +11,7 @@ import type { StationView } from "@/lib/types";
 import { AvailabilityBadge } from "./availability-badge";
 import { BatteryIcon, BoltIcon, BoxIcon, HeartIcon, PinIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
+import { SolarBadge } from "./solar-badge";
 
 /** Link to the full station screen. */
 export const stationHref = (id: string) => `/station?id=${encodeURIComponent(id)}`;
@@ -70,6 +71,7 @@ export function StationCard({
                   {t.map.nearest}
                 </span>
               )}
+              {station.isSolar && <SolarBadge compact />}
             </div>
             <p className="flex items-center gap-1 truncate text-xs text-gp-muted dark:text-zinc-400">
               <PinIcon size={13} className="shrink-0" />

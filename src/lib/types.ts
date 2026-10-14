@@ -26,6 +26,8 @@ export interface Station {
   batteryCapacity: number;
   openingHours: string;
   phone: string | null;
+  /** Charges with solar power: only here do swaps and charges earn greenpoints. */
+  isSolar: boolean;
 }
 
 export interface StationStatus {
@@ -109,6 +111,8 @@ export interface StationInput {
   batteryCapacity: number;
   openingHours: string;
   phone: string | null;
+  /** Charges with solar power (greenpoints are only earned here). Left out: unchanged, false for a new station. */
+  isSolar?: boolean;
   /** Parcel counter and lockers, saved with the station. Left out: unchanged. */
   parcelDepot?: ParcelDepotInput;
   /** Ids of the battery types the swap point swaps, saved with the station. Left out: unchanged. */

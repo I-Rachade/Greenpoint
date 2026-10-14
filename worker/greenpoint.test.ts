@@ -73,7 +73,7 @@ async function setup() {
     );
   }
   db.exec(`
-    insert into stations (id, operator_id, name, lat, lng, kind, battery_capacity, created_at) values ('st', '${OPERATOR}', 'Bè', 6.13, 1.22, 'both', 10, '${now}');
+    insert into stations (id, operator_id, name, lat, lng, kind, battery_capacity, is_solar, created_at) values ('st', '${OPERATOR}', 'Bè', 6.13, 1.22, 'both', 10, 1, '${now}');
     insert into station_status (station_id, free_slots, full_batteries, updated_at) values ('st', 0, 10, '${now}');
     insert into station_staff (station_id, user_id) values ('st', 'staff');
   `);
@@ -121,6 +121,25 @@ describe("greenpoint", () => {
     expect((await visit(env, { contact: "+22890000002", service: "swap" })).body).toEqual({ error: "own_reservation" });
     expect((await visit(env, { contact: "+22899999999", service: "swap" })).body).toEqual({ error: "recipient_not_found" });
     expect((await call(env, "kofi", "POST", "/api/stations/st/greenpoint/visits", { contact: "+22890000002", service: "swap" })).status).toBe(403);
+  });
+
+  it("only gives greenpoints at stations the admin marked as solar", async () => {
+    const { env, db } = await setup();
+    db.exec("update stations set is_solar = 0 where id = 'st'");
+    // A reservation still completes, it just earns nothing.
+    expect((await swapWithReservation(env)).status).toBe(200);
+    expect((await mine(env)).points).toBe(0);
+    expect((await visit(env, { contact: "+22896123456", service: "swap" })).body).toEqual({ error: "greenpoint_not_solar" });
+
+    const input = { operatorId: OPERATOR, name: "Bè", address: "", lat: 6.13, lng: 1.22, kind: "both", vehicleTypes: ["scooter"], chargingSlots: 0, batteryCapacity: 10, openingHours: "", phone: null };
+    expect((await call(env, "admin", "POST", "/api/admin/stations", { id: "st", input: { ...input, isSolar: true } })).status).toBe(200);
+    const st = (await call<{ id: string; isSolar: boolean }[]>(env, "kofi", "GET", "/api/stations")).body.find((s) => s.id === "st");
+    expect(st?.isSolar).toBe(true);
+    expect((await visit(env, { contact: "+22896123456", service: "swap" })).status).toBe(200);
+    expect((await mine(env)).points).toBe(15);
+    // Saving without isSolar keeps the mark.
+    await call(env, "admin", "POST", "/api/admin/stations", { id: "st", input });
+    expect(db.prepare("select is_solar from stations where id = 'st'").get()).toEqual({ is_solar: 1 });
   });
 
   it("counts at most 3 swaps or charges per day", async () => {
