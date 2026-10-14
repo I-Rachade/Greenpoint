@@ -20,7 +20,7 @@ const AppContext = createContext<AppContextValue | null>(null);
 
 const FEATURES_KEY = "poinderecharge-features";
 /** Hidden until known, so a switched-off module never flashes up. */
-const UNKNOWN_FEATURES: Features = { parcels: false };
+const UNKNOWN_FEATURES: Features = { parcels: false, drivers: false };
 
 function readFeatures(): Features | null {
   try {
@@ -74,7 +74,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let active = true;
     const apply = (next: Features) => {
       if (!active) return;
-      setFeatures((prev) => (prev.parcels === next.parcels ? prev : next));
+      setFeatures((prev) => (prev.parcels === next.parcels && prev.drivers === next.drivers ? prev : next));
       setFeaturesReady(true);
     };
     // The last answer first, so the app offline or still loading shows what it showed before.

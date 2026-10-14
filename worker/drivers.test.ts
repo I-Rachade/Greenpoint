@@ -60,6 +60,7 @@ function setup() {
       ('${A.id}', '${OWN_OPERATOR}', 'Station A', ${A.lat}, ${A.lng}, 'both', '${now}'),
       ('${B.id}', '${OWN_OPERATOR}', 'Station B', ${B.lat}, ${B.lng}, 'both', '${now}');
     insert into parcel_depots (station_id, is_active, note, lockers, updated_at) values ('${A.id}', 1, '', 0, '${now}'), ('${B.id}', 1, '', 0, '${now}');
+    insert into app_settings (key, value, updated_at) values ('drivers_enabled', '1', '${now}');
   `);
   const files = new Map<string, ArrayBuffer>();
   const media = {
@@ -499,5 +500,43 @@ describe("settings", () => {
     const settings = (await adminDrivers(t.admin)).settings;
     expect(settings.baseFcfa).toBe(700);
     expect(settings.vehicles.find((v) => v.type === "car")).toEqual(DEFAULT_DRIVER_SETTINGS.vehicles.find((v) => v.type === "car"));
+  });
+});
+
+describe("driver module switched off", () => {
+  it("refuses every booking that needs a driver, but not a regular parcel at the counter", async () => {
+    const t = setup();
+    const parcel = await arrivedParcelAtB(t);
+    t.db.exec("update app_settings set value = '0' where key = 'drivers_enabled'");
+    const recipient = t.ctx(profile(parcel.recipient.userId!, RECIPIENT_PHONE));
+    const soon = { code: "drivers_soon" };
+    const DROPOFF = { lat: 6.2, lng: 1.19, note: "Marché d'Agoè" };
+
+    await expect(bookPickup(t.sender, { home: HOME, toStationId: A.id, recipientPhone: "92 00 00 00", content: "Vêtements", size: "M" })).rejects.toMatchObject(soon);
+    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1 })).rejects.toMatchObject(soon);
+    await expect(
+      bookCourier(t.sender, { pickup: HOME, dropoff: DROPOFF, recipientPhone: "92 00 00 00", content: "Clés", size: "S" }),
+    ).rejects.toMatchObject(soon);
+    await expect(bookDelivery(recipient, parcel.id, HOME)).rejects.toMatchObject(soon);
+    await expect(createParcel(t.admin, A.id, parcelInput(true))).rejects.toMatchObject(soon);
+    expect((await createParcel(t.admin, A.id, parcelInput(false))).express).toBe(false);
+  });
+
+  it("closes applications and the queue, but a driver finishes the trip under way", async () => {
+    const t = setup();
+    const driver = await approvedDriver(t, "d1");
+    await joinQueue(driver.me, A.id, A);
+    await createParcel(t.admin, A.id, parcelInput(true));
+    const job = (await driverHome(driver.me)).job!;
+    t.db.exec("update app_settings set value = '0' where key = 'drivers_enabled'");
+    const soon = { code: "drivers_soon" };
+
+    const newcomer = t.ctx(profile("d2", "+22893000002"));
+    await expect(applyDriver(newcomer, { fullName: "Chauffeur d2", idNumber: "ID12345", licenseNumber: "LIC9876", wantedType: "moto" })).rejects.toMatchObject(soon);
+    await expect(uploadDriverDocument(newcomer, "id", photo())).rejects.toMatchObject(soon);
+    await acceptJob(driver.me, job.id);
+    expect((await driverHome(driver.me)).job?.status).toBe("accepted");
+    t.db.exec(`update delivery_jobs set status = 'cancelled' where id = '${job.id}'`);
+    await expect(joinQueue(driver.me, A.id, A)).rejects.toMatchObject(soon);
   });
 });

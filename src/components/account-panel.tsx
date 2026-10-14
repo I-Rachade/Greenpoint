@@ -90,7 +90,8 @@ export function AccountPanel() {
             <MenuLink href="/notifications" icon={BellIcon} label={t.ui.tabs.alerts} value={unread > 0 ? unread : undefined} />
             <MenuLink href="/reservations" icon={TicketIcon} label={t.nav.reservations} />
             {walletShown && <MenuLink href="/portefeuille" icon={WalletIcon} label={t.nav.wallet} />}
-            {features.parcels && (
+            {/* Existing drivers keep their page (balance, a trip under way); new ones apply once the driver module is on. */}
+            {features.parcels && (features.drivers || !!profile.driverStatus) && (
               <MenuLink href="/chauffeur" icon={ScooterIcon} label={profile.driverStatus ? t.nav.driver : t.account.becomeDriver} />
             )}
             {features.parcels && managesFleet(profile) && <MenuLink href="/flotte" icon={ScooterIcon} label={t.nav.fleet} />}

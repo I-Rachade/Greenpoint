@@ -717,6 +717,11 @@ export class CloudflareBackend implements Backend {
     this.changed();
   }
 
+  async setDriversEnabled(enabled: boolean) {
+    await this.call("POST", "/api/admin/features/drivers", { enabled });
+    this.changed();
+  }
+
   currentPromotion() {
     return this.call<Promotion | null>("GET", "/api/promotions/current");
   }

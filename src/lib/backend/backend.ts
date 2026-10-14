@@ -105,6 +105,7 @@ export type BackendErrorCode =
   | "photo_missing"
   | "ride_open"
   | "vehicle_soon"
+  | "drivers_soon"
   | "vehicle_unavailable"
   | "vehicle_too_small"
   | "has_other_role"
@@ -253,6 +254,8 @@ export interface Backend {
   features(): Promise<Features>;
   /** Backoffice: switches the parcel module on or off for everyone (admins only). */
   setParcelsEnabled(enabled: boolean): Promise<void>;
+  /** Backoffice: switches everything that needs a driver (courses, express, pickups, home deliveries) on or off (admins only). */
+  setDriversEnabled(enabled: boolean): Promise<void>;
 
   // Parcel depot (see src/lib/parcels.ts)
   /** Stations that take parcels, and the prices. Public. */

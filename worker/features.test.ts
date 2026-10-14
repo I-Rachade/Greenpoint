@@ -63,15 +63,15 @@ const get = (env: Env, path: string) => handleApi(new Request(`https://app.poind
 describe("parcel module switch", () => {
   it("starts on", async () => {
     const { env } = setup();
-    expect(await getFeatures(env)).toEqual({ parcels: true });
+    expect(await getFeatures(env)).toEqual({ parcels: true, drivers: false });
     expect((await get(env, "/api/parcels/info")).status).toBe(200);
   });
 
   it("hides parcel and partner routes when off, and logs who switched", async () => {
     const { db, env } = setup();
     await setParcelsEnabled(env, ADMIN, false);
-    expect(await getFeatures(env)).toEqual({ parcels: false });
-    expect(await (await get(env, "/api/features")).json()).toEqual({ parcels: false });
+    expect(await getFeatures(env)).toEqual({ parcels: false, drivers: false });
+    expect(await (await get(env, "/api/features")).json()).toEqual({ parcels: false, drivers: false });
 
     for (const path of ["/api/parcels/info", "/api/parcels/mine", "/api/stations/s1/parcels", "/api/stations/s1/bookings", "/api/partner/v1/stations"]) {
       const res = await get(env, path);
@@ -91,9 +91,9 @@ describe("parcel module switch", () => {
   it("counts as on before the migration added the row", async () => {
     const { db, env } = setup();
     db.exec("delete from app_settings where key = 'parcels_enabled'");
-    expect(await getFeatures(env)).toEqual({ parcels: true });
+    expect(await getFeatures(env)).toEqual({ parcels: true, drivers: false });
     await setParcelsEnabled(env, ADMIN, false);
-    expect(await getFeatures(env)).toEqual({ parcels: false });
+    expect(await getFeatures(env)).toEqual({ parcels: false, drivers: false });
   });
 
   it("matches only customer and staff parcel routes", () => {
