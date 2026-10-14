@@ -5,10 +5,11 @@ import { ChevronIcon } from "./icons";
 type Icon = ComponentType<{ size?: number }>;
 
 /** Titled group of rows in a rounded card (account and settings screens). */
-export function MenuGroup({ title, children }: { title?: string; children: ReactNode }) {
+export function MenuGroup({ title, top, children }: { title?: string; top?: ReactNode; children: ReactNode }) {
   return (
     <section className="space-y-2">
       {title && <h2 className="px-1 text-xs font-semibold uppercase tracking-wide text-gp-muted">{title}</h2>}
+      {top}
       <ul className="divide-y divide-gp-border overflow-hidden rounded-2xl border border-gp-border bg-gp-surface shadow-sm dark:divide-white/10 dark:border-white/10">
         {children}
       </ul>

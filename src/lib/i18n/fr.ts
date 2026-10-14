@@ -1399,6 +1399,8 @@ export const fr = {
       guestText: "Connectez-vous pour réserver et suivre vos réservations.",
       details: "Coordonnées",
       menu: "Mon espace",
+      greenpointHint: "Votre label vert : CO₂ économisé et récompenses",
+      greenpointPoints: "{points} greenpoints · {level}",
       settings: "Paramètres",
       privacy: "Politique de confidentialité",
       help: "Aide et contact",

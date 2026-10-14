@@ -5,14 +5,14 @@ import { useState, type FormEvent } from "react";
 import type { CodeChannel } from "@/lib/backend/backend";
 import { CONTACT_EMAIL } from "@/lib/config";
 import { normalizeEmail } from "@/lib/contact";
-import { useErrorMessage } from "@/lib/hooks";
+import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { normalizeTogoPhone } from "@/lib/phone";
 import { LEGAL_PATHS } from "@/lib/legal/content";
 import { useApp } from "./app-provider";
 import { useWalletShown } from "./header";
 import { useAlerts } from "./use-alerts";
-import { BellIcon, GearIcon, HeartIcon, HelpIcon, LeafIcon, LogoutIcon, ScooterIcon, ShieldIcon, StoreIcon, TicketIcon, UserIcon, WalletIcon } from "./icons";
+import { BellIcon, ChevronIcon, GearIcon, HeartIcon, HelpIcon, LeafIcon, LogoutIcon, ScooterIcon, ShieldIcon, StoreIcon, TicketIcon, UserIcon, WalletIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { MenuButton, MenuGroup, MenuLink } from "./menu";
 import { PageTitle } from "./page-title";
@@ -85,12 +85,11 @@ export function AccountPanel() {
             </div>
           </section>
 
-          <MenuGroup title={a.menu}>
+          <MenuGroup title={a.menu} top={<GreenpointHighlight />}>
             <MenuLink href="/favoris" icon={HeartIcon} label={t.ui.tabs.favorites} />
             <MenuLink href="/notifications" icon={BellIcon} label={t.ui.tabs.alerts} value={unread > 0 ? unread : undefined} />
             <MenuLink href="/reservations" icon={TicketIcon} label={t.nav.reservations} />
             {walletShown && <MenuLink href="/portefeuille" icon={WalletIcon} label={t.nav.wallet} />}
-            <MenuLink href="/greenpoint" icon={LeafIcon} label={t.nav.greenpoint} />
             {features.parcels && (
               <MenuLink href="/chauffeur" icon={ScooterIcon} label={profile.driverStatus ? t.nav.driver : t.account.becomeDriver} />
             )}
@@ -133,6 +132,32 @@ export function AccountPanel() {
 }
 
 /** Shows the phone number or e-mail address, or a small form to add it (confirmed by a code). */
+/** greenpoint first in "Mon espace", standing out: the leaf, the points and the level. */
+function GreenpointHighlight() {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { data } = useLiveQuery(() => backend.myGreenpoint());
+  return (
+    <Link
+      href="/greenpoint"
+      className="flex items-center gap-4 rounded-2xl bg-gradient-to-br from-gp-green to-gp-green-dark p-4 text-white shadow-md active:scale-[0.99]"
+    >
+      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-gp-green-dark">
+        <LeafIcon size={26} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-lg font-bold leading-tight">{t.nav.greenpoint}</span>
+        <span className="block text-sm text-white/85">
+          {data
+            ? format(t.ui.account.greenpointPoints, { points: data.points, level: t.greenpoint.levels[data.level] })
+            : t.ui.account.greenpointHint}
+        </span>
+      </span>
+      <ChevronIcon size={20} />
+    </Link>
+  );
+}
+
 function ContactRow({ kind, value }: { kind: "phone" | "email"; value: string | null }) {
   const { t } = useI18n();
   const { backend } = useApp();

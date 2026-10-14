@@ -1399,6 +1399,8 @@ export const en: Dictionary = {
       guestText: "Sign in to reserve and follow your reservations.",
       details: "Contact details",
       menu: "My space",
+      greenpointHint: "Your green label: CO₂ saved and rewards",
+      greenpointPoints: "{points} greenpoints · {level}",
       settings: "Settings",
       privacy: "Privacy policy",
       help: "Help and contact",
