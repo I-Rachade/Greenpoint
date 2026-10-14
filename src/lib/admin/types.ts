@@ -64,7 +64,8 @@ export type AuditTable =
   | "wallets"
   | "fleet_manager_drivers"
   | "battery_types"
-  | "ev_chargers";
+  | "ev_chargers"
+  | "settings";
 
 export const AUDIT_TABLES: AuditTable[] = [
   "reservations",
@@ -92,6 +93,7 @@ export const AUDIT_TABLES: AuditTable[] = [
   "partner_api_keys",
   "partner_bookings",
   "wallets",
+  "settings",
 ];
 
 export type AuditAction = "insert" | "update" | "delete";

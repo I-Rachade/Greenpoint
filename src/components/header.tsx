@@ -25,7 +25,7 @@ export function Header() {
     { href: "/reservations", label: t.nav.reservations, show: !!profile },
     { href: "/colis", label: t.nav.parcels, show: !!profile && features.parcels },
     { href: "/courses", label: t.ui.tabs.trips, show: !!profile && features.parcels },
-    { href: "/portefeuille", label: t.nav.wallet, show: !!profile && walletShown },
+    { href: "/portefeuille", label: t.nav.wallet, show: !!profile && walletShown && features.wallet },
     { href: "/greenpoint", label: t.nav.greenpoint, show: !!profile },
     { href: "/chauffeur", label: t.nav.driver, show: !!profile?.driverStatus && features.parcels },
     { href: "/compte", label: t.nav.account, show: !!profile },

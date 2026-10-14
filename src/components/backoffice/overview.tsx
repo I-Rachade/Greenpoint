@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
+import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { computeKpis, findAnomalies, reservationsPerDay, STALE_STATUS_HOURS, type Finding } from "@/lib/admin/insights";
 import type { AdminSnapshot } from "@/lib/admin/types";
-import { useNow } from "@/lib/hooks";
+import { useErrorMessage, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { card, indexSnapshot, Loading, Pill, useAdminSnapshot, userLabel } from "./shared";
 
@@ -53,6 +55,45 @@ function DayChart({ snap, now }: { snap: AdminSnapshot; now: Date }) {
   );
 }
 
+/** The Lite preset: one switch that hides parcels, courses, Cashplus and car chargers in the app. */
+function LiteSwitch() {
+  const { t } = useI18n();
+  const { backend, features, featuresReady } = useApp();
+  const errorMessage = useErrorMessage();
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const l = t.backoffice.lite;
+  if (!featuresReady) return null;
+  const on = features.lite;
+
+  async function toggle() {
+    if (!window.confirm(on ? l.confirmOff : l.confirmOn)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await backend.setLiteEnabled(!on);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className={`${card} space-y-2`}>
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-xs uppercase tracking-wide text-zinc-500">{l.title}</span>
+        <Pill tone={on ? "amber" : "green"}>{on ? l.lite : l.full}</Pill>
+        <button type="button" disabled={busy} onClick={toggle} className="text-sm text-gp-green-dark underline disabled:opacity-40 dark:text-gp-green">
+          {on ? l.turnOff : l.turnOn}
+        </button>
+      </div>
+      <p className="text-sm text-zinc-600 dark:text-zinc-400">{on ? l.liteText : l.fullText}</p>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+    </section>
+  );
+}
+
 const TONE = { high: "red", medium: "amber", low: "gray" } as const;
 
 function FindingRow({ finding, snap }: { finding: Finding; snap: AdminSnapshot }) {
@@ -87,6 +128,7 @@ export function AdminOverview() {
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">{b.title}</h1>
+      <LiteSwitch />
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Kpi
           label={b.kpi.stations}

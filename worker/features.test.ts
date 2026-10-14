@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import type { Profile } from "../src/lib/types";
 import { handleApi } from "./api";
 import type { Env } from "./env";
-import { getFeatures, PARCEL_ROUTE, setParcelsEnabled } from "./features";
+import { driversEnabled, getFeatures, PARCEL_ROUTE, setDriversEnabled, setLiteEnabled, setParcelsEnabled } from "./features";
+import { walletAccess } from "./wallet";
 
 // --- A minimal D1 on top of SQLite, with the real migrations (as in wallet.test.ts) ---
 
@@ -58,20 +59,23 @@ function setup() {
 
 const ADMIN: Profile = { id: "admin", phone: "+22890000001", email: null, fullName: "Admin", role: "admin" };
 
+/** What the full version adds to the parcel and driver switches. */
+const FULL = { wallet: true, evChargers: true, lite: false };
+
 const get = (env: Env, path: string) => handleApi(new Request(`https://app.poinderecharge.com${path}`), env);
 
 describe("parcel module switch", () => {
   it("starts on", async () => {
     const { env } = setup();
-    expect(await getFeatures(env)).toEqual({ parcels: true, drivers: false });
+    expect(await getFeatures(env)).toEqual({ parcels: true, drivers: false, ...FULL });
     expect((await get(env, "/api/parcels/info")).status).toBe(200);
   });
 
   it("hides parcel and partner routes when off, and logs who switched", async () => {
     const { db, env } = setup();
     await setParcelsEnabled(env, ADMIN, false);
-    expect(await getFeatures(env)).toEqual({ parcels: false, drivers: false });
-    expect(await (await get(env, "/api/features")).json()).toEqual({ parcels: false, drivers: false });
+    expect(await getFeatures(env)).toEqual({ parcels: false, drivers: false, ...FULL });
+    expect(await (await get(env, "/api/features")).json()).toEqual({ parcels: false, drivers: false, ...FULL });
 
     for (const path of ["/api/parcels/info", "/api/parcels/mine", "/api/stations/s1/parcels", "/api/stations/s1/bookings", "/api/partner/v1/stations"]) {
       const res = await get(env, path);
@@ -91,9 +95,9 @@ describe("parcel module switch", () => {
   it("counts as on before the migration added the row", async () => {
     const { db, env } = setup();
     db.exec("delete from app_settings where key = 'parcels_enabled'");
-    expect(await getFeatures(env)).toEqual({ parcels: true, drivers: false });
+    expect(await getFeatures(env)).toEqual({ parcels: true, drivers: false, ...FULL });
     await setParcelsEnabled(env, ADMIN, false);
-    expect(await getFeatures(env)).toEqual({ parcels: false, drivers: false });
+    expect(await getFeatures(env)).toEqual({ parcels: false, drivers: false, ...FULL });
   });
 
   it("matches only customer and staff parcel routes", () => {
@@ -103,5 +107,44 @@ describe("parcel module switch", () => {
     for (const path of ["/api/admin/parcels", "/api/stations", "/api/stations/a/status", "/api/parcelsx", "/api/features"]) {
       expect(PARCEL_ROUTE.test(path), path).toBe(false);
     }
+  });
+});
+
+describe("Lite version switch", () => {
+  it("hides parcels, drivers, Cashplus and car chargers, and brings them back as they were", async () => {
+    const { db, env } = setup();
+    await setDriversEnabled(env, ADMIN, true);
+    await setLiteEnabled(env, ADMIN, true);
+
+    const lite = { parcels: false, drivers: false, wallet: false, evChargers: false, lite: true };
+    expect(await getFeatures(env)).toEqual(lite);
+    expect(await (await get(env, "/api/features")).json()).toEqual(lite);
+    expect(await driversEnabled(env.DB)).toBe(false);
+    expect((await get(env, "/api/parcels/info")).status).toBe(404);
+    await expect(walletAccess(env, ADMIN)).rejects.toMatchObject({ code: "wallet_disabled", status: 403 });
+
+    const log = db.prepare("select actor, table_name, row_id, changes from audit_log where row_id = 'lite_mode'").get();
+    expect(log).toEqual({ actor: "admin", table_name: "settings", row_id: "lite_mode", changes: '{"enabled":true}' });
+
+    await setLiteEnabled(env, ADMIN, false);
+    expect(await getFeatures(env)).toEqual({ parcels: true, drivers: true, ...FULL });
+    expect((await get(env, "/api/parcels/info")).status).toBe(200);
+    await expect(walletAccess(env, ADMIN)).resolves.toMatchObject({ enabled: true });
+  });
+});
+
+describe("Lite version and car chargers", () => {
+  it("leaves car chargers out of the public station list", async () => {
+    const { db, env } = setup();
+    const now = new Date().toISOString();
+    db.exec(`
+      insert into stations (id, operator_id, name, lat, lng, kind, battery_capacity, created_at) values ('st', '00000000-0000-4000-8000-000000000001', 'Bè', 6.13, 1.22, 'both', 10, '${now}');
+      insert into station_status (station_id, free_slots, full_batteries, updated_at) values ('st', 0, 10, '${now}');
+      insert into ev_chargers (id, name, connector, power_kw, station_id, created_at) values ('ev1', 'Borne 1', 'type2', 22, 'st', '${now}');
+    `);
+    const chargers = async () => ((await (await get(env, "/api/stations")).json()) as { evChargers?: unknown[] }[])[0].evChargers ?? [];
+    expect(await chargers()).toHaveLength(1);
+    await setLiteEnabled(env, ADMIN, true);
+    expect(await chargers()).toEqual([]);
   });
 });

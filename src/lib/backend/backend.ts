@@ -256,6 +256,8 @@ export interface Backend {
   setParcelsEnabled(enabled: boolean): Promise<void>;
   /** Backoffice: switches everything that needs a driver (courses, express, pickups, home deliveries) on or off (admins only). */
   setDriversEnabled(enabled: boolean): Promise<void>;
+  /** Backoffice: switches the Lite version on or off for everyone (admins only). */
+  setLiteEnabled(enabled: boolean): Promise<void>;
 
   // Parcel depot (see src/lib/parcels.ts)
   /** Stations that take parcels, and the prices. Public. */

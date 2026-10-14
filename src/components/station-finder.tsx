@@ -132,7 +132,7 @@ export function StationFinder() {
               <option value="charging">{t.filter.charging}</option>
               <option value="swap">{t.filter.swap}</option>
               {features.parcels && <option value="parcel">{t.filter.parcel}</option>}
-              <option value="ev">🚗 {t.filter.ev}</option>
+              {features.evChargers && <option value="ev">🚗 {t.filter.ev}</option>}
             </select>
             {brands.length > 0 && (
               <select

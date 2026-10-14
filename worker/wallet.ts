@@ -25,6 +25,7 @@ import {
 import { verifyPin } from "./auth";
 import { cardProviderFromEnv, providerFromEnv } from "./payment-providers";
 import type { Env } from "./env";
+import { liteEnabled } from "./features";
 import { ApiError, nowIso, readJson, uuid } from "./http";
 
 // Wallet (Cashplus phase 1). Every booking is one D1 batch, which D1 runs as a
@@ -105,8 +106,9 @@ async function walletEnabled(env: Env): Promise<boolean> {
   return row?.value === "1";
 }
 
-/** While the module is off only admins may use it, to test. */
+/** While the module is off only admins may use it, to test. The Lite version hides it from everyone. */
 export async function walletAccess(env: Env, user: Profile): Promise<{ enabled: boolean; testMode: boolean }> {
+  if (await liteEnabled(env.DB)) throw new ApiError("wallet_disabled", 403);
   const enabled = await walletEnabled(env);
   if (enabled) return { enabled, testMode: false };
   if (user.role === "admin") return { enabled, testMode: true };

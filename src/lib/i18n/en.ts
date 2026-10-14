@@ -297,6 +297,18 @@ export const en: Dictionary = {
   },
   backoffice: {
     title: "Back office",
+    lite: {
+      title: "App version",
+      full: "Full",
+      lite: "Lite",
+      fullText: "Every module switched on here shows in the app.",
+      liteText: "The app only shows the map, stations, reservations and the account. Parcels, courses, Cashplus and electric car chargers are hidden for everyone.",
+      turnOn: "Switch to the Lite version",
+      turnOff: "Back to the full version",
+      confirmOn: "Switch to the Lite version? Parcels, courses, Cashplus and electric car chargers disappear from the app for everyone. The data stays here, and everything comes back with the full version.",
+      confirmOff: "Back to the full version? The modules switched on here show in the app again.",
+      moduleHidden: "Hidden by the Lite version (see Overview).",
+    },
     nav: {
       overview: "Dashboard",
       stations: "Stations",
@@ -446,6 +458,7 @@ export const en: Dictionary = {
         partner_api_keys: "API key",
         partner_bookings: "Partner booking",
         wallets: "Wallet",
+        settings: "App settings",
       },
       actions: { insert: "created", update: "changed", delete: "deleted" },
       staffAdded: "assigned to",
