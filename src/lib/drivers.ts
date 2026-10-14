@@ -1,5 +1,6 @@
 // Drivers: people who drive one of our vehicles and carry parcels express between
-// stations, pick them up at a customer's home or deliver them there.
+// stations, pick them up at a customer's home or deliver them there, and take
+// customers themselves from one place to another (rides).
 // Shared by the app, the demo backend and the Worker. Plan: planung/fahrer.md.
 
 import { distanceMeters, LOME_CENTER, type LatLng } from "./geo";
@@ -7,7 +8,7 @@ import { PARCEL_SIZES, type ParcelMeasures, type ParcelSize } from "./parcels";
 
 /**
  * Our own vehicles; drivers never use their own. Moto: people or parcels, fast.
- * Tricycle: carries people (passengers come later). Cargo tricycle: goods.
+ * Tricycle: people (up to three) or parcels. Cargo tricycle: goods only.
  */
 export type FleetVehicleType = "moto" | "tricycle" | "cargo_tricycle";
 export const FLEET_VEHICLE_TYPES: FleetVehicleType[] = ["moto", "tricycle", "cargo_tricycle"];
@@ -21,13 +22,14 @@ export type DriverStatus =
 export type JobKind =
   | "express" // station A to station B, paid at the counter in A
   | "pickup" // a customer's home to station B, paid to the driver
-  | "delivery"; // station A to the recipient's home, paid to the driver at the door
+  | "delivery" // station A to the recipient's home, paid to the driver at the door
+  | "ride"; // the customer themselves from point A to point B, paid to the driver on arrival
 
 export type JobStatus =
   | "open" // no driver yet
   | "assigned" // offered to the first driver in line, waiting for "J'y vais"
   | "accepted" // the driver is on the way to the start
-  | "picked_up" // the driver has the parcel
+  | "picked_up" // the driver has the parcel (ride: the customer is on board)
   | "at_door" // delivery: the driver is at the recipient's
   | "returning" // delivery: nobody there, back to the station
   | "done"
@@ -81,7 +83,17 @@ export const DEFAULT_DRIVER_SETTINGS: DriverSettings = {
   ],
 };
 
-/** Pickups and deliveries only within this distance of the centre of Lomé. */
+/** Seats for customers on each vehicle type (the driver not counted). */
+export const RIDE_SEATS: Record<FleetVehicleType, number> = { moto: 1, tricycle: 3, cargo_tricycle: 0 };
+/** Most passengers one ride can book. */
+export const MAX_PASSENGERS = Math.max(...Object.values(RIDE_SEATS));
+
+/** True when a vehicle of this type has a seat for every passenger. */
+export function vehicleSeats(type: FleetVehicleType, passengers: number): boolean {
+  return passengers >= 1 && RIDE_SEATS[type] >= passengers;
+}
+
+/** Pickups, deliveries and rides only within this distance of the centre of Lomé. */
 export const SERVICE_RADIUS_KM = 25;
 
 export function inServiceArea(p: LatLng): boolean {
@@ -258,6 +270,11 @@ export interface HomePoint extends LatLng {
   phone: string;
 }
 
+/** Where a ride ends: a pin on the map and a description. */
+export interface DropoffPoint extends LatLng {
+  note: string;
+}
+
 /** The driver, as the customer and staff see them. */
 export interface JobDriver {
   name: string;
@@ -277,8 +294,12 @@ export interface DeliveryJob {
   fromStationId: string | null;
   /** Destination station (express, pickup). */
   toStationId: string | null;
-  /** The customer's home: start of a pickup, end of a delivery. */
+  /** The customer's home: start of a pickup, end of a delivery. Rides: where the customer gets on. */
   home: HomePoint | null;
+  /** Rides: where the customer gets off. */
+  dropoff: DropoffPoint | null;
+  /** Rides: how many people travel. */
+  passengers: number | null;
   /** Booked size (pickup) or the parcel's size. */
   size: ParcelSize;
   weightKg: number | null;
@@ -311,6 +332,13 @@ export interface PickupBooking {
   content: string;
   size: ParcelSize;
   declaredValue?: number | null;
+}
+
+/** A customer books a driver to take them from A to B. */
+export interface RideBooking {
+  pickup: HomePoint;
+  dropoff: DropoffPoint;
+  passengers: number;
 }
 
 export type LedgerKind = "collected" | "earning" | "settlement";

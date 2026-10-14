@@ -27,6 +27,7 @@ import type {
   FleetVehicleInput,
   HomePoint,
   PickupBooking,
+  RideBooking,
   StationDrivers,
 } from "../drivers";
 import type { FleetStats, FleetView } from "../fleet";
@@ -540,6 +541,14 @@ export class CloudflareBackend implements Backend {
     return this.job(id, "absent");
   }
 
+  boardRide(id: string) {
+    return this.job(id, "board");
+  }
+
+  finishRide(id: string) {
+    return this.job(id, "finish");
+  }
+
   async myJobs() {
     if (!this.token) return [];
     return this.call<DeliveryJob[]>("GET", "/api/jobs/mine");
@@ -547,6 +556,12 @@ export class CloudflareBackend implements Backend {
 
   async bookPickup(input: PickupBooking) {
     const job = await this.call<DeliveryJob>("POST", "/api/jobs/pickup", input);
+    this.changed();
+    return job;
+  }
+
+  async bookRide(input: RideBooking) {
+    const job = await this.call<DeliveryJob>("POST", "/api/jobs/ride", input);
     this.changed();
     return job;
   }

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Pill } from "@/components/backoffice/shared";
-import { MAX_DRIVER_IMAGE_BYTES, type DeliveryJob, type JobStatus } from "@/lib/drivers";
+import { MAX_DRIVER_IMAGE_BYTES, type DeliveryJob, type JobKind, type JobStatus } from "@/lib/drivers";
 import { format } from "@/lib/i18n/format";
 import { useI18n } from "../i18n-provider";
 
@@ -23,15 +23,16 @@ const TONE: Record<JobStatus, "green" | "amber" | "red" | "gray" | "blue"> = {
   cancelled: "gray",
 };
 
-export function JobStatusPill({ status }: { status: JobStatus }) {
+export function JobStatusPill({ status, kind }: { status: JobStatus; kind?: JobKind }) {
   const { t } = useI18n();
-  return <Pill tone={TONE[status]}>{t.drivers.status[status]}</Pill>;
+  return <Pill tone={TONE[status]}>{kind === "ride" && status === "picked_up" ? t.drivers.rideOnBoard : t.drivers.status[status]}</Pill>;
 }
 
-/** "Station A → Station B", "Home → Station B" or "Station A → Home". */
+/** "Station A → Station B", "Home → Station B", "Station A → Home" or "A → B" for a ride. */
 export function useJobRoute() {
   const { t } = useI18n();
   return (job: DeliveryJob, stationName: (id: string | null) => string) => {
+    if (job.kind === "ride") return `${job.home?.note || t.drivers.customer.rideFrom} → ${job.dropoff?.note || t.drivers.customer.rideTo}`;
     const home = job.home?.note || t.drivers.kind[job.kind];
     if (job.kind === "pickup") return `${home} → ${stationName(job.toStationId)}`;
     if (job.kind === "delivery") return `${stationName(job.fromStationId)} → ${home}`;

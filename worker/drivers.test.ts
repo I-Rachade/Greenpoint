@@ -9,7 +9,9 @@ import {
   arriveAtDoor,
   assignJob,
   bookDelivery,
+  boardRide,
   bookPickup,
+  bookRide,
   cancelJob,
   collectPickup,
   declineJob,
@@ -18,6 +20,7 @@ import {
   driverAtStation,
   driverHome,
   failDelivery,
+  finishRide,
   handToDriver,
   joinQueue,
   myJobs,
@@ -358,6 +361,60 @@ describe("pickup at home", () => {
       from_station_id: B.id,
     });
     expect((await driverHome(driver.me)).driver?.balanceFcfa).toBe(collected.collectFcfa - driverEarning(job.fareFcfa, DEFAULT_DRIVER_SETTINGS));
+  });
+});
+
+describe("ride", () => {
+  const DROPOFF = { lat: 6.2, lng: 1.19, note: "Marché d'Agoè" };
+
+  it("takes the customer from A to B and books the fare as cash collected", async () => {
+    const t = setup();
+    const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1 });
+    expect(booking).toMatchObject({ kind: "ride", status: "open", passengers: 1, dropoff: DROPOFF });
+    expect(booking.fareFcfa).toBe(fareFor(distanceMeters(HOME, DROPOFF), false, DEFAULT_DRIVER_SETTINGS));
+    expect(booking.collectFcfa).toBe(booking.fareFcfa);
+    // One open ride at a time.
+    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1 })).rejects.toMatchObject({ code: "ride_open" });
+
+    const driver = await approvedDriver(t, "d1", "moto");
+    await joinQueue(driver.me, B.id, B);
+    const job = (await driverHome(driver.me)).job!;
+    expect(job.id).toBe(booking.id);
+    // Not before the driver accepted, and parcel steps do not apply.
+    await expect(boardRide(driver.me, job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+    await acceptJob(driver.me, job.id);
+    await expect(collectPickup(driver.me, job.id, { lengthCm: 10, widthCm: 10, heightCm: 10, weightKg: 1 })).rejects.toMatchObject({ code: "job_wrong_status" });
+    await expect(finishRide(driver.me, job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+    await boardRide(driver.me, job.id);
+    // The customer cannot cancel once on board.
+    await expect(cancelJob(t.sender, job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+    await finishRide(driver.me, job.id);
+
+    const home = await driverHome(driver.me);
+    expect(home.job).toBeNull();
+    expect(home.history[0]).toMatchObject({ id: job.id, status: "done" });
+    expect(home.driver?.balanceFcfa).toBe(job.fareFcfa - driverEarning(job.fareFcfa, DEFAULT_DRIVER_SETTINGS));
+    expect((await myJobs(t.sender))[0]).toMatchObject({ kind: "ride", status: "done" });
+    // A new ride can be booked once the last one is over.
+    expect((await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 1 })).status).toBe("open");
+  });
+
+  it("only offers rides to vehicles with a seat for every passenger", async () => {
+    const t = setup();
+    const booking = await bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 3 });
+    const moto = await approvedDriver(t, "d1", "moto");
+    await joinQueue(moto.me, B.id, B);
+    expect((await driverHome(moto.me)).job).toBeNull();
+    const tricycle = await approvedDriver(t, "d2", "tricycle");
+    await joinQueue(tricycle.me, A.id, A);
+    expect((await driverHome(tricycle.me)).job?.id).toBe(booking.id);
+  });
+
+  it("refuses bad bookings", async () => {
+    const t = setup();
+    await expect(bookRide(t.sender, { pickup: HOME, dropoff: DROPOFF, passengers: 4 })).rejects.toMatchObject({ code: "bad_request" });
+    await expect(bookRide(t.sender, { pickup: HOME, dropoff: { lat: 7.5, lng: 1.1, note: "" }, passengers: 1 })).rejects.toMatchObject({ code: "outside_area" });
+    await expect(bookRide(t.sender, { pickup: { ...HOME, phone: "" }, dropoff: DROPOFF, passengers: 1 })).rejects.toMatchObject({ code: "phone_not_allowed" });
   });
 });
 

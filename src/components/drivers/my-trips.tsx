@@ -5,7 +5,7 @@ import { useLiveQuery } from "@/lib/hooks";
 import { useApp } from "../app-provider";
 import { BoxIcon, ScooterIcon } from "../icons";
 import { useI18n } from "../i18n-provider";
-import { BookPickup, MyJobs } from "./customer-jobs";
+import { BookPickup, BookRide, MyJobs } from "./customer-jobs";
 
 type Choice = "ride" | "order";
 
@@ -39,7 +39,7 @@ function ChoiceTile({
   );
 }
 
-/** "Courses" tab: take a ride (people, coming soon) or order a parcel trip, and follow your trips. */
+/** "Courses" tab: take a ride or have a parcel picked up at home, and follow your trips. */
 export function MyTrips() {
   const { t } = useI18n();
   const { backend } = useApp();
@@ -58,7 +58,7 @@ export function MyTrips() {
         <ChoiceTile icon={ScooterIcon} label={t.ui.trips.ride} hint={t.ui.trips.rideHint} selected={choice === "ride"} onClick={() => toggle("ride")} />
         <ChoiceTile icon={BoxIcon} label={t.ui.trips.order} hint={t.ui.trips.orderHint} selected={choice === "order"} onClick={() => toggle("order")} />
       </div>
-      {choice === "ride" && <p className="rounded-xl bg-gp-green/10 p-4 text-sm">{t.ui.trips.rideSoon}</p>}
+      {choice === "ride" && <BookRide info={info} />}
       {choice === "order" && <BookPickup info={info} stations={stations} open />}
       <MyJobs jobs={jobs} stations={stations} />
     </div>
