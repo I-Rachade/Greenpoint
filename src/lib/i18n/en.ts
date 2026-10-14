@@ -1222,7 +1222,12 @@ export const en: Dictionary = {
     },
     trips: {
       title: "My trips",
-      intro: "A driver picks up your parcel at home and brings it to a station. Follow your trips here.",
+      intro: "Get around or have a parcel carried by our drivers.",
+      ride: "Take a ride",
+      rideHint: "Go from A to B",
+      order: "Order a delivery",
+      orderHint: "Have a parcel carried",
+      rideSoon: "Rides for people are coming soon. For now our drivers only carry parcels.",
     },
     back: "Back",
     exitHint: "Press back again to exit",

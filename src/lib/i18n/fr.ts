@@ -1222,7 +1222,12 @@ export const fr = {
     },
     trips: {
       title: "Mes courses",
-      intro: "Un chauffeur vient chercher votre colis chez vous et l'apporte à une station. Suivez ici vos courses.",
+      intro: "Déplacez-vous ou faites transporter un colis avec nos chauffeurs.",
+      ride: "Faire une course",
+      rideHint: "Me déplacer de A à B",
+      order: "Commander une course",
+      orderHint: "Faire transporter un colis",
+      rideSoon: "Les trajets de personnes arrivent bientôt. Nos chauffeurs transportent pour l'instant uniquement des colis.",
     },
     back: "Retour",
     exitHint: "Appuyez encore sur retour pour quitter",

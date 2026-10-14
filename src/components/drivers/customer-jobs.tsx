@@ -68,8 +68,11 @@ function useEmptyHome(): HomePoint {
   return { lat: 0, lng: 0, note: "", phone: profile?.phone ?? "" };
 }
 
-/** The customer books a driver to fetch a parcel at home and bring it to a station. */
-export function BookPickup({ info, stations }: { info: ParcelInfo; stations: StationView[] }) {
+/**
+ * The customer books a driver to fetch a parcel at home and bring it to a station.
+ * `open` shows the form directly instead of behind a fold.
+ */
+export function BookPickup({ info, stations, open }: { info: ParcelInfo; stations: StationView[]; open?: boolean }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
@@ -110,64 +113,76 @@ export function BookPickup({ info, stations }: { info: ParcelInfo; stations: Sta
     }
   }
 
+  const formBody = (
+    <form onSubmit={submit} className="mt-3 space-y-3">
+      <p className="text-zinc-600 dark:text-zinc-400">{t.drivers.customer.pickupIntro}</p>
+      <HomeFields value={home} onChange={setHome} />
+      <label className={label}>
+        <span>{t.drivers.customer.destination}</span>
+        <select className={input} required value={form.toStationId} onChange={set("toStationId")}>
+          <option value="">{t.drivers.customer.chooseDestination}</option>
+          {destinations.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className={label}>
+          <span>{t.drivers.customer.recipientPhone}</span>
+          <input className={input} type="tel" required value={form.recipientPhone} onChange={set("recipientPhone")} placeholder="90 12 34 56" />
+        </label>
+        <label className={label}>
+          <span>{t.drivers.customer.recipientName}</span>
+          <input className={input} maxLength={80} value={form.recipientName} onChange={set("recipientName")} />
+        </label>
+      </div>
+      <label className={label}>
+        <span>{t.drivers.customer.content}</span>
+        <input className={input} required maxLength={300} value={form.content} onChange={set("content")} />
+      </label>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className={label}>
+          <span>{t.drivers.customer.size}</span>
+          <select className={input} value={form.size} onChange={set("size")}>
+            {PARCEL_SIZES.map((size) => {
+              const s = info.sizes.find((x) => x.size === size);
+              return (
+                <option key={size} value={size}>
+                  {size}
+                  {s ? ` · ${format(t.parcels.upTo, { dims: `${s.maxLengthCm}×${s.maxWidthCm}×${s.maxHeightCm}`, kg: s.maxWeightKg })}` : ""}
+                </option>
+              );
+            })}
+          </select>
+        </label>
+        <label className={label}>
+          <span>{t.drivers.customer.declaredValue}</span>
+          <input className={input} inputMode="numeric" value={form.declaredValue} onChange={set("declaredValue")} />
+        </label>
+      </div>
+      {fare !== null && tier && <p className="font-semibold">{format(t.drivers.customer.estimate, { parcel: tier.priceFcfa, fare })}</p>}
+      <p className="text-xs text-zinc-500">{t.drivers.customer.giveRight}</p>
+      <button type="submit" className={primary} disabled={busy || !pinned || !inServiceArea(home)}>
+        {t.drivers.customer.book}
+      </button>
+      <Notice error={error} notice={notice} />
+    </form>
+  );
+
+  if (open) {
+    return (
+      <section className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">
+        <h2 className="font-semibold">{t.drivers.customer.pickupTitle}</h2>
+        {formBody}
+      </section>
+    );
+  }
   return (
     <details className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">
       <summary className="cursor-pointer font-semibold">🛵 {t.drivers.customer.pickupTitle}</summary>
-      <form onSubmit={submit} className="mt-3 space-y-3">
-        <p className="text-zinc-600 dark:text-zinc-400">{t.drivers.customer.pickupIntro}</p>
-        <HomeFields value={home} onChange={setHome} />
-        <label className={label}>
-          <span>{t.drivers.customer.destination}</span>
-          <select className={input} required value={form.toStationId} onChange={set("toStationId")}>
-            <option value="">{t.drivers.customer.chooseDestination}</option>
-            {destinations.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className={label}>
-            <span>{t.drivers.customer.recipientPhone}</span>
-            <input className={input} type="tel" required value={form.recipientPhone} onChange={set("recipientPhone")} placeholder="90 12 34 56" />
-          </label>
-          <label className={label}>
-            <span>{t.drivers.customer.recipientName}</span>
-            <input className={input} maxLength={80} value={form.recipientName} onChange={set("recipientName")} />
-          </label>
-        </div>
-        <label className={label}>
-          <span>{t.drivers.customer.content}</span>
-          <input className={input} required maxLength={300} value={form.content} onChange={set("content")} />
-        </label>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className={label}>
-            <span>{t.drivers.customer.size}</span>
-            <select className={input} value={form.size} onChange={set("size")}>
-              {PARCEL_SIZES.map((size) => {
-                const s = info.sizes.find((x) => x.size === size);
-                return (
-                  <option key={size} value={size}>
-                    {size}
-                    {s ? ` · ${format(t.parcels.upTo, { dims: `${s.maxLengthCm}×${s.maxWidthCm}×${s.maxHeightCm}`, kg: s.maxWeightKg })}` : ""}
-                  </option>
-                );
-              })}
-            </select>
-          </label>
-          <label className={label}>
-            <span>{t.drivers.customer.declaredValue}</span>
-            <input className={input} inputMode="numeric" value={form.declaredValue} onChange={set("declaredValue")} />
-          </label>
-        </div>
-        {fare !== null && tier && <p className="font-semibold">{format(t.drivers.customer.estimate, { parcel: tier.priceFcfa, fare })}</p>}
-        <p className="text-xs text-zinc-500">{t.drivers.customer.giveRight}</p>
-        <button type="submit" className={primary} disabled={busy || !pinned || !inServiceArea(home)}>
-          {t.drivers.customer.book}
-        </button>
-        <Notice error={error} notice={notice} />
-      </form>
+      {formBody}
     </details>
   );
 }
