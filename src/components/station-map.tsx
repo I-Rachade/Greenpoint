@@ -27,7 +27,8 @@ function markerElement(station: StationView, selected: boolean): HTMLElement {
     width: `${size}px`,
     height: `${size}px`,
     borderRadius: "9999px",
-    border: "3px solid white",
+    // Stations with an electric car charger get a blue ring.
+    border: `3px solid ${(station.evChargers ?? []).length > 0 ? "#2F80ED" : "white"}`,
     boxShadow: "0 1px 4px rgba(0,0,0,.4)",
     background: AVAILABILITY_COLORS[stationAvailability(station)],
     color: "white",

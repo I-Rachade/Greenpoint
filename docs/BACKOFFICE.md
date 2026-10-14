@@ -37,6 +37,10 @@ Im Stations-Editor lädt der Admin bis zu 6 Fotos hoch (R2, Ordner `stations/`);
 
 Angemeldete Kunden bewerten eine Station mit 1 bis 5 Sternen und einem Kommentar (höchstens 500 Zeichen); pro Kunde und Station gibt es eine Bewertung, eine neue ersetzt die alte (Tabelle `station_reviews`). Die App zeigt Durchschnitt, Verteilung und die neuesten Bewertungen mit Vorname und Initiale. Im Stations-Editor sieht der Admin alle Bewertungen der Station und löscht beleidigende; das Löschen steht im Aktivitätsprotokoll.
 
+## Ladesäulen für Elektroautos („Bornes VE“)
+
+Unter `/admin/ev-chargers` legt der Admin Ladesäulen für Elektroautos an (Name, Stecker Type 2 / CCS2 / CHAdeMO / GB/T, Leistung in kW) und weist jede einer Station zu, direkt in der Liste über das Auswahlfeld. Eine Station mit mindestens einer aktiven zugewiesenen Säule zeigt in der App das Abzeichen „Voiture électrique“, ihre Säulen in der Stationsansicht und erscheint im Filter „Voiture électrique“. Nicht zugewiesene Säulen werden oben gezählt. Migration `0020_ev_chargers.sql`, Code `src/lib/ev-chargers.ts`, `worker/ev-chargers.ts`.
+
 ## Auffälligkeiten („À vérifier“)
 
 Berechnet in `src/lib/admin/insights.ts` (Tests in `src/lib/__tests__/admin-insights.test.ts`):

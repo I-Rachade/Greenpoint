@@ -202,3 +202,18 @@ describe("battery stock", () => {
     expect(availableBatteries(closed)).toBe(0);
   });
 });
+
+describe("electric car filter", () => {
+  const ev = station({ id: "ev", name: "EV", evChargers: [{ id: "c1", name: "Borne 1", connector: "ccs2", powerKw: 60 }] });
+  const plain = station({ id: "plain", name: "Plain", evChargers: [] });
+
+  it("keeps only stations with a charger, whatever the two-wheeler type", () => {
+    const filter = { ...DEFAULT_FILTER, service: "ev" as const, vehicle: "tricycle" as const };
+    expect(rankStations([ev, plain], null, filter).map((r) => r.station.id)).toEqual(["ev"]);
+  });
+
+  it("with only available, leaves out a closed station", () => {
+    const closed = { ...ev, status: { ...ev.status, isOpen: false } };
+    expect(rankStations([closed], null, { ...DEFAULT_FILTER, service: "ev", onlyAvailable: true })).toEqual([]);
+  });
+});

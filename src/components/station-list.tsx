@@ -17,7 +17,7 @@ import { StationCard } from "./station-card";
 /** Folds accents and case so "lome" finds "Lomé". */
 const fold = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
 
-type Chip = "all" | "available" | "charging" | "swap" | "parcel" | "favorites";
+type Chip = "all" | "available" | "charging" | "swap" | "parcel" | "ev" | "favorites";
 
 /** Station list screen: search, filter chips, nearest first. */
 export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean }) {
@@ -33,7 +33,7 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
 
   const filter: StationFilter = {
     ...DEFAULT_FILTER,
-    service: chip === "charging" || chip === "swap" || chip === "parcel" ? chip : "all",
+    service: chip === "charging" || chip === "swap" || chip === "parcel" || chip === "ev" ? chip : "all",
     onlyAvailable: chip === "available",
     brand,
   };
@@ -51,6 +51,7 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
     { id: "charging", label: t.filter.charging },
     { id: "swap", label: t.filter.swap },
     ...(features.parcels ? [{ id: "parcel" as const, label: t.filter.parcel }] : []),
+    { id: "ev", label: t.filter.ev },
     { id: "favorites", label: t.ui.stations.favorites },
   ];
 

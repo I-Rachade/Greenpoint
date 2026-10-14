@@ -6,10 +6,11 @@ import { directionsUrl, formatDistance } from "@/lib/geo";
 import { format } from "@/lib/i18n/format";
 import { useFavorites } from "@/lib/prefs";
 import { brandFullBatteries, stationBrands } from "@/lib/battery-types";
+import { chargesEvs } from "@/lib/ev-chargers";
 import { hasRestArea } from "@/lib/station-extras";
 import { offersParcels } from "@/lib/station-points";
 import type { StationView } from "@/lib/types";
-import { BatteryIcon, BenchIcon, BoltIcon, BoxIcon, ClockIcon, HeartIcon, NavigateIcon, PinIcon } from "./icons";
+import { BatteryIcon, BenchIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, HeartIcon, NavigateIcon, PinIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { SolarBadge } from "./solar-badge";
 import { OpenBadge, RatingInline, StationPhoto, useHoursLabel } from "./station-look";
@@ -49,6 +50,21 @@ export function RestBadge({ station, className = "" }: { station: StationView; c
     <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-gp-yellow px-2.5 py-0.5 text-xs font-semibold text-gp-forest ${className}`}>
       <BenchIcon size={13} strokeWidth={2.2} />
       {t.stationLook.restArea}
+    </span>
+  );
+}
+
+/** "Electric car" label for stations with at least one electric car charger. */
+export function EvBadge({ station, className = "" }: { station: StationView; className?: string }) {
+  const { t } = useI18n();
+  if (!chargesEvs(station)) return null;
+  return (
+    <span
+      title={t.station.ev.yes}
+      className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-gp-info px-2.5 py-0.5 text-xs font-semibold text-white ${className}`}
+    >
+      <CarIcon size={13} strokeWidth={2.2} />
+      {t.station.ev.badge}
     </span>
   );
 }
@@ -123,6 +139,14 @@ export function StationCard({
       <div className="flex gap-3">
         <div className="relative h-24 w-28 shrink-0 overflow-hidden rounded-2xl bg-gp-green/10 sm:w-32">
           <StationPhoto station={station} className="h-full w-full" />
+          {chargesEvs(station) && (
+            <span
+              title={t.station.ev.yes}
+              className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-gp-info text-white shadow"
+            >
+              <CarIcon size={16} strokeWidth={2.2} />
+            </span>
+          )}
           {nearest && (
             <span className="absolute left-1.5 top-1.5 rounded-full bg-gp-info px-2 py-0.5 text-[10px] font-semibold uppercase text-white shadow">
               {t.map.nearest}
@@ -142,6 +166,7 @@ export function StationCard({
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             <OpenBadge station={station} />
             <RestBadge station={station} />
+            <EvBadge station={station} />
             {station.isSolar && <SolarBadge />}
           </div>
           <StockLine station={station} className="mt-1.5 text-gp-forest dark:text-zinc-200" />
@@ -182,6 +207,7 @@ export function StationPhotoCard({ station, distance }: { station: StationView; 
       <div className="absolute left-3 right-3 top-3 flex items-center gap-1.5">
         <OpenBadge station={station} />
         <RestBadge station={station} />
+        <EvBadge station={station} />
         {station.isSolar && <SolarBadge compact />}
         {(station.rating?.count ?? 0) > 0 && (
           <span className="ml-auto rounded-full bg-white/90 px-2 py-0.5 text-xs text-gp-forest shadow">

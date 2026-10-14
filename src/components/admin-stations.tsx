@@ -12,7 +12,7 @@ import { hasAnyPoint, kindFor } from "@/lib/station-points";
 import { VEHICLE_TYPES, type StationInput, type StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { StationMediaFields, StationReviewsAdmin } from "./backoffice/station-media";
-import { BatteryIcon, BoltIcon, BoxIcon, SunIcon } from "./icons";
+import { BatteryIcon, BoltIcon, BoxIcon, CarIcon, SunIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { SolarBadge } from "./solar-badge";
 
@@ -116,6 +116,7 @@ function StationForm({
   sockets,
   parcelCount,
   batteryTypes,
+  evChargers,
   onSave,
   onCancel,
 }: {
@@ -128,6 +129,8 @@ function StationForm({
   /** Connected sockets registered at this station. */
   sockets: Device[];
   parcelCount: number;
+  /** Active electric car chargers assigned to the station; assigned in the "Bornes VE" tab. */
+  evChargers: number;
   onSave: (input: StationInput) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -372,6 +375,15 @@ function StationForm({
         {(form.parcelCounter || form.parcelLockers) && parcelCount > 0 && (
           <p className="text-xs text-zinc-500">{format(p.parcelsHere, { n: parcelCount })}</p>
         )}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10">
+          <span className="flex items-center gap-2">
+            <CarIcon size={18} className="text-gp-green-dark" />
+            {format(p.evChargers, { n: evChargers })}
+          </span>
+          <Link href="/admin/ev-chargers" className="text-gp-green-dark hover:underline">
+            {p.manageEvChargers}
+          </Link>
+        </div>
       </div>
 
       <StationMediaFields
@@ -633,6 +645,7 @@ export function AdminStations() {
           sockets={[]}
           parcelCount={0}
           batteryTypes={batteryTypes}
+          evChargers={0}
           onSave={(i) => save(null, i)}
           onCancel={() => setEditing(null)}
         />
@@ -652,6 +665,7 @@ export function AdminStations() {
                 sockets={socketsOf(s.id)}
                 parcelCount={parcelsAt(parcels, s.id)}
                 batteryTypes={batteryTypes}
+                evChargers={(s.evChargers ?? []).length}
                 onSave={(i) => save(s.id, i)}
                 onCancel={() => setEditing(null)}
               />

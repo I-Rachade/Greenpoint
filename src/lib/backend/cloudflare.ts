@@ -1,5 +1,6 @@
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { EvCharger, EvChargerInput } from "../ev-chargers";
 import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
@@ -343,6 +344,20 @@ export class CloudflareBackend implements Backend {
 
   async saveBatteryType(id: string | null, input: BatteryTypeInput) {
     await this.call("POST", "/api/admin/battery-types", { id, input });
+    this.changed();
+  }
+
+  listEvChargers() {
+    return this.call<EvCharger[]>("GET", "/api/admin/ev-chargers");
+  }
+
+  async saveEvCharger(id: string | null, input: EvChargerInput) {
+    await this.call("POST", "/api/admin/ev-chargers", { id, input });
+    this.changed();
+  }
+
+  async deleteEvCharger(id: string) {
+    await this.call("DELETE", `/api/admin/ev-chargers/${encodeURIComponent(id)}`);
     this.changed();
   }
 
