@@ -53,7 +53,7 @@ export function StationPhoto({
   className = "",
   sizes,
 }: {
-  station: Pick<StationView, "id" | "kind" | "photos" | "name">;
+  station: Pick<StationView, "id" | "kind" | "photos" | "name" | "evChargers">;
   index?: number;
   className?: string;
   sizes?: string;

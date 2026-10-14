@@ -218,7 +218,7 @@ export const DEMO_STATION_BATTERY_TYPES: Record<string, string[]> = {
 /** Photos (illustrations in public/station-photos) and amenities of the demo stations. */
 export const DEMO_STATION_EXTRAS: Record<string, { photos: string[]; amenities: Amenity[] }> = {
   "st-grand-marche": {
-    photos: ["/station-photos/hub.svg", "/station-photos/rest.svg", "/station-photos/swap.svg"],
+    photos: ["/station-photos/ev.svg", "/station-photos/hub.svg", "/station-photos/rest.svg", "/station-photos/swap.svg"],
     amenities: ["seating", "shade", "toilets", "drinks", "food", "phone_charging"],
   },
   "st-tokoin": { photos: ["/station-photos/swap.svg", "/station-photos/rest.svg"], amenities: ["seating", "shade", "water", "shop"] },
@@ -227,7 +227,7 @@ export const DEMO_STATION_EXTRAS: Record<string, { photos: string[]; amenities: 
     amenities: ["seating", "shade", "wifi", "phone_charging", "drinks"],
   },
   "st-be": { photos: ["/station-photos/hub.svg"], amenities: ["shade", "food", "parking"] },
-  "st-agoe": { photos: ["/station-photos/swap.svg"], amenities: ["seating", "toilets", "water", "parking"] },
+  "st-agoe": { photos: ["/station-photos/ev.svg", "/station-photos/swap.svg"], amenities: ["seating", "toilets", "water", "parking"] },
   "st-hedzranawoe": { photos: ["/station-photos/charging.svg"], amenities: ["parking"] },
   "st-deckon": { photos: ["/station-photos/charging.svg", "/station-photos/rest.svg"], amenities: ["seating", "shade", "wifi", "drinks"] },
   "st-colis-adewui": { photos: ["/station-photos/parcel.svg"], amenities: ["shop"] },

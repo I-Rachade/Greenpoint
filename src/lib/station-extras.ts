@@ -105,14 +105,15 @@ export function starCounts(reviews: readonly { rating: number }[]): number[] {
   return [5, 4, 3, 2, 1].map((n) => reviews.filter((r) => r.rating === n).length);
 }
 
-/** Illustration shown when a station has no photo yet, by its main service. */
-export function placeholderPhoto(station: { kind: string; id: string }): string {
+/** Illustration shown when a station has no photo yet: an electric car when it has a charger for one, else its main service. */
+export function placeholderPhoto(station: { kind: string; id: string; evChargers?: unknown[] }): string {
+  if ((station.evChargers ?? []).length > 0) return "/station-photos/ev.svg";
   if (station.kind === "parcel") return "/station-photos/parcel.svg";
   if (station.kind === "swap") return "/station-photos/swap.svg";
   if (station.kind === "charging") return "/station-photos/charging.svg";
   return "/station-photos/hub.svg";
 }
 
-export function stationPhotos(station: { kind: string; id: string; photos?: string[] }): string[] {
+export function stationPhotos(station: { kind: string; id: string; photos?: string[]; evChargers?: unknown[] }): string[] {
   return station.photos && station.photos.length > 0 ? station.photos : [placeholderPhoto(station)];
 }

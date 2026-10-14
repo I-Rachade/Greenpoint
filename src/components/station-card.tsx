@@ -138,6 +138,14 @@ export function StationCard({
       <div className="flex gap-3">
         <div className="relative h-24 w-28 shrink-0 overflow-hidden rounded-2xl bg-gp-green/10 sm:w-32">
           <StationPhoto station={station} className="h-full w-full" />
+          {chargesEvs(station) && (
+            <span
+              title={t.station.ev.yes}
+              className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-gp-info text-white shadow"
+            >
+              <CarIcon size={16} strokeWidth={2.2} />
+            </span>
+          )}
           {nearest && (
             <span className="absolute left-1.5 top-1.5 rounded-full bg-gp-info px-2 py-0.5 text-[10px] font-semibold uppercase text-white shadow">
               {t.map.nearest}
