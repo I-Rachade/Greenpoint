@@ -130,7 +130,7 @@ import {
   stationBookings,
 } from "./partners";
 import type { Env } from "./env";
-import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setParcelsEnabled } from "./features";
+import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setDriversEnabled, setParcelsEnabled } from "./features";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 import { DB_CUSTOMER, roleFromDb, roleToDb } from "./roles";
 import { refreshTopup, startTopup } from "./wallet-topups";
@@ -1428,6 +1428,11 @@ const ROUTES: [string, RegExp, Handler][] = [
     const admin = await c.requireAdmin();
     const { enabled } = await readJson<{ enabled?: boolean }>(c.request);
     return setParcelsEnabled(c.env, admin, !!enabled);
+  }],
+  ["POST", /^\/api\/admin\/features\/drivers$/, async (c) => {
+    const admin = await c.requireAdmin();
+    const { enabled } = await readJson<{ enabled?: boolean }>(c.request);
+    return setDriversEnabled(c.env, admin, !!enabled);
   }],
   // Wallet (worker/wallet.ts)
   ["GET", /^\/api\/wallet$/, async (c) => getWallet(c.env, await c.requireUser())],

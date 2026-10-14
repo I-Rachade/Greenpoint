@@ -87,12 +87,13 @@ export function HowToList({ steps }: { steps: readonly string[] }) {
 /** "Courses" tab: pick a vehicle, then order the delivery on its page; your deliveries below. */
 export function MyTrips() {
   const { t } = useI18n();
-  const { backend } = useApp();
+  const { backend, features } = useApp();
   const { data } = useLiveQuery(() => Promise.all([backend.myJobs(), backend.listStations(), backend.parcelInfo()]));
   const orders = data?.[0].filter((j) => j.kind === "courier") ?? [];
   const settings = data?.[2].driverSettings ?? DEFAULT_DRIVER_SETTINGS;
-  // Until we know, every vehicle shows as available.
-  const soon = (type: BookableVehicleType) => (data && !data[2].bookableVehicles.includes(type) ? t.ui.trips.soon : undefined);
+  // Without drivers in service nothing can be ordered; otherwise, until we know, every vehicle shows as available.
+  const soon = (type: BookableVehicleType) =>
+    !features.drivers || (data && !data[2].bookableVehicles.includes(type)) ? t.ui.trips.soon : undefined;
   const hint = (type: BookableVehicleType) => {
     const limit = settings.vehicles.find((v) => v.type === type);
     return limit ? format(t.ui.trips.upTo, { size: limit.maxSize, kg: limit.maxWeightKg }) : "";
@@ -118,7 +119,7 @@ export function MyTrips() {
 /** Orders a delivery with the vehicle picked on the "Courses" tab. */
 export function OrderPage({ vehicle }: { vehicle: BookableVehicleType }) {
   const { t } = useI18n();
-  const { backend } = useApp();
+  const { backend, features } = useApp();
   const { data: info } = useLiveQuery(() => backend.parcelInfo());
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
@@ -128,6 +129,8 @@ export function OrderPage({ vehicle }: { vehicle: BookableVehicleType }) {
       <InfoLink href="/courses/comment" label={t.ui.trips.howTo} />
       {!info ? (
         <p className="text-sm text-zinc-500">{t.loading}</p>
+      ) : !features.drivers ? (
+        <p className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">{t.errors.drivers_soon}</p>
       ) : info.bookableVehicles.includes(vehicle) ? (
         <BookCourier info={info} vehicle={vehicle} />
       ) : (

@@ -345,6 +345,45 @@ function JobRow({ job, drivers, stationName, onReport }: { job: DeliveryJob; dri
 }
 
 /** Backoffice: driver applications, our vehicles, all trips and the prices (/admin/drivers). */
+/** Switches everything a driver does (courses, express, pickups and deliveries at home) on or off for customers. */
+function DriversModuleSwitch() {
+  const { t } = useI18n();
+  const { backend, features, featuresReady } = useApp();
+  const errorMessage = useErrorMessage();
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const a = t.drivers.admin;
+  if (!featuresReady) return null;
+  const on = features.drivers;
+
+  async function toggle() {
+    if (!window.confirm(on ? a.confirmOff : a.confirmOn)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await backend.setDriversEnabled(!on);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className={`${card} space-y-2`}>
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-xs uppercase tracking-wide text-zinc-500">{a.module}</span>
+        <Pill tone={on ? "green" : "amber"}>{on ? a.moduleOn : a.moduleOff}</Pill>
+        <button type="button" disabled={busy} onClick={toggle} className="text-sm text-gp-green-dark underline disabled:opacity-40 dark:text-gp-green">
+          {on ? a.turnOff : a.turnOn}
+        </button>
+      </div>
+      {!on && <p className="text-sm text-amber-700 dark:text-amber-300">{a.offHint}</p>}
+      {error && <p className="text-sm text-red-600">{error}</p>}
+    </section>
+  );
+}
+
 export function DriversManager() {
   const { t } = useI18n();
   const { backend } = useApp();
@@ -370,6 +409,7 @@ export function DriversManager() {
         <h1 className="text-2xl font-semibold">{t.drivers.admin.title}</h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.drivers.admin.intro}</p>
       </div>
+      <DriversModuleSwitch />
       {message && (
         <p role={message.ok ? "status" : "alert"} className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>
           {message.text}

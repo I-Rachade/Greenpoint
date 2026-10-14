@@ -56,6 +56,7 @@ import {
 } from "../src/lib/parcels";
 import { normalizeTogoPhone } from "../src/lib/phone";
 import type { Profile } from "../src/lib/types";
+import { requireDrivers } from "./features";
 import { tripStatement } from "./greenpoint";
 import { ApiError, nowIso, uuid } from "./http";
 import { notifyPerson } from "./notify";
@@ -964,6 +965,7 @@ function cleanHome(input: unknown): HomePoint {
 /** A customer asks a driver to fetch a parcel at home and bring it to station B. */
 export async function bookPickup(c: ParcelCtx, input: PickupBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
+  await requireDrivers(c.db);
   const home = cleanHome(input?.home);
   const toStationId = String(input?.toStationId ?? "");
   await requireDepot(c.db, toStationId);
@@ -1024,6 +1026,7 @@ function cleanDropoff(input: unknown): { lat: number; lng: number; note: string 
 /** A customer books a driver to take them (and others, as seats allow) from A to B. Not offered in the app at the moment. */
 export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
+  await requireDrivers(c.db);
   const pickup = cleanHome(input?.pickup);
   const d = cleanDropoff(input?.dropoff);
   const passengers = Number(input?.passengers);
@@ -1073,6 +1076,7 @@ export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<Delive
  */
 export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
+  await requireDrivers(c.db);
   const pickup = cleanHome(input?.pickup);
   const d = cleanDropoff(input?.dropoff);
   if (!d.note) throw new ApiError("bad_request");
@@ -1130,6 +1134,7 @@ export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<
 /** The recipient of a parcel waiting at a station has it brought home; this hands the pickup right to the driver. */
 export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unknown): Promise<DeliveryJob> {
   const user = await c.requireUser();
+  await requireDrivers(c.db);
   const home = cleanHome(rawHome);
   const parcel = await c.db.prepare("select * from parcels where id = ?").bind(parcelId).first<ParcelRow>();
   if (!parcel) throw new ApiError("parcel_not_found", 404);

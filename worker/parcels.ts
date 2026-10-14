@@ -27,6 +27,7 @@ import type { DeliveryStatus } from "../src/lib/drivers";
 import type { Profile } from "../src/lib/types";
 import type { Env } from "./env";
 import { cancelParcelJob, createExpressJob, driverSettings, bookableVehicles } from "./drivers";
+import { requireDrivers } from "./features";
 import { ApiError, nowIso, randomDigits, uuid } from "./http";
 import { roleToDb } from "./roles";
 import { notifyPerson, type Message } from "./notify";
@@ -352,6 +353,8 @@ export async function createParcel(c: ParcelCtx, fromStationId: string, input: P
   const measures = cleanMeasures(input.measures);
   await requireDepot(c.db, fromStationId);
   await requireDepot(c.db, toStationId);
+  // Express needs a driver to carry it to station B.
+  if (input.express) await requireDrivers(c.db);
   return storeParcel(c, staff.id, {
     fromStationId,
     toStationId,

@@ -230,6 +230,8 @@ interface DemoState {
   operatorPhones?: Record<string, string | null>;
   /** Parcel module switch of the backoffice (missing = on). */
   parcelsEnabled?: boolean;
+  /** Courses, express and trips at home; off until an admin switches it on (as in worker/features.ts). */
+  driversEnabled?: boolean;
   /** Demo PINs by phone number or e-mail address (stored in clear: demo only). */
   pins?: Record<string, string>;
   /** Customer reviews (missing = the example reviews). */
@@ -1504,6 +1506,7 @@ export class DemoBackend implements Backend {
     if (!senderPhone || !recipientPhone) throw new BackendError("phone_not_allowed");
     if (input.toStationId === stationId) throw new BackendError("same_station");
     if (!this.activeDepot(state, stationId) || !this.activeDepot(state, input.toStationId)) throw new BackendError("depot_inactive");
+    if (input.express) this.requireDrivers(state);
     const content = (input.content ?? "").trim();
     if (!content) throw new BackendError("unknown", "content missing");
     const tier = sizeFor(input.measures, state.parcelSizes ?? DEFAULT_PARCEL_SIZES);
@@ -2233,6 +2236,7 @@ export class DemoBackend implements Backend {
   async bookPickup(input: PickupBooking): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
+    this.requireDrivers(state);
     const home = this.cleanHome(input.home);
     if (!this.activeDepot(state, input.toStationId)) throw new BackendError("depot_inactive");
     const recipientPhone = normalizeTogoPhone(input.recipientPhone ?? "");
@@ -2275,6 +2279,7 @@ export class DemoBackend implements Backend {
   async bookRide(input: RideBooking): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
+    this.requireDrivers(state);
     const pickup = this.cleanHome(input.pickup);
     const d = this.cleanDropoff(input.dropoff);
     if (!Number.isInteger(input.passengers) || input.passengers < 1 || input.passengers > MAX_PASSENGERS) throw new BackendError("unknown", "passengers");
@@ -2315,6 +2320,7 @@ export class DemoBackend implements Backend {
   async bookCourier(input: CourierBooking): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
+    this.requireDrivers(state);
     const pickup = this.cleanHome(input.pickup);
     const dropoff = this.cleanDropoff(input.dropoff);
     if (!dropoff.note) throw new BackendError("unknown", "directions missing");
@@ -2362,6 +2368,7 @@ export class DemoBackend implements Backend {
   async bookDelivery(parcelId: string, input: HomePoint): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
+    this.requireDrivers(state);
     const home = this.cleanHome(input);
     const parcel = this.parcelsOf(state).find((p) => p.id === parcelId);
     if (!parcel) throw new BackendError("parcel_not_found");
@@ -3195,7 +3202,18 @@ export class DemoBackend implements Backend {
   }
 
   async features(): Promise<Features> {
-    return { parcels: this.load().parcelsEnabled !== false };
+    const state = this.load();
+    return { parcels: state.parcelsEnabled !== false, drivers: state.driversEnabled === true };
+  }
+
+  async setDriversEnabled(enabled: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    this.save(withAudit({ ...state, driversEnabled: enabled }, { table: "drivers", action: "update", rowId: "drivers_enabled", changes: { enabled } }));
+  }
+
+  private requireDrivers(state: DemoState) {
+    if (state.driversEnabled !== true) throw new BackendError("drivers_soon");
   }
 
   async setParcelsEnabled(enabled: boolean) {

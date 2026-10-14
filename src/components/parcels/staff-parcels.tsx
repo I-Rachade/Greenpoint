@@ -164,7 +164,7 @@ function NewParcelForm({
   onError: (msg: string) => void;
 }) {
   const { t } = useI18n();
-  const { backend } = useApp();
+  const { backend, features } = useApp();
   const errorMessage = useErrorMessage();
   const [form, setForm] = useState(empty);
   const [checked, setChecked] = useState(false);
@@ -180,7 +180,7 @@ function NewParcelForm({
     .map((d) => stations.find((s) => s.id === d.stationId))
     .filter((s): s is StationView => !!s);
   const to = destinations.find((s) => s.id === form.toStationId);
-  const fare = express && to ? fareFor(distanceMeters(station, to), true, info.driverSettings) : 0;
+  const fare = express && features.drivers && to ? fareFor(distanceMeters(station, to), true, info.driverSettings) : 0;
   const total = tier ? tier.priceFcfa + fare : 0;
 
   async function submit(e: FormEvent) {
@@ -197,7 +197,7 @@ function NewParcelForm({
       content: form.content,
       declaredValue: form.declaredValue ? Math.round(num(form.declaredValue)) : null,
       measures: measuresOf(tier),
-      express,
+      express: express && features.drivers,
     };
     try {
       const created = await backend.createParcel(station.id, parcel);
@@ -262,10 +262,13 @@ function NewParcelForm({
               ? format(t.drivers.staff.expressPrice, { parcel: tier.priceFcfa, fare, total })
               : format(t.parcels.staff.computed, { size: tier.size, price: tier.priceFcfa }))}
         </div>
-        <label className="flex items-center gap-2 text-sm sm:col-span-2">
-          <input type="checkbox" checked={express} onChange={(e) => setExpress(e.target.checked)} />
-          {t.drivers.staff.express}
-        </label>
+        {/* Express needs a driver: offered only while the driver module is on. */}
+        {features.drivers && (
+          <label className="flex items-center gap-2 text-sm sm:col-span-2">
+            <input type="checkbox" checked={express} onChange={(e) => setExpress(e.target.checked)} />
+            {t.drivers.staff.express}
+          </label>
+        )}
         <label className="flex items-center gap-2 text-sm sm:col-span-2">
           <input type="checkbox" required checked={checked} onChange={(e) => setChecked(e.target.checked)} />
           {t.parcels.staff.checkedContent}

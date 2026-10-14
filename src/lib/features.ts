@@ -2,4 +2,6 @@
 export interface Features {
   /** Parcel depot, partner API and driver pickups. */
   parcels: boolean;
+  /** Courses, express door to door, pickups and deliveries at home: everything a driver does. */
+  drivers: boolean;
 }

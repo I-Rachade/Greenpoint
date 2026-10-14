@@ -17,6 +17,7 @@ import { SlipDialog } from "./slip-dialog";
 
 function ParcelCard({ parcel: p, stations, info, onSlip }: { parcel: Parcel; stations: StationView[]; info: ParcelInfo; onSlip: () => void }) {
   const { t } = useI18n();
+  const { features } = useApp();
   const when = useDateTime();
   const station = (id: string) => stations.find((s) => s.id === id);
   const to = station(p.toStationId);
@@ -52,9 +53,12 @@ function ParcelCard({ parcel: p, stations, info, onSlip }: { parcel: Parcel; sta
           </div>
         </div>
       )}
-      {received && p.status === "arrived" && (!p.deliveryStatus || p.deliveryStatus === "failed") && (
-        <BookDelivery parcel={p} station={to} info={info} />
-      )}
+      {received && p.status === "arrived" && (!p.deliveryStatus || p.deliveryStatus === "failed") &&
+        (features.drivers ? (
+          <BookDelivery parcel={p} station={to} info={info} />
+        ) : (
+          <p className="text-xs text-zinc-500">{t.drivers.customer.deliverySoon}</p>
+        ))}
       {!received && (
         <button type="button" onClick={onSlip} className="text-sm text-gp-green-dark underline dark:text-gp-green">
           {t.parcels.slip}
@@ -127,14 +131,20 @@ export function HowToSend() {
 /** "Colis" tab: two ways to send (at a station, or express door to door), then your parcels and their trips. */
 export function MyParcels() {
   const { t } = useI18n();
-  const { backend } = useApp();
+  const { backend, features } = useApp();
   const { data } = useLiveQuery(() => Promise.all([backend.myParcels(), backend.listStations(), backend.parcelInfo(), backend.myJobs()]));
   const [slip, setSlip] = useState<Parcel | null>(null);
 
   const tiles = (
     <div className="grid grid-cols-2 gap-3">
       <ChoiceTile href="/colis/regulier" icon={StoreIcon} label={t.parcels.regular} hint={t.parcels.regularHint} />
-      <ChoiceTile href="/colis/express" icon={BoxFastIcon} label={t.parcels.express} hint={t.parcels.expressHint} />
+      <ChoiceTile
+        href="/colis/express"
+        icon={BoxFastIcon}
+        label={t.parcels.express}
+        hint={t.parcels.expressHint}
+        soon={features.drivers ? undefined : t.ui.trips.soon}
+      />
     </div>
   );
   if (!data) {
@@ -176,7 +186,7 @@ export function MyParcels() {
 /** Standard sending: hand the parcel in at a station (or have a driver bring it there); the recipient collects it at a station. */
 export function RegularSend() {
   const { t } = useI18n();
-  const { backend } = useApp();
+  const { backend, features } = useApp();
   const { data } = useLiveQuery(() => Promise.all([backend.listStations(), backend.parcelInfo()]));
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
@@ -186,7 +196,11 @@ export function RegularSend() {
       {data ? (
         <>
           <InfoLink href="/colis/regulier/comment" label={t.parcels.howTo} />
-          <BookPickup info={data[1]} stations={data[0]} />
+          {features.drivers ? (
+            <BookPickup info={data[1]} stations={data[0]} />
+          ) : (
+            <p className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">{t.drivers.customer.pickupSoon}</p>
+          )}
         </>
       ) : (
         <p className="text-sm text-zinc-500">{t.loading}</p>
@@ -198,14 +212,20 @@ export function RegularSend() {
 /** Express sending: a driver takes the parcel at the sender's door straight to the recipient's door. */
 export function ExpressSend() {
   const { t } = useI18n();
-  const { backend } = useApp();
+  const { backend, features } = useApp();
   const { data: info } = useLiveQuery(() => backend.parcelInfo());
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
       <BackTo href="/colis" />
       <h1 className="text-2xl font-semibold">{t.parcels.express}</h1>
       <InfoLink href="/colis/express/comment" label={t.parcels.expressHowTo} />
-      {info ? <BookCourier info={info} /> : <p className="text-sm text-zinc-500">{t.loading}</p>}
+      {!features.drivers ? (
+        <p className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">{t.errors.drivers_soon}</p>
+      ) : info ? (
+        <BookCourier info={info} />
+      ) : (
+        <p className="text-sm text-zinc-500">{t.loading}</p>
+      )}
     </div>
   );
 }
