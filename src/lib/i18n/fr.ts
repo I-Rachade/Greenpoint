@@ -1217,6 +1217,12 @@ export const fr = {
       favorites: "Favoris",
       alerts: "Alertes",
       account: "Compte",
+      parcels: "Colis",
+      trips: "Courses",
+    },
+    trips: {
+      title: "Mes courses",
+      intro: "Un chauffeur vient chercher votre colis chez vous et l'apporte à une station. Suivez ici vos courses.",
     },
     back: "Retour",
     exitHint: "Appuyez encore sur retour pour quitter",

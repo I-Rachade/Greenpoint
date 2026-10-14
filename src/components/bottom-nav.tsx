@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { useApp } from "./app-provider";
-import { BellIcon, HeartIcon, ListIcon, MapIcon, UserIcon } from "./icons";
+import { BoxIcon, ListIcon, MapIcon, ScooterIcon, UserIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
 
@@ -14,7 +14,7 @@ const HIDDEN_PREFIXES = ["/login", "/admin", "/operator"];
 /** Tab bar at the bottom of the screen on phones (web and app). */
 export function BottomNav() {
   const { t } = useI18n();
-  const { profile } = useApp();
+  const { profile, features } = useApp();
   const pathname = usePathname();
   const { unread } = useAlerts();
   const hidden = HIDDEN_PREFIXES.some((p) => pathname.startsWith(p));
@@ -25,18 +25,22 @@ export function BottomNav() {
 
   if (hidden) return null;
 
+  // Favourites and alerts live on the account page; its tab carries the unread count.
+  // Parcels and trips only show while the parcel module is on in the backoffice.
   const tabs = [
-    { href: "/", label: t.ui.tabs.map, icon: MapIcon, active: pathname === "/" },
-    { href: "/stations", label: t.ui.tabs.stations, icon: ListIcon, active: pathname.startsWith("/stations") || pathname.startsWith("/station") },
-    { href: "/favoris", label: t.ui.tabs.favorites, icon: HeartIcon, active: pathname.startsWith("/favoris") },
-    { href: "/notifications", label: t.ui.tabs.alerts, icon: BellIcon, active: pathname.startsWith("/notifications"), badge: unread },
+    { href: "/", label: t.ui.tabs.map, icon: MapIcon, active: pathname === "/", show: true },
+    { href: "/stations", label: t.ui.tabs.stations, icon: ListIcon, active: pathname.startsWith("/stations") || pathname.startsWith("/station"), show: true },
+    { href: "/colis", label: t.ui.tabs.parcels, icon: BoxIcon, active: pathname.startsWith("/colis"), show: features.parcels },
+    { href: "/courses", label: t.ui.tabs.trips, icon: ScooterIcon, active: pathname.startsWith("/courses"), show: features.parcels },
     {
       href: profile ? "/compte" : "/login",
       label: t.ui.tabs.account,
       icon: UserIcon,
-      active: ["/compte", "/parametres", "/reservations", "/colis", "/portefeuille"].some((p) => pathname.startsWith(p)),
+      active: ["/compte", "/parametres", "/reservations", "/portefeuille", "/favoris", "/notifications"].some((p) => pathname.startsWith(p)),
+      badge: unread,
+      show: true,
     },
-  ];
+  ].filter((tab) => tab.show);
 
   return (
     <nav

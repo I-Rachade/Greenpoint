@@ -1217,6 +1217,12 @@ export const en: Dictionary = {
       favorites: "Favourites",
       alerts: "Alerts",
       account: "Account",
+      parcels: "Parcels",
+      trips: "Trips",
+    },
+    trips: {
+      title: "My trips",
+      intro: "A driver picks up your parcel at home and brings it to a station. Follow your trips here.",
     },
     back: "Back",
     exitHint: "Press back again to exit",
