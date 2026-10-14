@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { Pill, useDateTime } from "@/components/backoffice/shared";
 import { useLiveQuery } from "@/lib/hooks";
@@ -9,8 +8,8 @@ import { pickupQrPayload, type Parcel, type ParcelInfo } from "@/lib/parcels";
 import type { StationView } from "@/lib/types";
 import { useApp } from "../app-provider";
 import { BookCourier, BookDelivery, BookPickup, MyJobs } from "../drivers/customer-jobs";
-import { BackTo, ChoiceTile } from "../drivers/my-trips";
-import { BoxFastIcon, ChevronIcon, InfoIcon, StoreIcon } from "../icons";
+import { BackTo, ChoiceTile, HowToList, InfoLink } from "../drivers/my-trips";
+import { BoxFastIcon, StoreIcon } from "../icons";
 import { useI18n } from "../i18n-provider";
 import { QrImage } from "./qr-image";
 import { ParcelStatusPill } from "./status";
@@ -71,11 +70,7 @@ function SendInfo({ info, stations }: { info: ParcelInfo; stations: StationView[
   const depots = info.depots.map((d) => ({ ...d, station: stations.find((s) => s.id === d.stationId) })).filter((d) => d.station);
   return (
     <div className="space-y-4 text-sm">
-      <ol className="list-decimal space-y-1 pl-5">
-        {t.parcels.howToList.map((step) => (
-          <li key={step}>{step}</li>
-        ))}
-      </ol>
+      <HowToList steps={t.parcels.howToList} />
       <div>
         <h2 className="font-semibold">{t.parcels.depots}</h2>
         {depots.length === 0 ? (
@@ -190,15 +185,8 @@ export function RegularSend() {
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.parcels.regularIntro}</p>
       {data ? (
         <>
-          <Link
-            href="/colis/regulier/comment"
-            className="flex items-center gap-3 rounded-xl border border-black/10 p-4 text-sm font-semibold text-gp-green-dark dark:border-white/10 dark:text-gp-green"
-          >
-            <InfoIcon size={22} />
-            <span className="flex-1">{t.parcels.howTo}</span>
-            <ChevronIcon size={18} />
-          </Link>
-          <BookPickup info={data[1]} stations={data[0]} open />
+          <InfoLink href="/colis/regulier/comment" label={t.parcels.howTo} />
+          <BookPickup info={data[1]} stations={data[0]} />
         </>
       ) : (
         <p className="text-sm text-zinc-500">{t.loading}</p>
@@ -215,7 +203,27 @@ export function ExpressSend() {
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
       <BackTo href="/colis" />
+      <h1 className="text-2xl font-semibold">{t.parcels.express}</h1>
+      <InfoLink href="/colis/express/comment" label={t.parcels.expressHowTo} />
       {info ? <BookCourier info={info} /> : <p className="text-sm text-zinc-500">{t.loading}</p>}
+    </div>
+  );
+}
+
+/** "Comment fonctionne l'envoi express", opened from the express sending page. */
+export function ExpressHowTo() {
+  const { t } = useI18n();
+  return (
+    <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
+      <BackTo href="/colis/express" />
+      <h1 className="text-2xl font-semibold">{t.parcels.expressHowTo}</h1>
+      <HowToList steps={t.parcels.expressHowToList} />
+      <h2 className="text-sm font-semibold">{t.parcels.rulesTitle}</h2>
+      <ul className="list-disc pl-5 text-sm text-zinc-600 dark:text-zinc-400">
+        {t.parcels.rules.map((rule) => (
+          <li key={rule}>{rule}</li>
+        ))}
+      </ul>
     </div>
   );
 }
