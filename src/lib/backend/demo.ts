@@ -16,7 +16,19 @@ import {
   type VehicleType,
 } from "../types";
 import { BackendError, type Backend, type CodeChannel, type StatusPatch } from "./backend";
-import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, demoSocketPoints, initialDemoStatus, DEMO_BATTERY_TYPES, DEMO_STATION_BATTERY_TYPES } from "./demo-data";
+import {
+  DEMO_CHARGING_POINTS,
+  DEMO_OPERATORS,
+  DEMO_STATIONS,
+  demoSocketPoints,
+  initialDemoStatus,
+  DEMO_BATTERY_TYPES,
+  DEMO_STATION_BATTERY_TYPES,
+  DEMO_STATION_EXTRAS,
+  demoReviews,
+  type DemoReview,
+} from "./demo-data";
+import { cleanAmenities, cleanPhotos, cleanReview, ratingOf, shortName, type ReviewInput, type StationReview } from "../station-extras";
 import { depotPoints, hasAnyPoint, kindFor } from "../station-points";
 import { validBatteryType, type BatteryType, type BatteryTypeInput } from "../battery-types";
 import { DEMO_STAFF, demoHistory, demoUsers } from "../admin/demo-seed";
@@ -76,7 +88,9 @@ import {
   validPoint,
   validSettings,
   vehicleFits,
-  vehicleSeats,
+  jobFits,
+  withAllVehicles,
+  BOOKABLE_VEHICLE_TYPES,
   MAX_PASSENGERS,
   type AdminDrivers,
   type DeliveryJob,
@@ -94,6 +108,9 @@ import {
   type LedgerEntry,
   type PickupBooking,
   type RideBooking,
+  type CourierBooking,
+  type BookableVehicleType,
+  type DropoffPoint,
   type StationDrivers,
 } from "../drivers";
 import { distanceMeters, type LatLng } from "../geo";
@@ -211,6 +228,8 @@ interface DemoState {
   parcelsEnabled?: boolean;
   /** Demo PINs by phone number or e-mail address (stored in clear: demo only). */
   pins?: Record<string, string>;
+  /** Customer reviews (missing = the example reviews). */
+  reviews?: DemoReview[];
 }
 
 interface DemoWallet {
@@ -531,6 +550,7 @@ export class DemoBackend implements Backend {
 
   private views(state: DemoState, stations: Station[]): StationView[] {
     const seen = new Date().toISOString();
+    const reviews = this.reviews(state);
     return stations.map((s) => {
       let status = state.statuses.find((st) => st.stationId === s.id)!;
       // Pretend staff report regularly, so an old demo session does not turn grey.
@@ -554,8 +574,12 @@ export class DemoBackend implements Backend {
         .filter((t) => swapped.includes(t.id))
         .sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name))
         .map((t) => ({ ...t, fullBatteries: counts[t.id] ?? 0 }));
+      const extras = DEMO_STATION_EXTRAS[s.id];
       return {
         ...s,
+        photos: s.photos ?? extras?.photos ?? [],
+        amenities: s.amenities ?? extras?.amenities ?? [],
+        rating: ratingOf(reviews.filter((r) => r.stationId === s.id)),
         chargingSlots,
         status: { ...status, freeSlots: Math.min(status.freeSlots, chargingSlots) },
         reservedSlots: held.slots,
@@ -702,6 +726,7 @@ export class DemoBackend implements Backend {
       pins,
       users: (state.users ?? []).filter((u) => u.id !== profile.id),
       reservations: state.reservations.filter((r) => r.userId !== profile.id),
+      reviews: this.reviews(state).filter((r) => r.userId !== profile.id),
     });
   }
 
@@ -884,6 +909,8 @@ export class DemoBackend implements Backend {
     if (!hasAnyPoint({ swap: offersSwap(input.kind), charging: offersCharging(input.kind), ...depot })) {
       throw new BackendError("station_without_point");
     }
+    const before = id ? state.stations.find((s) => s.id === id) : undefined;
+    const extras = id ? DEMO_STATION_EXTRAS[id] : undefined;
     const station: Station = {
       ...fields,
       // Left out: unchanged, as in the Worker.
@@ -891,9 +918,11 @@ export class DemoBackend implements Backend {
       id: id ?? crypto.randomUUID(),
       operatorName: operator.name,
       isOwn: operator.isOwn,
+      // Left out of the input: unchanged.
+      photos: input.photos ? cleanPhotos(input.photos) : (before?.photos ?? extras?.photos ?? []),
+      amenities: input.amenities ? cleanAmenities(input.amenities) : (before?.amenities ?? extras?.amenities ?? []),
     };
     if (id) {
-      const before = state.stations.find((s) => s.id === id);
       this.save(
         withAudit(
           { ...state, stations: state.stations.map((s) => (s.id === id ? station : s)) },
@@ -1359,8 +1388,14 @@ export class DemoBackend implements Backend {
     return {
       depots: (state.parcelDepots ?? seedDepots()).filter((d) => this.activeDepot(state, d.stationId)),
       sizes: state.parcelSizes ?? DEFAULT_PARCEL_SIZES,
-      driverSettings: state.driverSettings ?? DEFAULT_DRIVER_SETTINGS,
+      driverSettings: this.settingsOf(state),
+      bookableVehicles: this.bookableVehiclesOf(state),
     };
+  }
+
+  private bookableVehiclesOf(state: DemoState): BookableVehicleType[] {
+    const fleet = (state.fleet ?? seedFleet()).filter((v) => v.isActive);
+    return BOOKABLE_VEHICLE_TYPES.filter((type) => fleet.some((v) => v.type === type));
   }
 
   async myParcels(): Promise<Parcel[]> {
@@ -1642,7 +1677,7 @@ export class DemoBackend implements Backend {
   // Drivers ---------------------------------------------------------------------
 
   private settingsOf(state: DemoState): DriverSettings {
-    return state.driverSettings ?? DEFAULT_DRIVER_SETTINGS;
+    return state.driverSettings ? withAllVehicles(state.driverSettings) : DEFAULT_DRIVER_SETTINGS;
   }
 
   private depotPoints(state: DemoState) {
@@ -1676,6 +1711,7 @@ export class DemoBackend implements Backend {
       home: j.home,
       dropoff: j.dropoff ?? null,
       passengers: j.passengers ?? null,
+      vehicleType: j.vehicleType ?? null,
       size: j.size,
       weightKg: j.weightKg,
       content: j.content,
@@ -1736,6 +1772,7 @@ export class DemoBackend implements Backend {
       home: null,
       dropoff: null,
       passengers: null,
+      vehicleType: null,
       weightKg: null,
       content: "",
       collectFcfa: 0,
@@ -1790,7 +1827,7 @@ export class DemoBackend implements Backend {
     const stations = this.depotPoints(state);
     const tiers = state.parcelSizes ?? DEFAULT_PARCEL_SIZES;
     for (const job of [...jobs].filter((j) => j.status === "open").sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
-      const start = job.kind === "pickup" || job.kind === "ride" ? job.home : this.stationAt(state, job.fromStationId);
+      const start = job.kind === "pickup" || job.kind === "ride" || job.kind === "courier" ? job.home : this.stationAt(state, job.fromStationId);
       if (!start) continue;
       const entries = queue
         .filter((q) => !job.declined.includes(q.driverId))
@@ -1801,9 +1838,7 @@ export class DemoBackend implements Backend {
         })
         .filter((q) => q !== null);
       const weight = job.weightKg ?? tiers.find((t) => t.size === job.size)?.maxWeightKg ?? 50;
-      const pick = pickDriver(start, entries, stations, (type) =>
-        job.kind === "ride" ? vehicleSeats(type, job.passengers ?? 1) : vehicleFits(type, job.size, weight, s),
-      );
+      const pick = pickDriver(start, entries, stations, (type) => jobFits({ ...job, vehicleType: job.vehicleType ?? null, passengers: job.passengers ?? null }, type, weight, s));
       if (!pick) continue;
       queue = queue.filter((q) => q.driverId !== pick.driverId);
       jobs = jobs.map((j) =>
@@ -2087,17 +2122,22 @@ export class DemoBackend implements Backend {
     this.saveJobs(state, this.updateJob(state, job.id, ["at_door"], { status: "returning" }));
   }
 
+  /** Ride: the customer got on. Courier: the driver took the parcel and the fare in cash. */
   async boardRide(id: string) {
     const state = this.load();
-    const { job } = this.myDemoJob(state, id);
-    if (job.kind !== "ride") throw new BackendError("job_wrong_status");
-    this.saveJobs(state, this.updateJob(state, job.id, ["accepted"], { status: "picked_up", pickedUpAt: new Date().toISOString() }));
+    const { driver, job } = this.myDemoJob(state, id);
+    if (job.kind !== "ride" && job.kind !== "courier") throw new BackendError("job_wrong_status");
+    const jobs = this.updateJob(state, job.id, ["accepted"], { status: "picked_up", pickedUpAt: new Date().toISOString() });
+    if (job.kind === "ride") return this.saveJobs(state, jobs);
+    this.saveJobs(state, jobs, undefined, {
+      ledger: [this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null), ...(state.ledger ?? [])],
+    });
   }
 
   async finishRide(id: string) {
     const state = this.load();
     const { driver, job } = this.myDemoJob(state, id);
-    if (job.kind !== "ride") throw new BackendError("job_wrong_status");
+    if (job.kind !== "ride" && job.kind !== "courier") throw new BackendError("job_wrong_status");
     const jobs = this.updateJob(state, job.id, ["picked_up"], { status: "done", doneAt: new Date().toISOString() });
     this.saveJobs(
       state,
@@ -2106,7 +2146,8 @@ export class DemoBackend implements Backend {
       {
         greenpoint: this.tripGreenpoint(state, driver.userId, job, job.driverStationId),
         ledger: [
-          this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null),
+          // A courier was paid when the driver took the parcel.
+          ...(job.kind === "ride" ? [this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null)] : []),
           this.ledgerEntry(driver.userId, "earning", driverEarning(job.fareFcfa, this.settingsOf(state)), job.id, null),
           ...(state.ledger ?? []),
         ],
@@ -2177,9 +2218,7 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const profile = this.requireProfile(state);
     const pickup = this.cleanHome(input.pickup);
-    const d = input.dropoff;
-    if (!validPoint(d)) throw new BackendError("unknown", "no destination");
-    if (!inServiceArea(d)) throw new BackendError("outside_area");
+    const d = this.cleanDropoff(input.dropoff);
     if (!Number.isInteger(input.passengers) || input.passengers < 1 || input.passengers > MAX_PASSENGERS) throw new BackendError("unknown", "passengers");
     const done: JobStatus[] = ["done", "failed", "cancelled"];
     if ((state.jobs ?? []).some((j) => j.kind === "ride" && j.customerUserId === profile.id && !done.includes(j.status))) throw new BackendError("ride_open");
@@ -2188,7 +2227,7 @@ export class DemoBackend implements Backend {
     const job = this.newJob({
       kind: "ride",
       home: pickup,
-      dropoff: { lat: d.lat, lng: d.lng, note: (d.note ?? "").trim().slice(0, 300) },
+      dropoff: d,
       passengers: input.passengers,
       size: "S",
       distanceM,
@@ -2203,6 +2242,59 @@ export class DemoBackend implements Backend {
       rowId: job.id,
       userId: profile.id,
       changes: { kind: "ride", passengers: input.passengers, fare_fcfa: fare },
+    });
+    this.dispatch();
+    const saved = this.load();
+    return this.viewJob(saved, (saved.jobs ?? []).find((j) => j.id === job.id)!);
+  }
+
+  private cleanDropoff(d: DropoffPoint): DropoffPoint {
+    if (!validPoint(d)) throw new BackendError("unknown", "no destination");
+    if (!inServiceArea(d)) throw new BackendError("outside_area");
+    return { lat: d.lat, lng: d.lng, note: (d.note ?? "").trim().slice(0, 300) };
+  }
+
+  async bookCourier(input: CourierBooking): Promise<DeliveryJob> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const pickup = this.cleanHome(input.pickup);
+    const dropoff = this.cleanDropoff(input.dropoff);
+    if (!dropoff.note) throw new BackendError("unknown", "directions missing");
+    const recipientPhone = normalizeTogoPhone(input.recipientPhone ?? "");
+    if (!recipientPhone) throw new BackendError("phone_not_allowed");
+    const content = (input.content ?? "").trim().slice(0, 300);
+    if (!content) throw new BackendError("unknown", "content missing");
+    const tier = (state.parcelSizes ?? DEFAULT_PARCEL_SIZES).find((t) => t.size === input.size);
+    if (!tier) throw new BackendError("parcel_too_large");
+    const vehicleType = input.vehicleType ?? null;
+    if (vehicleType) {
+      if (!BOOKABLE_VEHICLE_TYPES.includes(vehicleType)) throw new BackendError("unknown", "vehicle");
+      if (!this.bookableVehiclesOf(state).includes(vehicleType)) throw new BackendError("vehicle_soon");
+      if (!vehicleFits(vehicleType, tier.size, tier.maxWeightKg, this.settingsOf(state))) throw new BackendError("parcel_too_large");
+    }
+    const distanceM = Math.round(distanceMeters(pickup, dropoff));
+    const fare = fareFor(distanceM, false, this.settingsOf(state));
+    const job = this.newJob({
+      kind: "courier",
+      vehicleType,
+      home: pickup,
+      dropoff,
+      size: tier.size,
+      weightKg: tier.maxWeightKg,
+      content,
+      recipient: { phone: recipientPhone, name: input.recipientName?.trim() || null },
+      distanceM,
+      fareFcfa: fare,
+      collectFcfa: fare,
+      customerUserId: profile.id,
+      customerName: profile.fullName,
+    });
+    this.saveJobs(state, [job, ...(state.jobs ?? [])], {
+      table: "delivery_jobs",
+      action: "insert",
+      rowId: job.id,
+      userId: profile.id,
+      changes: { kind: "courier", size: tier.size, vehicle_type: vehicleType, fare_fcfa: fare },
     });
     this.dispatch();
     const saved = this.load();
@@ -2587,7 +2679,9 @@ export class DemoBackend implements Backend {
     if (!d || d.status !== "active" || !vehicle?.isActive) throw new BackendError("driver_not_found");
     if (this.busyJob(state, driverId)) throw new BackendError("driver_busy");
     const weight = job.weightKg ?? (state.parcelSizes ?? DEFAULT_PARCEL_SIZES).find((t) => t.size === job.size)?.maxWeightKg ?? 50;
-    if (!vehicleFits(vehicle.type, job.size, weight, this.settingsOf(state))) throw new BackendError("vehicle_too_small");
+    if (!jobFits({ ...job, vehicleType: job.vehicleType ?? null, passengers: job.passengers ?? null }, vehicle.type, weight, this.settingsOf(state))) {
+      throw new BackendError("vehicle_too_small");
+    }
     const queued = (state.driverQueue ?? []).find((q) => q.driverId === driverId);
     this.saveJobs(
       state,
@@ -2810,6 +2904,78 @@ export class DemoBackend implements Backend {
         { table: "promotions", action: "delete", rowId: id, changes: { title: before.title } },
       ),
     );
+  }
+
+  // Reviews and photos -------------------------------------------------------------
+
+  private reviews(state: DemoState): DemoReview[] {
+    return state.reviews ?? demoReviews(new Date());
+  }
+
+  async stationReviews(stationId: string): Promise<StationReview[]> {
+    const state = this.load();
+    const me = state.profile?.id;
+    return this.reviews(state)
+      .filter((r) => r.stationId === stationId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((r) => ({
+        id: r.id,
+        stationId: r.stationId,
+        authorName: r.authorName,
+        rating: r.rating,
+        comment: r.comment,
+        createdAt: r.createdAt,
+        isMine: !!me && r.userId === me,
+      }));
+  }
+
+  async saveReview(stationId: string, input: ReviewInput) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const review = cleanReview(input);
+    if (!review) throw new BackendError("invalid_review");
+    if (!this.activeStations(state).some((s) => s.id === stationId)) throw new BackendError("station_not_found");
+    const others = this.reviews(state).filter((r) => !(r.stationId === stationId && r.userId === profile.id));
+    this.save({
+      ...state,
+      reviews: [
+        {
+          id: crypto.randomUUID(),
+          stationId,
+          userId: profile.id,
+          authorName: shortName(profile.fullName),
+          ...review,
+          createdAt: new Date().toISOString(),
+        },
+        ...others,
+      ],
+    });
+  }
+
+  async deleteReview(id: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const review = this.reviews(state).find((r) => r.id === id);
+    if (!review) return;
+    if (review.userId !== profile.id && profile.role !== "admin") throw new BackendError("forbidden");
+    const next = { ...state, reviews: this.reviews(state).filter((r) => r.id !== id) };
+    this.save(
+      review.userId === profile.id
+        ? next
+        : withAudit(next, {
+            table: "stations",
+            action: "update",
+            rowId: review.stationId,
+            stationId: review.stationId,
+            changes: { review_removed: { rating: review.rating, comment: review.comment } },
+          }),
+    );
+  }
+
+  async uploadStationPhoto(file: File): Promise<string> {
+    this.requireAdmin(this.load());
+    if (file.size > MAX_PROMO_IMAGE_BYTES / 4) throw new BackendError("image_too_large");
+    return readAsDataUrl(file);
   }
 
   /** The demo keeps images inline in browser storage, so they stay small. */

@@ -1,5 +1,6 @@
 import type { StationBatteryType } from "./battery-types";
 import type { ParcelDepotInput } from "./parcels";
+import type { Amenity, StationRating } from "./station-extras";
 
 export type VehicleType = "scooter" | "tricycle" | "ebike" | "moped";
 /** Battery services of a station; "parcel" = neither swap nor charging, a parcel point only. See station-points.ts. */
@@ -28,6 +29,10 @@ export interface Station {
   phone: string | null;
   /** Charges with solar power: only here do swaps and charges earn greenpoints. */
   isSolar: boolean;
+  /** Photo URLs set in the backoffice; the first is the cover. Missing on data saved before photos existed. */
+  photos?: string[];
+  /** Places to rest and services at the station (see station-extras.ts). */
+  amenities?: Amenity[];
 }
 
 export interface StationStatus {
@@ -61,6 +66,8 @@ export interface StationView extends Station {
   parcelPoint?: ParcelPoint | null;
   /** Battery types the swap point swaps (active types only in the app). */
   batteryTypes?: StationBatteryType[];
+  /** Average stars and number of customer reviews. */
+  rating?: StationRating;
 }
 
 export interface ParcelPoint {
@@ -117,6 +124,10 @@ export interface StationInput {
   parcelDepot?: ParcelDepotInput;
   /** Ids of the battery types the swap point swaps, saved with the station. Left out: unchanged. */
   batteryTypeIds?: string[];
+  /** Photo URLs (first = cover). Left out: unchanged. */
+  photos?: string[];
+  /** Left out: unchanged. */
+  amenities?: Amenity[];
 }
 
 export interface Operator {

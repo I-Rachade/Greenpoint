@@ -38,9 +38,11 @@ import type {
   HomePoint,
   PickupBooking,
   RideBooking,
+  CourierBooking,
   StationDrivers,
 } from "../drivers";
 import type { FleetStats, FleetView } from "../fleet";
+import type { ReviewInput, StationReview } from "../station-extras";
 import type { LatLng } from "../geo";
 import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
 
@@ -101,6 +103,7 @@ export type BackendErrorCode =
   | "wait_longer"
   | "photo_missing"
   | "ride_open"
+  | "vehicle_soon"
   | "vehicle_unavailable"
   | "vehicle_too_small"
   | "has_other_role"
@@ -132,6 +135,7 @@ export type BackendErrorCode =
   | "greenpoint_daily_limit"
   | "greenpoint_fleet_driver"
   | "greenpoint_not_solar"
+  | "invalid_review"
   | "unknown";
 
 export class BackendError extends Error {
@@ -176,6 +180,16 @@ export interface Backend {
   sendDeleteCode(channel: CodeChannel): Promise<void>;
   /** Deletes the signed-in user's account for good, after checking the code. */
   deleteAccount(channel: CodeChannel, code: string): Promise<void>;
+
+  // Reviews and photos (see src/lib/station-extras.ts)
+  /** Customer reviews of a station, newest first. Public; `isMine` marks the signed-in user's own. */
+  stationReviews(stationId: string): Promise<StationReview[]>;
+  /** Rates a station 1 to 5 stars with an optional comment; one review per customer and station (a new one replaces the old). */
+  saveReview(stationId: string, input: ReviewInput): Promise<void>;
+  /** The author deletes their review, or an admin removes one. */
+  deleteReview(id: string): Promise<void>;
+  /** Stores a station photo and returns its public URL (admins only). */
+  uploadStationPhoto(file: File): Promise<string>;
 
   // Customer
   myReservations(): Promise<Reservation[]>;
@@ -290,6 +304,8 @@ export interface Backend {
   bookPickup(input: PickupBooking): Promise<DeliveryJob>;
   /** A driver takes the customer from A to B; one open ride at a time. */
   bookRide(input: RideBooking): Promise<DeliveryJob>;
+  /** Express parcel: a driver takes it at the sender's door straight to the recipient's door. */
+  bookCourier(input: CourierBooking): Promise<DeliveryJob>;
   /** The recipient has a waiting parcel brought home; the driver gets the pickup right. */
   bookDelivery(parcelId: string, home: HomePoint): Promise<DeliveryJob>;
   /** Customer (before the driver has the parcel) or admin. */

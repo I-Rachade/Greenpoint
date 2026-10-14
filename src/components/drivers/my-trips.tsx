@@ -1,66 +1,109 @@
 "use client";
 
-import { useState, type ComponentType } from "react";
+import Link from "next/link";
+import type { ComponentType } from "react";
+import { DEFAULT_DRIVER_SETTINGS, type BookableVehicleType } from "@/lib/drivers";
+import { format } from "@/lib/i18n/format";
 import { useLiveQuery } from "@/lib/hooks";
 import { useApp } from "../app-provider";
-import { BoxIcon, ScooterIcon } from "../icons";
+import { BackIcon, CargoTricycleIcon, ScooterIcon } from "../icons";
 import { useI18n } from "../i18n-provider";
-import { BookPickup, BookRide, MyJobs } from "./customer-jobs";
+import { BookCourier, MyJobs } from "./customer-jobs";
 
-type Choice = "ride" | "order";
-
-/** A big tile that picks what the customer wants a driver for. */
-function ChoiceTile({
+/** A big tile that leads to one way of getting or sending something; greyed out with `soon` until it is available. */
+export function ChoiceTile({
+  href,
   icon: Icon,
   label,
   hint,
-  selected,
-  onClick,
+  soon,
 }: {
+  href: string;
   icon: ComponentType<{ size?: number }>;
   label: string;
   hint: string;
-  selected: boolean;
-  onClick: () => void;
+  soon?: string;
 }) {
+  if (soon) {
+    return (
+      <div
+        aria-disabled
+        className="flex min-h-32 flex-col items-center justify-center gap-1.5 rounded-2xl bg-gp-forest/40 p-3 text-center text-white/80 shadow-sm dark:bg-white/10"
+      >
+        <Icon size={36} />
+        <span className="text-base font-semibold leading-tight">{label}</span>
+        <span className="text-xs">{soon}</span>
+      </div>
+    );
+  }
   return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onClick}
-      className={`flex min-h-32 flex-col items-center justify-center gap-1.5 rounded-2xl p-3 text-center shadow-sm active:scale-[0.99] ${
-        selected ? "bg-gp-forest text-white ring-2 ring-gp-green ring-offset-2 dark:ring-offset-zinc-900" : "bg-gp-forest/90 text-white"
-      }`}
+    <Link
+      href={href}
+      className="flex min-h-32 flex-col items-center justify-center gap-1.5 rounded-2xl bg-gp-forest p-3 text-center text-white shadow-sm active:scale-[0.99]"
     >
       <Icon size={36} />
       <span className="text-base font-semibold leading-tight">{label}</span>
       <span className="text-xs text-white/75">{hint}</span>
-    </button>
+    </Link>
   );
 }
 
-/** "Courses" tab: take a ride or have a parcel picked up at home, and follow your trips. */
+/** Back to the page with the tiles. */
+export function BackTo({ href }: { href: string }) {
+  const { t } = useI18n();
+  return (
+    <Link href={href} className="-ml-1 inline-flex items-center gap-1 text-sm text-gp-green-dark dark:text-gp-green">
+      <BackIcon size={18} />
+      {t.ui.back}
+    </Link>
+  );
+}
+
+/** "Courses" tab: pick a vehicle, then order the delivery on its page; your deliveries below. */
 export function MyTrips() {
   const { t } = useI18n();
   const { backend } = useApp();
-  const [choice, setChoice] = useState<Choice | null>(null);
   const { data } = useLiveQuery(() => Promise.all([backend.myJobs(), backend.listStations(), backend.parcelInfo()]));
-
-  if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
-  const [jobs, stations, info] = data;
-  const toggle = (c: Choice) => setChoice((current) => (current === c ? null : c));
+  const orders = data?.[0].filter((j) => j.kind === "courier") ?? [];
+  const settings = data?.[2].driverSettings ?? DEFAULT_DRIVER_SETTINGS;
+  // Until we know, every vehicle shows as available.
+  const soon = (type: BookableVehicleType) => (data && !data[2].bookableVehicles.includes(type) ? t.ui.trips.soon : undefined);
+  const hint = (type: BookableVehicleType) => {
+    const limit = settings.vehicles.find((v) => v.type === type);
+    return limit ? format(t.ui.trips.upTo, { size: limit.maxSize, kg: limit.maxWeightKg }) : "";
+  };
+  const tile = (type: BookableVehicleType, slug: string, icon: ComponentType<{ size?: number }>) => (
+    <ChoiceTile href={`/courses/${slug}`} icon={icon} label={t.ui.trips[type]} hint={hint(type)} soon={soon(type)} />
+  );
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
       <h1 className="text-2xl font-semibold">{t.ui.trips.title}</h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.ui.trips.intro}</p>
       <div className="grid grid-cols-2 gap-3">
-        <ChoiceTile icon={ScooterIcon} label={t.ui.trips.ride} hint={t.ui.trips.rideHint} selected={choice === "ride"} onClick={() => toggle("ride")} />
-        <ChoiceTile icon={BoxIcon} label={t.ui.trips.order} hint={t.ui.trips.orderHint} selected={choice === "order"} onClick={() => toggle("order")} />
+        {tile("moto", "moto", ScooterIcon)}
+        {tile("cargo_tricycle", "tricycle-bagage", CargoTricycleIcon)}
       </div>
-      {choice === "ride" && <BookRide info={info} />}
-      {choice === "order" && <BookPickup info={info} stations={stations} open />}
-      <MyJobs jobs={jobs} stations={stations} />
+      {data && <MyJobs jobs={orders} stations={data[1]} title={t.ui.trips.mine} />}
+    </div>
+  );
+}
+
+/** Orders a delivery with the vehicle picked on the "Courses" tab. */
+export function OrderPage({ vehicle }: { vehicle: BookableVehicleType }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { data: info } = useLiveQuery(() => backend.parcelInfo());
+  return (
+    <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
+      <BackTo href="/courses" />
+      {!info ? (
+        <p className="text-sm text-zinc-500">{t.loading}</p>
+      ) : info.bookableVehicles.includes(vehicle) ? (
+        <BookCourier info={info} vehicle={vehicle} />
+      ) : (
+        <p className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">{t.errors.vehicle_soon}</p>
+      )}
     </div>
   );
 }

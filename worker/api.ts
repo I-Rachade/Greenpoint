@@ -1,5 +1,7 @@
 import { offersCharging, offersSwap, withinOpeningHours } from "../src/lib/availability";
 import { depotPoints, hasAnyPoint } from "../src/lib/station-points";
+import { cleanAmenities, cleanPhotos, type ReviewInput } from "../src/lib/station-extras";
+import { deleteReview, saveReview, stationReviews } from "./reviews";
 import type { BatteryTypeInput } from "../src/lib/battery-types";
 import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements, typeBatteryStatements } from "./battery-types";
 import {
@@ -87,6 +89,7 @@ import {
   bookDelivery,
   bookPickup,
   bookRide,
+  bookCourier,
   cancelJob,
   collectPickup,
   declineJob,
@@ -109,7 +112,7 @@ import {
   uploadDriverDocument,
   uploadProof,
 } from "./drivers";
-import type { DriverApplication, DriverDecision, FleetVehicleInput, PickupBooking, RideBooking } from "../src/lib/drivers";
+import type { DriverApplication, DriverDecision, FleetVehicleInput, PickupBooking, RideBooking, CourierBooking } from "../src/lib/drivers";
 import { fleetAssign, fleetStats, fleetView, setDriverManager } from "./fleet";
 import type { PartnerInput } from "../src/lib/partners";
 import { PARTNER_API_BASE } from "../src/lib/partners";
@@ -177,6 +180,11 @@ interface StationRow {
   depot_active: number | null;
   depot_counter: number | null;
   depot_lockers: number | null;
+  /** JSON arrays; missing before migration 0021. */
+  photos?: string;
+  amenities?: string;
+  rating_avg: number | null;
+  rating_count: number;
 }
 
 interface ReservationRow {
@@ -239,7 +247,18 @@ function toStationView(r: StationRow): StationView & { isActive: boolean } {
     reservedSlots: r.reserved_slots,
     reservedBatteries: r.reserved_batteries,
     parcelPoint: r.depot_active ? { counter: r.depot_counter !== 0, lockers: r.depot_lockers ?? 0 } : null,
+    photos: cleanPhotos(parseJson(r.photos)),
+    amenities: cleanAmenities(parseJson(r.amenities)),
+    rating: { average: r.rating_avg ? Math.round(r.rating_avg * 10) / 10 : 0, count: r.rating_count ?? 0 },
   };
+}
+
+function parseJson(text: string | undefined): unknown {
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return null;
+  }
 }
 
 function toReservation(r: ReservationRow, withCode: boolean): Reservation {
@@ -277,7 +296,9 @@ const STATION_SELECT = `
          st.is_open, st.free_slots, st.full_batteries, st.updated_at,
          pd.is_active as depot_active, pd.has_counter as depot_counter, pd.lockers as depot_lockers,
          (select count(*) from reservations r where r.station_id = s.id and r.status = 'active' and r.expires_at > ?1 and r.type = 'slot') as reserved_slots,
-         (select count(*) from reservations r where r.station_id = s.id and r.status = 'active' and r.expires_at > ?1 and r.type = 'battery') as reserved_batteries
+         (select count(*) from reservations r where r.station_id = s.id and r.status = 'active' and r.expires_at > ?1 and r.type = 'battery') as reserved_batteries,
+         (select avg(rating) from station_reviews sr where sr.station_id = s.id) as rating_avg,
+         (select count(*) from station_reviews sr where sr.station_id = s.id) as rating_count
   from stations s
   left join operators o on o.id = s.operator_id
   left join station_status st on st.station_id = s.id
@@ -615,9 +636,6 @@ function stationRow(input: StationInput) {
   };
 }
 
-/** is_solar from the input; null when left out (update keeps it, insert takes 0). */
-const solarValue = (input: StationInput) => (input.isSolar === undefined ? null : input.isSolar ? 1 : 0);
-
 /** Charging places of station ?{station}: its connected outlets. */
 const CONNECTED_OUTLETS_SQL = (station: string) =>
   `(select count(*) from charging_points where station_id = ${station} and device_id is not null)`;
@@ -629,7 +647,6 @@ const CONNECTED_OUTLETS_SQL = (station: string) =>
 async function saveStation(c: Ctx, id: string | null, input: StationInput) {
   const admin = await c.requireAdmin();
   const row = stationRow(input);
-  const solar = solarValue(input);
   const depotInput = input.parcelDepot ?? null;
   const existingDepot = id
     ? await c.db.prepare("select is_active, has_counter, lockers from parcel_depots where station_id = ?").bind(id).first<{ is_active: number; has_counter: number | null; lockers: number }>()
@@ -645,10 +662,20 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
   const types = input.batteryTypeIds
     ? await stationBatteryTypeStatements(c.db, stationId, input.batteryTypeIds, offersSwap(input.kind))
     : null;
+  // Photos, amenities and the solar mark: left out of the input means unchanged (a new station is not solar).
+  const extras = {
+    // Data URLs are for the demo only; real photos live in R2.
+    ...(input.photos ? { photos: JSON.stringify(cleanPhotos(input.photos).filter((u) => !u.startsWith("data:"))) } : {}),
+    ...(input.amenities ? { amenities: JSON.stringify(cleanAmenities(input.amenities)) } : {}),
+    ...(input.isSolar !== undefined ? { is_solar: input.isSolar ? 1 : 0 } : {}),
+  };
+  const extraStatements = Object.entries(extras).map(([column, value]) =>
+    c.db.prepare(`update stations set ${column} = ? where id = ?`).bind(value, stationId),
+  );
   if (id) {
     const before = await c.db
       .prepare(
-        "select operator_id, name, address, lat, lng, kind, has_battery, vehicle_types, battery_capacity, opening_hours, phone, is_solar from stations where id = ?",
+        "select operator_id, name, address, lat, lng, kind, has_battery, vehicle_types, battery_capacity, opening_hours, phone, photos, amenities, is_solar from stations where id = ?",
       )
       .bind(id)
       .first<Record<string, unknown>>();
@@ -657,20 +684,13 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
       c.db
         .prepare(
           `update stations set operator_id = ?, name = ?, address = ?, lat = ?, lng = ?, kind = ?, has_battery = ?, vehicle_types = ?,
-           battery_capacity = ?, opening_hours = ?, phone = ?, is_solar = coalesce(?, is_solar),
-           charging_slots = ${CONNECTED_OUTLETS_SQL("stations.id")} where id = ?`,
+           battery_capacity = ?, opening_hours = ?, phone = ?, charging_slots = ${CONNECTED_OUTLETS_SQL("stations.id")} where id = ?`,
         )
-        .bind(...Object.values(row), solar, id),
-      c.audit(
-        admin.id,
-        "stations",
-        "update",
-        id,
-        { ...diff(before, solar === null ? row : { ...row, is_solar: solar }), ...(types ? { battery_types: types.labels } : {}) },
-        { stationId: id },
-      ),
+        .bind(...Object.values(row), id),
+      c.audit(admin.id, "stations", "update", id, { ...diff(before, { ...row, ...extras }), ...(types ? { battery_types: types.labels } : {}) }, { stationId: id }),
       ...(depotInput ? await depotStatements(c, admin.id, id, depotInput) : []),
       ...(types?.statements ?? []),
+      ...extraStatements,
     ]);
     return;
   }
@@ -679,16 +699,17 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
     c.db
       .prepare(
         `insert into stations (id, operator_id, name, address, lat, lng, kind, has_battery, vehicle_types,
-         battery_capacity, opening_hours, phone, is_solar, charging_slots, is_active, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?)`,
+         battery_capacity, opening_hours, phone, charging_slots, is_active, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?)`,
       )
-      .bind(newId, ...Object.values(row), solar ?? 0, now),
+      .bind(newId, ...Object.values(row), now),
     // No connected socket yet, so no free charging place.
     c.db
       .prepare("insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values (?, 1, 0, ?, ?)")
       .bind(newId, row.battery_capacity, now),
-    c.audit(admin.id, "stations", "insert", newId, { ...row, is_solar: solar ?? 0, ...(types ? { battery_types: types.labels } : {}) }, { stationId: newId }),
+    c.audit(admin.id, "stations", "insert", newId, { ...row, ...extras, ...(types ? { battery_types: types.labels } : {}) }, { stationId: newId }),
     ...(depotInput ? await depotStatements(c, admin.id, newId, depotInput) : []),
     ...(types?.statements ?? []),
+    ...extraStatements,
   ]);
 }
 
@@ -1186,7 +1207,8 @@ async function uploadImage(c: Ctx) {
   const body = await c.request.arrayBuffer();
   if (body.byteLength > MAX_PROMO_IMAGE_BYTES) throw new ApiError("image_too_large", 413);
   if (!body.byteLength) throw new ApiError("bad_request");
-  const key = `promotions/${uuid()}.${ext}`;
+  const folder = c.url.searchParams.get("folder") === "stations" ? "stations" : "promotions";
+  const key = `${folder}/${uuid()}.${ext}`;
   await c.env.MEDIA.put(key, body, { httpMetadata: { contentType: type, cacheControl: "public, max-age=31536000, immutable" } });
   const local = c.url.hostname === "localhost" || c.url.hostname === "127.0.0.1";
   return { url: `${local ? c.url.origin : `https://${c.url.host}`}/api/media/${key}` };
@@ -1210,6 +1232,24 @@ type Handler = (c: Ctx, params: string[]) => Promise<unknown>;
 const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/stations$/, (c) => publicStations(c)],
   ["GET", /^\/api\/operators$/, (c) => listOperators(c)],
+  ["GET", /^\/api\/stations\/([\w-]+)\/reviews$/, async (c, [id]) => stationReviews(c.db, id, await c.user())],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/reviews$/,
+    async (c, [id]) => {
+      await saveReview(c.db, await c.requireUser(), id, await readJson<ReviewInput>(c.request));
+      return { ok: true };
+    },
+  ],
+  [
+    "DELETE",
+    /^\/api\/reviews\/([\w-]+)$/,
+    async (c, [id]) => {
+      const user = await c.requireUser();
+      await deleteReview(c.db, user, id, (stationId, changes) => c.audit(user.id, "stations", "update", stationId, changes, { stationId }));
+      return { ok: true };
+    },
+  ],
   ["GET", /^\/api\/me$/, (c) => c.user()],
   // Auth bodies name the phone number or e-mail address "contact"; "phone" is the
   // older name, still sent by app versions released before e-mail login.
@@ -1510,6 +1550,7 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/jobs\/mine$/, (c) => myJobs(c)],
   ["POST", /^\/api\/jobs\/pickup$/, async (c) => bookPickup(c, await readJson<PickupBooking>(c.request))],
   ["POST", /^\/api\/jobs\/ride$/, async (c) => bookRide(c, await readJson<RideBooking>(c.request))],
+  ["POST", /^\/api\/jobs\/courier$/, async (c) => bookCourier(c, await readJson<CourierBooking>(c.request))],
   ["POST", /^\/api\/parcels\/([\w-]+)\/delivery$/, async (c, [id]) => bookDelivery(c, id, (await readJson<{ home: unknown }>(c.request)).home)],
   ["POST", /^\/api\/jobs\/([\w-]+)\/cancel$/, (c, [id]) => cancelJob(c, id)],
   ["GET", /^\/api\/stations\/([\w-]+)\/drivers$/, (c, [id]) => stationDrivers(c, id)],
