@@ -1,5 +1,6 @@
 import type { BatteryType } from "../battery-types";
 import type { ChargingPoint, Operator, Station, StationStatus } from "../types";
+import type { Amenity } from "../station-extras";
 
 // Example stations in Lomé (approximate positions).
 export const DEMO_OPERATORS: Operator[] = [
@@ -212,3 +213,46 @@ export const DEMO_STATION_BATTERY_TYPES: Record<string, string[]> = {
   "st-be": ["bt-ovt-60"],
   "st-agoe": ["bt-ovt-60", "bt-ovt-72"],
 };
+
+/** Photos (illustrations in public/station-photos) and amenities of the demo stations. */
+export const DEMO_STATION_EXTRAS: Record<string, { photos: string[]; amenities: Amenity[] }> = {
+  "st-grand-marche": {
+    photos: ["/station-photos/hub.svg", "/station-photos/rest.svg", "/station-photos/swap.svg"],
+    amenities: ["seating", "shade", "toilets", "drinks", "food", "phone_charging"],
+  },
+  "st-tokoin": { photos: ["/station-photos/swap.svg", "/station-photos/rest.svg"], amenities: ["seating", "shade", "water", "shop"] },
+  "st-universite": {
+    photos: ["/station-photos/charging.svg", "/station-photos/rest.svg"],
+    amenities: ["seating", "shade", "wifi", "phone_charging", "drinks"],
+  },
+  "st-be": { photos: ["/station-photos/hub.svg"], amenities: ["shade", "food", "parking"] },
+  "st-agoe": { photos: ["/station-photos/swap.svg"], amenities: ["seating", "toilets", "water", "parking"] },
+  "st-hedzranawoe": { photos: ["/station-photos/charging.svg"], amenities: ["parking"] },
+  "st-deckon": { photos: ["/station-photos/charging.svg", "/station-photos/rest.svg"], amenities: ["seating", "shade", "wifi", "drinks"] },
+  "st-colis-adewui": { photos: ["/station-photos/parcel.svg"], amenities: ["shop"] },
+};
+
+export interface DemoReview {
+  id: string;
+  stationId: string;
+  userId: string;
+  authorName: string | null;
+  rating: number;
+  comment: string;
+  createdAt: string;
+}
+
+/** A few example reviews, dated relative to `now`. */
+export function demoReviews(now: Date): DemoReview[] {
+  const daysAgo = (d: number) => new Date(now.getTime() - d * 86_400_000).toISOString();
+  return [
+    { id: "rv-1", stationId: "st-grand-marche", userId: "demo-u-1", authorName: "Kossi M.", rating: 5, comment: "Échange rapide, personnel accueillant. On attend à l'ombre avec une boisson fraîche.", createdAt: daysAgo(1) },
+    { id: "rv-2", stationId: "st-grand-marche", userId: "demo-u-2", authorName: "Afi D.", rating: 4, comment: "Toujours des batteries pleines le matin. Un peu de monde vers midi.", createdAt: daysAgo(4) },
+    { id: "rv-3", stationId: "st-grand-marche", userId: "demo-u-3", authorName: "Yao A.", rating: 5, comment: "Les bancs et les toilettes sont propres, pratique pendant la recharge.", createdAt: daysAgo(9) },
+    { id: "rv-4", stationId: "st-tokoin", userId: "demo-u-1", authorName: "Kossi M.", rating: 4, comment: "Bon accueil, échange en deux minutes.", createdAt: daysAgo(2) },
+    { id: "rv-5", stationId: "st-universite", userId: "demo-u-4", authorName: "Mawuli K.", rating: 5, comment: "Le wifi permet de travailler pendant que le scooter charge.", createdAt: daysAgo(3) },
+    { id: "rv-6", stationId: "st-universite", userId: "demo-u-2", authorName: "Afi D.", rating: 4, comment: "", createdAt: daysAgo(12) },
+    { id: "rv-7", stationId: "st-deckon", userId: "demo-u-3", authorName: "Yao A.", rating: 3, comment: "Prises en direct très pratiques, mais seulement deux places.", createdAt: daysAgo(6) },
+    { id: "rv-8", stationId: "st-agoe", userId: "demo-u-4", authorName: "Mawuli K.", rating: 4, comment: "Grand parking, facile d'accès.", createdAt: daysAgo(5) },
+  ];
+}

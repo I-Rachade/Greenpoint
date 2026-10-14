@@ -31,6 +31,7 @@ import type {
   CourierBooking,
   StationDrivers,
 } from "../drivers";
+import type { ReviewInput, StationReview } from "../station-extras";
 import type { FleetStats, FleetView } from "../fleet";
 import type { LatLng } from "../geo";
 import type {
@@ -121,6 +122,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "not_enough_points",
   "greenpoint_daily_limit",
   "greenpoint_fleet_driver",
+  "invalid_review",
 ];
 
 /**
@@ -715,6 +717,25 @@ export class CloudflareBackend implements Backend {
   async deletePromotion(id: string) {
     await this.call("DELETE", `/api/admin/promotions/${encodeURIComponent(id)}`);
     this.changed();
+  }
+
+  stationReviews(stationId: string) {
+    return this.call<StationReview[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/reviews`);
+  }
+
+  async saveReview(stationId: string, input: ReviewInput) {
+    await this.call("POST", `/api/stations/${encodeURIComponent(stationId)}/reviews`, input);
+    this.changed();
+  }
+
+  async deleteReview(id: string) {
+    await this.call("DELETE", `/api/reviews/${encodeURIComponent(id)}`);
+    this.changed();
+  }
+
+  async uploadStationPhoto(file: File) {
+    const { url } = await this.call<{ url: string }>("POST", "/api/admin/media?folder=stations", file);
+    return url;
   }
 
   async uploadPromotionImage(file: File) {

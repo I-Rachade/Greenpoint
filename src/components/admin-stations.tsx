@@ -11,6 +11,7 @@ import { batteryTypeLabel, groupByBrand, type BatteryType } from "@/lib/battery-
 import { hasAnyPoint, kindFor } from "@/lib/station-points";
 import { VEHICLE_TYPES, type StationInput, type StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
+import { StationMediaFields, StationReviewsAdmin } from "./backoffice/station-media";
 import { BatteryIcon, BoltIcon, BoxIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 
@@ -54,6 +55,8 @@ function toInput(s: StationView): StationInput {
     batteryCapacity: s.batteryCapacity,
     openingHours: s.openingHours,
     phone: s.phone,
+    photos: s.photos ?? [],
+    amenities: s.amenities ?? [],
   };
 }
 
@@ -105,6 +108,7 @@ function PointSection({
 }
 
 function StationForm({
+  stationId,
   initial,
   operators,
   sockets,
@@ -113,6 +117,8 @@ function StationForm({
   onSave,
   onCancel,
 }: {
+  /** Null for a new station. */
+  stationId: string | null;
   initial: FormState;
   operators: { id: string; name: string }[];
   /** All battery types; switched-off ones only show while still ticked. */
@@ -343,6 +349,14 @@ function StationForm({
         )}
       </div>
 
+      <StationMediaFields
+        photos={form.input.photos ?? []}
+        amenities={form.input.amenities ?? []}
+        onPhotos={(photos) => set("photos", photos)}
+        onAmenities={(amenities) => set("amenities", amenities)}
+      />
+      {stationId && <StationReviewsAdmin stationId={stationId} />}
+
       {(form.swap || form.charging) && (
         <fieldset className="space-y-1 text-sm sm:col-span-2">
           <legend>{t.admin.vehicles}</legend>
@@ -560,6 +574,8 @@ export function AdminStations() {
     batteryCapacity: 0,
     openingHours: "",
     phone: null,
+    photos: [],
+    amenities: [],
   };
 
   return (
@@ -584,6 +600,7 @@ export function AdminStations() {
       />
       {editing === "new" && (
         <StationForm
+          stationId={null}
           initial={toForm(blank, undefined)}
           operators={operators}
           sockets={[]}
@@ -598,6 +615,7 @@ export function AdminStations() {
           editing === s.id ? (
             <li key={s.id}>
               <StationForm
+                stationId={s.id}
                 initial={toForm(
                   toInput(s),
                   depotOf(s.id),

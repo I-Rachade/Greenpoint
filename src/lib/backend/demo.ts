@@ -16,7 +16,19 @@ import {
   type VehicleType,
 } from "../types";
 import { BackendError, type Backend, type CodeChannel, type StatusPatch } from "./backend";
-import { DEMO_CHARGING_POINTS, DEMO_OPERATORS, DEMO_STATIONS, demoSocketPoints, initialDemoStatus, DEMO_BATTERY_TYPES, DEMO_STATION_BATTERY_TYPES } from "./demo-data";
+import {
+  DEMO_CHARGING_POINTS,
+  DEMO_OPERATORS,
+  DEMO_STATIONS,
+  demoSocketPoints,
+  initialDemoStatus,
+  DEMO_BATTERY_TYPES,
+  DEMO_STATION_BATTERY_TYPES,
+  DEMO_STATION_EXTRAS,
+  demoReviews,
+  type DemoReview,
+} from "./demo-data";
+import { cleanAmenities, cleanPhotos, cleanReview, ratingOf, shortName, type ReviewInput, type StationReview } from "../station-extras";
 import { depotPoints, hasAnyPoint, kindFor } from "../station-points";
 import { validBatteryType, type BatteryType, type BatteryTypeInput } from "../battery-types";
 import { DEMO_STAFF, demoHistory, demoUsers } from "../admin/demo-seed";
@@ -216,6 +228,8 @@ interface DemoState {
   parcelsEnabled?: boolean;
   /** Demo PINs by phone number or e-mail address (stored in clear: demo only). */
   pins?: Record<string, string>;
+  /** Customer reviews (missing = the example reviews). */
+  reviews?: DemoReview[];
 }
 
 interface DemoWallet {
@@ -536,6 +550,7 @@ export class DemoBackend implements Backend {
 
   private views(state: DemoState, stations: Station[]): StationView[] {
     const seen = new Date().toISOString();
+    const reviews = this.reviews(state);
     return stations.map((s) => {
       let status = state.statuses.find((st) => st.stationId === s.id)!;
       // Pretend staff report regularly, so an old demo session does not turn grey.
@@ -559,8 +574,12 @@ export class DemoBackend implements Backend {
         .filter((t) => swapped.includes(t.id))
         .sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name))
         .map((t) => ({ ...t, fullBatteries: counts[t.id] ?? 0 }));
+      const extras = DEMO_STATION_EXTRAS[s.id];
       return {
         ...s,
+        photos: s.photos ?? extras?.photos ?? [],
+        amenities: s.amenities ?? extras?.amenities ?? [],
+        rating: ratingOf(reviews.filter((r) => r.stationId === s.id)),
         chargingSlots,
         status: { ...status, freeSlots: Math.min(status.freeSlots, chargingSlots) },
         reservedSlots: held.slots,
@@ -707,6 +726,7 @@ export class DemoBackend implements Backend {
       pins,
       users: (state.users ?? []).filter((u) => u.id !== profile.id),
       reservations: state.reservations.filter((r) => r.userId !== profile.id),
+      reviews: this.reviews(state).filter((r) => r.userId !== profile.id),
     });
   }
 
@@ -889,14 +909,18 @@ export class DemoBackend implements Backend {
     if (!hasAnyPoint({ swap: offersSwap(input.kind), charging: offersCharging(input.kind), ...depot })) {
       throw new BackendError("station_without_point");
     }
+    const before = id ? state.stations.find((s) => s.id === id) : undefined;
+    const extras = id ? DEMO_STATION_EXTRAS[id] : undefined;
     const station: Station = {
       ...fields,
       id: id ?? crypto.randomUUID(),
       operatorName: operator.name,
       isOwn: operator.isOwn,
+      // Left out of the input: unchanged.
+      photos: input.photos ? cleanPhotos(input.photos) : (before?.photos ?? extras?.photos ?? []),
+      amenities: input.amenities ? cleanAmenities(input.amenities) : (before?.amenities ?? extras?.amenities ?? []),
     };
     if (id) {
-      const before = state.stations.find((s) => s.id === id);
       this.save(
         withAudit(
           { ...state, stations: state.stations.map((s) => (s.id === id ? station : s)) },
@@ -2878,6 +2902,78 @@ export class DemoBackend implements Backend {
         { table: "promotions", action: "delete", rowId: id, changes: { title: before.title } },
       ),
     );
+  }
+
+  // Reviews and photos -------------------------------------------------------------
+
+  private reviews(state: DemoState): DemoReview[] {
+    return state.reviews ?? demoReviews(new Date());
+  }
+
+  async stationReviews(stationId: string): Promise<StationReview[]> {
+    const state = this.load();
+    const me = state.profile?.id;
+    return this.reviews(state)
+      .filter((r) => r.stationId === stationId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((r) => ({
+        id: r.id,
+        stationId: r.stationId,
+        authorName: r.authorName,
+        rating: r.rating,
+        comment: r.comment,
+        createdAt: r.createdAt,
+        isMine: !!me && r.userId === me,
+      }));
+  }
+
+  async saveReview(stationId: string, input: ReviewInput) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const review = cleanReview(input);
+    if (!review) throw new BackendError("invalid_review");
+    if (!this.activeStations(state).some((s) => s.id === stationId)) throw new BackendError("station_not_found");
+    const others = this.reviews(state).filter((r) => !(r.stationId === stationId && r.userId === profile.id));
+    this.save({
+      ...state,
+      reviews: [
+        {
+          id: crypto.randomUUID(),
+          stationId,
+          userId: profile.id,
+          authorName: shortName(profile.fullName),
+          ...review,
+          createdAt: new Date().toISOString(),
+        },
+        ...others,
+      ],
+    });
+  }
+
+  async deleteReview(id: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const review = this.reviews(state).find((r) => r.id === id);
+    if (!review) return;
+    if (review.userId !== profile.id && profile.role !== "admin") throw new BackendError("forbidden");
+    const next = { ...state, reviews: this.reviews(state).filter((r) => r.id !== id) };
+    this.save(
+      review.userId === profile.id
+        ? next
+        : withAudit(next, {
+            table: "stations",
+            action: "update",
+            rowId: review.stationId,
+            stationId: review.stationId,
+            changes: { review_removed: { rating: review.rating, comment: review.comment } },
+          }),
+    );
+  }
+
+  async uploadStationPhoto(file: File): Promise<string> {
+    this.requireAdmin(this.load());
+    if (file.size > MAX_PROMO_IMAGE_BYTES / 4) throw new BackendError("image_too_large");
+    return readAsDataUrl(file);
   }
 
   /** The demo keeps images inline in browser storage, so they stay small. */
