@@ -1654,5 +1654,31 @@ export const en: Dictionary = {
       confirmRemove: "Delete this review for good?",
     },
   },
-  loading: "Loading…",
+  loading: "Loading…",  phase1b: {
+    greenpoint: {
+      confirmTitle: "Use “{reward}”?",
+      confirmText: "A code valid for {minutes} min will be created. {n} greenpoints are taken when staff enter it (you will have {left} left).",
+      expiresIn: "Expires in",
+      expired: "This code has expired. Your greenpoints were not used; you can ask for a new code.",
+    },
+    courier: {
+      stepsLabel: "Booking steps",
+      stepPickup: "Pickup",
+      stepDropoff: "Destination",
+      stepParcel: "Parcel and price",
+      price: "Trip price",
+      pricePending: "Place both points on the map",
+      priceHint: "Paid to the driver when they collect the parcel.",
+      next: "Continue",
+      back: "Back",
+    },
+    jobs: {
+      searching: "Looking for a driver…",
+    },
+    parcels: {
+      tracking: "Parcel tracking",
+      notYet: "not yet",
+      steps: { deposited: "Handed in", in_transit: "On the way", arrived: "Arrived", picked_up: "Collected", delivered: "Delivered" },
+    },
+  },
 };

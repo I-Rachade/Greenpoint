@@ -1654,7 +1654,33 @@ export const fr = {
       confirmRemove: "Supprimer cet avis pour de bon ?",
     },
   },
-  loading: "Chargement…",
+  loading: "Chargement…",  phase1b: {
+    greenpoint: {
+      confirmTitle: "Utiliser « {reward} » ?",
+      confirmText: "Un code valable {minutes} min sera créé. {n} greenpoints seront déduits quand le personnel le saisit (il vous en restera {left}).",
+      expiresIn: "Expire dans",
+      expired: "Ce code a expiré. Vos greenpoints n'ont pas été utilisés ; vous pouvez demander un nouveau code.",
+    },
+    courier: {
+      stepsLabel: "Étapes de la réservation",
+      stepPickup: "Départ",
+      stepDropoff: "Destination",
+      stepParcel: "Colis et prix",
+      price: "Prix de la course",
+      pricePending: "Placez les deux points sur la carte",
+      priceHint: "À payer au chauffeur quand il prend le colis.",
+      next: "Continuer",
+      back: "Retour",
+    },
+    jobs: {
+      searching: "Recherche d'un chauffeur…",
+    },
+    parcels: {
+      tracking: "Suivi du colis",
+      notYet: "pas encore",
+      steps: { deposited: "Déposé", in_transit: "En route", arrived: "Arrivé", picked_up: "Retiré", delivered: "Livré" },
+    },
+  },
 };
 
 export type Dictionary = typeof fr;
