@@ -161,11 +161,20 @@ describe("Xingke cloud", () => {
     });
   });
 
-  it("reports an offline device and records the refusal", async () => {
+  it("reports an offline device and records the refusal with the platform's reason", async () => {
     const { db, env } = await setup();
     platform(409, { code: "DEVICE_OFFLINE", message: "offline" });
     await expect(startOutlet(env, DEVICE, 1, "admin")).rejects.toMatchObject({ code: "device_offline" });
-    expect(db.prepare("select status, result from device_commands").get()).toEqual({ status: "failed", result: "DEVICE_OFFLINE" });
+    expect(db.prepare("select status, result from device_commands").get()).toEqual({ status: "failed", result: "DEVICE_OFFLINE: offline" });
+  });
+
+  it("tolerates a pasted https:// in the host and Bearer in the token", async () => {
+    const { env } = await setup();
+    Object.assign(env, { XINGKE_API_HOST: " https://xingke.example/ ", XINGKE_API_TOKEN: "Bearer api-token " });
+    const calls = platform();
+    await startOutlet(env, DEVICE, 1, "admin");
+    expect(calls[0].url).toBe(`https://xingke.example/openapi/v1/devices/${DEVICE}/commands`);
+    expect((calls[0].init.headers as Record<string, string>).Authorization).toBe("Bearer api-token");
   });
 
   it("needs the platform settings", async () => {
