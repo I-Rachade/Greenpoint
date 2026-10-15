@@ -431,6 +431,8 @@ function History({ items }: { items: WalletTransaction[] }) {
             ? t.wallet.byAdmin
             : x.type === "topup"
               ? format(t.wallet.viaNetwork, { name: x.counterparty ?? "" })
+              : x.type === "charge"
+                ? format(t.wallet.chargeAt, { name: x.counterparty ?? "" })
               : format(incoming ? t.wallet.from : t.wallet.to, { name: x.counterparty ?? "?" });
         return (
           <li key={x.id} className="flex items-start gap-3 p-3 text-sm">

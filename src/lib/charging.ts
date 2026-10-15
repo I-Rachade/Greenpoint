@@ -35,6 +35,13 @@ export function validTariff(t: ChargeTariff): boolean {
   return ok(t.kwhXof) && t.kwhXof > 0 && ok(t.minXof) && t.minXof >= 0;
 }
 
+/** What the backoffice saves: the network default (`stationId` null) or a station's own price (null = default). */
+export interface ChargeTariffInput {
+  stationId: string | null;
+  kwhXof: number | null;
+  minXof: number | null;
+}
+
 /** One charge as staff and the customer see it. */
 export interface ChargeSession {
   id: string;

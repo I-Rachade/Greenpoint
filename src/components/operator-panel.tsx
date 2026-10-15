@@ -8,6 +8,7 @@ import { format } from "@/lib/i18n/format";
 import type { Reservation, StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
+import { StaffCharging } from "./charging/charging";
 import { GreenpointStaff } from "./greenpoint/greenpoint-staff";
 import { OperatorBack } from "./parcels/staff-parcels";
 import { effectiveStatus, minutesLeft } from "./reservation-list";
@@ -187,6 +188,8 @@ function StationControls({ station, onError }: { station: StationView; onError: 
           </ul>
         )}
       </div>
+
+      <StaffCharging station={station} />
 
       <GreenpointStaff station={station} />
     </section>

@@ -17,6 +17,17 @@ import {
 } from "../types";
 import { BackendError, type Backend, type CodeChannel, type StatusPatch } from "./backend";
 import {
+  chargePrice,
+  contactFromCode,
+  DEFAULT_CHARGE_TARIFF,
+  validTariff,
+  type AdminCharging,
+  type ChargeSession,
+  type ChargeTariff,
+  type ChargeTariffInput,
+  type StationCharging,
+} from "../charging";
+import {
   DEMO_CHARGING_POINTS,
   DEMO_OPERATORS,
   DEMO_STATIONS,
@@ -239,7 +250,16 @@ interface DemoState {
   pins?: Record<string, string>;
   /** Customer reviews (missing = the example reviews). */
   reviews?: DemoReview[];
+  /** Charges at a socket (demo only: the socket pretends to draw DEMO_CHARGE_WATTS). */
+  charges?: DemoCharge[];
+  chargeTariff?: ChargeTariff;
+  stationTariffs?: Record<string, { kwhXof: number | null; minXof: number | null }>;
 }
+
+type DemoCharge = ChargeSession & { userId: string | null; pointId: string };
+
+/** The demo socket draws this much while charging, so energy and price move on screen. */
+const DEMO_CHARGE_WATTS = 360;
 
 interface DemoWallet {
   enabled: boolean;
@@ -3612,6 +3632,235 @@ export class DemoBackend implements Backend {
     const g = this.gp(state);
     const rewards = id ? g.rewards.map((r) => (r.id === id ? { ...valid, id } : r)) : [...g.rewards, { ...valid, id: crypto.randomUUID() }];
     this.save({ ...state, greenpoint: { ...g, rewards } });
+  }
+
+  // Charging at a socket ----------------------------------------------------------------
+
+  private chargeTariffOf(state: DemoState, stationId: string): ChargeTariff {
+    const base = state.chargeTariff ?? DEFAULT_CHARGE_TARIFF;
+    const own = state.stationTariffs?.[stationId];
+    return { kwhXof: own?.kwhXof ?? base.kwhXof, minXof: own?.minXof ?? base.minXof };
+  }
+
+  /** A running demo charge gains energy with time; the price follows. */
+  private chargeView(c: DemoCharge, now = Date.now()): ChargeSession {
+    const { userId: _userId, pointId: _pointId, ...view } = c;
+    if (c.status !== "charging") return view;
+    const energyWh = Math.round(((now - new Date(c.startedAt).getTime()) / 3_600_000) * DEMO_CHARGE_WATTS);
+    return { ...view, energyWh, powerWatts: DEMO_CHARGE_WATTS, amountXof: chargePrice(energyWh, c.tariff) };
+  }
+
+  private updateCharge(state: DemoState, id: string, change: (c: DemoCharge) => DemoCharge): ChargeSession {
+    let found: DemoCharge | null = null;
+    const charges = (state.charges ?? []).map((c) => (c.id === id ? (found = change(c)) : c));
+    if (!found) throw new BackendError("unknown", "not_found");
+    this.save({ ...state, charges });
+    return this.chargeView(found);
+  }
+
+  async stationCharging(stationId: string): Promise<StationCharging> {
+    const state = this.load();
+    this.requireStaff(state);
+    const all = (state.charges ?? []).filter((c) => c.stationId === stationId).map((c) => this.chargeView(c));
+    const day = dayStart();
+    const paid = all.filter((c) => c.status === "paid" && (c.paidAt ?? "") >= day);
+    return {
+      tariff: this.chargeTariffOf(state, stationId),
+      open: all.filter((c) => c.status === "charging" || c.status === "stopped"),
+      today: all.filter((c) => (c.status === "paid" || c.status === "cancelled") && c.startedAt >= day),
+      takings: {
+        cashXof: paid.filter((c) => c.paymentMethod === "cash").reduce((n, c) => n + c.amountXof, 0),
+        appXof: paid.filter((c) => c.paymentMethod !== "cash").reduce((n, c) => n + c.amountXof, 0),
+        count: paid.length,
+      },
+    };
+  }
+
+  async startCharge(stationId: string, input: { pointId: string; contact?: string }): Promise<ChargeSession> {
+    const state = this.load();
+    const staff = this.requireStaff(state);
+    const station = state.stations.find((s) => s.id === stationId);
+    const point = (state.devices ?? seedDevices()).flatMap((d) => d.points).find((p) => p.id === input.pointId && p.stationId === stationId);
+    if (!station || !point) throw new BackendError("unknown", "not_found");
+    if ((state.charges ?? []).some((c) => c.pointId === point.id && c.status === "charging")) throw new BackendError("charge_busy");
+    const text = contactFromCode(input.contact ?? "");
+    const customer = text ? this.findWalletUser(state, text) : null;
+    if (customer?.id === staff.id) throw new BackendError("own_reservation");
+    const charge: DemoCharge = {
+      id: crypto.randomUUID(),
+      stationId,
+      stationName: station.name,
+      pointLabel: point.label,
+      pointId: point.id,
+      status: "charging",
+      userId: customer?.id ?? null,
+      customer: customer ? personLabel(customer) : null,
+      powerWatts: 0,
+      energyWh: 0,
+      tariff: this.chargeTariffOf(state, stationId),
+      amountXof: 0,
+      startedAt: new Date().toISOString(),
+      stoppedAt: null,
+      endedByDevice: false,
+      paymentMethod: null,
+      paidAt: null,
+      greenpoints: 0,
+    };
+    this.save({ ...state, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
+    return this.chargeView(charge);
+  }
+
+  async stopCharge(stationId: string, id: string): Promise<ChargeSession> {
+    const state = this.load();
+    this.requireStaff(state);
+    return this.updateCharge(state, id, (c) => {
+      if (c.status !== "charging") return c;
+      const live = this.chargeView(c);
+      return { ...c, status: "stopped", energyWh: live.energyWh, amountXof: live.amountXof, powerWatts: 0, stoppedAt: new Date().toISOString() };
+    });
+  }
+
+  async cancelCharge(stationId: string, id: string): Promise<ChargeSession> {
+    const state = this.load();
+    this.requireStaff(state);
+    return this.updateCharge(state, id, (c) => {
+      if (c.status !== "stopped" || c.energyWh > 0) throw new BackendError("charge_wrong_status");
+      return { ...c, status: "cancelled" };
+    });
+  }
+
+  /** Paid: the greenpoints follow the kWh for an app customer at a solar station (as chargeEarnStatement). */
+  private payCharge(state: DemoState, id: string, method: ChargeSession["paymentMethod"]): DemoState {
+    const c = (state.charges ?? []).find((x) => x.id === id);
+    if (!c || c.status !== "stopped" || c.amountXof <= 0) throw new BackendError("charge_wrong_status");
+    let next = state;
+    let points = 0;
+    const g = this.gp(state);
+    const solar = state.stations.find((s) => s.id === c.stationId)?.isSolar;
+    if (c.userId && solar) {
+      const grams = Math.round((c.energyWh / 1000) * g.factors.kwhGrams);
+      points = pointsFor(grams);
+      if (points > 0) {
+        const entry = {
+          id: crypto.randomUUID(),
+          userId: c.userId,
+          reservationId: null,
+          kind: "charge" as const,
+          co2Grams: grams,
+          points,
+          vehicle: g.vehicles[c.userId] ?? "scooter",
+          stationName: c.stationName,
+          rewardTitle: null,
+          createdAt: new Date().toISOString(),
+        };
+        next = { ...next, greenpoint: { ...g, ledger: [entry, ...g.ledger].slice(0, 500) } };
+      }
+    }
+    const charges = (next.charges ?? []).map((x) =>
+      x.id === id ? { ...x, status: "paid" as const, paymentMethod: method, paidAt: new Date().toISOString(), greenpoints: points } : x,
+    );
+    return { ...next, charges };
+  }
+
+  async payChargeCash(stationId: string, id: string): Promise<ChargeSession> {
+    const state = this.load();
+    this.requireStaff(state);
+    const next = this.payCharge(state, id, "cash");
+    this.save(next);
+    return this.chargeView(next.charges!.find((c) => c.id === id)!);
+  }
+
+  async myCharges(): Promise<ChargeSession[]> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const walletOn = demoFeatures(state).wallet && (this.wallet(state).enabled || profile.role === "admin");
+    return (state.charges ?? [])
+      .filter((c) => c.userId === profile.id)
+      .map((c) => {
+        const own = state.operators.find((o) => o.id === state.stations.find((s) => s.id === c.stationId)?.operatorId)?.isOwn ?? false;
+        const open = c.status === "stopped" && own;
+        return { ...this.chargeView(c), payOptions: { wallet: open && walletOn, mobile: open }, pendingPaymentId: null };
+      });
+  }
+
+  async payChargeWallet(id: string, input: { pin: string; idempotencyKey: string }): Promise<ChargeSession> {
+    const state = this.load();
+    const profile = this.walletAccess(state);
+    const c = (state.charges ?? []).find((x) => x.id === id && x.userId === profile.id);
+    if (!c) throw new BackendError("unknown", "not_found");
+    if (c.status === "paid") return this.chargeView(c);
+    const pinOf = state.pins?.[profile.phone ?? profile.email ?? ""];
+    if (!validPinFormat(input.pin) || (pinOf !== undefined && pinOf !== input.pin)) throw new BackendError("invalid_pin");
+    const w = this.wallet(state);
+    const before = this.balance(w, profile.id);
+    if (before < c.amountXof) throw new BackendError("insufficient_balance");
+    const paid = this.payCharge(state, id, "wallet");
+    const tx: DemoWallet["transactions"][number] = {
+      id: crypto.randomUUID(),
+      trxId: newTrxId("charge"),
+      type: "charge",
+      attribute: "send",
+      status: "success",
+      amountXof: c.amountXof,
+      feeXof: 0,
+      totalXof: c.amountXof,
+      balanceAfterXof: before - c.amountXof,
+      counterparty: c.stationName,
+      remark: null,
+      createdAt: new Date().toISOString(),
+      userId: profile.id,
+      userLabel: [profile.fullName, profile.phone ?? profile.email].filter(Boolean).join(" · "),
+      adminId: null,
+      key: input.idempotencyKey,
+    };
+    const wallet = { ...w, balances: { ...w.balances, [profile.id]: before - c.amountXof }, transactions: [tx, ...w.transactions] };
+    this.save({ ...paid, wallet });
+    return this.chargeView(paid.charges!.find((x) => x.id === id)!);
+  }
+
+  /** The demo has no Flooz/T-Money: the payment is confirmed at once. */
+  async payChargeMobile(id: string): Promise<void> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const c = (state.charges ?? []).find((x) => x.id === id && x.userId === profile.id);
+    if (!c) throw new BackendError("unknown", "not_found");
+    this.save(this.payCharge(state, id, "tmoney"));
+  }
+
+  async refreshChargePayment(): Promise<void> {}
+
+  async adminCharging(): Promise<AdminCharging> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const charges = (state.charges ?? []).map((c) => this.chargeView(c));
+    const paid = charges.filter((c) => c.status === "paid");
+    const points = (state.devices ?? seedDevices()).flatMap((d) => d.points);
+    return {
+      defaultTariff: state.chargeTariff ?? DEFAULT_CHARGE_TARIFF,
+      stations: state.stations
+        .map((s) => ({
+          id: s.id,
+          name: s.name,
+          kwhXof: state.stationTariffs?.[s.id]?.kwhXof ?? null,
+          minXof: state.stationTariffs?.[s.id]?.minXof ?? null,
+          outlets: points.filter((p) => p.stationId === s.id && p.deviceId).length,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      sessions: charges,
+      totals: { paidXof: paid.reduce((n, c) => n + c.amountXof, 0), energyWh: paid.reduce((n, c) => n + c.energyWh, 0), count: paid.length },
+    };
+  }
+
+  async saveChargeTariff(input: ChargeTariffInput): Promise<void> {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (input.stationId === null) {
+      const t = { kwhXof: input.kwhXof ?? -1, minXof: input.minXof ?? -1 };
+      if (!validTariff(t)) throw new BackendError("unknown", "bad_request");
+      this.save({ ...state, chargeTariff: t });
+      return;
+    }
+    this.save({ ...state, stationTariffs: { ...state.stationTariffs, [input.stationId]: { kwhXof: input.kwhXof, minXof: input.minXof } } });
   }
 }
 
