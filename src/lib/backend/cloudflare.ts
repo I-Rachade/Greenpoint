@@ -48,6 +48,8 @@ import type {
   UserRole,
 } from "../types";
 import type { StationService, StationServiceInfo } from "../station-services";
+import { getActiveStation } from "../active-station";
+import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEntry, type SwapFilter, type SwapInput } from "../station-work";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StatusPatch } from "./backend";
 
 const TOKEN_KEY = "poinderecharge-session";
@@ -135,6 +137,17 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "service_request_pending",
   "no_pending_request",
   "invalid_review",
+  "active_station_required",
+  "no_full_battery",
+  "counter_full",
+  "swap_price_missing",
+  "same_battery",
+  "battery_type_required",
+  "cash_only",
+  "wrong_fleet",
+  "not_a_customer",
+  "request_conflict",
+  "reason_required",
 ];
 
 /**
@@ -172,6 +185,9 @@ export class CloudflareBackend implements Backend {
     const headers: Record<string, string> = {};
     const token = this.token;
     if (token) headers.Authorization = `Bearer ${token}`;
+    // Station actions carry the station the person works at now (src/lib/station-work.ts).
+    const active = typeof window === "undefined" ? null : getActiveStation();
+    if (active) headers[ACTIVE_STATION_HEADER] = active;
     let payload: BodyInit | undefined;
     if (body instanceof Blob) {
       headers["Content-Type"] = body.type;
@@ -318,9 +334,32 @@ export class CloudflareBackend implements Backend {
     return this.call<Reservation[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/reservations`);
   }
 
-  async completeReservation(id: string, pickupCode: string) {
-    await this.call("POST", `/api/reservations/${encodeURIComponent(id)}/complete`, { pickupCode });
+  async completeReservation(id: string, pickupCode: string, batteryTypeId?: string | null) {
+    await this.call("POST", `/api/reservations/${encodeURIComponent(id)}/complete`, { pickupCode, batteryTypeId: batteryTypeId ?? null });
     this.changed();
+  }
+
+  // Station work ---------------------------------------------------------------------
+
+  stationCounter(stationId: string) {
+    return this.call<StationCounter>("GET", `/api/stations/${encodeURIComponent(stationId)}/counter`);
+  }
+
+  async batteryEvent(stationId: string, input: BatteryEventInput) {
+    const event = await this.call<BatteryEventView>("POST", `/api/stations/${encodeURIComponent(stationId)}/battery-events`, input);
+    this.changed();
+    return event;
+  }
+
+  async recordSwap(stationId: string, input: SwapInput) {
+    const swap = await this.call<SwapEntry>("POST", `/api/stations/${encodeURIComponent(stationId)}/swaps`, input);
+    this.changed();
+    return swap;
+  }
+
+  stationSwaps(stationId: string, filter: SwapFilter = {}) {
+    const q = filter.customerType ? `?customerType=${encodeURIComponent(filter.customerType)}` : "";
+    return this.call<SwapEntry[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/swaps${q}`);
   }
 
   // Operator accounts ---------------------------------------------------------------

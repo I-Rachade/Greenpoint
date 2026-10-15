@@ -70,11 +70,13 @@ async function setup() {
   return { db, env: { DB: d1 } as unknown as Env };
 }
 
-async function call(env: Env, as: string, method: string, path: string, body?: unknown) {
+async function call(env: Env, as: string, method: string, path: string, body?: unknown, activeStation?: string) {
+  const headers: Record<string, string> = { Authorization: `Bearer session-token-of-${as}-0123456789`, "Content-Type": "application/json" };
+  if (activeStation) headers["X-Active-Station"] = activeStation;
   const res = await handleApi(
     new Request(`https://app.poinderecharge.com${path}`, {
       method,
-      headers: { Authorization: `Bearer session-token-of-${as}-0123456789`, "Content-Type": "application/json" },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
     env,
@@ -146,8 +148,10 @@ describe("operator accounts", () => {
 
   it("lets the owner run station status, choose staff and edit details only at their stations", async () => {
     const { env, lome, be } = await withOperator();
-    expect((await call(env, "yao", "PATCH", `/api/stations/${lome}/status`, { isOpen: false })).status).toBe(200);
-    expect((await call(env, "yao", "PATCH", `/api/stations/${be}/status`, { isOpen: false })).status).toBe(403);
+    // An owner acts at the station chosen as active station (R7).
+    expect((await call(env, "yao", "PATCH", `/api/stations/${lome}/status`, { isOpen: false })).status).toBe(409);
+    expect((await call(env, "yao", "PATCH", `/api/stations/${lome}/status`, { isOpen: false }, lome)).status).toBe(200);
+    expect((await call(env, "yao", "PATCH", `/api/stations/${be}/status`, { isOpen: false }, be)).status).toBe(403);
 
     expect((await call(env, "yao", "POST", "/api/owner/staff", { stationId: lome, contact: "90000003" })).status).toBe(200);
     expect((await call(env, "afi", "GET", "/api/staff/stations")).body).toMatchObject([{ id: lome }]);
@@ -223,6 +227,6 @@ describe("operator accounts", () => {
     const { env, operatorId, lome } = await withOperator();
     await call(env, "admin", "DELETE", `/api/admin/operators/${operatorId}/owners/yao`);
     expect((await call(env, "yao", "GET", "/api/owner")).status).toBe(403);
-    expect((await call(env, "yao", "PATCH", `/api/stations/${lome}/status`, { isOpen: false })).status).toBe(403);
+    expect((await call(env, "yao", "PATCH", `/api/stations/${lome}/status`, { isOpen: false }, lome)).status).toBe(403);
   });
 });

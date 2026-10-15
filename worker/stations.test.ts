@@ -83,11 +83,13 @@ function station(name: string, patch: Partial<StationInput> = {}): StationInput 
   };
 }
 
-async function call(env: Env, method: string, path: string, body?: unknown) {
+async function call(env: Env, method: string, path: string, body?: unknown, activeStation?: string) {
+  const headers: Record<string, string> = { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };
+  if (activeStation) headers["X-Active-Station"] = activeStation;
   const res = await handleApi(
     new Request(`https://app.poinderecharge.com${path}`, {
       method,
-      headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
     env,
@@ -226,25 +228,31 @@ describe("battery types", () => {
     expect((await byName(env, "Mixte")).batteryTypes!.map((t) => t.id)).toEqual([spiro]);
   });
 
-  it("counts full batteries per type, the station total being their sum", async () => {
+  it("counts full batteries per type through counter events, the station total being their sum", async () => {
     const { env } = await setup();
     const spiro = await addType(env, "Spiro", "72 V");
     const ovt = await addType(env, "Omnivoltaic", "60 V");
     const other = await addType(env, "Omnivoltaic", "72 V");
     await save(env, station("Echange", { kind: "swap", batteryCapacity: 10, batteryTypeIds: [spiro, ovt] }));
     const { id } = await byName(env, "Echange");
-    const status = (body: unknown) => call(env, "PATCH", `/api/stations/${id}/status`, body);
+    let n = 0;
+    const event = (type: string, batteryTypeId: string) =>
+      call(env, "POST", `/api/stations/${id}/battery-events`, { type, batteryTypeId, requestId: `req-${String(++n).padStart(6, "0")}` }, id);
 
-    expect((await status({ typeBatteries: { [spiro]: 4, [ovt]: 2 } })).status).toBe(200);
+    for (let i = 0; i < 4; i++) expect((await event("full", spiro)).status).toBe(200);
+    for (let i = 0; i < 2; i++) expect((await event("full", ovt)).status).toBe(200);
     let s = await byName(env, "Echange");
     expect(s.batteryTypes!.map((t) => [t.brand, t.fullBatteries])).toEqual([["Omnivoltaic", 2], ["Spiro", 4]]);
     expect(s.status.fullBatteries).toBe(6);
 
-    await status({ typeBatteries: { [ovt]: 0 } });
+    await event("issue", ovt);
+    await event("issue", ovt);
     expect((await byName(env, "Echange")).status.fullBatteries).toBe(4);
 
-    // A type the station does not swap is refused.
-    expect((await status({ typeBatteries: { [other]: 1 } })).status).toBe(400);
+    // A type the station does not swap is refused, and numbers are never set directly any more.
+    expect((await event("full", other)).status).toBe(400);
+    expect((await call(env, "PATCH", `/api/stations/${id}/status`, { typeBatteries: { [spiro]: 1 } }, id)).status).toBe(400);
+    expect((await call(env, "PATCH", `/api/stations/${id}/status`, { fullBatteries: 1 }, id)).status).toBe(400);
 
     // Saving the station keeps the counts of the types it still swaps.
     await save(env, station("Echange", { kind: "swap", batteryCapacity: 10, batteryTypeIds: [spiro, other] }), id);

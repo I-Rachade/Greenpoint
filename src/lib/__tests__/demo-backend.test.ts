@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
 
 // Runs without a browser: the demo falls back to in-memory storage.
@@ -15,6 +16,7 @@ describe("DemoBackend reservations", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-12T12:00:00Z"));
     backend = new DemoBackend();
+    setActiveStation(null);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -33,12 +35,18 @@ describe("DemoBackend reservations", () => {
     const r = await backend.reserve(STATION, "battery");
     const before = (await backend.listStations()).find((s) => s.id === STATION)!.status.fullBatteries;
 
-    await expect(backend.completeReservation(r.id, r.pickupCode!)).rejects.toMatchObject({ code: "own_reservation" });
+    // Only station staff complete, at their active station (as in the Worker).
+    await expect(backend.completeReservation(r.id, r.pickupCode!)).rejects.toMatchObject({ code: "forbidden" });
 
     await asRole(backend, "operator");
+    await expect(backend.completeReservation(r.id, r.pickupCode!)).rejects.toMatchObject({ code: "active_station_required" });
+    setActiveStation(STATION);
     const wrong = r.pickupCode === "0000" ? "1111" : "0000";
     await expect(backend.completeReservation(r.id, wrong)).rejects.toMatchObject({ code: "wrong_pickup_code" });
-    await backend.completeReservation(r.id, r.pickupCode!);
+    // A battery handed out is a swap: at a station with several battery types, of the type given.
+    const type = (await backend.listStations()).find((s) => s.id === STATION)!.batteryTypes?.[0]?.id ?? null;
+    await backend.completeReservation(r.id, r.pickupCode!, type);
+    expect(await backend.stationSwaps(STATION)).toMatchObject([{ customerType: "app", payment: "none", reservationId: r.id }]);
 
     const after = (await backend.listStations()).find((s) => s.id === STATION)!;
     expect(after.status.fullBatteries).toBe(before - 1);
@@ -49,6 +57,7 @@ describe("DemoBackend reservations", () => {
     await asRole(backend, "customer");
     const r = await backend.reserve(STATION, "slot");
     await asRole(backend, "operator");
+    setActiveStation(STATION);
     await backend.updateStatus(STATION, { isOpen: false });
     await asRole(backend, "customer");
     const mine = (await backend.myReservations()).find((x) => x.id === r.id)!;

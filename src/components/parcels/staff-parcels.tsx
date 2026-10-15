@@ -29,13 +29,12 @@ import { canScanQr, QrScanner } from "./qr-scanner";
 import { MenuTile } from "./menu-tile";
 import { SizePicker } from "./size-picker";
 import { SlipDialog } from "./slip-dialog";
+import { useActiveStation } from "../station-work/use-active-station";
 import { ParcelStatusPill } from "./status";
 
-/** Back to the station home with its two big buttons (status, parcels); only there while the parcel module is on. */
+/** Back to the station home with its service tiles. */
 export function OperatorBack() {
   const { t } = useI18n();
-  const { features } = useApp();
-  if (!features.parcels) return null;
   return (
     <Link href="/operator" className="-ml-1 inline-flex items-center gap-1 text-sm text-gp-green-dark dark:text-gp-green">
       <BackIcon size={18} />
@@ -656,36 +655,13 @@ function StationParcels({
   );
 }
 
-const STATION_KEY = "gp-parcel-station";
-
-/** The counter's station, kept while staff move between its pages. */
-function useCounterStation(): [string | null, (id: string) => void] {
-  const [id, setId] = useState<string | null>(() => {
-    try {
-      return typeof window === "undefined" ? null : window.localStorage.getItem(STATION_KEY);
-    } catch {
-      return null;
-    }
-  });
-  return [
-    id,
-    (next) => {
-      setId(next);
-      try {
-        window.localStorage.setItem(STATION_KEY, next);
-      } catch {
-        // Private mode: the choice lasts for this page only.
-      }
-    },
-  ];
-}
-
 /** /operator/colis: big buttons, one per job; /operator/colis/<section>: that job alone. */
 export function StaffParcels({ section }: { section?: ParcelSection }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const { data, error } = useLiveQuery(() => Promise.all([backend.staffStations(), backend.listStations(), backend.parcelInfo()]));
-  const [selectedId, setSelectedId] = useCounterStation();
+  // The station chosen for all station work on this device (W3).
+  const [selectedId, setSelectedId] = useActiveStation();
 
   if (error) return <p className="p-6 text-sm text-red-600">{t.errors.forbidden}</p>;
   if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;

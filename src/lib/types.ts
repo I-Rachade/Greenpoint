@@ -2,6 +2,8 @@ import type { StationBatteryType } from "./battery-types";
 import type { StationEvCharger } from "./ev-chargers";
 import type { ParcelDepotInput } from "./parcels";
 import type { Amenity, StationRating } from "./station-extras";
+import type { StationService } from "./station-services";
+import type { StationRole } from "./station-work";
 
 export type VehicleType = "scooter" | "tricycle" | "ebike" | "moped";
 /** Battery services of a station; "parcel" = neither swap nor charging, a parcel point only. See station-points.ts. */
@@ -71,6 +73,10 @@ export interface StationView extends Station {
   rating?: StationRating;
   /** Active electric car chargers assigned to the station (see ev-chargers.ts). */
   evChargers?: StationEvCharger[];
+  /** Station work list (/api/staff/stations) only: the services active there now (station-services.ts). */
+  activeServices?: StationService[];
+  /** Station work list only: the viewer's role at the station (station-work.ts). */
+  myRole?: StationRole;
 }
 
 export interface ParcelPoint {

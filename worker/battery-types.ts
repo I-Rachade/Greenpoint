@@ -100,38 +100,3 @@ export async function stationBatteryTypeStatements(db: D1Database, stationId: st
     labels: wanted.map((id) => batteryTypeLabel(known.get(id)!)),
   };
 }
-
-/**
- * Statements that set the full batteries of some of the types a station swaps,
- * the station's new total (the sum over all its types) and the audit changes.
- * Types the station does not swap are refused.
- */
-export async function typeBatteryStatements(db: D1Database, stationId: string, counts: Record<string, number>) {
-  const { results } = await db
-    .prepare(
-      `select sbt.battery_type_id as id, sbt.full_batteries, t.brand, t.name
-       from station_battery_types sbt join battery_types t on t.id = sbt.battery_type_id
-       where sbt.station_id = ?`,
-    )
-    .bind(stationId)
-    .all<{ id: string; full_batteries: number; brand: string; name: string }>();
-  const rows = new Map(results.map((r) => [r.id, r]));
-  const statements: D1PreparedStatement[] = [];
-  const changes: Record<string, unknown> = {};
-  for (const [id, value] of Object.entries(counts ?? {})) {
-    const row = rows.get(id);
-    const n = Number(value);
-    if (!row || !Number.isFinite(n) || n < 0 || n > 100_000) throw new ApiError("bad_request");
-    const next = Math.floor(n);
-    if (next === row.full_batteries) continue;
-    changes[`full_batteries ${batteryTypeLabel(row)}`] = [row.full_batteries, next];
-    row.full_batteries = next;
-    statements.push(
-      db
-        .prepare("update station_battery_types set full_batteries = ? where station_id = ? and battery_type_id = ?")
-        .bind(next, stationId, id),
-    );
-  }
-  const total = [...rows.values()].reduce((sum, r) => sum + r.full_batteries, 0);
-  return { statements, total, changes };
-}
