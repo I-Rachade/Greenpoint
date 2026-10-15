@@ -39,4 +39,6 @@ export interface Env {
   XINGKE_API_TOKEN?: string;
   /** Credential the Xingke platform sends with its callbacks to /api/devices/xingke (secret). */
   XINGKE_CALLBACK_TOKEN?: string;
+  /** One Durable Object per OCPP charge point, holding its WebSocket (wrangler.jsonc, worker/ocpp.ts). */
+  OCPP?: DurableObjectNamespace;
 }

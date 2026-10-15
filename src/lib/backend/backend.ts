@@ -80,6 +80,7 @@ export type BackendErrorCode =
   | "invalid_device"
   | "device_exists"
   | "device_offline"
+  | "device_not_charging"
   | "device_command_failed"
   | "device_not_configured"
   | "depot_inactive"
@@ -243,7 +244,8 @@ export interface Backend {
   // Connected sockets (admins only; see src/lib/iot/devices.ts)
   listDevices(): Promise<Device[]>;
   /** Registers a socket and creates one charging point per outlet. */
-  createDevice(input: DeviceInput): Promise<void>;
+  /** Registers a socket; an OCPP charge point gets its password (only now). */
+  createDevice(input: DeviceInput): Promise<{ ocppKey?: string }>;
   /** Removes a socket and its charging points. */
   deleteDevice(externalId: string): Promise<void>;
   /** Switches an outlet on (until full) or off; only where `canSwitch`. */

@@ -9,7 +9,7 @@ import { useErrorMessage, useLiveQuery, useNow, useRelativeTime } from "@/lib/ho
 import { format } from "@/lib/i18n/format";
 import { card, field, indexSnapshot, Loading, Pill, useAdminSnapshot } from "./shared";
 
-const EMPTY: DeviceInput = { externalId: "", stationId: "", outlets: 2, link: "lorawan", vendor: "", model: "" };
+const EMPTY: DeviceInput = { externalId: "", stationId: "", outlets: 2, link: "lorawan", vendor: "", model: "", protocol: null };
 
 const TONE = { free: "green", reserved: "blue", charging: "blue", done: "gray", fault: "red", offline: "red" } as const;
 
@@ -29,10 +29,10 @@ export function DevicesManager() {
   const b = t.backoffice.devices;
   const idx = indexSnapshot(snap);
 
-  async function run(action: () => Promise<void>, success: string) {
+  async function run(action: () => Promise<void>, success: string | (() => string)) {
     try {
       await action();
-      setMessage({ ok: true, text: success });
+      setMessage({ ok: true, text: typeof success === "string" ? success : success() });
       reload();
       return true;
     } catch (err) {
@@ -60,7 +60,7 @@ export function DevicesManager() {
       </div>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{b.intro}</p>
       {message && (
-        <p role={message.ok ? "status" : "alert"} className={`text-sm ${message.ok ? "text-gp-green-dark" : "text-red-600"}`}>
+        <p role={message.ok ? "status" : "alert"} className={`text-sm break-words ${message.ok ? "text-gp-green-dark" : "text-red-600"}`}>
           {message.text}
         </p>
       )}
@@ -71,7 +71,13 @@ export function DevicesManager() {
           onCancel={() => setAdding(false)}
           onSave={async (input) => {
             const id = input.externalId.trim().toUpperCase();
-            if (await run(() => backend.createDevice(input), format(b.added, { id }))) setAdding(false);
+            let text = format(b.added, { id });
+            const ok = await run(async () => {
+              const { ocppKey } = await backend.createDevice(input);
+              // The charge point's password exists only in this answer.
+              if (ocppKey) text = format(b.ocppAdded, { id, key: ocppKey, url: `wss://${window.location.host}/api/devices/ocpp` });
+            }, () => text);
+            if (ok) setAdding(false);
           }}
         />
       )}
@@ -88,7 +94,8 @@ export function DevicesManager() {
                   <div className="min-w-0">
                     <div className="font-mono text-sm font-medium">{d.externalId}</div>
                     <div className="text-xs text-zinc-500">
-                      {idx.stationName(d.stationId)} · {[d.vendor, d.model].filter(Boolean).join(" ") || b.links[d.link]} ·{" "}
+                      {idx.stationName(d.stationId)} · {[d.vendor, d.model].filter(Boolean).join(" ") || b.links[d.link]}
+                      {d.protocol === "ocpp1.6" && " · OCPP 1.6J"} ·{" "}
                       {b.lastSeen}: {d.lastSeenAt ? relativeTime(d.lastSeenAt, now) : b.never}
                     </div>
                   </div>
@@ -220,7 +227,8 @@ function DeviceForm({
           onChange={(e) => {
             const link = e.target.value as DeviceInput["link"];
             // Sockets on a vendor cloud are Xingke ones so far; the name enables switching.
-            set(link === "vendor_cloud" && !input.vendor ? { link, vendor: "Xingke" } : { link });
+            const protocol = link === "own_server" ? input.protocol : null;
+            set(link === "vendor_cloud" && !input.vendor ? { link, protocol, vendor: "Xingke" } : { link, protocol });
           }}
           className={field}
         >
@@ -231,6 +239,16 @@ function DeviceForm({
           ))}
         </select>
       </label>
+      {input.link === "own_server" && (
+        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <input
+            type="checkbox"
+            checked={input.protocol === "ocpp1.6"}
+            onChange={(e) => set({ protocol: e.target.checked ? "ocpp1.6" : null })}
+          />
+          {f.ocpp}
+        </label>
+      )}
       <label className={label}>
         {f.vendor}
         <input value={input.vendor} onChange={(e) => set({ vendor: e.target.value })} maxLength={80} className={field} />

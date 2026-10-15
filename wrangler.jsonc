@@ -25,6 +25,9 @@
       "migrations_dir": "worker/migrations"
     }
   ],
+  // Each OCPP charge point keeps a WebSocket to its own Durable Object (worker/ocpp.ts).
+  "durable_objects": { "bindings": [{ "name": "OCPP", "class_name": "OcppConnection" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OcppConnection"] }],
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "poinderecharge-media" }],
   // Login codes by e-mail through Cloudflare Email Service. The domain must be
   // onboarded under Email Service > Email Sending (see docs/DEPLOYMENT.md).

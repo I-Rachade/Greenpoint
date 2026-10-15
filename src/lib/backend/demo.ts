@@ -167,6 +167,7 @@ import {
 import { OPERATOR_NAME_MAX, type AdminOperator, type OperatorInput, type OwnerStationInput, type OwnerView } from "../operators";
 import { validEvCharger, type EvCharger, type EvChargerInput } from "../ev-chargers";
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
+import { ocppKey } from "../iot/ocpp";
 
 const STORAGE_KEY = "poinderecharge-demo-v3";
 /** Every demo registration accepts this SMS code. */
@@ -316,6 +317,7 @@ function seedDevices(): Device[] {
       vendor: "LoRa",
       model: "2 prises",
       link: "lorawan",
+      protocol: null,
       outlets: DEMO_CHARGING_POINTS.length,
       lastSeenAt: null,
       createdAt: "2026-10-01T08:00:00.000Z",
@@ -334,6 +336,7 @@ function seedDevices(): Device[] {
       vendor: "Xingke",
       model: `${outlets} prises`,
       link: "vendor_cloud" as const,
+      protocol: null,
       outlets,
       lastSeenAt: null,
       createdAt: "2026-10-01T08:00:00.000Z",
@@ -1366,6 +1369,7 @@ export class DemoBackend implements Backend {
       model: input.model?.trim() ?? "",
       link: input.link ?? "lorawan",
       outlets,
+      protocol: input.protocol ?? null,
       lastSeenAt: null,
       createdAt: new Date().toISOString(),
       points: Array.from({ length: outlets }, (_, i) => ({
@@ -1389,6 +1393,7 @@ export class DemoBackend implements Backend {
         { table: "charging_points", action: "insert", rowId: externalId, stationId: input.stationId, changes: { device: externalId, outlets } },
       ),
     );
+    return device.protocol === "ocpp1.6" ? { ocppKey: ocppKey() } : {};
   }
 
   async deleteDevice(externalId: string) {

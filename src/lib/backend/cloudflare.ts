@@ -73,6 +73,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "invalid_device",
   "device_exists",
   "device_offline",
+  "device_not_charging",
   "device_command_failed",
   "device_not_configured",
   "depot_inactive",
@@ -420,8 +421,9 @@ export class CloudflareBackend implements Backend {
   }
 
   async createDevice(input: DeviceInput) {
-    await this.call("POST", "/api/admin/devices", input);
+    const { ocppKey } = await this.call<{ ocppKey?: string }>("POST", "/api/admin/devices", input);
     this.changed();
+    return { ocppKey };
   }
 
   async deleteDevice(externalId: string) {
