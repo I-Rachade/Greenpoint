@@ -211,4 +211,15 @@ describe("greenpoint", () => {
     expect((await visit(env, { contact: "+22896123456", service: "swap" })).body).toEqual({ error: "greenpoint_fleet_driver" });
     expect(await tripStatement(d1, { driverId: "staff", jobId: "job-2", distanceMeters: 1000, stationId: null, createdBy: null })).toBeNull();
   });
+
+  it("gives station staff no greenpoints: no balance, no rewards, no visits credited", async () => {
+    const { env, db } = await setup();
+    db.prepare("insert into users (id, phone, full_name, role, created_at) values ('ama', '+22890000003', 'Ama', 'operator', ?)").run(new Date().toISOString());
+    expect((await visit(env, { contact: "+22890000003", service: "swap" })).body).toEqual({ error: "greenpoint_station_staff" });
+    expect((await call(env, "staff", "GET", "/api/greenpoint")).status).toBe(403);
+    expect((await call(env, "staff", "POST", "/api/greenpoint/redemptions", { rewardId: "x" })).status).toBe(403);
+    expect((await call(env, "staff", "POST", "/api/greenpoint/vehicle", { vehicle: "moped" })).status).toBe(403);
+    // Staff still credit riders.
+    expect((await visit(env, { contact: "+22896123456", service: "swap" })).status).toBe(200);
+  });
 });

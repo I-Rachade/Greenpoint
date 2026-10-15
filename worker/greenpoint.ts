@@ -137,6 +137,16 @@ async function isSolarStation(db: D1Database, stationId: string): Promise<boolea
   return !!row?.is_solar;
 }
 
+/** Station staff (role operator) have no greenpoints: they earn nothing and have no balance. */
+async function isStationStaff(db: D1Database, userId: string): Promise<boolean> {
+  const row = await db.prepare("select 1 from users where id = ? and role = 'operator'").bind(userId).first();
+  return !!row;
+}
+
+function refuseStationStaff(user: Profile) {
+  if (user.role === "operator") throw new ApiError("forbidden", 403);
+}
+
 /**
  * Drivers on one of our vehicles earn per km instead (tripStatement); swaps and
  * charges of their account would count the same battery twice.
@@ -162,6 +172,7 @@ export async function tripStatement(
     .bind(input.driverId)
     .first<{ type: FleetVehicleType }>();
   if (!vehicle) return null;
+  if (await isStationStaff(db, input.driverId)) return null;
   const grams = tripGrams(input.distanceMeters, vehicle.type, await getFactors(db));
   // "or ignore": a trip earns once (unique index on job_id).
   return db
@@ -184,6 +195,7 @@ export async function earnStatement(
   if (!(await isSolarStation(db, input.stationId))) return null;
   if ((await earnedToday(db, input.userId)) >= MAX_EARNINGS_PER_DAY) return null;
   if (await drivesFleetVehicle(db, input.userId)) return null;
+  if (await isStationStaff(db, input.userId)) return null;
   const vehicle = input.vehicle ?? (await vehicleOf(db, input.userId));
   const grams = (await getFactors(db)).batteryGrams[vehicle];
   const kind: GreenpointKind = input.reservationId ? (input.type === "battery" ? "swap" : "charge") : "visit";
@@ -211,6 +223,7 @@ export async function chargeEarnStatement(
   if (!(await isSolarStation(db, input.stationId))) return null;
   if ((await earnedToday(db, input.userId)) >= MAX_EARNINGS_PER_DAY) return null;
   if (await drivesFleetVehicle(db, input.userId)) return null;
+  if (await isStationStaff(db, input.userId)) return null;
   const grams = Math.round((input.energyWh / 1000) * (await getFactors(db)).kwhGrams);
   const points = pointsFor(grams);
   if (points <= 0) return null;
@@ -259,6 +272,7 @@ async function liveRedemption(db: D1Database, userId: string): Promise<Redemptio
 // Riders ---------------------------------------------------------------------
 
 export async function myGreenpoint(env: Env, user: Profile): Promise<GreenpointView> {
+  refuseStationStaff(user);
   const db = env.DB;
   const [{ grams, points }, vehicle, redemption, list, history] = await Promise.all([
     totals(db, user.id),
@@ -281,6 +295,7 @@ export async function myGreenpoint(env: Env, user: Profile): Promise<GreenpointV
 }
 
 export async function setVehicle(env: Env, user: Profile, request: Request) {
+  refuseStationStaff(user);
   const { vehicle } = await readJson<{ vehicle?: string }>(request);
   if (!VEHICLE_TYPES.includes(vehicle as VehicleType)) throw new ApiError("bad_request");
   await env.DB.prepare("update users set greenpoint_vehicle = ? where id = ?").bind(vehicle, user.id).run();
@@ -289,6 +304,7 @@ export async function setVehicle(env: Env, user: Profile, request: Request) {
 
 /** A code for a reward; points are only taken once staff enter it. One open code at a time. */
 export async function startRedemption(env: Env, user: Profile, request: Request): Promise<GreenpointRedemption> {
+  refuseStationStaff(user);
   const { rewardId } = await readJson<{ rewardId?: string }>(request);
   const db = env.DB;
   const row = await db.prepare("select * from greenpoint_rewards where id = ?").bind(String(rewardId ?? "")).first<RewardRow>();
@@ -369,6 +385,7 @@ export async function recordVisit(env: Env, user: Profile, isStaffOf: StaffCheck
   // Staff never credit themselves.
   if (rider.id === user.id) throw new ApiError("own_reservation");
   if (await drivesFleetVehicle(db, rider.id)) throw new ApiError("greenpoint_fleet_driver");
+  if (await isStationStaff(db, rider.id)) throw new ApiError("greenpoint_station_staff");
 
   const earned = await earnStatement(db, { userId: rider.id, type, stationId, createdBy: user.id, vehicle });
   if (!earned) throw new ApiError("greenpoint_daily_limit");

@@ -125,6 +125,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "not_enough_points",
   "greenpoint_daily_limit",
   "greenpoint_fleet_driver",
+  "greenpoint_station_staff",
   "greenpoint_not_solar",
   "charge_busy",
   "charge_wrong_status",
