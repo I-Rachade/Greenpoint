@@ -22,7 +22,7 @@ import { AMENITIES, stationPhotos } from "@/lib/station-extras";
 import { RESERVATION_MINUTES, type ReservationType, type StationView } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
-import { BackIcon, BatteryIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, ShareIcon, StoreIcon, SunIcon } from "./icons";
+import { BackIcon, BatteryIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, ScooterIcon, ShareIcon, StoreIcon, SunIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { EvBadge, FavoriteButton, RestBadge } from "./station-card";
 import { AMENITY_ICONS, OpenBadge, RatingInline, useHoursLabel } from "./station-look";
@@ -167,7 +167,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
   const photos = station.photos ?? [];
   const evChargers = station.evChargers ?? [];
   // Both reserve buttons leave room for the route as an icon only.
-  const twoReserve = battery && !!profile && swap && charging;
+  const twoReserve = battery && !!profile && swap && charging && !connected;
 
   const primary =
     "flex flex-1 items-center justify-center gap-2 rounded-2xl bg-gp-green-dark px-4 py-3.5 text-sm font-semibold text-white shadow-md hover:bg-gp-forest disabled:opacity-40";
@@ -300,7 +300,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
         {(battery || station.parcelPoint) && (
           <Section title={L.available}>
             <div className="grid grid-cols-2 gap-3">
-              {charging && stockCard(BoltIcon, L.charging, format(L.freeOf, { n: slots, total: station.chargingSlots }), slots > 0)}
+              {charging && !connected && stockCard(BoltIcon, L.charging, format(L.freeOf, { n: slots, total: station.chargingSlots }), slots > 0)}
               {swap && stockCard(BatteryIcon, L.swap, format(L.fullOf, { n: batteries, total: station.batteryCapacity }), availableBatteries(station) > 0)}
               {station.parcelPoint?.counter && stockCard(BoxIcon, t.station.parcelCounter, "✓", true)}
               {(station.parcelPoint?.lockers ?? 0) > 0 &&
@@ -329,9 +329,41 @@ export function StationDetail({ station, distance, onChanged }: Props) {
               </div>
             )}
 
-            {points.length > 0 && (
+            {connected && (
+              <div className="flex items-center gap-3 rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm dark:border-white/10">
+                <span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gp-green/15 text-gp-green-dark dark:text-gp-green">
+                  <ScooterIcon size={26} />
+                  <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-gp-green-dark text-white">
+                    <BoltIcon size={12} />
+                  </span>
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-semibold">{t.station.moto.title}</h3>
+                  <p className={`text-sm font-semibold ${slots > 0 ? "text-gp-green-dark dark:text-gp-green" : "text-gp-closed"}`}>
+                    {slots === 0 ? t.station.moto.none : format(slots === 1 ? t.station.moto.one : t.station.moto.many, { n: slots })}
+                    <span className="font-normal text-gp-muted dark:text-zinc-400"> {format(t.station.moto.of, { total: points.length })}</span>
+                  </p>
+                </div>
+                {profile ? (
+                  <button
+                    type="button"
+                    disabled={busy || slots === 0}
+                    onClick={() => reserve("slot")}
+                    className="shrink-0 rounded-xl bg-gp-green-dark px-3 py-2 text-xs font-semibold text-white hover:bg-gp-forest disabled:opacity-40"
+                  >
+                    {t.station.moto.reserve}
+                  </button>
+                ) : (
+                  <Link href="/login" className="shrink-0 rounded-xl border-2 border-gp-green-dark px-3 py-1.5 text-xs font-semibold text-gp-green-dark dark:border-gp-green dark:text-gp-green">
+                    {t.station.moto.reserve}
+                  </Link>
+                )}
+              </div>
+            )}
+
+            {points.length > 0 && !connected && (
               <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm dark:border-white/10">
-                <h3 className="text-sm font-semibold">{connected ? t.station.liveOutlets : t.station.outlets}</h3>
+                <h3 className="text-sm font-semibold">{t.station.outlets}</h3>
                 <ul className="mt-1 divide-y divide-gp-border text-sm dark:divide-white/10">
                   {points.map((p) => {
                     const shown = displayStatus(p, now);
@@ -341,10 +373,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
                           <span className={`h-2.5 w-2.5 rounded-full ${OUTLET_COLORS[shown]}`} aria-hidden />
                           {p.label}
                         </span>
-                        <span className="text-gp-muted dark:text-zinc-400">
-                          {t.station.outletStatus[shown]}
-                          {shown === "charging" && p.powerWatts ? ` · ${p.powerWatts} W` : ""}
-                        </span>
+                        <span className="text-gp-muted dark:text-zinc-400">{t.station.outletStatus[shown]}</span>
                       </li>
                     );
                   })}
@@ -445,7 +474,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
               {t.station.reserveBattery}
             </button>
           )}
-          {battery && profile && charging && (
+          {battery && profile && charging && !connected && (
             <button type="button" disabled={busy || slots === 0} onClick={() => reserve("slot")} className={primary}>
               <BoltIcon size={18} />
               {t.station.reserveSlot}
