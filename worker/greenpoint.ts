@@ -143,15 +143,15 @@ async function isStationStaff(db: D1Database, userId: string): Promise<boolean> 
   return !!row;
 }
 
-/** Drivers are not customers either (W10, R11): no greenpoints for swaps or charges. */
+/** Drivers and fleet managers are not customers either (W5, W10, R11): no greenpoints for swaps or charges. */
 async function isDriverAccount(db: D1Database, userId: string): Promise<boolean> {
-  const row = await db.prepare("select 1 from users where id = ? and role = 'driver'").bind(userId).first();
+  const row = await db.prepare("select 1 from users where id = ? and role in ('driver', 'fleet_manager')").bind(userId).first();
   return !!row;
 }
 
-/** Station staff and drivers have no greenpoint page (R11). */
+/** Station staff, drivers and fleet managers have no greenpoint page (R11). */
 function refuseStationStaff(user: Profile) {
-  if (user.role === "operator" || user.role === "driver") throw new ApiError("forbidden", 403);
+  if (user.role === "operator" || user.role === "driver" || user.role === "fleet_manager") throw new ApiError("forbidden", 403);
 }
 
 /**

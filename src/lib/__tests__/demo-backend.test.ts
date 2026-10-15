@@ -254,3 +254,66 @@ describe("DemoBackend driver accounts (phase 5, as in the Worker)", () => {
     await expect(backend.setUserRole("demo-driver", "customer")).rejects.toMatchObject({ code: "has_other_role" });
   });
 });
+
+describe("DemoBackend fleets (phase 6, as in the Worker)", () => {
+  let backend: DemoBackend;
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-12T12:00:00Z"));
+    backend = new DemoBackend();
+    setActiveStation(null);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("registers a fleet manager with a pending fleet, blocked until an admin approves (W5)", async () => {
+    const profile = await backend.registerFleetManager("+22891112233", DEMO_CODE, "2580", "Moto Lomé");
+    expect(profile.role).toBe("fleet_manager");
+    const view = await backend.fleetView();
+    expect(view.fleet?.status).toBe("pending");
+    expect(view.drivers).toEqual([]);
+    await expect(backend.inviteFleetDriver("+22891000001")).rejects.toMatchObject({ code: "fleet_not_approved" });
+    // R11: a fleet manager is not a customer.
+    await expect(backend.myWallet()).rejects.toMatchObject({ code: "forbidden" });
+    await expect(backend.myGreenpoint()).rejects.toMatchObject({ code: "forbidden" });
+    await expect(backend.reserve(STATION, "battery", null)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(backend.registerFleetManager("+22891112233", DEMO_CODE, "2580", "Encore")).rejects.toMatchObject({ code: "account_exists" });
+
+    await backend.register("+22890123456", DEMO_CODE, "2580", "admin");
+    const pending = (await backend.adminFleets()).find((f) => f.managerId === profile.id)!;
+    expect(pending.status).toBe("pending");
+    await backend.reviewFleet(profile.id, "approve");
+    expect((await backend.adminFleets()).find((f) => f.managerId === profile.id)?.status).toBe("approved");
+  });
+
+  it("limits a standard fleet to 3 places, invites included (R13), and locks the statistics", async () => {
+    await backend.register("+22890123456", DEMO_CODE, "2580", "fleet_manager");
+    const view = await backend.fleetView();
+    expect(view.fleet?.tier).toBe("standard");
+    await expect(backend.fleetStats("2026-10-01", "2026-10-12")).rejects.toMatchObject({ code: "fleet_locked" });
+    const free = (view.fleet!.driverLimit ?? 0) - view.fleet!.used;
+    for (let i = 0; i < free; i++) await backend.inviteFleetDriver(`+2289100000${i}`);
+    await expect(backend.inviteFleetDriver("+22891000009")).rejects.toMatchObject({ code: "fleet_limit" });
+    const invite = (await backend.fleetView()).invites[0];
+    await backend.revokeFleetInvite(invite.id);
+    await backend.inviteFleetDriver("+22891000009");
+  });
+
+  it("lets an empty customer account accept an invite and become a driver (R12)", async () => {
+    await backend.register("+22890123456", DEMO_CODE, "2580", "admin");
+    await backend.setDriversEnabled(true);
+    await backend.register("+22890123456", DEMO_CODE, "2580", "fleet_manager");
+    const invite = await backend.inviteFleetDriver("+22897777777");
+    await expect(backend.inviteFleetDriver("+22897777777")).rejects.toMatchObject({ code: "invite_pending" });
+    await backend.register("+22897777777", DEMO_CODE, "2580", "customer");
+    const mine = await backend.myFleetInvites();
+    expect(mine.map((i) => i.token)).toContain(invite.token);
+    const application = { fullName: "Kossi Mensah", idNumber: "TG-12345", licenseNumber: "LIC-987", wantedType: "moto" as const };
+    await backend.acceptFleetInvite(invite.token.toLowerCase(), mine.find((i) => i.token === invite.token)!.needsApplication ? application : undefined);
+    const home = await backend.driverHome();
+    expect(home.driver).not.toBeNull();
+    expect((await backend.getProfile())?.role).toBe("driver");
+    await expect(backend.myFleetInvites()).resolves.toEqual([]);
+  });
+});

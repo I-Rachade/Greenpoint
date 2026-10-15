@@ -18,7 +18,12 @@ export function roleToDb(role: UserRole): string {
   return role === "customer" ? DB_CUSTOMER : role;
 }
 
-/** Drivers are never customers (R11): wallet, greenpoints, reservations and bookings answer 403. */
+/** Accounts that are never customers (W5, R11): drivers and fleet managers. */
+export function notCustomerRole(role: string): boolean {
+  return role === "driver" || role === "fleet_manager";
+}
+
+/** Drivers and fleet managers are never customers (R11): wallet, greenpoints, reservations and bookings answer 403. */
 export function refuseDriver(user: { role: string }) {
-  if (user.role === "driver") throw new ApiError("forbidden", 403);
+  if (notCustomerRole(user.role)) throw new ApiError("forbidden", 403);
 }

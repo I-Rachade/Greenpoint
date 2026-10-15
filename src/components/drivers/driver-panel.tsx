@@ -29,6 +29,7 @@ import { useI18n } from "../i18n-provider";
 import { QrImage } from "../parcels/qr-image";
 import { Button, Countdown, Input } from "../ui";
 import { PIN_LENGTH } from "@/lib/pin";
+import { FleetInvitesCard } from "./fleet-invites";
 import { input, JobStatusPill, Notice, PhotoButton, primary, secondary, shrinkImage, useFcfa, useJobRoute } from "./shared";
 
 function Card({ title, children, className = "" }: { title?: string; children: ReactNode; className?: string }) {
@@ -758,8 +759,14 @@ export function DriverPanel() {
         )}
       </>
     );
-  } else if (profile && profile.role !== "customer" && (!driver || driver.status === "rejected" || driver.status === "pending")) {
-    // Only a customer account applies (one role per account, R15).
+  } else if (
+    profile &&
+    profile.role !== "customer" &&
+    !(profile.role === "driver" && driver) &&
+    (!driver || driver.status === "rejected" || driver.status === "pending")
+  ) {
+    // Only a customer account applies (one role per account, R15). A driver account that joined
+    // a fleet by invite (W6) completes its own application and documents here.
     body = <p className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">{t.drivers.page.onlyCustomers}</p>;
   } else if (!driver || driver.status === "rejected") {
     body = (
@@ -806,6 +813,7 @@ export function DriverPanel() {
       <h1 className="text-2xl font-semibold">{t.drivers.page.title}</h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{format(t.drivers.page.intro, { pct: home.settings.driverSharePct })}</p>
       {home.formerAccount && <FormerAccountCard former={home.formerAccount} />}
+      {features.drivers && !driver && <FleetInvitesCard />}
       {body}
     </div>
   );
