@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { availableSlots, offersCharging, offersSwap, stockBatteries } from "@/lib/availability";
 import { directionsUrl, formatDistance } from "@/lib/geo";
 import { format } from "@/lib/i18n/format";
@@ -23,6 +24,8 @@ export function FavoriteButton({ stationId, className = "" }: { stationId: strin
   const { t } = useI18n();
   const favorites = useFavorites();
   const on = favorites.has(stationId);
+  // Bumped on every tap so the heart pops once (re-keyed to restart the animation).
+  const [bump, setBump] = useState(0);
   return (
     <button
       type="button"
@@ -30,6 +33,7 @@ export function FavoriteButton({ stationId, className = "" }: { stationId: strin
         e.preventDefault();
         e.stopPropagation();
         favorites.toggle(stationId);
+        setBump((n) => n + 1);
       }}
       aria-pressed={on}
       aria-label={on ? t.ui.favorites.remove : t.ui.favorites.add}
@@ -37,7 +41,9 @@ export function FavoriteButton({ stationId, className = "" }: { stationId: strin
         on ? "text-gp-closed" : "text-gp-muted hover:text-gp-closed dark:text-zinc-400"
       } ${className}`}
     >
-      <HeartIcon size={22} filled={on} />
+      <span key={bump} className={bump ? "animate-gp-bump" : "inline-block"}>
+        <HeartIcon size={22} filled={on} />
+      </span>
     </button>
   );
 }
@@ -100,26 +106,27 @@ export function StockLine({ station, className = "", withBrands = true }: { stat
   );
 }
 
-/** Opens the route in the maps app; a button, because the card around it is already a link. */
+/** Opens the route in the maps app. */
 function DirectionsButton({ station }: { station: StationView }) {
   const { t } = useI18n();
   return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        window.open(directionsUrl(station), "_blank", "noopener,noreferrer");
-      }}
-      className="ml-auto flex shrink-0 items-center gap-1.5 rounded-full bg-gp-green-dark px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-gp-forest"
+    <a
+      href={directionsUrl(station)}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="relative z-10 ml-auto flex shrink-0 items-center gap-1.5 rounded-full bg-gp-green-dark px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-gp-forest"
     >
       <NavigateIcon size={14} />
       {t.station.directions}
-    </button>
+    </a>
   );
 }
 
-/** One station in the lists: photo on the left, hours, distance, stars and the route button below. */
+/**
+ * One station in the lists: photo on the left, hours, distance, stars and the route button below.
+ * The title link stretches over the whole card; the heart and route buttons sit beside it
+ * (not inside it), so screen readers meet three separate controls.
+ */
 export function StationCard({
   station,
   distance,
@@ -132,10 +139,7 @@ export function StationCard({
   const { t } = useI18n();
   const hours = useHoursLabel();
   return (
-    <Link
-      href={stationHref(station.id)}
-      className="block rounded-3xl border border-gp-border bg-gp-surface p-3 shadow-sm transition-shadow hover:shadow-md dark:border-white/10"
-    >
+    <div className="relative rounded-3xl border border-gp-border bg-gp-surface p-3 shadow-sm transition-shadow hover:shadow-md dark:border-white/10">
       <div className="flex gap-3">
         <div className="relative h-24 w-28 shrink-0 overflow-hidden rounded-2xl bg-gp-green/10 sm:w-32">
           <StationPhoto station={station} className="h-full w-full" />
@@ -155,8 +159,12 @@ export function StationCard({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-start gap-1">
-            <h3 className="min-w-0 flex-1 truncate font-heading text-base font-semibold leading-tight">{station.name}</h3>
-            <FavoriteButton stationId={station.id} className="-mr-2 -mt-2" />
+            <h3 className="min-w-0 flex-1 truncate font-heading text-base font-semibold leading-tight">
+              <Link href={stationHref(station.id)} className="after:absolute after:inset-0 after:rounded-3xl after:content-['']">
+                {station.name}
+              </Link>
+            </h3>
+            <FavoriteButton stationId={station.id} className="relative z-10 -mr-2 -mt-2" />
           </div>
           <p className="-mt-1 text-xs font-medium text-gp-green-dark dark:text-gp-green">{t.kinds[station.kind]}</p>
           <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-gp-muted dark:text-zinc-400">
@@ -190,7 +198,7 @@ export function StationCard({
         )}
         <DirectionsButton station={station} />
       </div>
-    </Link>
+    </div>
   );
 }
 

@@ -192,6 +192,16 @@ describe("battery brand filter", () => {
     expect(ids("Spiro", true)).toEqual(["a", "d"]);
     expect(ids("Omnivoltaic", true)).toEqual([]);
   });
+
+  it("still applies the vehicle and service filters", () => {
+    const tricycle = station({ id: "t", kind: "swap", vehicleTypes: ["tricycle"], status: { stationId: "t", isOpen: true, freeSlots: 0, fullBatteries: 5, updatedAt: now }, batteryTypes: [spiro] });
+    const pick = (filter: Partial<typeof DEFAULT_FILTER>) =>
+      rankStations([a, tricycle], null, { ...DEFAULT_FILTER, brand: "Spiro", ...filter }).map((r) => r.station.id).sort();
+    expect(pick({})).toEqual(["a", "t"]);
+    expect(pick({ vehicle: "tricycle" })).toEqual(["t"]);
+    expect(pick({ vehicle: "scooter" })).toEqual(["a"]);
+    expect(pick({ service: "charging" })).toEqual(["a"]);
+  });
 });
 
 describe("battery stock", () => {

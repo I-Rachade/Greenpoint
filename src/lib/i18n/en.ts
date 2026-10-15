@@ -1655,4 +1655,17 @@ export const en: Dictionary = {
     },
   },
   loading: "Loading…",
+  phase1a: {
+    activeReservation: "Active reservation",
+    code: "Code {code}",
+    view: "View",
+    seeAllStations: "See all {count} stations",
+    reservedTitle: "Reservation confirmed",
+    reservedBody: "Show this code to the station staff. It is valid for {minutes} minutes.",
+    viewReservation: "View my reservation",
+    minutes: "{n} min",
+    timeLeft: "Time left",
+    seeStations: "See stations",
+    emptyText: "Reserve a battery or a charging place from a station's page.",
+  },
 };

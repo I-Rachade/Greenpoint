@@ -109,19 +109,19 @@ export interface StationFilter {
 export const DEFAULT_FILTER: StationFilter = { vehicle: "all", service: "all", onlyAvailable: false };
 
 export function matchesFilter(station: StationView, filter: StationFilter): boolean {
-  // A brand only concerns battery swap: the station must swap that brand's batteries.
+  // Electric cars: the station needs a charger; the two-wheeler vehicle types and battery brands do not apply.
+  if (filter.service === "ev") return chargesEvs(station) && (!filter.onlyAvailable || isOpenNow(station));
+  if (filter.vehicle !== "all" && !station.vehicleTypes.includes(filter.vehicle)) return false;
+  if (filter.service === "charging" && !offersCharging(station.kind)) return false;
+  if (filter.service === "swap" && !offersSwap(station.kind)) return false;
+  if (filter.service === "parcel") return offersParcels(station) && (!filter.onlyAvailable || isOpenNow(station));
+  // A brand only concerns battery swap: the station must also swap that brand's batteries.
   if (filter.brand && filter.brand !== "all") {
     if (!stationBrands(station).includes(filter.brand)) return false;
     // Counted per type by the staff: a station out of this brand's batteries is not available for it.
     if (filter.onlyAvailable) return availableBatteries(station) > 0 && brandFullBatteries(station, filter.brand) > 0;
     return true;
   }
-  // Electric cars: the station needs a charger; the two-wheeler vehicle types do not apply.
-  if (filter.service === "ev") return chargesEvs(station) && (!filter.onlyAvailable || isOpenNow(station));
-  if (filter.vehicle !== "all" && !station.vehicleTypes.includes(filter.vehicle)) return false;
-  if (filter.service === "charging" && !offersCharging(station.kind)) return false;
-  if (filter.service === "swap" && !offersSwap(station.kind)) return false;
-  if (filter.service === "parcel") return offersParcels(station) && (!filter.onlyAvailable || isOpenNow(station));
   if (filter.onlyAvailable) {
     if (filter.service === "charging") return availableSlots(station) > 0;
     if (filter.service === "swap") return availableBatteries(station) > 0;

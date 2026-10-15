@@ -7,6 +7,7 @@ import { useMemo, useRef, useState, type ReactNode } from "react";
 import {
   availableBatteries,
   availableSlots,
+  isHolding,
   isStale,
   offersCharging,
   offersSwap,
@@ -20,15 +21,18 @@ import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { loginHref } from "@/lib/next-path";
 import { AMENITIES, stationPhotos } from "@/lib/station-extras";
-import { RESERVATION_MINUTES, type ReservationType, type StationView } from "@/lib/types";
+import { RESERVATION_MINUTES, type Reservation, type ReservationType, type StationView } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
+import { ConfirmSheet } from "./confirm-sheet";
 import { BackIcon, BatteryIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, ScooterIcon, ShareIcon, StoreIcon, SunIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { EvBadge, FavoriteButton, RestBadge, stationHref } from "./station-card";
 import { AMENITY_ICONS, OpenBadge, RatingInline, useHoursLabel } from "./station-look";
 import { SolarBadge } from "./solar-badge";
 import { StationReviews } from "./station-reviews";
+import { Countdown, SuccessCheck } from "./ui";
+import { useActiveReservation } from "./use-alerts";
 
 const StationMap = dynamic(() => import("./station-map").then((m) => m.StationMap), { ssr: false });
 
@@ -117,17 +121,23 @@ export function StationDetail({ station, distance, onChanged }: Props) {
   const gallery = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  /** The reservation just made here; its code is shown in a sheet until closed. */
+  const [reserved, setReserved] = useState<Reservation | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const single = useMemo(() => [station], [station]);
+  // Once something is reserved here, the bar shows it instead of the reserve buttons,
+  // so a second tap cannot replace the code with an error.
+  const shared = useActiveReservation(station.id)?.reservation ?? null;
+  const activeHere = reserved && isHolding(reserved, now) ? reserved : shared;
 
   async function reserve(type: ReservationType) {
+    if (busy || activeHere) return;
     setBusy(true);
     setMessage(null);
     try {
       const reservation = await backend.reserve(station.id, type);
-      setMessage({
-        ok: true,
-        text: format(t.station.reserved, { code: reservation.pickupCode ?? "–", minutes: RESERVATION_MINUTES }),
-      });
+      setReserved(reservation);
+      setSheetOpen(true);
       onChanged();
     } catch (err) {
       setMessage({ ok: false, text: errorMessage(err) });
@@ -348,7 +358,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
                 {profile ? (
                   <button
                     type="button"
-                    disabled={busy || slots === 0}
+                    disabled={busy || slots === 0 || !!activeHere}
                     onClick={() => reserve("slot")}
                     className="shrink-0 rounded-xl bg-gp-green-dark px-3 py-2 text-xs font-semibold text-white hover:bg-gp-forest disabled:opacity-40"
                   >
@@ -469,13 +479,33 @@ export function StationDetail({ station, distance, onChanged }: Props) {
           </p>
         )}
         <div className="flex gap-2">
-          {battery && profile && swap && (
+          {battery && profile && activeHere && (
+            <Link
+              href="/reservations"
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl bg-gp-green/15 px-4 py-3 text-sm text-gp-forest dark:text-zinc-100"
+            >
+              <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-gp-green-dark dark:bg-gp-green" />
+              <span className="min-w-0 flex-1 truncate">
+                <b className="font-semibold">{t.phase1a.activeReservation}</b>
+                {activeHere.pickupCode && (
+                  <>
+                    {" · "}
+                    <span className="font-mono font-semibold tracking-wider">{format(t.phase1a.code, { code: activeHere.pickupCode })}</span>
+                  </>
+                )}
+                {" · "}
+                <Countdown expiresAt={activeHere.expiresAt} />
+              </span>
+              <span className="shrink-0 font-semibold text-gp-green-dark dark:text-gp-green">{t.phase1a.view}</span>
+            </Link>
+          )}
+          {battery && profile && swap && !activeHere && (
             <button type="button" disabled={busy || availableBatteries(station) === 0} onClick={() => reserve("battery")} className={primary}>
               <BatteryIcon size={18} />
               {t.station.reserveBattery}
             </button>
           )}
-          {battery && profile && charging && !connected && (
+          {battery && profile && charging && !connected && !activeHere && (
             <button type="button" disabled={busy || slots === 0} onClick={() => reserve("slot")} className={primary}>
               <BoltIcon size={18} />
               {t.station.reserveSlot}
@@ -491,13 +521,33 @@ export function StationDetail({ station, distance, onChanged }: Props) {
             target="_blank"
             rel="noopener noreferrer"
             aria-label={t.station.directions}
-            className={twoReserve ? iconSecondary : secondary}
+            className={twoReserve || activeHere ? iconSecondary : secondary}
           >
             <NavigateIcon size={18} />
-            {!twoReserve && t.station.directions}
+            {!twoReserve && !activeHere && t.station.directions}
           </a>
         </div>
       </div>
+
+      <ConfirmSheet
+        open={sheetOpen && !!reserved}
+        title={t.phase1a.reservedTitle}
+        confirmLabel={t.phase1a.viewReservation}
+        cancelLabel={t.station.close}
+        onConfirm={() => router.push("/reservations")}
+        onCancel={() => setSheetOpen(false)}
+      >
+        <div className="flex flex-col items-center gap-2 py-2 text-center">
+          <SuccessCheck size={64} />
+          {reserved?.pickupCode && (
+            <>
+              <span className="text-xs text-gp-muted">{t.reservations.pickupCode}</span>
+              <span className="font-mono text-5xl font-bold tracking-[0.3em] text-gp-green-dark dark:text-gp-green">{reserved.pickupCode}</span>
+            </>
+          )}
+          <p className="text-sm">{format(t.phase1a.reservedBody, { minutes: RESERVATION_MINUTES })}</p>
+        </div>
+      </ConfirmSheet>
     </div>
   );
 }

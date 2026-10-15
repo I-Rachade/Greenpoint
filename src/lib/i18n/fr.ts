@@ -1655,6 +1655,19 @@ export const fr = {
     },
   },
   loading: "Chargement…",
+  phase1a: {
+    activeReservation: "Réservation active",
+    code: "Code {code}",
+    view: "Voir",
+    seeAllStations: "Voir les {count} stations",
+    reservedTitle: "Réservation confirmée",
+    reservedBody: "Montrez ce code au personnel de la station. Il est valable {minutes} minutes.",
+    viewReservation: "Voir ma réservation",
+    minutes: "{n} min",
+    timeLeft: "Temps restant",
+    seeStations: "Voir les stations",
+    emptyText: "Réservez une batterie ou une place de recharge depuis la fiche d'une station.",
+  },
 };
 
 export type Dictionary = typeof fr;
