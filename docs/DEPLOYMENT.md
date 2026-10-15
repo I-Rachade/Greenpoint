@@ -77,6 +77,10 @@ Vor dem Deploy des Workers mit der Fahrer-Funktion `npm run db:migrate` ausführ
 
 `npm run db:migrate` legt `fleet_manager_drivers` an (`0015_fleet_managers.sql`, braucht `0007_drivers.sql`). Sicher auch mit dem alten Worker. Danach ordnet der Admin unter **Chauffeurs** Fahrer einem Flottenmanager zu.
 
+## 5b''. OCPP-Ladepunkte (Migration 0023, Durable Object)
+
+`npm run db:migrate` legt `ocpp_transactions` und zwei Spalten in `devices` an (`0023_ocpp.sql`), sicher auch mit dem alten Worker. Der Durable Object `OcppConnection` (Binding `OCPP`, Migration `v1` in `wrangler.jsonc`) wird beim Deploy angelegt; kein neuer Secret. Siehe [steckdosen-lora.md](steckdosen-lora.md#ocpp-16j-direkt-an-unseren-server).
+
 ## 5c. Minuten-Cron (Partner-Webhooks)
 
 Der zweite Cron-Trigger `* * * * *` schickt fällige Webhooks an Partner-Apps und wiederholt fehlgeschlagene (`runPartnerEvents` in `worker/partners.ts`). Vorher muss Migration `0008_partner_api.sql` ausgeführt sein. Siehe [PARTNER-API.md](PARTNER-API.md).

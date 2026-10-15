@@ -119,6 +119,33 @@ Seit Oktober 2026 bietet Xingke eine Cloud-API an ("Xingke Unified API V1.0", `p
 
 Noch offen bei Xingke: Produktionsadresse und Zugangsdaten, ob die Geräte-IDs Kleinbuchstaben enthalten, und ob `energy` pro Ladevorgang oder als Zählerstand gemeldet wird (die App zeigt den gemeldeten Wert). Die JSON-Beispiele, das JSON-Schema und die OpenAPI-Datei des Herstellers liegen unter `src/lib/__tests__/fixtures/xingke/`; die Tests prüfen unsere Befehle und Callbacks dagegen.
 
+## OCPP 1.6J (direkt an unseren Server)
+
+Ladepunkte, die OCPP 1.6J sprechen (auch Xingke-Geräte im „OCPP Mode“), verbinden sich ohne Hersteller-Plattform direkt mit uns. Jeder Ladepunkt hält eine WebSocket-Verbindung zu einem eigenen Durable Object (`OcppConnection` in `worker/ocpp.ts`); der Worker ist das „Central System“.
+
+**Einrichten**
+
+1. Migration `0023_ocpp.sql` anwenden: `npx wrangler d1 migrations apply DB --remote`. Der Durable Object (`OCPP` in `wrangler.jsonc`) entsteht beim nächsten Deploy von selbst.
+2. Im Backoffice unter **Prises connectées** die Steckdose anlegen: Kennung des Ladepunkts (Charge Point ID), Verbindung „Notre serveur“, Häkchen „OCPP 1.6J“, Zahl der Ausgänge (= Connectoren).
+3. Das Backoffice zeigt danach **einmal** das Passwort (AuthorizationKey). Nur sein Hash wird gespeichert; wer es verliert, löscht die Steckdose und legt sie neu an.
+4. Im Ladepunkt eintragen: Central-System-URL `wss://app.poinderecharge.com/api/devices/ocpp`, Charge Point ID wie angelegt, Passwort = AuthorizationKey (HTTP Basic, Security Profile 1). Der Ladepunkt hängt seine ID selbst an die URL an. Unterprotokoll `ocpp1.6`.
+5. Die Cloudflare-Regel, die `/api/devices/` von Browser Integrity Check und Bot-Schutz ausnimmt, gilt auch hier.
+
+**Ablauf**
+
+| Vom Ladepunkt | Wirkung |
+|---|---|
+| `BootNotification` | angenommen, Heartbeat alle 300 s; leere Felder Hersteller/Modell werden ausgefüllt |
+| `Heartbeat` | Lebenszeichen |
+| `StatusNotification` | `Available` frei, `Charging`/`SuspendedEV`/`SuspendedEVSE` lädt, `Finishing` fertig, `Unavailable`/`Faulted` Störung; `Preparing` und `Reserved` ändern nichts. Connector 0 gestört: alle Ausgänge gestört |
+| `Authorize`, `StartTransaction` | nur idTags, die mit `PDR` beginnen (von uns beim Fernstart vergeben), sind gültig; Ladekarten gibt es noch nicht. Jeder Start bekommt eine `transactionId` (Zeile in `ocpp_transactions`) |
+| `MeterValues` | Leistung (`Power.Active.Import`, W oder kW) und Energie der Ladung (Zählerstand minus `meterStart`) |
+| `StopTransaction` | Ladung beendet, Energie gespeichert, Ausgang fertig |
+| `DataTransfer` | `UnknownVendorId` |
+| alles andere | `NotImplemented` |
+
+„Allumer“ schickt `RemoteStartTransaction` mit einem neuen idTag, „Éteindre“ `RemoteStopTransaction` mit der offenen `transactionId` des Connectors (ohne laufende Ladung: Fehlermeldung). Die Antwort des Ladepunkts (`Accepted`/`Rejected` oder ein CALLERROR) schließt den Befehl in `device_commands`. Ist der Ladepunkt nicht verbunden, zeigt das Backoffice „hors ligne“. Trennt er die Verbindung, gelten seine Ausgänge sofort als offline. Eine feste Ladedauer gibt es über OCPP 1.6 nicht.
+
 ## Xingke-Protokoll V1.1 (über eine Brücke)
 
 Das ältere Textprotokoll bleibt für Geräte ohne Xingke-Cloud.

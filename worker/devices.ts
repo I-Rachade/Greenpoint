@@ -12,16 +12,20 @@ import {
 import {
   commandRoute,
   normalizeDeviceId,
+  type CommandRoute,
   outletLabel,
   validDeviceInput,
   type Device,
   type DeviceInput,
   type DeviceLink,
+  type DeviceProtocol,
 } from "../src/lib/iot/devices";
 import type { ChargingPoint, ChargingPointStatus } from "../src/lib/types";
 import type { Env } from "./env";
-import { ApiError, nowIso, uuid } from "./http";
+import { ApiError, nowIso, sha256, uuid } from "./http";
 import { dispatchXingkeCommand } from "./xingke";
+import { ocppIdTag, ocppKey, remoteStartRequest, remoteStopRequest } from "../src/lib/iot/ocpp";
+import { sendOcppCommand } from "./ocpp";
 import { earnStatement } from "./greenpoint";
 
 // Connected sockets (e.g. LoRa). See docs/steckdosen-lora.md.
@@ -227,13 +231,17 @@ export async function createDevice(db: D1Database, input: DeviceInput, actor: st
   const model = String(input.model ?? "").trim().slice(0, 80);
   // The vendor's API wants the id exactly as typed.
   const vendorRef = String(input.externalId).trim();
-  if (commandRoute({ externalId, vendor, link }) === "xingke_cloud" && !XINGKE_ID.test(vendorRef)) throw new ApiError("invalid_device");
+  const protocol = input.protocol ?? null;
+  if (commandRoute({ externalId, vendor, link, protocol }) === "xingke_cloud" && !XINGKE_ID.test(vendorRef)) throw new ApiError("invalid_device");
+  // An OCPP charge point logs in with this key; only its hash is kept, so it is shown once.
+  const key = protocol === "ocpp1.6" ? ocppKey() : null;
   const statements = [
     db
       .prepare(
-        "insert into devices (external_id, station_id, vendor, model, link, outlets, vendor_ref, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)",
+        `insert into devices (external_id, station_id, vendor, model, link, outlets, vendor_ref, protocol, ocpp_key_hash, created_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(externalId, stationId, vendor, model, link, outlets, vendorRef, now),
+      .bind(externalId, stationId, vendor, model, link, outlets, vendorRef, protocol, key && (await sha256(key)), now),
   ];
   for (let n = 1; n <= outlets; n++) {
     statements.push(
@@ -253,14 +261,14 @@ export async function createDevice(db: D1Database, input: DeviceInput, actor: st
       )
       .bind(stationId),
   );
-  statements.push(auditDevice(db, actor, "insert", externalId, stationId, { device: externalId, outlets, vendor, model, link }));
+  statements.push(auditDevice(db, actor, "insert", externalId, stationId, { device: externalId, outlets, vendor, model, link, protocol }));
   try {
     await db.batch(statements);
   } catch (err) {
     if (/UNIQUE|PRIMARY KEY/i.test(String(err))) throw new ApiError("device_exists", 409);
     throw err;
   }
-  return { externalId, outlets };
+  return key ? { externalId, outlets, ocppKey: key } : { externalId, outlets };
 }
 
 interface DeviceRow {
@@ -270,6 +278,7 @@ interface DeviceRow {
   model: string;
   link: DeviceLink;
   outlets: number;
+  protocol: DeviceProtocol | null;
   last_seen_at: string | null;
   created_at: string;
 }
@@ -288,6 +297,7 @@ export async function listDevices(db: D1Database): Promise<Device[]> {
     model: d.model,
     link: d.link,
     outlets: d.outlets,
+    protocol: d.protocol,
     lastSeenAt: d.last_seen_at,
     createdAt: d.created_at,
     points: all.filter((p) => p.deviceId === d.external_id).sort((a, b) => (a.outlet ?? 0) - (b.outlet ?? 0)),
@@ -322,20 +332,20 @@ interface CommandTarget {
   externalId: string;
   /** The id the vendor's API knows the device by. */
   vendorRef: string;
-  route: "xingke_cloud" | "xingke_bridge";
+  route: CommandRoute;
 }
 
 async function commandTarget(db: D1Database, rawId: string, outlet: number): Promise<CommandTarget> {
   const externalId = normalizeDeviceId(rawId);
   const device = await db
     .prepare(
-      `select d.vendor, d.link, d.vendor_ref from devices d join charging_points p on p.device_id = d.external_id
+      `select d.vendor, d.link, d.vendor_ref, d.protocol from devices d join charging_points p on p.device_id = d.external_id
        where d.external_id = ? and p.outlet = ?`,
     )
     .bind(externalId, outlet)
-    .first<{ vendor: string; link: DeviceLink; vendor_ref: string | null }>();
+    .first<{ vendor: string; link: DeviceLink; vendor_ref: string | null; protocol: DeviceProtocol | null }>();
   if (!device) throw new ApiError("not_found", 404);
-  const route = commandRoute({ externalId, vendor: device.vendor, link: device.link });
+  const route = commandRoute({ externalId, vendor: device.vendor, link: device.link, protocol: device.protocol });
   if (!route) throw new ApiError("bad_request"); // this socket only reports
   return { externalId, vendorRef: device.vendor_ref ?? externalId, route };
 }
@@ -351,10 +361,29 @@ async function sendCloud(env: Env, target: CommandTarget, outlet: number, kind: 
   await dispatchXingkeCommand(env, target.vendorRef, command);
 }
 
+/** Stores an OCPP command, then hands it to the charge point's connection. */
+async function sendOcpp(env: Env, target: CommandTarget, outlet: number, kind: "start" | "stop", order: string, action: string, payload: object, actor: string) {
+  const messageId = uuid();
+  const row = await env.DB.prepare(
+    `insert into device_commands (external_id, outlet, kind, order_no, line, message_id, created_by, created_at)
+     values (?, ?, ?, ?, ?, ?, ?, ?) returning id`,
+  )
+    .bind(target.externalId, outlet, kind, order, JSON.stringify([2, messageId, action, payload]), messageId, actor, nowIso())
+    .first<{ id: number }>();
+  await sendOcppCommand(env, target.externalId, row!.id, messageId, action, payload);
+}
+
 /** Switches an outlet on, until full or for `minutes` (1 to 998). */
 export async function startOutlet(env: Env, rawId: string, outlet: number, actor: string, minutes?: number) {
   const target = await commandTarget(env.DB, rawId, outlet);
   if (minutes !== undefined && !(Number.isInteger(minutes) && minutes >= 1 && minutes <= 998)) throw new ApiError("bad_request");
+  if (target.route === "ocpp") {
+    // OCPP 1.6 has no timed start without charging profiles; the charge runs until stopped or full.
+    if (minutes !== undefined) throw new ApiError("bad_request");
+    const idTag = ocppIdTag();
+    await sendOcpp(env, target, outlet, "start", idTag, "RemoteStartTransaction", remoteStartRequest(outlet, idTag), actor);
+    return { order: idTag };
+  }
   if (target.route === "xingke_cloud") {
     const order = xingkeTransactionId();
     const command = xingkeStartRequest(xingkeMessageId("start"), outlet, order, minutes === undefined ? undefined : minutes * 60);
@@ -374,6 +403,17 @@ export async function startOutlet(env: Env, rawId: string, outlet: number, actor
 /** Switches an outlet off, ending its last started charge. */
 export async function stopOutlet(env: Env, rawId: string, outlet: number, actor: string) {
   const target = await commandTarget(env.DB, rawId, outlet);
+  if (target.route === "ocpp") {
+    // OCPP stops a charge, not an outlet: the connector's open transaction.
+    const tx = await env.DB.prepare(
+      "select id from ocpp_transactions where external_id = ? and connector_id = ? and stopped_at is null order by id desc limit 1",
+    )
+      .bind(target.externalId, outlet)
+      .first<{ id: number }>();
+    if (!tx) throw new ApiError("device_not_charging", 409);
+    await sendOcpp(env, target, outlet, "stop", String(tx.id), "RemoteStopTransaction", remoteStopRequest(tx.id), actor);
+    return { order: String(tx.id) };
+  }
   const last = await env.DB.prepare(
     `select order_no from device_commands where external_id = ? and outlet = ? and kind = 'start' and status in ('sent', 'done')
      order by id desc limit 1`,
