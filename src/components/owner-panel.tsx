@@ -5,25 +5,82 @@ import { useState, type FormEvent } from "react";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { OperatorStaff } from "@/lib/operators";
+import { canRequest, serviceDisplay, type ServiceDisplay, type StationServiceInfo } from "@/lib/station-services";
 import type { StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
 import { LoadFailed } from "./load-state";
 import { StaleNotice } from "./stale-notice";
+import { Badge, Button, useToast, type BadgeTone } from "./ui";
 
 const card = "space-y-3 rounded-xl border border-black/10 p-4 dark:border-white/10";
 const field = "rounded-lg border border-black/15 bg-white px-3 py-1.5 text-sm dark:border-white/20 dark:bg-zinc-900";
 const button = "rounded-full bg-gp-green-dark px-4 py-1.5 text-sm text-white disabled:opacity-30";
 const outline = "rounded-full border border-black/15 px-3 py-1 text-xs dark:border-white/20";
 
+export const SERVICE_TONE: Record<ServiceDisplay, BadgeTone> = {
+  active: "green",
+  globalOff: "amber",
+  pending: "blue",
+  rejected: "red",
+  locked: "neutral",
+};
+
+/** The station's services with their state; the owner asks the admin for the ones not unlocked. */
+function ServicesSection({ station, services, onChanged }: { station: StationView; services: StationServiceInfo[]; onChanged: () => void }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const errorMessage = useErrorMessage();
+  const toast = useToast();
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function ask(info: StationServiceInfo) {
+    setBusy(info.service);
+    try {
+      await backend.requestStationService(station.id, info.service);
+      toast(format(t.services.requested, { service: t.services.names[info.service], station: station.name }), { tone: "success" });
+      onChanged();
+    } catch (err) {
+      toast(errorMessage(err), { tone: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <h3 className="text-sm font-medium">{t.services.title}</h3>
+      <p className="text-xs text-zinc-500">{t.services.ownerIntro}</p>
+      <ul className="divide-y divide-black/5 text-sm dark:divide-white/10">
+        {services.map((info) => {
+          const display = serviceDisplay(info);
+          return (
+            <li key={info.service} className="flex min-h-11 flex-wrap items-center gap-2 py-1.5">
+              <span className="flex-1">{t.services.names[info.service]}</span>
+              <Badge tone={SERVICE_TONE[display]}>{t.services.status[display]}</Badge>
+              {canRequest(info) && (
+                <Button variant="secondary" busy={busy === info.service} disabled={busy !== null} onClick={() => ask(info)}>
+                  {t.services.request}
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function StationCard({
   station,
   staff,
+  services,
   onChanged,
   onMessage,
 }: {
   station: StationView;
   staff: OperatorStaff[];
+  services: StationServiceInfo[];
   onChanged: () => void;
   onMessage: (text: string, ok: boolean) => void;
 }) {
@@ -70,6 +127,8 @@ function StationCard({
         <h2 className="text-lg font-semibold">{station.name}</h2>
         <span className="text-sm text-zinc-500">{station.address}</span>
       </div>
+
+      {services.length > 0 && <ServicesSection station={station} services={services} onChanged={onChanged} />}
 
       <div className="space-y-2">
         <h3 className="text-sm font-medium">{t.owner.staff}</h3>
@@ -139,6 +198,8 @@ export function OwnerPanel() {
   const { t } = useI18n();
   const { backend } = useApp();
   const { data, error, reload } = useLiveQuery(() => backend.ownerView());
+  // Shown when it loads; the rest of the page does not wait for it.
+  const { data: services, reload: reloadServices } = useLiveQuery(() => backend.stationServices());
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
 
   // A failed refresh keeps the last data on screen; only nothing at all is an error page.
@@ -167,7 +228,11 @@ export function OwnerPanel() {
           key={s.id}
           station={s}
           staff={data.staff.filter((p) => p.stationId === s.id)}
-          onChanged={reload}
+          services={(services ?? []).filter((x) => x.stationId === s.id)}
+          onChanged={() => {
+            reload();
+            reloadServices();
+          }}
           onMessage={(text, ok) => setMessage({ text, ok })}
         />
       ))}

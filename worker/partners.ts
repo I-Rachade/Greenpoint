@@ -30,6 +30,7 @@ import {
 } from "../src/lib/partners";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, sha256, uuid } from "./http";
+import { unlockedSql } from "./services";
 import { cleanMeasures, cleanName, requireDepot, requireStaff, sizes, storeParcel, tierFor, type ParcelCtx } from "./parcels";
 
 const TRACKING_URL = "https://app.poinderecharge.com/colis";
@@ -670,7 +671,7 @@ async function stationsForPartners(db: D1Database) {
   const { results } = await db
     .prepare(
       `select s.id, s.name, s.address, s.lat, s.lng, s.opening_hours, s.phone, d.note from parcel_depots d
-       join stations s on s.id = d.station_id where d.is_active = 1 and s.is_active = 1 order by s.name`,
+       join stations s on s.id = d.station_id where d.is_active = 1 and s.is_active = 1 and ${unlockedSql("s.id", "parcels")} order by s.name`,
     )
     .all<{ id: string; name: string; address: string; lat: number; lng: number; opening_hours: string; phone: string | null; note: string }>();
   return {

@@ -66,12 +66,14 @@ export type AuditTable =
   | "battery_types"
   | "ev_chargers"
   | "charging_sessions"
+  | "station_services"
   | "settings";
 
 export const AUDIT_TABLES: AuditTable[] = [
   "reservations",
   "station_status",
   "stations",
+  "station_services",
   "station_staff",
   "operator_owners",
   "profiles",

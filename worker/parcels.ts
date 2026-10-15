@@ -28,6 +28,7 @@ import type { Profile } from "../src/lib/types";
 import type { Env } from "./env";
 import { cancelParcelJob, createExpressJob, driverSettings, bookableVehicles } from "./drivers";
 import { requireDrivers } from "./features";
+import { stationUnlocked, unlockedSql } from "./services";
 import { ApiError, nowIso, randomDigits, uuid } from "./http";
 import { roleToDb } from "./roles";
 import { notifyPerson, type Message } from "./notify";
@@ -160,7 +161,8 @@ export async function parcelInfo(c: ParcelCtx): Promise<ParcelInfo> {
   const [depots, tiers, driverSettingsValue, bookableVehiclesValue] = await Promise.all([
     c.db
       .prepare(
-        "select d.* from parcel_depots d join stations s on s.id = d.station_id where d.is_active = 1 and s.is_active = 1",
+        `select d.* from parcel_depots d join stations s on s.id = d.station_id where d.is_active = 1 and s.is_active = 1
+           and ${unlockedSql("d.station_id", "parcels")}`,
       )
       .all<DepotRow>(),
     sizes(c.db),
@@ -189,6 +191,9 @@ export async function requireDepot(db: D1Database, stationId: string) {
     .bind(stationId)
     .first();
   if (!row) throw new ApiError("depot_inactive");
+  // The station must also be unlocked for parcels (worker/services.ts). The parcel module's
+  // global switch is checked where it always was: it hides the parcel routes as a whole.
+  if (!(await stationUnlocked(db, stationId, "parcels"))) throw new ApiError("depot_inactive");
 }
 
 export async function requireStaff(c: ParcelCtx, stationId: string): Promise<Profile> {
