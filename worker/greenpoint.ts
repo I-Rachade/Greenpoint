@@ -143,8 +143,15 @@ async function isStationStaff(db: D1Database, userId: string): Promise<boolean> 
   return !!row;
 }
 
+/** Drivers are not customers either (W10, R11): no greenpoints for swaps or charges. */
+async function isDriverAccount(db: D1Database, userId: string): Promise<boolean> {
+  const row = await db.prepare("select 1 from users where id = ? and role = 'driver'").bind(userId).first();
+  return !!row;
+}
+
+/** Station staff and drivers have no greenpoint page (R11). */
 function refuseStationStaff(user: Profile) {
-  if (user.role === "operator") throw new ApiError("forbidden", 403);
+  if (user.role === "operator" || user.role === "driver") throw new ApiError("forbidden", 403);
 }
 
 /**
@@ -160,7 +167,8 @@ async function drivesFleetVehicle(db: D1Database, userId: string): Promise<boole
 }
 
 /**
- * The ledger row for a driver's finished trip: CO2 per km by the vehicle they drive.
+ * The ledger row for a driver's finished trip: CO2 and km by the vehicle they drive, for the
+ * fleet's CO2 statistics. No greenpoints (W10): drivers are not customers, points stay 0.
  * Callers put it into the batch that closes the trip. Null without a vehicle.
  */
 export async function tripStatement(
@@ -174,13 +182,13 @@ export async function tripStatement(
   if (!vehicle) return null;
   if (await isStationStaff(db, input.driverId)) return null;
   const grams = tripGrams(input.distanceMeters, vehicle.type, await getFactors(db));
-  // "or ignore": a trip earns once (unique index on job_id).
+  // "or ignore": a trip counts once (unique index on job_id).
   return db
     .prepare(
       `insert or ignore into greenpoint_ledger (id, user_id, kind, co2_grams, points, vehicle, station_id, job_id, distance_m, created_by, created_at)
-       values (?, ?, 'delivery', ?, ?, ?, ?, ?, ?, ?, ?)`,
+       values (?, ?, 'delivery', ?, 0, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(uuid(), input.driverId, grams, pointsFor(grams), vehicle.type, input.stationId, input.jobId, input.distanceMeters, input.createdBy, nowIso());
+    .bind(uuid(), input.driverId, grams, vehicle.type, input.stationId, input.jobId, input.distanceMeters, input.createdBy, nowIso());
 }
 
 /**
@@ -196,6 +204,7 @@ export async function earnStatement(
   if ((await earnedToday(db, input.userId)) >= MAX_EARNINGS_PER_DAY) return null;
   if (await drivesFleetVehicle(db, input.userId)) return null;
   if (await isStationStaff(db, input.userId)) return null;
+  if (await isDriverAccount(db, input.userId)) return null;
   const vehicle = input.vehicle ?? (await vehicleOf(db, input.userId));
   const grams = (await getFactors(db)).batteryGrams[vehicle];
   const kind: GreenpointKind = input.reservationId ? (input.type === "battery" ? "swap" : "charge") : "visit";
@@ -224,6 +233,7 @@ export async function chargeEarnStatement(
   if ((await earnedToday(db, input.userId)) >= MAX_EARNINGS_PER_DAY) return null;
   if (await drivesFleetVehicle(db, input.userId)) return null;
   if (await isStationStaff(db, input.userId)) return null;
+  if (await isDriverAccount(db, input.userId)) return null;
   const grams = Math.round((input.energyWh / 1000) * (await getFactors(db)).kwhGrams);
   const points = pointsFor(grams);
   if (points <= 0) return null;
@@ -384,7 +394,7 @@ export async function recordVisit(env: Env, user: Profile, isStaffOf: StaffCheck
   if (!rider) throw new ApiError("recipient_not_found", 404);
   // Staff never credit themselves.
   if (rider.id === user.id) throw new ApiError("own_reservation");
-  if (await drivesFleetVehicle(db, rider.id)) throw new ApiError("greenpoint_fleet_driver");
+  if ((await drivesFleetVehicle(db, rider.id)) || (await isDriverAccount(db, rider.id))) throw new ApiError("greenpoint_fleet_driver");
   if (await isStationStaff(db, rider.id)) throw new ApiError("greenpoint_station_staff");
 
   const earned = await earnStatement(db, { userId: rider.id, type, stationId, createdBy: user.id, vehicle });

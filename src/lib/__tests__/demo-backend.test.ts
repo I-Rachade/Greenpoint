@@ -205,3 +205,52 @@ describe("DemoBackend station points", () => {
     await expect(backend.saveParcelDepot(s.id, { isActive: false, note: "", lockers: 0 })).rejects.toMatchObject({ code: "station_without_point" });
   });
 });
+
+describe("DemoBackend driver accounts (phase 5, as in the Worker)", () => {
+  let backend: DemoBackend;
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-12T12:00:00Z"));
+    backend = new DemoBackend();
+    setActiveStation(null);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps a driver account out of customer things (R11) and gives no greenpoints", async () => {
+    await backend.register("+22890123456", DEMO_CODE, "2580", "driver");
+    const home = await backend.driverHome();
+    expect(home.driver?.status).toBe("active");
+    expect(home.formerAccount).toBeNull();
+    await expect(backend.myWallet()).rejects.toMatchObject({ code: "forbidden" });
+    await expect(backend.myGreenpoint()).rejects.toMatchObject({ code: "forbidden" });
+    await expect(backend.reserve(STATION, "battery", null)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(backend.bookPickup({ home: { lat: 6.13, lng: 1.22, note: "" }, toStationId: STATION } as never)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(backend.sendFormerAccountCode("+22899999999")).rejects.toMatchObject({ code: "account_not_found" });
+  });
+
+  it("takes only a valid, fresh driver pass for a fleet swap (R10)", async () => {
+    await backend.register("+22890123456", DEMO_CODE, "2580", "driver");
+    const pass = await backend.driverPass();
+    const code = (await backend.driverHome()).driver!.code!;
+    await backend.signIn("+22890123456", "2580", "operator");
+    setActiveStation(STATION);
+    const batteryTypeId = (await backend.listStations()).find((s) => s.id === STATION)!.batteryTypes?.[0]?.id ?? null;
+    const swap = (requestId: string, driverCode: string) => backend.recordSwap(STATION, { requestId, customerType: "fleet", driverCode, batteryTypeId });
+    await expect(swap("req-fleet-01", `POINDERECHARGE-CHAUFFEUR:${code}`)).rejects.toMatchObject({ code: "driver_pass_invalid" });
+    await expect(swap("req-fleet-01", pass.payload.replace(/.$/, (c) => (c === "0" ? "1" : "0")))).rejects.toMatchObject({ code: "driver_pass_invalid" });
+    vi.setSystemTime(new Date("2026-10-12T12:11:00Z"));
+    await expect(swap("req-fleet-01", pass.payload)).rejects.toMatchObject({ code: "driver_pass_expired" });
+    vi.setSystemTime(new Date("2026-10-12T12:05:00Z"));
+    const done = await swap("req-fleet-02", pass.payload);
+    expect(done.payment).toBe("fleet");
+  });
+
+  it("refuses the driver role in the generic role change", async () => {
+    await backend.register("+22890123456", DEMO_CODE, "2580", "driver");
+    await backend.signIn("+22890123456", "2580", "admin");
+    await expect(backend.setUserRole("demo-customer", "driver")).rejects.toMatchObject({ message: "bad_request" });
+    await expect(backend.setUserRole("demo-driver", "customer")).rejects.toMatchObject({ code: "has_other_role" });
+  });
+});

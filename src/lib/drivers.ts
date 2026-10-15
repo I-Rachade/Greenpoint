@@ -242,12 +242,75 @@ export function driverBadgePayload(code: string): string {
   return `${BADGE_PREFIX}:${code}`;
 }
 
-/** Reads a scanned driver QR code or a typed driver code. */
+/** Reads a scanned driver QR code (also the signed pass below) or a typed driver code. */
 export function parseDriverBadge(input: string): string | null {
   const text = input.trim().toUpperCase();
-  const body = text.startsWith(`${BADGE_PREFIX}:`) ? text.slice(BADGE_PREFIX.length + 1) : text.replace(/[\s-]/g, "");
+  const body = text.startsWith(`${BADGE_PREFIX}:`) ? text.slice(BADGE_PREFIX.length + 1).split(":")[0] : text.replace(/[\s-]/g, "");
   return new RegExp(`^[${CODE_ALPHABET}]{8}$`).test(body) ? body : null;
 }
+
+// Driver pass ------------------------------------------------------------------------
+//
+// The QR code the driver shows at a station is signed by the server and runs out after
+// DRIVER_PASS_MINUTES (plan phase 5, F10, R10): staff can still hand over parcels with
+// it or with the typed code, but a battery swap billed to a fleet needs a pass that is
+// genuine, not expired, of an active driver and of the fleet the driver belongs to now.
+// Format: POINDERECHARGE-CHAUFFEUR:<code>:<fleet>:<expires>:<signature>
+//   fleet      the first 8 characters of the fleet manager's id (0 without a fleet)
+//   expires    Unix seconds in base 36
+//   signature  HMAC-SHA256 over "<code>:<fleet>:<expires>", first 16 hex digits
+
+/** How long a driver pass is valid; the app fetches a new one before it runs out. */
+export const DRIVER_PASS_MINUTES = 10;
+
+export interface DriverPass {
+  /** What the QR code holds. */
+  payload: string;
+  expiresAt: string;
+}
+
+/** The fleet part of a pass: who the swap would be billed to. */
+export function fleetTag(managerId: string | null): string {
+  return managerId ? managerId.replace(/-/g, "").slice(0, 8).toUpperCase() : "0";
+}
+
+async function passSignature(secret: string, body: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)));
+  return [...mac.slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
+export async function signDriverPass(secret: string, code: string, managerId: string | null, now = Date.now()): Promise<DriverPass> {
+  const expires = Math.floor(now / 1000) + DRIVER_PASS_MINUTES * 60;
+  const body = `${code}:${fleetTag(managerId)}:${expires.toString(36).toUpperCase()}`;
+  return { payload: `${BADGE_PREFIX}:${body}:${await passSignature(secret, body)}`, expiresAt: new Date(expires * 1000).toISOString() };
+}
+
+export type DriverPassCheck =
+  | { ok: true; code: string; fleet: string }
+  | { ok: false; error: "driver_pass_invalid" | "driver_pass_expired" };
+
+/** Checks a scanned pass: signature first, then the time. The caller checks driver and fleet. */
+export async function checkDriverPass(secret: string, input: string, now = Date.now()): Promise<DriverPassCheck> {
+  const text = input.trim().toUpperCase();
+  const parts = text.startsWith(`${BADGE_PREFIX}:`) ? text.slice(BADGE_PREFIX.length + 1).split(":") : [];
+  if (parts.length !== 4) return { ok: false, error: "driver_pass_invalid" };
+  const [code, fleet, expires, signature] = parts;
+  if (!new RegExp(`^[${CODE_ALPHABET}]{8}$`).test(code) || !/^[0-9A-Z]{1,8}$/.test(fleet) || !/^[0-9A-Z]{1,10}$/.test(expires)) {
+    return { ok: false, error: "driver_pass_invalid" };
+  }
+  if ((await passSignature(secret, `${code}:${fleet}:${expires}`)) !== signature) return { ok: false, error: "driver_pass_invalid" };
+  if (parseInt(expires, 36) * 1000 <= now) return { ok: false, error: "driver_pass_expired" };
+  return { ok: true, code, fleet };
+}
+
+/** Driver accounts (role 'driver', plan phase 5): never customers, their home is /chauffeur. */
+export function isDriverAccount(profile: { role: string } | null | undefined): boolean {
+  return profile?.role === "driver";
+}
+
+/** Open trips nobody took: home trips booked by customers are called off after this long. */
+export const OPEN_JOB_EXPIRY_MINUTES = 30;
 
 export interface FleetVehicle {
   id: string;
@@ -357,6 +420,8 @@ export interface DeliveryJob {
   doneAt: string | null;
   /** Storage key of the photo taken at the door. */
   proofKey: string | null;
+  /** Called off because no driver took it in time (OPEN_JOB_EXPIRY_MINUTES). */
+  noDriver?: boolean;
 }
 
 export interface PickupBooking {
@@ -419,6 +484,23 @@ export interface DriverHome {
    * of the line); the app tells them once. Null when it never happened.
    */
   lastExpiredAt: string | null;
+  /** Converted drivers: the customer account that took over their wallet and greenpoints (0031). */
+  formerAccount?: FormerAccount | null;
+}
+
+/**
+ * What a converted driver left as a customer (migration 0031): a customer account with
+ * their wallet and greenpoints, waiting for a phone number or e-mail address of theirs.
+ */
+export interface FormerAccount {
+  balanceXof: number;
+  points: number;
+  /** Active reservations that were cancelled when the account became a driver account. */
+  cancelledReservations: number;
+  /** False while nobody can sign in to it. */
+  claimed: boolean;
+  /** Whether there is an account to claim (not when only reservations were cancelled). */
+  claimable: boolean;
 }
 
 /** A driver who showed their QR code at a station, and what staff can do for them. */
@@ -454,7 +536,9 @@ export type DriverDecision =
   | { action: "reject" }
   | { action: "suspend" }
   | { action: "reactivate" }
-  | { action: "vehicle"; vehicleId: string | null };
+  | { action: "vehicle"; vehicleId: string | null }
+  // Driver back to customer (R15): no trip under way, no cash open, no longer in a fleet.
+  | { action: "release" };
 
 /** Jobs that still tie up a driver. */
 /** Why a driver gives back a trip they accepted, before they have the parcel or the customer. */

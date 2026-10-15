@@ -18,7 +18,10 @@ import {
   validSettings,
   vehicleFits,
   MAX_PASSENGERS,
+  OPEN_JOB_EXPIRY_MINUTES,
+  signDriverPass,
   type AbandonReason,
+  type DriverPass,
   type AdminDrivers,
   type DeliveryJob,
   type Driver,
@@ -62,6 +65,8 @@ import type { Env } from "./env";
 import { driversEnabled, requireDrivers } from "./features";
 import { requireService, unlockedStations, unlockedSql } from "./services";
 import { tripStatement } from "./greenpoint";
+import { formerAccountOf } from "./former-accounts";
+import { DB_CUSTOMER, DB_DRIVER, refuseDriver } from "./roles";
 import { ApiError, nowIso, uuid } from "./http";
 import { EMAIL_FROM, notifyPerson, type Message } from "./notify";
 import {
@@ -97,12 +102,14 @@ export interface DriverRow {
   created_at: string;
   reviewed_at: string | null;
   phone: string | null;
+  /** users.role: only 'driver' accounts drive (0030, R1). */
+  u_role: string;
   v_type: FleetVehicleType | null;
   v_plate: string | null;
   v_active: number | null;
 }
 
-export const DRIVER_SELECT = `select d.*, u.phone, v.type as v_type, v.plate as v_plate, v.is_active as v_active
+export const DRIVER_SELECT = `select d.*, u.phone, u.role as u_role, v.type as v_type, v.plate as v_plate, v.is_active as v_active
   from drivers d join users u on u.id = d.user_id left join fleet_vehicles v on v.id = d.vehicle_id`;
 
 export interface JobRow {
@@ -137,6 +144,7 @@ export interface JobRow {
   at_door_at: string | null;
   done_at: string | null;
   proof_key: string | null;
+  cancelled_by: string | null;
   dropoff_lat: number | null;
   dropoff_lng: number | null;
   dropoff_note: string | null;
@@ -194,6 +202,7 @@ export function toJob(r: JobRow): DeliveryJob {
     atDoorAt: r.at_door_at,
     doneAt: r.done_at,
     proofKey: r.proof_key,
+    ...(r.status === "cancelled" && r.cancelled_by === NO_DRIVER ? { noDriver: true } : {}),
   };
 }
 
@@ -329,11 +338,17 @@ async function driverRow(db: D1Database, userId: string): Promise<DriverRow | nu
   return db.prepare(`${DRIVER_SELECT} where d.user_id = ?`).bind(userId).first<DriverRow>();
 }
 
+/** A driver row that may drive: approved, on a driver account (role 'driver', not just a drivers row). */
+function drives(row: DriverRow | null): row is DriverRow {
+  return !!row && row.status === "active" && row.u_role === DB_DRIVER;
+}
+
 /** The signed-in user as an active driver. */
 async function requireDriver(c: ParcelCtx): Promise<{ user: Profile; row: DriverRow }> {
   const user = await c.requireUser();
+  if (user.role !== "driver") throw new ApiError("not_a_driver", 403);
   const row = await driverRow(c.db, user.id);
-  if (!row || row.status !== "active") throw new ApiError("not_a_driver", 403);
+  if (!drives(row)) throw new ApiError("not_a_driver", 403);
   return { user, row };
 }
 
@@ -383,7 +398,7 @@ function ledger(c: ParcelCtx, driverId: string, kind: LedgerEntry["kind"], amoun
 async function requeue(db: D1Database, driverId: string, stationId: string | null, s: DriverSettings): Promise<D1PreparedStatement[]> {
   if (!stationId) return [];
   const row = await driverRow(db, driverId);
-  if (!row || row.status !== "active" || !row.vehicle_id || !row.v_active) return [];
+  if (!drives(row) || !row.vehicle_id || !row.v_active) return [];
   if ((await balance(db, driverId)).balance >= s.cashLimitFcfa) return [];
   return [db.prepare("insert or ignore into driver_queue (driver_id, station_id, since) values (?, ?, ?)").bind(driverId, stationId, nowIso())];
 }
@@ -441,6 +456,8 @@ export async function dispatch(c: Pick<ParcelCtx, "db" | "audit"> & { env?: Env 
     }
   }
 
+  await expireOpenJobs(c);
+
   const { results: open } = await c.db
     .prepare("select * from delivery_jobs where status = 'open' order by created_at limit 50")
     .all<JobRow>();
@@ -448,8 +465,8 @@ export async function dispatch(c: Pick<ParcelCtx, "db" | "audit"> & { env?: Env 
   const { results: queueRows } = await c.db
     .prepare(
       `select q.driver_id, q.station_id, q.since, v.type from driver_queue q
-       join drivers d on d.user_id = q.driver_id join fleet_vehicles v on v.id = d.vehicle_id
-       where d.status = 'active' and v.is_active = 1 and ${unlockedSql("q.station_id", "drivers")}`,
+       join drivers d on d.user_id = q.driver_id join users u on u.id = d.user_id join fleet_vehicles v on v.id = d.vehicle_id
+       where d.status = 'active' and u.role = '${DB_DRIVER}' and v.is_active = 1 and ${unlockedSql("q.station_id", "drivers")}`,
     )
     .all<{ driver_id: string; station_id: string; since: string; type: FleetVehicleType }>();
   let queue: QueueEntry[] = queueRows.map((q) => ({ driverId: q.driver_id, stationId: q.station_id, since: q.since, vehicleType: q.type }));
@@ -487,6 +504,29 @@ export async function dispatch(c: Pick<ParcelCtx, "db" | "audit"> & { env?: Env 
   await Promise.all(offers);
 }
 
+/** Trips customers booked from home: called off when no driver took them in time. Express trips stay with the station staff. */
+const EXPIRING_KINDS: JobKind[] = ["pickup", "delivery", "ride", "courier"];
+
+/**
+ * A customer's trip nobody took within OPEN_JOB_EXPIRY_MINUTES is called off, so the
+ * app does not show "looking for a driver" for ever; the customer is told and can book
+ * again. Runs with every dispatch (the cron runs it every minute).
+ */
+async function expireOpenJobs(c: Pick<ParcelCtx, "db" | "audit"> & { env?: Env }) {
+  const before = new Date(Date.now() - OPEN_JOB_EXPIRY_MINUTES * 60_000).toISOString();
+  const { results } = await c.db
+    .prepare(`${JOB_SELECT} where j.status = 'open' and j.created_at < ? and j.kind in (${EXPIRING_KINDS.map(() => "?").join(", ")}) limit 50`)
+    .bind(before, ...EXPIRING_KINDS)
+    .all<JobRow>();
+  for (const job of results) {
+    if (!(await closeJob(c, job, ["open"], NO_DRIVER))) continue;
+    await tellUser(c.env, job.customer_user_id, job.parcel_id, "job_expired", {
+      subject: "Aucun chauffeur disponible",
+      text: `poinderecharge : aucun chauffeur n'a pu prendre votre course${job.tracking_no ? ` (colis ${job.tracking_no})` : ""}. Elle est annulée, rien n'est à payer. Vous pouvez en réserver une nouvelle dans l'app : ${APP_URL}`,
+    });
+  }
+}
+
 /**
  * The every-minute cron (worker/index.ts): offers go out and run out even while
  * nobody has the app open. Nothing happens while the driver module is off.
@@ -508,8 +548,12 @@ export async function runDispatch(env: Env) {
 export async function driverHome(c: ParcelCtx): Promise<DriverHome> {
   const user = await c.requireUser();
   await dispatch(c);
-  const [row, s] = await Promise.all([driverRow(c.db, user.id), driverSettings(c.db)]);
-  if (!row) return { driver: null, job: null, history: [], ledger: [], settings: s, lastExpiredAt: null };
+  const [row, s, formerAccount] = await Promise.all([
+    driverRow(c.db, user.id),
+    driverSettings(c.db),
+    user.role === "driver" ? formerAccountOf(c.db, user.id) : Promise.resolve(null),
+  ]);
+  if (!row) return { driver: null, job: null, history: [], ledger: [], settings: s, lastExpiredAt: null, formerAccount };
   const [driver, job, history, entries, expired] = await Promise.all([
     toDriver(c.db, row, true),
     currentJob(c.db, user.id),
@@ -536,7 +580,31 @@ export async function driverHome(c: ParcelCtx): Promise<DriverHome> {
     ledger: entries.results.map((e) => ({ id: e.id, at: e.at, kind: e.kind, amountFcfa: e.amount_fcfa, jobId: e.job_id, stationId: e.station_id })),
     settings: s,
     lastExpiredAt: expired?.at ?? null,
+    formerAccount,
   };
+}
+
+/** The key the driver passes are signed with: made once, kept in app_settings (never sent to anyone). */
+export async function passSecret(db: D1Database): Promise<string> {
+  const read = () => db.prepare("select value from app_settings where key = 'driver_pass_secret'").first<{ value: string }>();
+  const row = await read();
+  if (row) return row.value;
+  const fresh = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  await db
+    .prepare("insert or ignore into app_settings (key, value, updated_at) values ('driver_pass_secret', ?, ?)")
+    .bind(fresh, nowIso())
+    .run();
+  return (await read())!.value;
+}
+
+/**
+ * The signed QR code the driver shows at a station (src/lib/drivers.ts, R10): staff hand
+ * over parcels with it, and a battery swap billed to the driver's fleet needs it.
+ */
+export async function driverPass(c: ParcelCtx): Promise<DriverPass> {
+  const { row } = await requireDriver(c);
+  const fleet = await c.db.prepare("select manager_id from fleet_manager_drivers where driver_id = ?").bind(row.user_id).first<{ manager_id: string }>();
+  return signDriverPass(await passSecret(c.db), row.code, fleet?.manager_id ?? null);
 }
 
 function cleanText(value: unknown, min: number, max: number): string {
@@ -548,6 +616,8 @@ function cleanText(value: unknown, min: number, max: number): string {
 /** Applies (or applies again after a refusal) to drive one of our vehicles. */
 export async function applyDriver(c: ParcelCtx, input: DriverApplication) {
   const user = await c.requireUser();
+  // Customers apply; staff, owners, fleet managers and admins keep their role (F1, one role per account).
+  if (user.role !== "customer") throw new ApiError("forbidden", 403);
   await requireDrivers(c.db);
   if (!user.phone) throw new ApiError("phone_required");
   const fullName = cleanText(input?.fullName, 2, 80);
@@ -607,6 +677,7 @@ const DOC_COLUMN: Record<DriverDocument, "id_doc_key" | "license_doc_key" | "por
 /** A photo of the ID card, the licence or the driver. Private: only admins see it. */
 export async function uploadDriverDocument(c: ParcelCtx, kind: string, request: Request) {
   const user = await c.requireUser();
+  if (user.role !== "customer") throw new ApiError("forbidden", 403);
   await requireDrivers(c.db);
   const column = DOC_COLUMN[kind as DriverDocument];
   if (!column) throw new ApiError("bad_request");
@@ -954,7 +1025,7 @@ export async function stationDrivers(c: ParcelCtx, stationId: string): Promise<S
 async function driverByBadge(c: ParcelCtx, badge: unknown): Promise<DriverRow> {
   const code = parseDriverBadge(String(badge ?? ""));
   const row = code ? await c.db.prepare(`${DRIVER_SELECT} where d.code = ?`).bind(code).first<DriverRow>() : null;
-  if (!row || row.status !== "active") throw new ApiError("driver_not_found", 404);
+  if (!drives(row)) throw new ApiError("driver_not_found", 404);
   return row;
 }
 
@@ -1084,6 +1155,7 @@ function cleanHome(input: unknown): HomePoint {
 /** A customer asks a driver to fetch a parcel at home and bring it to station B. */
 export async function bookPickup(c: ParcelCtx, input: PickupBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
+  refuseDriver(user);
   await requireDrivers(c.db);
   const home = cleanHome(input?.home);
   const toStationId = String(input?.toStationId ?? "");
@@ -1145,6 +1217,7 @@ function cleanDropoff(input: unknown): { lat: number; lng: number; note: string 
 /** A customer books a driver to take them (and others, as seats allow) from A to B. Not offered in the app at the moment. */
 export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
+  refuseDriver(user);
   await requireDrivers(c.db);
   const pickup = cleanHome(input?.pickup);
   const d = cleanDropoff(input?.dropoff);
@@ -1195,6 +1268,7 @@ export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<Delive
  */
 export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
+  refuseDriver(user);
   await requireDrivers(c.db);
   const pickup = cleanHome(input?.pickup);
   const d = cleanDropoff(input?.dropoff);
@@ -1253,6 +1327,7 @@ export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<
 /** The recipient of a parcel waiting at a station has it brought home; this hands the pickup right to the driver. */
 export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unknown): Promise<DeliveryJob> {
   const user = await c.requireUser();
+  refuseDriver(user);
   await requireDrivers(c.db);
   const home = cleanHome(rawHome);
   const parcel = await c.db.prepare("select * from parcels where id = ?").bind(parcelId).first<ParcelRow>();
@@ -1313,11 +1388,17 @@ export async function myJobs(c: ParcelCtx): Promise<DeliveryJob[]> {
 
 const CANCELLABLE: JobStatus[] = ["open", "assigned", "accepted"];
 
-async function cancelJobRow(c: ParcelCtx, job: JobRow, actor: string) {
-  if (!(await moveJob(c.db, job.id, CANCELLABLE, "status = 'cancelled', done_at = ?, cancelled_by = ?", nowIso(), actor))) {
-    throw new ApiError("job_wrong_status");
-  }
-  const batch = [jobAudit(c, actor, job, { status: [job.status, "cancelled"] })];
+/** cancelled_by of trips called off because no driver took them in time (expireOpenJobs). */
+const NO_DRIVER = "no_driver";
+
+/** Calls a trip off while it is still in `from`; false when it moved on in the meantime. */
+async function closeJob(c: Pick<ParcelCtx, "db" | "audit">, job: JobRow, from: JobStatus[], actor: string): Promise<boolean> {
+  if (!(await moveJob(c.db, job.id, from, "status = 'cancelled', done_at = ?, cancelled_by = ?", nowIso(), actor))) return false;
+  const batch = [
+    actor === NO_DRIVER
+      ? jobAudit(c as ParcelCtx, null, job, { status: [job.status, "cancelled"], reason: NO_DRIVER })
+      : jobAudit(c as ParcelCtx, actor, job, { status: [job.status, "cancelled"] }),
+  ];
   if (job.parcel_id && job.kind === "delivery") {
     batch.push(c.db.prepare("update parcels set delivery_status = null where id = ? and delivery_status = 'booked'").bind(job.parcel_id));
   }
@@ -1332,14 +1413,25 @@ async function cancelJobRow(c: ParcelCtx, job: JobRow, actor: string) {
     );
   }
   await c.db.batch(batch);
+  return true;
 }
 
-/** The customer (before the driver has the parcel) or an admin calls a trip off. */
+async function cancelJobRow(c: ParcelCtx, job: JobRow, actor: string) {
+  if (!(await closeJob(c, job, CANCELLABLE, actor))) throw new ApiError("job_wrong_status");
+}
+
+/** The customer (before the driver has the parcel) or an admin calls a trip off; the driver it was offered to is told. */
 export async function cancelJob(c: ParcelCtx, jobId: string) {
   const user = await c.requireUser();
   const job = await loadJob(c.db, jobId);
   if (user.role !== "admin" && job.customer_user_id !== user.id) throw new ApiError("forbidden", 403);
   await cancelJobRow(c, job, user.id);
+  if (job.driver_id) {
+    await tellUser(c.env, job.driver_id, job.parcel_id, "job_cancelled", {
+      subject: "Course annulée",
+      text: `poinderecharge : la course qui vous était confiée${job.tracking_no ? ` (colis ${job.tracking_no})` : ""} a été annulée par ${job.customer_user_id === user.id ? "le client" : "l'équipe"}. Vous reprenez votre place dans la file : ${DRIVER_URL}`,
+    });
+  }
 }
 
 /** A parcel was cancelled at the counter or picked up in person: its open trip is off. */
@@ -1414,17 +1506,24 @@ export async function reviewDriver(c: ParcelCtx, userId: string, decision: Drive
     if (other) throw new ApiError("vehicle_unavailable");
   };
   switch (decision?.action) {
-    case "approve":
+    case "approve": {
       if (row.status !== "pending" && row.status !== "rejected") throw new ApiError("forbidden", 403);
       if (!row.id_doc_key || !row.license_doc_key || !row.portrait_key) throw new ApiError("documents_missing");
+      // The customer account becomes a driver account (one role per account): staff and others keep theirs.
+      if (row.u_role !== DB_CUSTOMER && row.u_role !== DB_DRIVER) throw new ApiError("has_other_role");
+      // R15: only with nothing open as a customer.
+      if (row.u_role === DB_CUSTOMER && (await customerThingsOpen(c.db, userId, row.phone))) throw new ApiError("role_change_blocked", 409);
       await vehicleFree(String(decision.vehicleId));
       await c.db.batch([
         c.db
           .prepare("update drivers set status = 'active', vehicle_id = ?, reviewed_at = ?, reviewed_by = ? where user_id = ?")
           .bind(decision.vehicleId, now, admin.id, userId),
+        c.db.prepare("update users set role = ? where id = ? and role = ?").bind(DB_DRIVER, userId, DB_CUSTOMER),
         audit({ status: [row.status, "active"], vehicle_id: [row.vehicle_id, decision.vehicleId] }),
+        ...(row.u_role === DB_CUSTOMER ? [c.audit(admin.id, "profiles", "update", userId, { role: ["customer", "driver"] }, { userId })] : []),
       ]);
       return;
+    }
     case "reject":
       if (row.status !== "pending") throw new ApiError("forbidden", 403);
       await c.db.batch([
@@ -1460,9 +1559,44 @@ export async function reviewDriver(c: ParcelCtx, userId: string, decision: Drive
       ]);
       return;
     }
+    case "release": {
+      // R15: driver back to customer only with no trip under way, no cash open and out of any fleet.
+      if (row.u_role !== DB_DRIVER) throw new ApiError("forbidden", 403);
+      if (busy) throw new ApiError("driver_busy");
+      const inFleet = await c.db.prepare("select 1 from fleet_manager_drivers where driver_id = ?").bind(userId).first();
+      if (inFleet || (await balance(c.db, userId)).balance !== 0) throw new ApiError("role_change_blocked", 409);
+      await c.db.batch([
+        c.db.prepare("delete from driver_queue where driver_id = ?").bind(userId),
+        // W1: the drivers table only holds driver accounts. Trips and the cash ledger stay (no foreign key).
+        c.db.prepare("delete from drivers where user_id = ?").bind(userId),
+        c.db.prepare("update users set role = ? where id = ? and role = ?").bind(DB_CUSTOMER, userId, DB_DRIVER),
+        audit({ status: [row.status, null], released: true }),
+        c.audit(admin.id, "profiles", "update", userId, { role: ["driver", "customer"] }, { userId }),
+      ]);
+      return;
+    }
     default:
       throw new ApiError("bad_request");
   }
+}
+
+/**
+ * R15: what keeps a customer account from becoming a driver account: money in the
+ * wallet, an active reservation, an open parcel (sent or to receive) or a booked trip.
+ */
+export async function customerThingsOpen(db: D1Database, userId: string, phone: string | null): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `select
+         (select coalesce(sum(balance_xof), 0) from wallets where user_id = ?1) as balance,
+         (select count(*) from reservations where user_id = ?1 and status = 'active' and expires_at > ?3) as reservations,
+         (select count(*) from parcels where (sender_user_id = ?1 or recipient_user_id = ?1 or (?2 is not null and (sender_phone = ?2 or recipient_phone = ?2)))
+            and status in ('deposited', 'in_transit', 'arrived', 'stored')) as parcels,
+         (select count(*) from delivery_jobs where customer_user_id = ?1 and status not in ('done', 'failed', 'cancelled')) as trips`,
+    )
+    .bind(userId, phone, nowIso())
+    .first<{ balance: number; reservations: number; parcels: number; trips: number }>();
+  return !!row && (row.balance > 0 || row.reservations > 0 || row.parcels > 0 || row.trips > 0);
 }
 
 /** Takes an offered trip back from a driver (it becomes open again). */
@@ -1515,7 +1649,7 @@ export async function assignJob(c: ParcelCtx, jobId: string, driverId: string) {
 /** Gives a trip to a driver ahead of the queue (admin or fleet manager); the driver confirms as usual. */
 export async function handJob(c: ParcelCtx, actorId: string, job: JobRow, driverId: string, by: "admin" | "fleet") {
   const row = await driverRow(c.db, driverId);
-  if (!row || row.status !== "active" || !row.v_type || !row.v_active) throw new ApiError("driver_not_found");
+  if (!drives(row) || !row.v_type || !row.v_active) throw new ApiError("driver_not_found");
   if (await currentJob(c.db, driverId)) throw new ApiError("driver_busy");
   const s = await driverSettings(c.db);
   if (!rowFits(job, row.v_type, job.weight_kg ?? (await maxWeight(c.db, job.size)), s)) throw new ApiError("vehicle_too_small");

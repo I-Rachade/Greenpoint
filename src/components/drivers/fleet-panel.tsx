@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
-import { BUSY_JOB_STATUSES, vehicleFits, type DeliveryJob } from "@/lib/drivers";
+import { BUSY_JOB_STATUSES, jobFits, type DeliveryJob } from "@/lib/drivers";
 import type { FleetDriver, FleetDriverStats, FleetView } from "@/lib/fleet";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
@@ -73,14 +73,15 @@ function OpenJob({ job, view, stations, onDone }: { job: DeliveryJob; view: Flee
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const name = (id: string | null) => stations.find((s) => s.id === id)?.name ?? "?";
-  // Free drivers whose vehicle can carry the parcel (by size until it is weighed); the server checks again.
+  // Free drivers whose vehicle fits the trip (the asked vehicle type, the seats of a ride, the parcel by size
+  // until it is weighed): the same rule as dispatch, and the server checks again.
   const weight = job.weightKg ?? 0;
   const candidates = view.drivers.filter(
     (d) =>
       d.status === "active" &&
       d.vehicle?.isActive &&
       !(d.job && BUSY_JOB_STATUSES.includes(d.job.status)) &&
-      vehicleFits(d.vehicle.type, job.size, weight, view.settings),
+      jobFits({ ...job, vehicleType: job.vehicleType ?? null, passengers: job.passengers ?? null }, d.vehicle.type, weight, view.settings),
   );
 
   async function assign() {

@@ -198,7 +198,7 @@ describe("greenpoint", () => {
     expect((await call(env, "kofi", "GET", "/api/greenpoint/total")).body).toEqual({ co2Grams: 1000 });
   });
 
-  it("gives drivers CO2 per km on our vehicles, and no points for the fleet's batteries", async () => {
+  it("counts drivers' CO2 per km on our vehicles for the fleet, but no greenpoints (W10), and no points for the fleet's batteries", async () => {
     const { env, db } = await setup();
     const now = new Date().toISOString();
     db.exec(`
@@ -213,7 +213,7 @@ describe("greenpoint", () => {
     await (await tripStatement(d1, { driverId: "kofi", jobId: "job-1", distanceMeters: 12_500, stationId: "st", createdBy: "kofi" }))!.run();
     const view = await mine(env);
     expect(view.co2Grams).toBe(750);
-    expect(view.points).toBe(7);
+    expect(view.points).toBe(0);
     expect(view.history[0]).toMatchObject({ kind: "delivery", vehicle: "tricycle" });
     expect((await visit(env, { contact: "+22896123456", service: "swap" })).body).toEqual({ error: "greenpoint_fleet_driver" });
     expect(await tripStatement(d1, { driverId: "staff", jobId: "job-2", distanceMeters: 1000, stationId: null, createdBy: null })).toBeNull();

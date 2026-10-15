@@ -81,7 +81,7 @@ export async function fleetStats(c: ParcelCtx, from: string, to: string): Promis
   if (!ids.length) return { from, to, drivers: [] };
   const marks = ids.map(() => "?").join(", ");
   const between = (col: string) => `${col} >= ? and ${col} < ?`;
-  const [trips, cash, charging, paid] = await Promise.all([
+  const [trips, cash, charging, paid, swaps] = await Promise.all([
     c.db
       .prepare(
         `select driver_id, status, count(*) as n, sum(fare_fcfa) as fare from delivery_jobs
@@ -110,6 +110,14 @@ export async function fleetStats(c: ParcelCtx, from: string, to: string): Promis
       )
       .bind(...ids, range.start, range.end)
       .all<{ user_id: string; amount: number }>(),
+    // Swaps at the counter with the driver's pass, billed to the fleet (station-work.ts).
+    c.db
+      .prepare(
+        `select driver_id, count(*) as n from swap_log
+         where customer_type = 'fleet' and driver_id in (${marks}) and ${between("created_at")} group by driver_id`,
+      )
+      .bind(...ids, range.start, range.end)
+      .all<{ driver_id: string; n: number }>(),
   ]);
   const drivers: FleetDriverStats[] = ids.map((id) => {
     const trip = (status: string) => trips.results.find((t) => t.driver_id === id && t.status === status);
@@ -123,7 +131,7 @@ export async function fleetStats(c: ParcelCtx, from: string, to: string): Promis
       earningFcfa: money("earning"),
       collectedFcfa: money("collected"),
       settledFcfa: money("settlement"),
-      batterySwaps: visits("battery"),
+      batterySwaps: visits("battery") + (swaps.results.find((x) => x.driver_id === id)?.n ?? 0),
       chargingSlots: visits("slot"),
       chargingPaidFcfa: paid.results.find((p) => p.user_id === id)?.amount ?? 0,
     };

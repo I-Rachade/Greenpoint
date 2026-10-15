@@ -8,7 +8,8 @@
 
 import { parseContact } from "../src/lib/contact";
 import { contactFromCode } from "../src/lib/charging";
-import { parseDriverBadge } from "../src/lib/drivers";
+import { checkDriverPass, fleetTag } from "../src/lib/drivers";
+import { passSecret } from "./drivers";
 import {
   ACTIVE_STATION_HEADER,
   cleanBatteryLabel,
@@ -39,7 +40,7 @@ import type { Env } from "./env";
 import { featuresOf } from "./features";
 import { earnStatement } from "./greenpoint";
 import { ApiError, nowIso, uuid } from "./http";
-import { DB_CUSTOMER } from "./roles";
+import { DB_CUSTOMER, DB_DRIVER } from "./roles";
 import { requireService } from "./services";
 import { walletAccess } from "./wallet";
 import { checkPickupCode, heldBatteriesSql, stillActive, type ReservationRow } from "./reservations";
@@ -433,20 +434,24 @@ async function findCustomer(db: D1Database, raw: unknown, staffId: string): Prom
 }
 
 /**
- * A fleet driver by their QR code: an active driver who belongs to a fleet (W7, R10).
- * TODO(phase 5): driver accounts and the driver QR of the new driver role (expiry,
- * removed drivers) replace this check against today's drivers table.
+ * A fleet driver by the signed pass their app shows (W7, R10, src/lib/drivers.ts): the
+ * signature must be ours and not expired, the account an active driver account, and the
+ * pass made for the fleet the driver belongs to now. A typed driver code is not enough:
+ * the swap is billed to the fleet.
  */
 async function findFleetDriver(db: D1Database, raw: unknown): Promise<{ driverId: string; managerId: string }> {
-  const code = parseDriverBadge(String(raw ?? ""));
-  const row = code
-    ? await db
-        .prepare("select d.user_id, d.status, f.manager_id from drivers d left join fleet_manager_drivers f on f.driver_id = d.user_id where d.code = ?")
-        .bind(code)
-        .first<{ user_id: string; status: string; manager_id: string | null }>()
-    : null;
-  if (!row || row.status !== "active") throw new ApiError("driver_not_found", 404);
-  if (!row.manager_id) throw new ApiError("wrong_fleet", 409);
+  const pass = await checkDriverPass(await passSecret(db), String(raw ?? ""));
+  if (!pass.ok) throw new ApiError(pass.error, 409);
+  const row = await db
+    .prepare(
+      `select d.user_id, d.status, u.role, f.manager_id from drivers d join users u on u.id = d.user_id
+       left join fleet_manager_drivers f on f.driver_id = d.user_id where d.code = ?`,
+    )
+    .bind(pass.code)
+    .first<{ user_id: string; status: string; role: string; manager_id: string | null }>();
+  if (!row || row.status !== "active" || row.role !== DB_DRIVER) throw new ApiError("driver_not_found", 404);
+  // Removed from the fleet, or moved to another one since the pass was made.
+  if (!row.manager_id || fleetTag(row.manager_id) !== pass.fleet) throw new ApiError("wrong_fleet", 409);
   return { driverId: row.user_id, managerId: row.manager_id };
 }
 

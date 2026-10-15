@@ -26,6 +26,8 @@ import type {
   DriverDecision,
   DriverDocument,
   DriverHome,
+  DriverPass,
+  FormerAccount,
   DriverSettings,
   FleetVehicleInput,
   HomePoint,
@@ -155,6 +157,9 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "outlet_busy",
   "outlet_required",
   "swap_required",
+  "driver_pass_invalid",
+  "driver_pass_expired",
+  "role_change_blocked",
 ];
 
 /**
@@ -579,6 +584,20 @@ export class CloudflareBackend implements Backend {
 
   driverHome() {
     return this.call<DriverHome>("GET", "/api/driver");
+  }
+
+  driverPass() {
+    return this.call<DriverPass>("GET", "/api/driver/pass");
+  }
+
+  async sendFormerAccountCode(contact: string) {
+    await this.call("POST", "/api/driver/former-account/code", { contact });
+  }
+
+  async claimFormerAccount(contact: string, code: string, pin: string) {
+    const account = await this.call<FormerAccount>("POST", "/api/driver/former-account/claim", { contact, code, pin });
+    this.changed();
+    return account;
   }
 
   private async act(method: string, path: string, body?: unknown) {

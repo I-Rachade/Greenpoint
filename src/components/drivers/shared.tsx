@@ -23,9 +23,11 @@ const TONE: Record<JobStatus, "green" | "amber" | "red" | "gray" | "blue"> = {
   cancelled: "gray",
 };
 
-export function JobStatusPill({ status, kind }: { status: JobStatus; kind?: JobKind }) {
+/** noDriver: a trip the server called off because no driver took it in time. */
+export function JobStatusPill({ status, kind, noDriver = false }: { status: JobStatus; kind?: JobKind; noDriver?: boolean }) {
   const { t } = useI18n();
-  return <Pill tone={TONE[status]}>{kind === "ride" && status === "picked_up" ? t.drivers.rideOnBoard : t.drivers.status[status]}</Pill>;
+  const label = noDriver && status === "cancelled" ? t.drivers.noDriver : kind === "ride" && status === "picked_up" ? t.drivers.rideOnBoard : t.drivers.status[status];
+  return <Pill tone={TONE[status]}>{label}</Pill>;
 }
 
 /** "Station A → Station B", "Home → Station B", "Station A → Home" or "A → B" for a ride or courier. */

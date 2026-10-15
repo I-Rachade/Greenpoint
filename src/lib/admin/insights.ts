@@ -52,7 +52,7 @@ export interface Kpis {
 export function computeKpis(snap: AdminSnapshot, now: Date): Kpis {
   const t = now.getTime();
   const active = snap.stations.filter((s) => s.isActive);
-  const usersByRole: Record<UserRole, number> = { customer: 0, operator: 0, fleet_manager: 0, admin: 0 };
+  const usersByRole: Record<UserRole, number> = { customer: 0, operator: 0, fleet_manager: 0, admin: 0, driver: 0 };
   for (const u of snap.users) usersByRole[u.role]++;
 
   const week = snap.reservations.filter((r) => t - new Date(r.createdAt).getTime() < 7 * DAY);

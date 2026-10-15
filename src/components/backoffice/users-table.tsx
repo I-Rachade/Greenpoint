@@ -11,6 +11,8 @@ import type { UserRole } from "@/lib/types";
 import { field, indexSnapshot, Loading, StaleNotice, Table, td, th, useAdminSnapshot, useDateTime, userContact, userLabel } from "./shared";
 
 const ROLES: UserRole[] = ["customer", "operator", "fleet_manager", "admin"];
+/** Driver accounts come and go through the driver backoffice (approve, release), not this list. */
+const FILTER_ROLES: UserRole[] = [...ROLES, "driver"];
 
 /** Users with their role, assigned stations, last login and reservation behaviour. */
 export function UsersTable() {
@@ -56,7 +58,7 @@ export function UsersTable() {
       <div className="flex flex-wrap items-center gap-2">
         <select className={field} value={role} onChange={(e) => setRole(e.target.value as UserRole | "")} aria-label={b.role}>
           <option value="">{b.allRoles}</option>
-          {ROLES.map((r) => (
+          {FILTER_ROLES.map((r) => (
             <option key={r} value={r}>
               {t.roles[r]}
             </option>
@@ -102,11 +104,11 @@ export function UsersTable() {
                 <select
                   className={field}
                   value={u.role}
-                  disabled={isSelf}
+                  disabled={isSelf || u.role === "driver"}
                   aria-label={`${b.role} ${userContact(u)}`}
                   onChange={(e) => changeRole(u, e.target.value as UserRole)}
                 >
-                  {ROLES.map((r) => (
+                  {(u.role === "driver" ? FILTER_ROLES : ROLES).map((r) => (
                     <option key={r} value={r}>
                       {t.roles[r]}
                     </option>

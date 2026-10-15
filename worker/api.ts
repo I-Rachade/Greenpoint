@@ -111,6 +111,7 @@ import {
   driverAtStation,
   driverFile,
   driverHome,
+  driverPass,
   failDelivery,
   finishRide,
   handToDriver,
@@ -147,6 +148,7 @@ import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 import { activeServices, decideService, listStationServices, requestService, requireService, setService } from "./services";
 import { customerStation } from "../src/lib/station-services";
 import { DB_CUSTOMER, roleFromDb, roleToDb } from "./roles";
+import { claimFormerAccount, sendFormerAccountCode } from "./former-accounts";
 import { refreshTopup, startTopup } from "./wallet-topups";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
 import { adjustBalance, adminWallet, findRecipient, getWallet, saveFeeSetting, sendMoney, setWalletEnabled, setWalletFrozen } from "./wallet";
@@ -910,6 +912,8 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
   if (!row) throw new ApiError("forbidden", 403);
   const before = roleFromDb(row.role);
   if (before === role) return;
+  // Driver accounts come and go through the driver backoffice only (approve, release; R15).
+  if (before === "driver") throw new ApiError("has_other_role");
   // Menu and rights follow the role: leaving "operator" ends every station assignment and operator account.
   const [staff, owned] =
     role === "operator"
@@ -939,10 +943,10 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
 const promoteToOperator = (c: Ctx, userId: string) =>
   c.db.prepare("update users set role = 'operator' where id = ? and role = ?").bind(userId, DB_CUSTOMER);
 
-/** One role per person: a fleet manager would lose their drivers (worker/fleet.ts). */
+/** One role per person: a fleet manager would lose their drivers (worker/fleet.ts), a driver is a driver only. */
 async function refuseOtherRole(c: Ctx, userId: string) {
   const row = await c.db.prepare("select role from users where id = ?").bind(userId).first<{ role: string }>();
-  if (row?.role === "fleet_manager") throw new ApiError("has_other_role");
+  if (row?.role === "fleet_manager" || row?.role === "driver") throw new ApiError("has_other_role");
 }
 
 /** Whoever has no station and runs no operator any more goes back to customer. */
@@ -1699,6 +1703,9 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/fleet\/jobs\/([\w-]+)\/assign$/, async (c, [id]) => fleetAssign(c, id, String((await readJson<{ driverId: string }>(c.request)).driverId))],
   ["POST", /^\/api\/admin\/drivers\/([\w-]+)\/manager$/, async (c, [id]) => setDriverManager(c, id, (await readJson<{ contact: string | null }>(c.request)).contact)],
   ["GET", /^\/api\/driver$/, (c) => driverHome(c)],
+  ["GET", /^\/api\/driver\/pass$/, (c) => driverPass(c)],
+  ["POST", /^\/api\/driver\/former-account\/code$/, async (c) => sendFormerAccountCode(c.env, await c.requireUser(), (await readJson<{ contact: string }>(c.request)).contact)],
+  ["POST", /^\/api\/driver\/former-account\/claim$/, async (c) => claimFormerAccount(c.env, await c.requireUser(), await readJson<{ contact: string; code: string; pin: string }>(c.request))],
   ["POST", /^\/api\/driver\/apply$/, async (c) => applyDriver(c, await readJson<DriverApplication>(c.request))],
   ["POST", /^\/api\/driver\/documents\/(id|license|portrait)$/, (c, [kind]) => uploadDriverDocument(c, kind, c.request)],
   [
