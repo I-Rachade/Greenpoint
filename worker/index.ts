@@ -9,8 +9,11 @@ import { runPartnerDeadlines, runPartnerEvents } from "./partners";
 // The Durable Object behind each OCPP charge point's WebSocket (wrangler.jsonc).
 export { OcppConnection } from "./ocpp";
 
-/** OCPP charge points connect here (worker/ocpp.ts). */
-const OCPP_PATH = /^\/api\/devices\/ocpp\/([^/]+)$/;
+/**
+ * OCPP charge points connect here (worker/ocpp.ts): /api/devices/ocpp/<id>, or
+ * /api/devices/ocpp/k/<key>/<id> for chargers that cannot send a password.
+ */
+const OCPP_PATH = /^\/api\/devices\/ocpp\/(?:k\/([^/]+)\/)?([^/]+)$/;
 
 /** The daily cron in wrangler.jsonc. */
 const DAILY_CRON = "0 8 * * *";
@@ -28,7 +31,7 @@ export default {
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     // A WebSocket for a charge point, not a browser call: no CORS.
     const ocpp = OCPP_PATH.exec(url.pathname);
-    if (ocpp) return handleOcppUpgrade(request, env, ocpp[1]);
+    if (ocpp) return handleOcppUpgrade(request, env, ocpp[2], ocpp[1]);
 
     const cors = corsHeaders(request);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });

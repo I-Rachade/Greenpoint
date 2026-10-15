@@ -338,6 +338,7 @@ function seedDevices(): Device[] {
       model: "2 prises",
       link: "lorawan",
       protocol: null,
+      ocppOpen: false,
       outlets: DEMO_CHARGING_POINTS.length,
       lastSeenAt: null,
       createdAt: "2026-10-01T08:00:00.000Z",
@@ -357,6 +358,7 @@ function seedDevices(): Device[] {
       model: `${outlets} prises`,
       link: "vendor_cloud" as const,
       protocol: null,
+      ocppOpen: false,
       outlets,
       lastSeenAt: null,
       createdAt: "2026-10-01T08:00:00.000Z",
@@ -1390,6 +1392,7 @@ export class DemoBackend implements Backend {
       link: input.link ?? "lorawan",
       outlets,
       protocol: input.protocol ?? null,
+      ocppOpen: input.protocol === "ocpp1.6" && !!input.ocppNoPassword,
       lastSeenAt: null,
       createdAt: new Date().toISOString(),
       points: Array.from({ length: outlets }, (_, i) => ({
@@ -1413,7 +1416,7 @@ export class DemoBackend implements Backend {
         { table: "charging_points", action: "insert", rowId: externalId, stationId: input.stationId, changes: { device: externalId, outlets } },
       ),
     );
-    return device.protocol === "ocpp1.6" ? { ocppKey: ocppKey() } : {};
+    return device.protocol === "ocpp1.6" && !device.ocppOpen ? { ocppKey: ocppKey() } : {};
   }
 
   async deleteDevice(externalId: string) {

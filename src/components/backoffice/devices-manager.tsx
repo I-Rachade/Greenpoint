@@ -75,7 +75,9 @@ export function DevicesManager() {
             const ok = await run(async () => {
               const { ocppKey } = await backend.createDevice(input);
               // The charge point's password exists only in this answer.
-              if (ocppKey) text = format(b.ocppAdded, { id, key: ocppKey, url: `wss://${window.location.host}/api/devices/ocpp` });
+              const url = `wss://${window.location.host}/api/devices/ocpp`;
+              if (ocppKey) text = format(b.ocppAdded, { id, key: ocppKey, url, keyUrl: `${url}/k/${ocppKey}` });
+              else if (input.protocol === "ocpp1.6") text = format(b.ocppAddedOpen, { id, url });
             }, () => text);
             if (ok) setAdding(false);
           }}
@@ -95,7 +97,7 @@ export function DevicesManager() {
                     <div className="font-mono text-sm font-medium">{d.externalId}</div>
                     <div className="text-xs text-zinc-500">
                       {idx.stationName(d.stationId)} · {[d.vendor, d.model].filter(Boolean).join(" ") || b.links[d.link]}
-                      {d.protocol === "ocpp1.6" && " · OCPP 1.6J"} ·{" "}
+                      {d.protocol === "ocpp1.6" && ` · OCPP 1.6J ${d.ocppOpen ? b.ocppOpen : b.ocppKeyed}`} ·{" "}
                       {b.lastSeen}: {d.lastSeenAt ? relativeTime(d.lastSeenAt, now) : b.never}
                     </div>
                   </div>
@@ -240,13 +242,23 @@ function DeviceForm({
         </select>
       </label>
       {input.link === "own_server" && (
-        <label className="flex items-center gap-2 text-sm sm:col-span-2">
-          <input
-            type="checkbox"
-            checked={input.protocol === "ocpp1.6"}
-            onChange={(e) => set({ protocol: e.target.checked ? "ocpp1.6" : null })}
-          />
-          {f.ocpp}
+        <label className={label}>
+          {f.protocol}
+          <select
+            value={input.protocol !== "ocpp1.6" ? "" : input.ocppNoPassword ? "ocpp-open" : "ocpp-key"}
+            onChange={(e) =>
+              set(
+                e.target.value === ""
+                  ? { protocol: null, ocppNoPassword: false }
+                  : { protocol: "ocpp1.6", ocppNoPassword: e.target.value === "ocpp-open" },
+              )
+            }
+            className={field}
+          >
+            <option value="">{f.protocolNone}</option>
+            <option value="ocpp-key">{f.ocppKey}</option>
+            <option value="ocpp-open">{f.ocppOpen}</option>
+          </select>
         </label>
       )}
       <label className={label}>

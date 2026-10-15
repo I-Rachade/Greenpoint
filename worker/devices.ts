@@ -238,7 +238,8 @@ export async function createDevice(db: D1Database, input: DeviceInput, actor: st
   const protocol = input.protocol ?? null;
   if (commandRoute({ externalId, vendor, link, protocol }) === "xingke_cloud" && !XINGKE_ID.test(vendorRef)) throw new ApiError("invalid_device");
   // An OCPP charge point logs in with this key; only its hash is kept, so it is shown once.
-  const key = protocol === "ocpp1.6" ? ocppKey() : null;
+  // Without a key (firmware that cannot send a password) anyone with the id can connect.
+  const key = protocol === "ocpp1.6" && !input.ocppNoPassword ? ocppKey() : null;
   const statements = [
     db
       .prepare(
@@ -265,7 +266,8 @@ export async function createDevice(db: D1Database, input: DeviceInput, actor: st
       )
       .bind(stationId),
   );
-  statements.push(auditDevice(db, actor, "insert", externalId, stationId, { device: externalId, outlets, vendor, model, link, protocol }));
+  const noPassword = protocol === "ocpp1.6" && !key;
+  statements.push(auditDevice(db, actor, "insert", externalId, stationId, { device: externalId, outlets, vendor, model, link, protocol, ...(noPassword ? { ocppNoPassword: true } : {}) }));
   try {
     await db.batch(statements);
   } catch (err) {
@@ -283,6 +285,7 @@ interface DeviceRow {
   link: DeviceLink;
   outlets: number;
   protocol: DeviceProtocol | null;
+  ocpp_key_hash: string | null;
   last_seen_at: string | null;
   created_at: string;
 }
@@ -302,6 +305,7 @@ export async function listDevices(db: D1Database): Promise<Device[]> {
     link: d.link,
     outlets: d.outlets,
     protocol: d.protocol,
+    ocppOpen: d.protocol === "ocpp1.6" && !d.ocpp_key_hash,
     lastSeenAt: d.last_seen_at,
     createdAt: d.created_at,
     points: all.filter((p) => p.deviceId === d.external_id).sort((a, b) => (a.outlet ?? 0) - (b.outlet ?? 0)),

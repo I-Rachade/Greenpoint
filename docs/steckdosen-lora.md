@@ -126,9 +126,9 @@ Ladepunkte, die OCPP 1.6J sprechen (auch Xingke-Geräte im „OCPP Mode“), ver
 **Einrichten**
 
 1. Migration `0023_ocpp.sql` anwenden: `npx wrangler d1 migrations apply DB --remote`. Der Durable Object (`OCPP` in `wrangler.jsonc`) entsteht beim nächsten Deploy von selbst.
-2. Im Backoffice unter **Prises connectées** die Steckdose anlegen: Kennung des Ladepunkts (Charge Point ID), Verbindung „Notre serveur“, Häkchen „OCPP 1.6J“, Zahl der Ausgänge (= Connectoren).
+2. Im Backoffice unter **Prises connectées** die Steckdose anlegen: Kennung des Ladepunkts (Charge Point ID), Verbindung „Notre serveur“, Protokoll „OCPP 1.6J avec mot de passe“ (oder „sans mot de passe“, wenn die Firmware keins senden kann: dann verbindet sich jeder, der die ID kennt), Zahl der Ausgänge (= Connectoren).
 3. Das Backoffice zeigt danach **einmal** das Passwort (AuthorizationKey). Nur sein Hash wird gespeichert; wer es verliert, löscht die Steckdose und legt sie neu an.
-4. Im Ladepunkt eintragen: Central-System-URL `wss://app.poinderecharge.com/api/devices/ocpp`, Charge Point ID wie angelegt, Passwort = AuthorizationKey (HTTP Basic, Security Profile 1). Der Ladepunkt hängt seine ID selbst an die URL an. Unterprotokoll `ocpp1.6`.
+4. Im Ladepunkt eintragen: Central-System-URL `wss://app.poinderecharge.com/api/devices/ocpp`, Charge Point ID wie angelegt, Passwort = AuthorizationKey (HTTP Basic, Security Profile 1). Der Ladepunkt hängt seine ID selbst an die URL an. Unterprotokoll `ocpp1.6`. Kann die Firmware kein Passwort senden (z. B. Xingke im OCPP-Modus), steht der Schlüssel stattdessen in der URL: `wss://app.poinderecharge.com/api/devices/ocpp/k/<AuthorizationKey>`, ohne Passwort; das Backoffice zeigt beide Varianten.
 5. Die Cloudflare-Regel, die `/api/devices/` von Browser Integrity Check und Bot-Schutz ausnimmt, gilt auch hier.
 
 **Ablauf**
