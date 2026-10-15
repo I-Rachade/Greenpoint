@@ -2,8 +2,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { chargePrice, customerCode, type ChargeSession, type StationCharging } from "../src/lib/charging";
 import type { Profile } from "../src/lib/types";
 import { hashPin } from "./auth";
-import { payWithMobile, payWithWallet, myCharges, saveChargeTariff } from "./charging";
-import { ingest } from "./devices";
+import { payCash, payWithMobile, payWithWallet, myCharges, saveChargeTariff, stopCharge } from "./charging";
+import { deleteDevice, ingest } from "./devices";
 import type { Env } from "./env";
 import { ApiError } from "./http";
 import { roleToDb } from "./roles";
@@ -193,6 +193,45 @@ describe("a charge at the counter", () => {
     await read(env, [{ outlet: 1, status: "charging", energy_wh: 1000 }]);
     expect((await act(env, data.id, "stop")).data.amountXof).toBe(200);
     expect(await code(saveChargeTariff(env, ADMIN, new Request("https://x", { method: "POST", body: JSON.stringify({ kwhXof: 152, minXof: 0 }) })))).toBe("bad_request");
+  });
+
+  it("writes one audit row when staff tap stop or cash twice at once", async () => {
+    const { db, env } = await setup();
+    const { data } = await start(env, { pointId: "p1" });
+    await read(env, [{ outlet: 1, status: "charging", energy_wh: 1000 }]);
+    const audits = (status: string) =>
+      db.prepare("select count(*) as n from audit_log where table_name = 'charging_sessions' and changes like ?").get(`%"${status}"]%`);
+    // The staff check waits for both taps, so both read the charge before either one changes it.
+    function bothTaps() {
+      let release = () => {};
+      const ready = new Promise<void>((resolve) => (release = resolve));
+      let waiting = 0;
+      return async () => {
+        if (++waiting === 2) release();
+        await ready;
+        return true;
+      };
+    }
+    const stopCheck = bothTaps();
+    const stops = await Promise.all([1, 2].map(() => stopCharge(env, STAFF, stopCheck, "st", data.id)));
+    expect(stops.map((c) => c.status)).toEqual(["stopped", "stopped"]);
+    expect(audits("stopped")).toEqual({ n: 1 });
+    const payCheck = bothTaps();
+    const pays = await Promise.all([1, 2].map(() => code(payCash(env, STAFF, payCheck, "st", data.id))));
+    expect(pays.sort()).toEqual(["charge_wrong_status", "ok"]);
+    expect(audits("paid")).toEqual({ n: 1 });
+    expect(db.prepare("select status, payment_method from charging_sessions where id = ?").get(data.id)).toEqual({ status: "paid", payment_method: "cash" });
+  });
+
+  it("keeps a socket that is charging from being deleted", async () => {
+    const { db, env } = await setup();
+    const { data } = await start(env, { pointId: "p2" });
+    expect(await code(deleteDevice(env.DB, "123456", ADMIN.id))).toBe("charge_busy");
+    expect(db.prepare("select count(*) as n from charging_points where device_id = '123456'").get()).toEqual({ n: 2 });
+    // Once the charge is stopped (paid later at the counter) the socket can go.
+    await act(env, data.id, "stop");
+    expect(await code(deleteDevice(env.DB, "123456", ADMIN.id))).toBe("ok");
+    expect(db.prepare("select count(*) as n from devices where external_id = '123456'").get()).toEqual({ n: 0 });
   });
 });
 

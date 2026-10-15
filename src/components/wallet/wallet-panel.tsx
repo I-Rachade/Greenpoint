@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
 import { canScanQr, QrScanner } from "@/components/parcels/qr-scanner";
 import { QrImage } from "@/components/parcels/qr-image";
@@ -23,7 +23,9 @@ import {
   type WalletView,
 } from "@/lib/wallet";
 import { useApp } from "../app-provider";
+import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
+import { LoadFailed, OfflineNotice } from "../load-state";
 
 const input = "w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-base dark:border-white/20 dark:bg-zinc-900";
 const button = "rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-50";
@@ -34,7 +36,6 @@ type Tab = "topup" | "send" | "receive" | "history";
 export function WalletPanel() {
   const { t, locale } = useI18n();
   const { backend } = useApp();
-  const errorMessage = useErrorMessage();
   const { data, error, reload } = useLiveQuery(() => backend.myWallet());
   const [tab, setTab] = useState<Tab | null>(null);
   // Back from the card provider's page: /portefeuille?topup=<id>.
@@ -43,11 +44,11 @@ export function WalletPanel() {
     if (returnedTopup) window.history.replaceState(null, "", window.location.pathname);
   }, [returnedTopup]);
 
-  if (error) {
-    const disabled = error instanceof BackendError && error.code === "wallet_disabled";
-    return <p className="p-6 text-sm text-zinc-600 dark:text-zinc-400">{disabled ? t.errors.wallet_disabled : errorMessage(error)}</p>;
+  if (error instanceof BackendError && error.code === "wallet_disabled") {
+    return <p className="p-6 text-sm text-zinc-600 dark:text-zinc-400">{t.errors.wallet_disabled}</p>;
   }
-  if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
+  // A failed refresh keeps the balance on screen (with a notice); only nothing at all shows the error.
+  if (!data) return error ? <LoadFailed error={error} onRetry={reload} /> : <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
 
   // An empty wallet opens on "Recharger", so the first thing people see is how to put money in.
   const current = tab ?? (returnedTopup || data.balanceXof === 0 ? "topup" : "send");
@@ -61,6 +62,7 @@ export function WalletPanel() {
   return (
     <div className="mx-auto w-full max-w-md space-y-4 p-4 sm:p-6">
       <h1 className="text-2xl font-semibold">{t.wallet.title}</h1>
+      {!!error && <OfflineNotice />}
       {data.testMode && <p className="rounded-lg bg-amber-100 p-3 text-sm text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">{t.wallet.testMode}</p>}
       <section className="rounded-2xl bg-gp-forest p-5 text-white">
         <div className="text-xs uppercase tracking-wide opacity-80">{t.wallet.balance}</div>
@@ -259,7 +261,11 @@ function SendForm({ wallet, onDone }: { wallet: WalletView; onDone: () => void }
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
   const [contact, setContact] = useState("");
-  const [recipient, setRecipient] = useState<string | null>(null);
+  /** The checked recipient and the number or address it was checked for. */
+  const [recipient, setRecipient] = useState<{ contact: string; label: string } | null>(null);
+  // What is in the field now, so a check answered after the person changed it is ignored.
+  const contactRef = useRef("");
+  const [reviewing, setReviewing] = useState(false);
   const [amountText, setAmountText] = useState("");
   const [remark, setRemark] = useState("");
   const [pin, setPin] = useState("");
@@ -275,28 +281,43 @@ function SendForm({ wallet, onDone }: { wallet: WalletView; onDone: () => void }
   const quote = amount ? quoteFee(amount, s) : null;
   const problem = amount ? checkLimits(amount, s, wallet.usage) : null;
   const left = remaining(s, wallet.usage);
+  // Money only goes to a recipient checked for exactly what is in the field now.
+  const verified = recipient !== null && recipient.contact === contact.trim() ? recipient : null;
+  const ready = !!verified && !!quote && !problem && !wallet.frozen && pin.length === 4 && quote.payableXof <= wallet.balanceXof;
+
+  function changeContact(value: string) {
+    contactRef.current = value;
+    setContact(value);
+    setRecipient(null);
+  }
 
   async function check(value = contact) {
+    const wanted = value.trim();
     setRecipient(null);
     setMessage(null);
-    if (!value.trim()) return;
+    if (!wanted) return;
     try {
-      setRecipient((await backend.findWalletRecipient(value.trim())).label);
+      const found = await backend.findWalletRecipient(wanted);
+      if (contactRef.current.trim() === wanted) setRecipient({ contact: wanted, label: found.label });
     } catch (err) {
-      setMessage({ ok: false, text: errorMessage(err) });
+      if (contactRef.current.trim() === wanted) setMessage({ ok: false, text: errorMessage(err) });
     }
   }
 
-  async function submit(e: FormEvent) {
+  // The form only opens the review; the PIN is sent once the person confirms there.
+  function submit(e: FormEvent) {
     e.preventDefault();
-    if (!amount || !quote) return;
+    if (ready) setReviewing(true);
+  }
+
+  async function send() {
+    if (!amount || !quote || !verified) return;
     setBusy(true);
     setMessage(null);
     try {
-      const tx = await backend.sendMoney({ contact: contact.trim(), amountXof: amount, pin, idempotencyKey: key, remark: remark || null });
+      const tx = await backend.sendMoney({ contact: verified.contact, amountXof: amount, pin, idempotencyKey: key, remark: remark || null });
       setMessage({ ok: true, text: format(t.wallet.sent, { amount: xof(tx.amountXof), name: tx.counterparty ?? "", trx: tx.trxId }) });
-      setContact("");
-      setRecipient(null);
+      changeContact("");
       setAmountText("");
       setRemark("");
       setPin("");
@@ -309,6 +330,7 @@ function SendForm({ wallet, onDone }: { wallet: WalletView; onDone: () => void }
       setPin("");
     } finally {
       setBusy(false);
+      setReviewing(false);
     }
   }
 
@@ -320,10 +342,7 @@ function SendForm({ wallet, onDone }: { wallet: WalletView; onDone: () => void }
           <input
             className={input}
             value={contact}
-            onChange={(e) => {
-              setContact(e.target.value);
-              setRecipient(null);
-            }}
+            onChange={(e) => changeContact(e.target.value)}
             onBlur={() => void check()}
             inputMode="email"
             autoComplete="off"
@@ -347,12 +366,16 @@ function SendForm({ wallet, onDone }: { wallet: WalletView; onDone: () => void }
           onResult={(text) => {
             setScanning(false);
             const scanned = parseReceivePayload(text);
-            setContact(scanned);
+            changeContact(scanned);
             void check(scanned);
           }}
         />
       )}
-      {recipient && <p className="rounded-lg bg-gp-green/10 p-2 text-sm">{format(t.wallet.recipientIs, { name: recipient })}</p>}
+      {verified ? (
+        <p className="rounded-lg bg-gp-green/10 p-2 text-sm">{format(t.wallet.recipientIs, { name: verified.label })}</p>
+      ) : (
+        contact.trim() && <p className="text-xs text-zinc-500">{t.wallet.verifyFirst}</p>
+      )}
 
       <label className="block space-y-1">
         <span className="text-sm font-medium">{t.wallet.amount}</span>
@@ -393,11 +416,39 @@ function SendForm({ wallet, onDone }: { wallet: WalletView; onDone: () => void }
       <button
         type="submit"
         className={`${button} w-full`}
-        disabled={busy || !quote || !!problem || wallet.frozen || pin.length !== 4 || quote.payableXof > wallet.balanceXof}
+        disabled={busy || !ready}
       >
         {format(t.wallet.confirm, { amount: amount ? xof(amount) : "" })}
       </button>
       {message && <p className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>{message.text}</p>}
+      <ConfirmSheet
+        open={reviewing && !!verified && !!quote}
+        title={t.wallet.reviewTitle}
+        confirmLabel={format(t.wallet.confirm, { amount: amount ? xof(amount) : "" })}
+        busy={busy}
+        onConfirm={() => void send()}
+        onCancel={() => setReviewing(false)}
+      >
+        {verified && quote && amount && (
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+            <dt className="text-zinc-500">{t.wallet.reviewTo}</dt>
+            <dd className="text-right font-medium">
+              {verified.label}
+              <span className="block text-sm font-normal text-zinc-500">{verified.contact}</span>
+            </dd>
+            <dt className="text-zinc-500">{t.wallet.reviewAmount}</dt>
+            <dd className="text-right">{xof(amount)}</dd>
+            {quote.feeXof > 0 && (
+              <>
+                <dt className="text-zinc-500">{t.wallet.fee}</dt>
+                <dd className="text-right">{xof(quote.feeXof)}</dd>
+              </>
+            )}
+            <dt className="font-semibold">{t.wallet.total}</dt>
+            <dd className="text-right font-semibold">{xof(quote.payableXof)}</dd>
+          </dl>
+        )}
+      </ConfirmSheet>
     </form>
   );
 }

@@ -4,10 +4,12 @@ import { MyCharges } from "./charging/charging";
 import { isHolding } from "@/lib/availability";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { Reservation, ReservationStatus } from "@/lib/types";
+import { MAX_UNUSED_RESERVATIONS_PER_DAY, STATION_COOLDOWN_MINUTES, type Reservation, type ReservationStatus } from "@/lib/types";
 import { useState } from "react";
 import { useApp } from "./app-provider";
+import { ConfirmSheet } from "./confirm-sheet";
 import { useI18n } from "./i18n-provider";
+import { LoadFailed, OfflineNotice } from "./load-state";
 
 /** An active reservation past its expiry is shown as expired. */
 export function effectiveStatus(r: Reservation, now: Date): ReservationStatus {
@@ -24,21 +26,30 @@ export function ReservationList() {
   const now = useNow(15_000);
   const errorMessage = useErrorMessage();
   const [error, setError] = useState<string | null>(null);
-  const { data, reload } = useLiveQuery(
+  /** Reservation the person asked to cancel; the sheet explains the consequence first. */
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const { data, error: loadError, reload } = useLiveQuery(
     () => Promise.all([backend.myReservations(), backend.listStations()]),
   );
 
-  if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
+  if (!data) {
+    return loadError ? <LoadFailed error={loadError} onRetry={reload} /> : <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
+  }
   const [reservations, stations] = data;
   const names = new Map(stations.map((s) => [s.id, s.name]));
 
   async function cancel(id: string) {
     setError(null);
+    setBusy(true);
     try {
       await backend.cancelReservation(id);
       reload();
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+      setCancelling(null);
     }
   }
 
@@ -46,6 +57,7 @@ export function ReservationList() {
     <div className="mx-auto w-full max-w-2xl space-y-4 p-6">
       <MyCharges />
       <h1 className="text-2xl font-semibold">{t.reservations.title}</h1>
+      {!!loadError && <OfflineNotice />}
       {error && <p className="text-sm text-red-600">{error}</p>}
       {reservations.length === 0 && <p className="text-sm text-zinc-500">{t.reservations.empty}</p>}
       <ul className="space-y-2">
@@ -74,7 +86,12 @@ export function ReservationList() {
                 )}
               </div>
               {status === "active" && (
-                <button type="button" onClick={() => cancel(r.id)} className="text-sm text-red-600 hover:underline">
+                <button
+                  type="button"
+                  onClick={() => setCancelling(r.id)}
+                  disabled={busy}
+                  className="min-h-11 text-sm text-red-600 hover:underline disabled:opacity-50"
+                >
                   {t.reservations.cancel}
                 </button>
               )}
@@ -91,6 +108,18 @@ export function ReservationList() {
           );
         })}
       </ul>
+      <ConfirmSheet
+        open={cancelling !== null}
+        title={t.reservations.confirmCancelTitle}
+        confirmLabel={t.reservations.confirmCancelAction}
+        cancelLabel={t.reservations.keep}
+        danger
+        busy={busy}
+        onConfirm={() => cancelling && void cancel(cancelling)}
+        onCancel={() => setCancelling(null)}
+      >
+        <p>{format(t.reservations.confirmCancelBody, { minutes: STATION_COOLDOWN_MINUTES, max: MAX_UNUSED_RESERVATIONS_PER_DAY })}</p>
+      </ConfirmSheet>
     </div>
   );
 }

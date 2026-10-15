@@ -7,7 +7,10 @@ import { useErrorMessage, useLiveQuery, useNow, useRelativeTime } from "@/lib/ho
 import { format } from "@/lib/i18n/format";
 import type { Reservation, StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
+import { ConfirmSheet } from "./confirm-sheet";
 import { useI18n } from "./i18n-provider";
+import { LoadFailed } from "./load-state";
+import { StaleNotice } from "./stale-notice";
 import { StaffCharging } from "./charging/charging";
 import { GreenpointStaff } from "./greenpoint/greenpoint-staff";
 import { OperatorBack } from "./parcels/staff-parcels";
@@ -101,6 +104,9 @@ function StationControls({ station, onError }: { station: StationView; onError: 
     station.id,
   );
 
+  const [confirmClose, setConfirmClose] = useState(false);
+  const [toggling, setToggling] = useState(false);
+
   async function run(action: () => Promise<void>): Promise<boolean> {
     onError("");
     try {
@@ -114,6 +120,16 @@ function StationControls({ station, onError }: { station: StationView; onError: 
   }
 
   const active = (reservations ?? []).filter((r) => effectiveStatus(r, now) === "active");
+  const isOpen = station.status.isOpen;
+
+  // Closing cancels every active reservation on the server, so it is asked first; opening is not.
+  async function setOpen(open: boolean) {
+    setToggling(true);
+    await run(() => backend.updateStatus(station.id, { isOpen: open }));
+    setToggling(false);
+    setConfirmClose(false);
+  }
+
   const types = offersSwap(station.kind) ? (station.batteryTypes ?? []) : [];
 
   return (
@@ -127,15 +143,35 @@ function StationControls({ station, onError }: { station: StationView; onError: 
         </div>
         <button
           type="button"
-          onClick={() => run(() => backend.updateStatus(station.id, { isOpen: !station.status.isOpen }))}
-          className={`rounded-full px-4 py-2 text-sm font-semibold text-white ${
-            station.status.isOpen ? "bg-gp-green-dark" : "bg-zinc-500"
+          disabled={toggling}
+          onClick={() => (isOpen ? setConfirmClose(true) : void setOpen(true))}
+          className={`inline-flex min-h-12 min-w-28 shrink-0 items-center justify-center gap-2 rounded-full px-5 text-base font-semibold text-white disabled:opacity-50 ${
+            isOpen ? "bg-gp-green-dark" : "bg-zinc-500"
           }`}
-          aria-pressed={station.status.isOpen}
+          aria-pressed={isOpen}
         >
-          {station.status.isOpen ? t.operator.open : t.operator.closed}
+          <span className={`h-2.5 w-2.5 rounded-full ${isOpen ? "bg-white" : "bg-white/50"}`} aria-hidden />
+          {isOpen ? t.operator.open : t.operator.closed}
         </button>
       </div>
+
+      <ConfirmSheet
+        open={confirmClose}
+        title={format(t.operator.closeTitle, { station: station.name })}
+        confirmLabel={t.operator.closeConfirm}
+        danger
+        busy={toggling}
+        onConfirm={() => void setOpen(false)}
+        onCancel={() => setConfirmClose(false)}
+      >
+        <p>
+          {active.length === 0
+            ? t.operator.closeNone
+            : active.length === 1
+              ? t.operator.closeOne
+              : format(t.operator.closeMany, { n: active.length })}
+        </p>
+      </ConfirmSheet>
 
       {types.length > 0 && (
         <p className="text-xs text-zinc-500">
@@ -200,11 +236,11 @@ export function OperatorPanel() {
   const { t } = useI18n();
   const { backend } = useApp();
   const [error, setError] = useState<string | null>(null);
-  const { data: stations, error: loadError } = useLiveQuery(() => backend.staffStations());
+  const { data: stations, error: loadError, reload } = useLiveQuery(() => backend.staffStations());
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  if (loadError) return <p className="p-6 text-sm text-red-600">{t.errors.forbidden}</p>;
-  if (!stations) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
+  // A failed refresh keeps the last stations on screen; only nothing at all is an error page.
+  if (!stations) return loadError ? <LoadFailed error={loadError} onRetry={reload} /> : <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
 
   const station = stations.find((s) => s.id === selectedId) ?? stations[0];
 
@@ -213,6 +249,7 @@ export function OperatorPanel() {
       <OperatorBack />
       <h1 className="text-2xl font-semibold">{t.operator.title}</h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.operator.intro}</p>
+      <StaleNotice error={loadError} onRetry={reload} />
       {stations.length === 0 && <p className="text-sm">{t.operator.noStations}</p>}
       {stations.length > 1 && (
         <select

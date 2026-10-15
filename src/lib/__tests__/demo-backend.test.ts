@@ -114,6 +114,11 @@ describe("DemoBackend connected sockets", () => {
     await backend.switchOutlet("123456", 2, true);
     expect((await backend.listDevices()).find((d) => d.externalId === "123456")!.points[1].status).toBe("charging");
 
+    // Not while a charge runs on one of its outlets (as the Worker).
+    const charge = await backend.startCharge(STATION, { pointId: added.points[0].id });
+    await expect(backend.deleteDevice("123456")).rejects.toMatchObject({ code: "charge_busy" });
+    await backend.stopCharge(STATION, charge.id);
+
     await backend.deleteDevice("123456");
     expect(await backend.listDevices()).toHaveLength(before.length);
   });

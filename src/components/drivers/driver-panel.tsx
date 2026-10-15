@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
 import {
+  ABANDON_REASONS,
   DRIVER_DOCUMENTS,
   driverBadgePayload,
   driverEarning,
   FLEET_VEHICLE_TYPES,
+  type AbandonReason,
   type DeliveryJob,
   type Driver,
   type DriverHome,
@@ -20,13 +22,14 @@ import { SizePicker } from "../parcels/size-picker";
 import type { StationView } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "../app-provider";
+import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
 import { QrImage } from "../parcels/qr-image";
 import { input, JobStatusPill, Notice, PhotoButton, primary, secondary, shrinkImage, useFcfa, useJobRoute } from "./shared";
 
-function Card({ title, children }: { title?: string; children: ReactNode }) {
+function Card({ title, children, className = "" }: { title?: string; children: ReactNode; className?: string }) {
   return (
-    <section className="space-y-3 rounded-xl border border-black/10 p-4 dark:border-white/10">
+    <section className={`space-y-3 rounded-xl border border-black/10 p-4 dark:border-white/10 ${className}`}>
       {title && <h2 className="font-semibold">{title}</h2>}
       {children}
     </section>
@@ -353,7 +356,6 @@ function DoorActions({ job, home }: { job: DeliveryJob; home: DriverHome }) {
 function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: DriverHome; stations: StationView[]; info: ParcelInfo }) {
   const { t } = useI18n();
   const { backend } = useApp();
-  const when = useDateTime();
   const route = useJobRoute();
   const { run, busy, status } = useAction();
   const [collected, setCollected] = useState("");
@@ -385,12 +387,11 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
   }
 
   if (job.status === "assigned") {
-    const until = job.assignedAt ? new Date(new Date(job.assignedAt).getTime() + home.settings.acceptMinutes * 60_000).toISOString() : null;
     return (
-      <Card title={t.drivers.page.offer}>
+      <Card title={t.drivers.page.offer} className="animate-gp-slide-up">
         <JobFacts job={job} route={route(job, name)} />
         <p className="text-sm font-medium">{format(t.drivers.page.earning, { n: driverEarning(job.fareFcfa, home.settings) })}</p>
-        {until && <p className="text-xs text-zinc-500">{format(t.drivers.page.offerHint, { time: when(until) })}</p>}
+        {job.assignedAt && <OfferCountdown assignedAt={job.assignedAt} minutes={home.settings.acceptMinutes} />}
         <div className="flex flex-wrap gap-2">
           <button type="button" className={primary} disabled={busy} onClick={() => void run(() => backend.acceptJob(job.id))}>
             {t.drivers.page.accept}
@@ -453,11 +454,105 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
           {t.drivers.page.courierDoneButton}
         </button>
       )}
+      {job.status === "accepted" && <AbandonButton job={job} />}
       <Notice error="" notice={collected} />
       {status}
     </Card>
   );
 }
+
+/** Time left to confirm an offer, as mm:ss and a bar that drains. */
+function OfferCountdown({ assignedAt, minutes }: { assignedAt: string; minutes: number }) {
+  const { t } = useI18n();
+  const now = useNow(1000);
+  const total = minutes * 60_000;
+  const left = Math.max(0, new Date(assignedAt).getTime() + total - now.getTime());
+  const seconds = Math.ceil(left / 1000);
+  const mmss = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+  const share = total > 0 ? left / total : 0;
+  return (
+    <div className="space-y-1">
+      <div className="h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/10" aria-hidden>
+        <div
+          className={`h-full rounded-full motion-safe:transition-[width] motion-safe:duration-1000 motion-safe:ease-linear ${share < 0.25 ? "bg-amber-500" : "bg-gp-green"}`}
+          style={{ width: `${share * 100}%` }}
+        />
+      </div>
+      <p className="text-xs text-zinc-500">{format(t.drivers.page.offerHint, { left: mmss })}</p>
+    </div>
+  );
+}
+
+/** Gives an accepted trip back before the pickup, with the reason. */
+function AbandonButton({ job }: { job: DeliveryJob }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { run, busy, status } = useAction();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState<AbandonReason>("customer_absent");
+  return (
+    <div>
+      <button type="button" className={secondary} disabled={busy} onClick={() => setOpen(true)}>
+        {t.drivers.page.abandon}
+      </button>
+      {status}
+      <ConfirmSheet
+        open={open}
+        title={t.drivers.page.abandonTitle}
+        confirmLabel={t.drivers.page.abandon}
+        danger
+        busy={busy}
+        onCancel={() => setOpen(false)}
+        onConfirm={() => void run(() => backend.abandonJob(job.id, reason), t.drivers.page.abandoned).then(() => setOpen(false))}
+      >
+        <p>{t.drivers.page.abandonHint}</p>
+        <fieldset className="space-y-2">
+          <legend className="sr-only">{t.drivers.page.abandonTitle}</legend>
+          {ABANDON_REASONS.map((r) => (
+            <label key={r} className="flex min-h-11 items-center gap-3 rounded-lg border border-black/10 px-3 dark:border-white/15">
+              <input type="radio" name="abandon-reason" value={r} checked={reason === r} onChange={() => setReason(r)} />
+              {t.drivers.page.abandonReason[r]}
+            </label>
+          ))}
+        </fieldset>
+      </ConfirmSheet>
+    </div>
+  );
+}
+
+/** Once per expired offer: the driver did not confirm in time and is back in line. */
+function ExpiredNotice({ at }: { at: string }) {
+  const { t } = useI18n();
+  // Old expiries (another device, long ago) are not news any more.
+  const [shown, setShown] = useState(() => Date.now() - new Date(at).getTime() < 60 * 60_000 && readStored(EXPIRED_SEEN_KEY) !== at);
+  useEffect(() => {
+    if (!shown) return;
+    try {
+      window.localStorage.setItem(EXPIRED_SEEN_KEY, at);
+    } catch {
+      // Without storage the notice may come back on the next visit.
+    }
+  }, [shown, at]);
+  if (!shown) return null;
+  return (
+    <p role="status" className="animate-gp-slide-up flex items-start gap-2 rounded-lg bg-amber-100 p-3 text-sm text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">
+      <span className="flex-1">{t.drivers.page.offerExpired}</span>
+      <button type="button" className="font-semibold" aria-label={t.drivers.customer.close} onClick={() => setShown(false)}>
+        ✕
+      </button>
+    </p>
+  );
+}
+
+function readStored(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+const EXPIRED_SEEN_KEY = "poinderecharge-driver-expired-seen";
 
 function JobFacts({ job, route }: { job: DeliveryJob; route: string }) {
   const { t } = useI18n();
@@ -563,6 +658,7 @@ export function DriverPanel() {
     body = (
       <>
         {!driver.vehicle && <p className="rounded-lg bg-amber-100 p-3 text-sm text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">{t.drivers.page.noVehicle}</p>}
+        {home.lastExpiredAt && home.job?.status !== "assigned" && <ExpiredNotice key={home.lastExpiredAt} at={home.lastExpiredAt} />}
         {home.job ? (
           <CurrentJob key={home.job.id} job={home.job} home={home} stations={stations} info={info} />
         ) : (

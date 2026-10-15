@@ -36,7 +36,8 @@
   // dashboard; keep them on deploy. See worker/env.ts.
   "keep_vars": true,
   // Daily at 08:00 in Lomé (UTC): parcel pickup reminders and returns (worker/parcels.ts).
-  // Every minute: webhooks to partner apps and their retries (worker/partners.ts).
+  // Every minute: webhooks to partner apps and their retries (worker/partners.ts), and driver
+  // offers sent out and run out (worker/drivers.ts runDispatch).
   "triggers": { "crons": ["0 8 * * *", "* * * * *"] },
   "observability": { "enabled": true },
   // Branches other than production build a Preview (`npx wrangler preview`),

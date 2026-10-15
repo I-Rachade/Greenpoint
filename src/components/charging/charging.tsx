@@ -14,6 +14,7 @@ import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
 import type { StationView } from "@/lib/types";
 import { useApp } from "../app-provider";
+import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
 import { QrImage } from "../parcels/qr-image";
 import { canScanQr, QrScanner } from "../parcels/qr-scanner";
@@ -184,6 +185,8 @@ export function StaffCharging({ station }: { station: StationView }) {
   const [starting, setStarting] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Stopping and booking cash cannot be undone, so each is confirmed first.
+  const [confirm, setConfirm] = useState<{ kind: "stop" | "cash"; id: string } | null>(null);
   const points = (station.chargingPoints ?? []).filter((p) => p.deviceId).sort((a, b) => a.label.localeCompare(b.label));
   usePolling(reload, (data?.open.length ?? 0) > 0);
 
@@ -198,9 +201,13 @@ export function StaffCharging({ station }: { station: StationView }) {
       setError(errorMessage(err));
     } finally {
       setBusy(false);
+      setConfirm(null);
       reload();
     }
   }
+
+  // The latest values of the charge being confirmed, so energy and price stay current while the sheet is open.
+  const pending = confirm ? data?.open.find((c) => c.id === confirm.id) : undefined;
 
   return (
     <section className="space-y-3 rounded-xl border border-black/10 p-4 dark:border-white/10">
@@ -224,17 +231,17 @@ export function StaffCharging({ station }: { station: StationView }) {
                 <ChargeCard charge={charge}>
                   <div className="flex flex-wrap gap-2">
                     {charge.status === "charging" && (
-                      <button type="button" disabled={busy} onClick={() => run(() => backend.stopCharge(station.id, charge.id))} className={`${button} bg-red-600`}>
+                      <button type="button" disabled={busy} onClick={() => setConfirm({ kind: "stop", id: charge.id })} className={`${button} min-h-11 bg-red-600`}>
                         {ch.stop}
                       </button>
                     )}
                     {charge.status === "stopped" && charge.amountXof > 0 && (
-                      <button type="button" disabled={busy} onClick={() => run(() => backend.payChargeCash(station.id, charge.id))} className={`${button} flex-1`}>
+                      <button type="button" disabled={busy} onClick={() => setConfirm({ kind: "cash", id: charge.id })} className={`${button} min-h-11 flex-1`}>
                         {ch.collectCash} · {xof(charge.amountXof)}
                       </button>
                     )}
                     {charge.status === "stopped" && charge.energyWh === 0 && (
-                      <button type="button" disabled={busy} onClick={() => run(() => backend.cancelCharge(station.id, charge.id))} className={ghost}>
+                      <button type="button" disabled={busy} onClick={() => run(() => backend.cancelCharge(station.id, charge.id))} className={`${ghost} min-h-11`}>
                         {ch.close}
                       </button>
                     )}
@@ -267,6 +274,34 @@ export function StaffCharging({ station }: { station: StationView }) {
           );
         })}
       </ul>
+      <ConfirmSheet
+        open={!!pending}
+        title={
+          pending
+            ? confirm?.kind === "stop"
+              ? format(ch.stopTitle, { outlet: pending.pointLabel })
+              : format(ch.cashTitle, { amount: xof(pending.amountXof) })
+            : ""
+        }
+        confirmLabel={confirm?.kind === "stop" ? ch.stopConfirm : ch.cashConfirm}
+        danger={confirm?.kind === "stop"}
+        busy={busy}
+        onConfirm={() => {
+          if (!pending || !confirm) return;
+          void run(() =>
+            confirm.kind === "stop" ? backend.stopCharge(station.id, pending.id) : backend.payChargeCash(station.id, pending.id),
+          );
+        }}
+        onCancel={() => setConfirm(null)}
+      >
+        {pending && (
+          <p>
+            {confirm?.kind === "stop"
+              ? format(ch.stopBody, { energy: formatKwh(pending.energyWh, locale), price: xof(pending.amountXof) })
+              : format(ch.cashBody, { amount: xof(pending.amountXof), outlet: pending.pointLabel })}
+          </p>
+        )}
+      </ConfirmSheet>
       {data && (
         <div className="space-y-2 border-t border-black/10 pt-3 dark:border-white/10">
           <div className="text-sm font-medium">{ch.today}</div>

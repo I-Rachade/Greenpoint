@@ -6,7 +6,7 @@ import { useI18n } from "@/components/i18n-provider";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { OPERATOR_NAME_MAX, type AdminOperator, type OperatorInput } from "@/lib/operators";
-import { card, field, Loading, Pill } from "./shared";
+import { card, field, Loading, Pill, StaleNotice } from "./shared";
 
 const button = "rounded-full bg-gp-green-dark px-3 py-1 text-xs text-white disabled:opacity-30";
 const outline = "rounded-full border border-black/15 px-3 py-1 text-xs dark:border-white/20";
@@ -182,11 +182,12 @@ export function OperatorsManager() {
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
 
-  if (!data) return <Loading error={error} />;
+  if (!data) return <Loading error={error} onRetry={reload} />;
   const onMessage = (text: string, ok: boolean) => setMessage({ text, ok });
 
   return (
     <div className="space-y-6">
+      <StaleNotice error={error} onRetry={reload} />
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold">{t.operators.title}</h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.operators.intro}</p>

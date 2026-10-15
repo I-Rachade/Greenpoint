@@ -3,6 +3,8 @@
 import type { ReactNode } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
+import { LoadFailed } from "@/components/load-state";
+import { StaleNotice } from "@/components/stale-notice";
 import type { AdminSnapshot, AdminUser } from "@/lib/admin/types";
 import { useLiveQuery } from "@/lib/hooks";
 
@@ -42,11 +44,18 @@ export function useDateTime() {
   return (iso: string | null) => (iso ? fmt.format(new Date(iso)) : "");
 }
 
-export function Loading({ error }: { error?: unknown }) {
+/**
+ * Before the first data: "Loading…", or what went wrong with a "Retry" button (a network
+ * failure reads as such, never as "not allowed"). Once data is there, pages keep showing
+ * it and put a StaleNotice above it when a refresh fails.
+ */
+export function Loading({ error, onRetry }: { error?: unknown; onRetry?: () => void }) {
   const { t } = useI18n();
-  if (error) return <p className="p-6 text-sm text-red-600">{t.errors.forbidden}</p>;
+  if (error) return <LoadFailed error={error} onRetry={onRetry ?? (() => window.location.reload())} />;
   return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
 }
+
+export { StaleNotice };
 
 export const card = "rounded-xl border border-black/10 bg-white p-4 dark:border-white/10 dark:bg-zinc-900";
 export const field =

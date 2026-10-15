@@ -11,6 +11,7 @@ import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
 import { HeartIcon, SearchIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
+import { LoadFailed, OfflineNotice } from "./load-state";
 import { PageTitle } from "./page-title";
 import { StationCard } from "./station-card";
 
@@ -25,7 +26,7 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
   const { backend, features } = useApp();
   const { position, state } = usePosition();
   const favorites = useFavorites();
-  const { data: stations } = useLiveQuery(() => backend.listStations());
+  const { data: stations, error, reload } = useLiveQuery(() => backend.listStations());
   const [query, setQuery] = useState("");
   const [chip, setChip] = useState<Chip>("all");
   const [brand, setBrand] = useState("all");
@@ -107,9 +108,14 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
         </select>
       )}
 
-      <p className="mt-3 text-xs text-gp-muted">
-        {stations === null ? t.loading : state === "locating" ? t.map.locating : format(t.map.stations, { count: shown.length })}
-      </p>
+      {stations === null && error ? (
+        <LoadFailed error={error} onRetry={reload} className="mt-6" />
+      ) : (
+        <p className="mt-3 text-xs text-gp-muted">
+          {stations === null ? t.loading : state === "locating" ? t.map.locating : format(t.map.stations, { count: shown.length })}
+        </p>
+      )}
+      {stations !== null && !!error && <OfflineNotice className="mt-2" />}
 
       {stations !== null && shown.length === 0 &&
         (favoritesOnly ? (

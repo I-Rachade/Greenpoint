@@ -7,7 +7,7 @@ import { isDeviceSilent, statusAgeHours, STALE_STATUS_HOURS } from "@/lib/admin/
 import { offersCharging, offersSwap } from "@/lib/availability";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { card, indexSnapshot, Loading, Pill, Table, td, th, useAdminSnapshot, userLabel } from "./shared";
+import { card, indexSnapshot, Loading, Pill, StaleNotice, Table, td, th, useAdminSnapshot, userLabel } from "./shared";
 import { SolarBadge } from "../solar-badge";
 
 /** Live status of every station (including deactivated ones), staff and connected sockets. */
@@ -19,7 +19,7 @@ export function StationsBoard() {
   const errorMessage = useErrorMessage();
   const { data: snap, error, reload } = useAdminSnapshot();
   const [message, setMessage] = useState<string | null>(null);
-  if (!snap) return <Loading error={error} />;
+  if (!snap) return <Loading error={error} onRetry={reload} />;
 
   const b = t.backoffice.stations;
   const idx = indexSnapshot(snap);
@@ -37,6 +37,7 @@ export function StationsBoard() {
 
   return (
     <div className="space-y-4">
+      <StaleNotice error={error} onRetry={reload} />
       <h1 className="text-2xl font-semibold">{b.title}</h1>
       {message && (
         <p role="alert" className="text-sm text-red-600">

@@ -28,6 +28,7 @@ import type {
   GreenpointView,
 } from "../greenpoint";
 import type {
+  AbandonReason,
   AdminDrivers,
   DeliveryJob,
   DriverApplication,
@@ -304,6 +305,8 @@ export interface Backend {
   acceptJob(id: string): Promise<void>;
   /** The trip goes to the next in line; the driver goes to the back. */
   declineJob(id: string): Promise<void>;
+  /** Gives back an accepted trip before the pickup, with the reason; the driver goes to the back of the line. */
+  abandonJob(id: string, reason: AbandonReason): Promise<void>;
   /** Pickup at home: measured and paid; the parcel gets its tracking number. */
   collectPickup(id: string, measures: ParcelMeasures): Promise<DeliveryJob>;
   arriveAtDoor(id: string): Promise<void>;

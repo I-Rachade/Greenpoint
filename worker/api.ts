@@ -82,6 +82,7 @@ import {
   stationParcels,
 } from "./parcels";
 import {
+  abandonJob,
   acceptJob,
   adminDrivers,
   applyDriver,
@@ -1606,6 +1607,7 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["DELETE", /^\/api\/driver\/queue$/, (c) => leaveQueue(c)],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/accept$/, (c, [id]) => acceptJob(c, id)],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/decline$/, (c, [id]) => declineJob(c, id)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/abandon$/, async (c, [id]) => abandonJob(c, id, (await readJson<{ reason: string }>(c.request)).reason)],
   [
     "POST",
     /^\/api\/driver\/jobs\/([\w-]+)\/collect$/,

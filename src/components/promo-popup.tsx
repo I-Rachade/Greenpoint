@@ -10,6 +10,26 @@ import { safeImage, safeLink, type Promotion } from "@/lib/promo";
 /** The ad shows on the map only; other pages are never interrupted. */
 const MAP_PATH = "/";
 
+/** Ads already shown in this browser session (sessionStorage), so coming back to the map does not reopen one. */
+const SEEN_KEY = "gp-promo-seen";
+
+function seenPromos(): string[] {
+  try {
+    const list: unknown = JSON.parse(window.sessionStorage.getItem(SEEN_KEY) ?? "[]");
+    return Array.isArray(list) ? list.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function markSeen(id: string) {
+  try {
+    window.sessionStorage.setItem(SEEN_KEY, JSON.stringify([...seenPromos().filter((x) => x !== id), id]));
+  } catch {
+    // Private mode or storage off: the ad may show again, which is acceptable.
+  }
+}
+
 /** Content of the ad window; also used as the preview in the backoffice. */
 export function PromoCard({
   promo,
@@ -64,8 +84,8 @@ export function PromoCard({
 }
 
 /**
- * Shows the current ad (managed in /admin/promotions) every time the customer
- * opens or comes back to the map. Nothing shows when no ad is running.
+ * Shows the current ad (managed in /admin/promotions) when the customer opens the
+ * map, at most once per ad and browser session. Nothing shows when no ad is running.
  */
 export function PromoPopup() {
   const { backend } = useApp();
@@ -81,8 +101,11 @@ export function PromoPopup() {
     let active = true;
     backend.currentPromotion().then(
       (p) => {
-        // A fresh copy, so the window opens again even when the ad is unchanged.
-        if (active) setPromo(p ? { ...p } : null);
+        if (!active) return;
+        if (p && !seenPromos().includes(p.id)) {
+          markSeen(p.id);
+          setPromo({ ...p });
+        } else setPromo(null);
       },
       () => {
         // No ad is better than an error on opening the map.

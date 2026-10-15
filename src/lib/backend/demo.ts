@@ -104,6 +104,7 @@ import {
   withAllVehicles,
   BOOKABLE_VEHICLE_TYPES,
   MAX_PASSENGERS,
+  type AbandonReason,
   type AdminDrivers,
   type DeliveryJob,
   type Driver,
@@ -380,6 +381,8 @@ interface DemoDriver {
   code: string;
   createdAt: string;
   reviewedAt: string | null;
+  /** When the driver's last offer ran out (DriverHome.lastExpiredAt). */
+  lastExpiredAt?: string | null;
 }
 
 /** A trip as the demo keeps it: the view (driver filled in on reading) plus bookkeeping. */
@@ -1425,6 +1428,9 @@ export class DemoBackend implements Backend {
     const devices = state.devices ?? seedDevices();
     const before = devices.find((d) => d.externalId === externalId);
     if (!before) return;
+    // As the Worker: a running charge would lose its outlet.
+    const pointIds = new Set(before.points.map((p) => p.id));
+    if ((state.charges ?? []).some((c) => c.status === "charging" && pointIds.has(c.pointId))) throw new BackendError("charge_busy");
     this.save(
       withAudit(
         { ...state, devices: devices.filter((d) => d !== before) },
@@ -1914,14 +1920,23 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const s = this.settingsOf(state);
     const stale = new Date(Date.now() - s.acceptMinutes * 60_000).toISOString();
+    const now = new Date().toISOString();
+    const expired = (state.jobs ?? []).filter((j) => j.status === "assigned" && j.assignedAt && j.assignedAt < stale);
     let jobs = (state.jobs ?? []).map((j) =>
-      j.status === "assigned" && j.assignedAt && j.assignedAt < stale
-        ? { ...j, status: "open" as const, driverId: null, assignedAt: null, declined: [...j.declined, j.driverId ?? ""] }
-        : j,
+      expired.includes(j) ? { ...j, status: "open" as const, driverId: null, assignedAt: null, declined: [...j.declined, j.driverId ?? ""] } : j,
     );
     let queue = [...(state.driverQueue ?? [])];
-    const drivers = state.drivers ?? [];
     const fleet = state.fleet ?? seedFleet();
+    // The driver goes back to the end of the line where they were, if they still may drive.
+    for (const j of expired) {
+      if (!j.driverId || !j.driverStationId || queue.some((q) => q.driverId === j.driverId)) continue;
+      const d = (state.drivers ?? []).find((x) => x.userId === j.driverId);
+      const v = fleet.find((x) => x.id === d?.vehicleId);
+      if (d?.status === "active" && v?.isActive && this.balanceOfDriver(state, d.userId) < s.cashLimitFcfa) {
+        queue.push({ driverId: d.userId, stationId: j.driverStationId, since: now });
+      }
+    }
+    const drivers = (state.drivers ?? []).map((d) => (expired.some((j) => j.driverId === d.userId) ? { ...d, lastExpiredAt: now } : d));
     const stations = this.depotPoints(state);
     const tiers = state.parcelSizes ?? DEFAULT_PARCEL_SIZES;
     for (const job of [...jobs].filter((j) => j.status === "open").sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
@@ -1943,8 +1958,8 @@ export class DemoBackend implements Backend {
         j.id === job.id ? { ...j, status: "assigned" as const, driverId: pick.driverId, driverStationId: pick.stationId, assignedAt: new Date().toISOString() } : j,
       );
     }
-    if (JSON.stringify(jobs) !== JSON.stringify(state.jobs ?? []) || queue.length !== (state.driverQueue ?? []).length) {
-      this.save({ ...state, jobs, driverQueue: queue });
+    if (expired.length || JSON.stringify(jobs) !== JSON.stringify(state.jobs ?? []) || queue.length !== (state.driverQueue ?? []).length) {
+      this.save({ ...state, jobs, driverQueue: queue, drivers });
     }
   }
 
@@ -2005,7 +2020,7 @@ export class DemoBackend implements Backend {
     const profile = this.requireProfile(state);
     const settings = this.settingsOf(state);
     const d = (state.drivers ?? []).find((x) => x.userId === profile.id);
-    if (!d) return { driver: null, job: null, history: [], ledger: [], settings };
+    if (!d) return { driver: null, job: null, history: [], ledger: [], settings, lastExpiredAt: null };
     const mine = (state.jobs ?? []).filter((j) => j.driverId === profile.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const busy = mine.find((j) => BUSY_JOB_STATUSES.includes(j.status));
     return {
@@ -2014,6 +2029,7 @@ export class DemoBackend implements Backend {
       history: mine.filter((j) => j !== busy).slice(0, 30).map((j) => this.viewJob(state, j)),
       ledger: (state.ledger ?? []).filter((e) => e.driverId === profile.id).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 100),
       settings,
+      lastExpiredAt: d.lastExpiredAt ?? null,
     };
   }
 
@@ -2099,6 +2115,23 @@ export class DemoBackend implements Backend {
     const queue = (state.driverQueue ?? []).filter((q) => q.driverId !== driver.userId);
     if (job.driverStationId) queue.push({ driverId: driver.userId, stationId: job.driverStationId, since: new Date().toISOString() });
     this.saveJobs(state, jobs, undefined, { driverQueue: queue });
+    this.dispatch();
+  }
+
+  async abandonJob(id: string, reason: AbandonReason) {
+    const state = this.load();
+    const { driver, job } = this.myDemoJob(state, id);
+    const jobs = this.updateJob(state, job.id, ["accepted"], { status: "open", driverId: null, assignedAt: null, acceptedAt: null, declined: [...job.declined, driver.userId] });
+    const queue = (state.driverQueue ?? []).filter((q) => q.driverId !== driver.userId);
+    if (job.driverStationId && this.balanceOfDriver(state, driver.userId) < this.settingsOf(state).cashLimitFcfa) {
+      queue.push({ driverId: driver.userId, stationId: job.driverStationId, since: new Date().toISOString() });
+    }
+    this.saveJobs(
+      state,
+      jobs,
+      { table: "delivery_jobs", action: "update", rowId: job.id, userId: driver.userId, changes: { status: ["accepted", "open"], reason: "abandoned", abandon_reason: reason } },
+      { driverQueue: queue },
+    );
     this.dispatch();
   }
 

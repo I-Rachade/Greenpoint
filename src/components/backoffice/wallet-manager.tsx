@@ -2,11 +2,13 @@
 
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
+import { ConfirmSheet } from "@/components/confirm-sheet";
 import { useI18n } from "@/components/i18n-provider";
+import { parseContact } from "@/lib/contact";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
 import { parseAmount, type WalletAdjustInput, type WalletFeeSetting } from "@/lib/wallet";
-import { card, field, Loading, Pill, Table, td, th, useDateTime } from "./shared";
+import { card, field, Loading, Pill, StaleNotice, Table, td, th, useAdminSnapshot, useDateTime, userLabel } from "./shared";
 
 type Message = { ok: boolean; text: string } | null;
 
@@ -19,7 +21,7 @@ export function WalletManager() {
   const [type, setType] = useState("");
   const { data, error, reload } = useLiveQuery(() => backend.adminWallet({ type: type || undefined }), type);
   const [message, setMessage] = useState<Message>(null);
-  if (!data) return <Loading error={error} />;
+  if (!data) return <Loading error={error} onRetry={reload} />;
 
   const b = t.backoffice.wallet;
   const xof = (n: number) => formatXof(n, locale);
@@ -38,6 +40,7 @@ export function WalletManager() {
 
   return (
     <div className="space-y-4">
+      <StaleNotice error={error} onRetry={reload} />
       <div>
         <h1 className="text-xl font-semibold">{b.title}</h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">{b.intro}</p>
@@ -203,6 +206,8 @@ function FeeForm({ setting, onSave }: { setting: WalletFeeSetting; onSave: (s: W
   );
 }
 
+type Pending = { kind: "adjust"; input: WalletAdjustInput } | { kind: "freeze"; contact: string; frozen: boolean };
+
 function AdjustForm({
   onAdjust,
   onFreeze,
@@ -210,23 +215,72 @@ function AdjustForm({
   onAdjust: (input: WalletAdjustInput) => Promise<boolean>;
   onFreeze: (contact: string, frozen: boolean) => Promise<boolean>;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const { backend } = useApp();
+  const { data: snap } = useAdminSnapshot();
   const b = t.backoffice.wallet;
+  const xof = (n: number) => formatXof(n, locale);
   const [contact, setContact] = useState("");
   const [direction, setDirection] = useState<"add" | "subtract">("add");
   const [amount, setAmount] = useState("");
   const [remark, setRemark] = useState("");
+  const [busy, setBusy] = useState(false);
+  // Money and blocking are asked first, with the account, the amount and the balance it leads to.
+  const [pending, setPending] = useState<Pending | null>(null);
+  // undefined: loading; null: no transaction on record, so the balance is not known here.
+  const [balance, setBalance] = useState<number | null | undefined>(undefined);
   const valid = !!contact.trim() && parseAmount(amount) !== null && !!remark.trim();
+
+  function findUser(text: string) {
+    const c = parseContact(text);
+    return c ? snap?.users.find((u) => (c.kind === "phone" ? u.phone === c.value : u.email?.toLowerCase() === c.value)) : undefined;
+  }
+  const pendingContact = pending ? (pending.kind === "adjust" ? pending.input.contact : pending.contact) : "";
+  const account = pending ? userLabel(findUser(pendingContact), pendingContact) : "";
+
+  async function ask(next: Pending) {
+    setPending(next);
+    if (next.kind !== "adjust") return;
+    setBalance(undefined);
+    const user = findUser(next.input.contact);
+    if (!user) return setBalance(null);
+    try {
+      // The latest successful booking of this account carries its balance after it.
+      const history = await backend.adminWallet({ userId: user.id });
+      setBalance(history.transactions.find((tx) => tx.status === "success")?.balanceAfterXof ?? null);
+    } catch {
+      setBalance(null);
+    }
+  }
+
+  async function confirm() {
+    if (!pending) return;
+    setBusy(true);
+    try {
+      if (pending.kind === "adjust") {
+        if (await onAdjust(pending.input)) {
+          setAmount("");
+          setRemark("");
+        }
+      } else {
+        await onFreeze(pending.contact, pending.frozen);
+      }
+    } finally {
+      setBusy(false);
+      setPending(null);
+    }
+  }
+
+  const adjust = pending?.kind === "adjust" ? pending.input : null;
+  const after = adjust && typeof balance === "number" ? balance + (adjust.direction === "add" ? adjust.amountXof : -adjust.amountXof) : null;
+
   return (
     <form
       className={`${card} space-y-3`}
       onSubmit={(e: FormEvent) => {
         e.preventDefault();
-        void onAdjust({ contact: contact.trim(), direction, amountXof: parseAmount(amount) ?? 0, remark: remark.trim() }).then((ok) => {
-          if (!ok) return;
-          setAmount("");
-          setRemark("");
-        });
+        if (busy) return;
+        void ask({ kind: "adjust", input: { contact: contact.trim(), direction, amountXof: parseAmount(amount) ?? 0, remark: remark.trim() } });
       }}
     >
       <h2 className="font-semibold">{b.adjustTitle}</h2>
@@ -251,16 +305,50 @@ function AdjustForm({
         <input className={`${field} w-full`} value={remark} onChange={(e) => setRemark(e.target.value)} maxLength={120} required />
       </label>
       <div className="flex flex-wrap gap-2">
-        <button type="submit" disabled={!valid} className="rounded-full bg-gp-forest px-4 py-1.5 text-sm text-white disabled:opacity-50">
+        <button type="submit" disabled={!valid || busy} className="min-h-11 rounded-full bg-gp-forest px-4 text-sm text-white disabled:opacity-50">
           {b.adjust}
         </button>
-        <button type="button" disabled={!contact.trim()} onClick={() => void onFreeze(contact.trim(), true)} className="rounded-full border border-black/15 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-white/20">
-          {b.freeze}
-        </button>
-        <button type="button" disabled={!contact.trim()} onClick={() => void onFreeze(contact.trim(), false)} className="rounded-full border border-black/15 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-white/20">
-          {b.unfreeze}
-        </button>
+        {([true, false] as const).map((frozen) => (
+          <button
+            key={String(frozen)}
+            type="button"
+            disabled={!contact.trim() || busy}
+            onClick={() => void ask({ kind: "freeze", contact: contact.trim(), frozen })}
+            className="min-h-11 rounded-full border border-black/15 px-3 text-sm disabled:opacity-50 dark:border-white/20"
+          >
+            {frozen ? b.freeze : b.unfreeze}
+          </button>
+        ))}
       </div>
+      <ConfirmSheet
+        open={!!pending}
+        title={
+          adjust
+            ? format(adjust.direction === "add" ? b.confirmCredit : b.confirmDebit, { amount: xof(adjust.amountXof) })
+            : format(pending?.kind === "freeze" && pending.frozen ? b.confirmFreeze : b.confirmUnfreeze, { account })
+        }
+        confirmLabel={adjust ? b.adjust : pending?.kind === "freeze" && pending.frozen ? b.freeze : b.unfreeze}
+        danger={adjust ? adjust.direction === "subtract" : pending?.kind === "freeze" && pending.frozen}
+        busy={busy}
+        onConfirm={() => void confirm()}
+        onCancel={() => setPending(null)}
+      >
+        {adjust ? (
+          <>
+            <p className="font-medium">{format(b.confirmAccount, { account })}</p>
+            <p>{format(b.confirmReason, { reason: adjust.remark })}</p>
+            <p className="tabular-nums">
+              {balance === undefined
+                ? b.confirmBalanceLoading
+                : balance === null || after === null
+                  ? b.confirmBalanceUnknown
+                  : format(b.confirmBalance, { before: xof(balance), after: xof(after) })}
+            </p>
+          </>
+        ) : (
+          pending?.kind === "freeze" && <p>{pending.frozen ? b.confirmFreezeBody : b.confirmUnfreezeBody}</p>
+        )}
+      </ConfirmSheet>
     </form>
   );
 }

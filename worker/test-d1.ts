@@ -20,6 +20,10 @@ export class Statement {
     return { results: this.db.prepare(this.sql).all(...this.params) as T[] };
   }
   async run() {
+    return this.runNow();
+  }
+  /** Synchronous, so a batch runs as one unit like D1's (no other batch slips in between). */
+  runNow() {
     try {
       const res = this.db.prepare(this.sql).run(...this.params);
       return { ...res, meta: { changes: Number(res.changes) } };
@@ -40,7 +44,7 @@ export function fakeD1() {
       db.exec("begin");
       try {
         const out = [];
-        for (const s of statements) out.push(await s.run());
+        for (const s of statements) out.push(s.runNow());
         db.exec("commit");
         return out;
       } catch (err) {

@@ -14,6 +14,7 @@ import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
 import { BellIcon, ChevronIcon, FilterIcon, SearchIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
+import { LoadFailed, OfflineNotice } from "./load-state";
 import { StationCard, StationPhotoCard, stationHref } from "./station-card";
 import { OpenBadge, RatingInline, StationPhoto } from "./station-look";
 
@@ -45,7 +46,7 @@ export function StationFinder() {
   const L = t.stationLook.home;
   const { backend, features, profile } = useApp();
   const { position, state } = usePosition();
-  const { data: stations } = useLiveQuery(() => backend.listStations());
+  const { data: stations, error, reload } = useLiveQuery(() => backend.listStations());
   const [filter, setFilter] = useState<StationFilter>(DEFAULT_FILTER);
   const [query, setQuery] = useState("");
   const [showFilters, setShowFilters] = useState(false);
@@ -215,9 +216,14 @@ export function StationFinder() {
               {L.viewAll}
             </Link>
           </div>
-          <p className="mt-0.5 text-xs text-gp-muted">
-            {stations === null ? t.loading : state === "locating" ? t.map.locating : format(t.map.stations, { count: shown.length })}
-          </p>
+          {stations === null && error ? (
+            <LoadFailed error={error} onRetry={reload} />
+          ) : (
+            <p className="mt-0.5 text-xs text-gp-muted">
+              {stations === null ? t.loading : state === "locating" ? t.map.locating : format(t.map.stations, { count: shown.length })}
+            </p>
+          )}
+          {stations !== null && !!error && <OfflineNotice className="mt-2" />}
           {stations !== null && shown.length === 0 && <p className="p-6 text-center text-sm text-gp-muted">{t.map.noResults}</p>}
           <ul className="mt-2 space-y-3">
             {shown.map(({ station, distance }, index) => (

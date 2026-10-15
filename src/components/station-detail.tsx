@@ -18,13 +18,14 @@ import { directionsUrl, formatDistance } from "@/lib/geo";
 import { displayStatus, type ChargingPointDisplay } from "@/lib/iot/charging-points";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
+import { loginHref } from "@/lib/next-path";
 import { AMENITIES, stationPhotos } from "@/lib/station-extras";
 import { RESERVATION_MINUTES, type ReservationType, type StationView } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
 import { BackIcon, BatteryIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, ScooterIcon, ShareIcon, StoreIcon, SunIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
-import { EvBadge, FavoriteButton, RestBadge } from "./station-card";
+import { EvBadge, FavoriteButton, RestBadge, stationHref } from "./station-card";
 import { AMENITY_ICONS, OpenBadge, RatingInline, useHoursLabel } from "./station-look";
 import { SolarBadge } from "./solar-badge";
 import { StationReviews } from "./station-reviews";
@@ -354,7 +355,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
                     {t.station.moto.reserve}
                   </button>
                 ) : (
-                  <Link href="/login" className="shrink-0 rounded-xl border-2 border-gp-green-dark px-3 py-1.5 text-xs font-semibold text-gp-green-dark dark:border-gp-green dark:text-gp-green">
+                  <Link href={loginHref(stationHref(station.id))} className="shrink-0 rounded-xl border-2 border-gp-green-dark px-3 py-1.5 text-xs font-semibold text-gp-green-dark dark:border-gp-green dark:text-gp-green">
                     {t.station.moto.reserve}
                   </Link>
                 )}
@@ -481,7 +482,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
             </button>
           )}
           {battery && !profile && (
-            <Link href="/login" className={primary}>
+            <Link href={loginHref(stationHref(station.id))} className={primary}>
               {t.station.loginToReserve}
             </Link>
           )}

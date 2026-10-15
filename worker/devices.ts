@@ -312,7 +312,7 @@ export async function listDevices(db: D1Database): Promise<Device[]> {
   }));
 }
 
-/** Removes a socket, its charging points and queued commands. */
+/** Removes a socket, its charging points and queued commands; refused while one of its outlets is charging. */
 export async function deleteDevice(db: D1Database, rawId: string, actor: string) {
   const externalId = normalizeDeviceId(rawId);
   const device = await db
@@ -320,6 +320,12 @@ export async function deleteDevice(db: D1Database, rawId: string, actor: string)
     .bind(externalId)
     .first<{ station_id: string; outlets: number }>();
   if (!device) throw new ApiError("not_found", 404);
+  // A running charge would lose its outlet and could never be stopped from the app.
+  const charging = await db
+    .prepare("select 1 as busy from charging_sessions where device_id = ? and status = 'charging' limit 1")
+    .bind(externalId)
+    .first<{ busy: number }>();
+  if (charging) throw new ApiError("charge_busy", 409);
   await db.batch([
     db.prepare("delete from device_commands where external_id = ?").bind(externalId),
     db.prepare("delete from charging_points where device_id = ?").bind(externalId),

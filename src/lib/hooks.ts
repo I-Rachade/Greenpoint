@@ -9,24 +9,32 @@ import { format } from "@/lib/i18n/format";
 /**
  * Loads data from the backend and reloads it whenever the backend reports a change.
  * Pass a `key` (e.g. a station id) to reload when the thing being loaded changes.
+ * When a reload fails, `data` keeps the last good value and `error` is set until
+ * the next success; `reload` is also the "Retry" action.
  */
 export function useLiveQuery<T>(load: () => Promise<T>, key = "") {
   const { backend } = useApp();
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<unknown>(null);
   const loadRef = useRef(load);
+  // Only the latest request may update the state: a slow older answer must not overwrite a newer one.
+  const latest = useRef(0);
 
   useEffect(() => {
     loadRef.current = load;
   });
 
   const reload = useCallback(() => {
+    const request = ++latest.current;
     loadRef.current().then(
       (value) => {
+        if (request !== latest.current) return;
         setData(value);
         setError(null);
       },
-      (err) => setError(err),
+      (err) => {
+        if (request === latest.current) setError(err);
+      },
     );
   }, []);
 

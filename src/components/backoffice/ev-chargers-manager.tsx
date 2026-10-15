@@ -6,7 +6,7 @@ import { useI18n } from "@/components/i18n-provider";
 import { EV_CONNECTORS, MAX_EV_POWER_KW, type EvCharger, type EvChargerInput } from "@/lib/ev-chargers";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { card, field, Loading, Pill, useAdminSnapshot } from "./shared";
+import { card, field, Loading, Pill, StaleNotice, useAdminSnapshot } from "./shared";
 
 const EMPTY: EvChargerInput = { name: "", connector: "type2", powerKw: 22, stationId: null, isActive: true };
 
@@ -24,11 +24,15 @@ export function EvChargersManager() {
   const { backend, features } = useApp();
   const errorMessage = useErrorMessage();
   const { data: chargers, error, reload } = useLiveQuery(() => backend.listEvChargers());
-  const { data: snap } = useAdminSnapshot();
+  const { data: snap, error: snapError, reload: reloadSnap } = useAdminSnapshot();
   // null = no form; "new" = adding; otherwise the id being edited.
   const [editing, setEditing] = useState<string | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  if (!chargers || !snap) return <Loading error={error} />;
+  const retry = () => {
+    reload();
+    reloadSnap();
+  };
+  if (!chargers || !snap) return <Loading error={error ?? snapError} onRetry={retry} />;
 
   const b = t.backoffice.evChargers;
   const stations = [...snap.stations].sort((x, y) => x.name.localeCompare(y.name)).map((s) => ({ id: s.id, name: s.name }));
@@ -61,6 +65,7 @@ export function EvChargersManager() {
 
   return (
     <div className="space-y-4">
+      <StaleNotice error={error ?? snapError} onRetry={retry} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-semibold">{b.title}</h1>
         {editing === null && (

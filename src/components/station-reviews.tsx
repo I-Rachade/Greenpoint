@@ -4,11 +4,13 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { useErrorMessage, useLiveQuery, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
+import { loginHref } from "@/lib/next-path";
 import { MAX_REVIEW_COMMENT, ratingOf, starCounts, type StationReview } from "@/lib/station-extras";
 import type { StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { StarIcon, TrashIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
+import { stationHref } from "./station-card";
 import { StarInput, Stars } from "./station-look";
 
 /** Reviews shown before "See all reviews". */
@@ -156,7 +158,7 @@ export function StationReviews({ station, onChanged }: { station: StationView; o
 
       {!profile ? (
         <Link
-          href="/login"
+          href={loginHref(stationHref(station.id))}
           className="flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gp-green-dark/40 px-4 py-4 text-sm font-semibold text-gp-green-dark dark:text-gp-green"
         >
           <StarIcon size={18} />
