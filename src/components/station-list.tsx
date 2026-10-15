@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
 import { DEFAULT_FILTER, rankStations, type StationFilter } from "@/lib/availability";
 import { allBrands } from "@/lib/battery-types";
@@ -14,6 +13,7 @@ import { useI18n } from "./i18n-provider";
 import { LoadFailed, OfflineNotice } from "./load-state";
 import { PageTitle } from "./page-title";
 import { StationCard } from "./station-card";
+import { Button, EmptyState, SkeletonCard } from "./ui";
 
 /** Folds accents and case so "lome" finds "Lomé". */
 const fold = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
@@ -112,26 +112,30 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
         <LoadFailed error={error} onRetry={reload} className="mt-6" />
       ) : (
         <p className="mt-3 text-xs text-gp-muted">
-          {stations === null ? t.loading : state === "locating" ? t.map.locating : format(t.map.stations, { count: shown.length })}
+          {stations === null ? <span className="sr-only">{t.loading}</span> : state === "locating" ? t.map.locating : format(t.map.stations, { count: shown.length })}
         </p>
       )}
       {stations !== null && !!error && <OfflineNotice className="mt-2" />}
 
       {stations !== null && shown.length === 0 &&
         (favoritesOnly ? (
-          <div className="mt-10 flex flex-col items-center gap-3 text-center">
-            <span className="flex h-20 w-20 items-center justify-center rounded-full bg-gp-green/15 text-gp-green-dark">
-              <HeartIcon size={36} />
-            </span>
-            <p className="font-semibold">{t.ui.favorites.empty}</p>
-            <p className="max-w-xs text-sm text-gp-muted">{t.ui.favorites.emptyHint}</p>
-            <Link href="/stations" className="mt-2 rounded-full bg-gp-green-dark px-5 py-2.5 text-sm font-semibold text-white">
-              {t.ui.favorites.browse}
-            </Link>
-          </div>
+          <EmptyState
+            icon={<HeartIcon size={36} />}
+            title={t.ui.favorites.empty}
+            text={t.ui.favorites.emptyHint}
+            action={<Button href="/stations">{t.ui.favorites.browse}</Button>}
+          />
         ) : (
           <p className="mt-8 text-center text-sm text-gp-muted">{t.map.noResults}</p>
         ))}
+
+      {stations === null && !error && (
+        <div className="mt-2 space-y-3">
+          {Array.from({ length: 4 }, (_, i) => (
+            <SkeletonCard key={i} className="h-36 rounded-3xl" />
+          ))}
+        </div>
+      )}
 
       <ul className="mt-2 space-y-3">
         {shown.map(({ station, distance }) => (

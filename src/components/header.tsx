@@ -17,6 +17,8 @@ export function Header() {
   const pathname = usePathname();
   const walletShown = useWalletShown();
   const { unread } = useAlerts();
+  // The map has its own green header on phones; only the demo notice stays above it.
+  const onMap = pathname === "/";
 
   const links: { href: string; label: string; show: boolean }[] = [
     { href: "/", label: t.nav.map, show: true },
@@ -36,7 +38,7 @@ export function Header() {
   ];
 
   return (
-    <header className="z-20 border-b border-black/10 bg-gp-surface dark:border-white/10">
+    <header className={`z-20 border-b border-black/10 bg-gp-surface dark:border-white/10 ${onMap && backend.mode !== "demo" ? "hidden md:block" : ""}`}>
       {backend.mode === "demo" && (
         <div className="flex flex-wrap items-center justify-center gap-x-3 bg-amber-100 px-4 py-1 text-center text-xs text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">
           <span className={HOSTED_DEMO ? "font-semibold" : undefined}>
@@ -52,7 +54,7 @@ export function Header() {
           </button>
         </div>
       )}
-      <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 py-2 sm:gap-3 sm:px-4">
+      <div className={`mx-auto max-w-6xl items-center ${onMap ? "hidden md:flex" : "flex"} gap-2 px-3 py-2 sm:gap-3 sm:px-4`}>
         <Link href="/" className="flex items-center gap-2 font-semibold text-gp-green-dark dark:text-gp-green">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-mini.svg" alt="" width={28} height={28} className="h-7 w-7" />

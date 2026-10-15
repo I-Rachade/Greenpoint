@@ -17,6 +17,8 @@ import { useI18n } from "./i18n-provider";
 import { LoadFailed, OfflineNotice } from "./load-state";
 import { StationCard, StationPhotoCard, stationHref } from "./station-card";
 import { OpenBadge, RatingInline, StationPhoto } from "./station-look";
+import { Countdown, SkeletonCard } from "./ui";
+import { useActiveReservation } from "./use-alerts";
 
 // MapLibre needs the browser (WebGL), so it is never rendered on the server.
 const StationMap = dynamic(() => import("./station-map").then((m) => m.StationMap), { ssr: false });
@@ -26,6 +28,8 @@ const fold = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").to
 
 /** Stations shown under "Recommended for you". */
 const RECOMMENDED = 5;
+/** Stations shown under "Nearby"; "See all" opens the full list. */
+const NEARBY = 5;
 
 /**
  * Open stations with something available, best first: good reviews, a rest area and
@@ -46,6 +50,7 @@ export function StationFinder() {
   const L = t.stationLook.home;
   const { backend, features, profile } = useApp();
   const { position, state } = usePosition();
+  const active = useActiveReservation();
   const { data: stations, error, reload } = useLiveQuery(() => backend.listStations());
   const [filter, setFilter] = useState<StationFilter>(DEFAULT_FILTER);
   const [query, setQuery] = useState("");
@@ -165,6 +170,21 @@ export function StationFinder() {
 
       <div className="relative mx-4 mt-4 h-56 overflow-hidden rounded-3xl border border-gp-border shadow-sm md:col-start-2 md:row-span-2 md:row-start-1 md:m-0 md:h-auto md:rounded-none md:border-0 md:shadow-none dark:border-white/10">
         <StationMap stations={shown.map((r) => r.station)} position={position} selectedId={selectedId} onSelect={setSelectedId} />
+        {active && (
+          <Link
+            href="/reservations"
+            className="animate-gp-fade-in absolute left-2 right-12 top-2 flex items-center gap-2 rounded-2xl bg-gp-forest px-3 py-2 text-sm text-white shadow-lg md:right-auto md:max-w-sm"
+          >
+            <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-gp-green" />
+            <span className="min-w-0 flex-1 truncate">
+              <b className="font-semibold">{t.phase1a.activeReservation}</b>
+              {active.stationName && <> · {active.stationName}</>}
+              {active.reservation.pickupCode && <> · {format(t.phase1a.code, { code: active.reservation.pickupCode })}</>}
+            </span>
+            <Countdown expiresAt={active.reservation.expiresAt} className="shrink-0 text-xs text-white/80" />
+            <ChevronIcon size={18} className="shrink-0 text-gp-green" />
+          </Link>
+        )}
         {state === "denied" && !selected && (
           <p className="absolute bottom-2 left-2 right-2 rounded-lg bg-white/90 px-3 py-2 text-xs shadow dark:bg-zinc-900/90">{t.map.locationDenied}</p>
         )}
@@ -220,18 +240,34 @@ export function StationFinder() {
             <LoadFailed error={error} onRetry={reload} />
           ) : (
             <p className="mt-0.5 text-xs text-gp-muted">
-              {stations === null ? t.loading : state === "locating" ? t.map.locating : format(t.map.stations, { count: shown.length })}
+              {stations === null ? <span className="sr-only">{t.loading}</span> : state === "locating" ? t.map.locating : format(t.map.stations, { count: shown.length })}
             </p>
           )}
           {stations !== null && !!error && <OfflineNotice className="mt-2" />}
           {stations !== null && shown.length === 0 && <p className="p-6 text-center text-sm text-gp-muted">{t.map.noResults}</p>}
+          {stations === null && !error && (
+            <div className="mt-2 space-y-3">
+              {Array.from({ length: 3 }, (_, i) => (
+                <SkeletonCard key={i} className="h-36 rounded-3xl" />
+              ))}
+            </div>
+          )}
           <ul className="mt-2 space-y-3">
-            {shown.map(({ station, distance }, index) => (
+            {shown.slice(0, NEARBY).map(({ station, distance }, index) => (
               <li key={station.id}>
                 <StationCard station={station} distance={distance} nearest={index === 0 && !!position} />
               </li>
             ))}
           </ul>
+          {shown.length > NEARBY && (
+            <Link
+              href="/stations"
+              className="mt-3 flex min-h-11 items-center justify-center gap-1 rounded-full border border-gp-border bg-gp-surface text-sm font-semibold text-gp-green-dark hover:bg-gp-green/10 dark:border-white/15 dark:text-gp-green"
+            >
+              {format(t.phase1a.seeAllStations, { count: shown.length })}
+              <ChevronIcon size={16} />
+            </Link>
+          )}
         </section>
       </div>
     </div>

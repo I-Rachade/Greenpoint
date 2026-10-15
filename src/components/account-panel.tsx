@@ -42,7 +42,7 @@ export function AccountPanel() {
   const [deleted, setDeleted] = useState(false);
   const a = t.ui.account;
 
-  if (!ready) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
+  if (!ready) return <p className="p-6 text-sm text-gp-muted">{t.loading}</p>;
 
   const name = profile?.fullName || profile?.phone || profile?.email || a.guest;
   const initials = profile?.fullName
@@ -125,7 +125,7 @@ export function AccountPanel() {
           </MenuGroup>
           <section className="space-y-2 rounded-2xl border border-gp-border bg-gp-surface p-4 dark:border-white/10">
             <h2 className="font-semibold">{t.account.deleteTitle}</h2>
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            <p className="text-sm text-gp-muted">
               {format(t.account.loggedOutText, { email: CONTACT_EMAIL })}
             </p>
           </section>
@@ -216,7 +216,7 @@ function ContactRow({ kind, value }: { kind: "phone" | "email"; value: string | 
   if (value) {
     return (
       <p className="text-sm">
-        <span className="text-zinc-500">{label} : </span>
+        <span className="text-gp-muted">{label} : </span>
         <span className="font-medium break-all">{value}</span>
       </p>
     );
@@ -231,7 +231,7 @@ function ContactRow({ kind, value }: { kind: "phone" | "email"; value: string | 
   return (
     <form onSubmit={sentTo ? confirm : send} className="space-y-2 rounded-lg border border-black/10 p-3 dark:border-white/15">
       <p className="text-sm font-medium">{kind === "phone" ? t.account.addPhone : t.account.addEmail}</p>
-      <p className="text-xs text-zinc-500">{t.account.addHint}</p>
+      <p className="text-xs text-gp-muted">{t.account.addHint}</p>
       {!sentTo ? (
         <input
           className={input}
@@ -329,7 +329,7 @@ function DeleteAccount({
   return (
     <form onSubmit={sent ? remove : send} className="space-y-3 rounded-2xl border border-red-200 bg-gp-surface p-4 dark:border-red-900">
       <h2 className="font-semibold text-red-700 dark:text-red-400">{t.account.deleteTitle}</h2>
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.account.deleteText}</p>
+      <p className="text-sm text-gp-muted">{t.account.deleteText}</p>
 
       <fieldset className="space-y-1" disabled={sent}>
         <legend className="text-sm font-medium">{t.account.deleteChannel}</legend>
