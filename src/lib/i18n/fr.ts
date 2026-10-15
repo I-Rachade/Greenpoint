@@ -565,7 +565,7 @@ export const fr = {
         save: "Enregistrer",
         cancel: "Annuler",
       },
-      connectors: { type2: "Type 2", ccs2: "CCS Combo 2", chademo: "CHAdeMO", gbt_ac: "GB/T AC", gbt_dc: "GB/T DC" },
+      connectors: { type2: "Type 2", ccs2: "CCS Combo 2", chademo: "CHAdeMO", gbt_ac: "GB/T AC", gbt_dc: "GB/T DC", schuko: "Schuko" },
     },
     promotions: {
       title: "Publicité à l'ouverture",
