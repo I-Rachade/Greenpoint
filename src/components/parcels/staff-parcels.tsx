@@ -29,6 +29,8 @@ import { canScanQr, QrScanner } from "./qr-scanner";
 import { MenuTile } from "./menu-tile";
 import { SizePicker } from "./size-picker";
 import { SlipDialog } from "./slip-dialog";
+import { OutgoingRuns, ReceiveParcels, type RunAction } from "./collection-runs";
+import { ConfirmSheet } from "../confirm-sheet";
 import { useActiveStation } from "../station-work/use-active-station";
 import { ParcelStatusPill } from "./status";
 
@@ -43,8 +45,8 @@ export function OperatorBack() {
   );
 }
 
-const input = "w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-sm dark:border-white/20 dark:bg-zinc-900";
-const primary = "rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40";
+const input = "min-h-11 w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-base dark:border-white/20 dark:bg-zinc-900";
+const primary = "min-h-11 rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40";
 
 function Section({
   icon: Icon,
@@ -118,13 +120,13 @@ function PickupBox({
           onChange={(e) => setCode(e.target.value.toUpperCase())}
           placeholder="GP-… / 000000"
           aria-label={t.parcels.staff.pickupInput}
-          className="w-48 rounded-lg border border-black/20 bg-white px-3 py-2 text-center font-mono text-lg tracking-widest dark:border-white/20 dark:bg-zinc-950"
+          className="min-h-11 w-48 rounded-lg border border-black/20 bg-white px-3 py-2 text-center font-mono text-lg tracking-widest dark:border-white/20 dark:bg-zinc-950"
         />
         <button type="submit" className={primary}>
           {t.parcels.staff.pickupButton}
         </button>
         {canScanQr() && !scanning && (
-          <button type="button" onClick={() => setScanning(true)} className="rounded-full border border-black/15 px-4 py-2 text-sm dark:border-white/20">
+          <button type="button" onClick={() => setScanning(true)} className="min-h-11 rounded-full border border-black/15 px-4 py-2 text-sm dark:border-white/20">
             {t.parcels.staff.scan}
           </button>
         )}
@@ -213,7 +215,7 @@ function NewParcelForm({
     }
   }
 
-  const label = "space-y-1 text-sm";
+  const label = "space-y-1 text-base";
   return (
     <Section icon={BoxPlusIcon} title={t.parcels.staff.newTitle} hint={t.parcels.newAccount}>
       <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2">
@@ -263,18 +265,18 @@ function NewParcelForm({
         </div>
         {/* Express needs a driver: offered only while the driver module is on. */}
         {features.drivers && (
-          <label className="flex items-center gap-2 text-sm sm:col-span-2">
-            <input type="checkbox" checked={express} onChange={(e) => setExpress(e.target.checked)} />
+          <label className="flex min-h-11 items-center gap-3 text-base sm:col-span-2">
+            <input type="checkbox" className="h-5 w-5" checked={express} onChange={(e) => setExpress(e.target.checked)} />
             {t.drivers.staff.express}
           </label>
         )}
-        <label className="flex items-center gap-2 text-sm sm:col-span-2">
-          <input type="checkbox" required checked={checked} onChange={(e) => setChecked(e.target.checked)} />
+        <label className="flex min-h-11 items-center gap-3 text-base sm:col-span-2">
+          <input type="checkbox" className="h-5 w-5" required checked={checked} onChange={(e) => setChecked(e.target.checked)} />
           {t.parcels.staff.checkedContent}
         </label>
         {tier && (
-          <label className="flex items-center gap-2 text-sm sm:col-span-2">
-            <input type="checkbox" required checked={paid} onChange={(e) => setPaid(e.target.checked)} />
+          <label className="flex min-h-11 items-center gap-3 text-base sm:col-span-2">
+            <input type="checkbox" className="h-5 w-5" required checked={paid} onChange={(e) => setPaid(e.target.checked)} />
             {format(t.parcels.staff.cashReceived, { price: total })}
           </label>
         )}
@@ -360,87 +362,21 @@ function BookedParcel({
               format(t.parcels.staff.computed, { size: tier.size, price: tier.priceFcfa })
             )}
           </p>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" required checked={checked} onChange={(e) => setChecked(e.target.checked)} />
+          <label className="flex min-h-11 items-center gap-3 text-base">
+            <input type="checkbox" className="h-5 w-5" required checked={checked} onChange={(e) => setChecked(e.target.checked)} />
             {t.parcels.staff.checkedContent}
           </label>
           <div className="flex gap-2">
             <button type="submit" className={primary} disabled={busy || !tier}>
               {t.parcels.staff.accept}
             </button>
-            <button type="button" className="rounded-full border border-black/15 px-4 py-2 text-sm dark:border-white/20" onClick={() => setOpen(false)}>
+            <button type="button" className="min-h-11 rounded-full border border-black/15 px-4 py-2 text-sm dark:border-white/20" onClick={() => setOpen(false)}>
               {t.partners.cancel}
             </button>
           </div>
         </form>
       )}
     </li>
-  );
-}
-
-/** A list of parcels with tick boxes and one action for the ticked ones. */
-function BatchList({
-  parcels,
-  stations,
-  actionLabel,
-  onAction,
-  extra,
-}: {
-  parcels: Parcel[];
-  stations: StationView[];
-  actionLabel: (n: number) => string;
-  onAction: (ids: string[]) => Promise<boolean>;
-  extra?: (p: Parcel) => ReactNode;
-}) {
-  const { t } = useI18n();
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const name = (id: string) => stations.find((s) => s.id === id)?.name ?? "?";
-  const ids = parcels.map((p) => p.id).filter((id) => selected.has(id));
-  if (parcels.length === 0) return <p className="text-sm text-zinc-500">{t.parcels.staff.none}</p>;
-  return (
-    <div className="space-y-2">
-      <label className="flex items-center gap-2 text-xs text-zinc-500">
-        <input
-          type="checkbox"
-          checked={ids.length === parcels.length}
-          onChange={(e) => setSelected(new Set(e.target.checked ? parcels.map((p) => p.id) : []))}
-        />
-        {t.parcels.staff.selectAll}
-      </label>
-      <ul className="space-y-1">
-        {parcels.map((p) => (
-          <li key={p.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-zinc-100 p-2 text-sm dark:bg-zinc-900">
-            <input
-              type="checkbox"
-              aria-label={p.trackingNo}
-              checked={selected.has(p.id)}
-              onChange={(e) =>
-                setSelected((s) => {
-                  const next = new Set(s);
-                  if (e.target.checked) next.add(p.id);
-                  else next.delete(p.id);
-                  return next;
-                })
-              }
-            />
-            <span className="font-mono">{p.trackingNo}</span>
-            <span>
-              {p.size} · {name(p.fromStationId)} → {name(p.toStationId)}
-            </span>
-            <span className="flex-1" />
-            {extra?.(p)}
-          </li>
-        ))}
-      </ul>
-      <button
-        type="button"
-        className={primary}
-        disabled={ids.length === 0}
-        onClick={() => void onAction(ids).then((ok) => ok && setSelected(new Set()))}
-      >
-        {actionLabel(ids.length)}
-      </button>
-    </div>
   );
 }
 
@@ -465,21 +401,22 @@ function StationParcels({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [slip, setSlip] = useState<Parcel | null>(null);
+  const [cancelling, setCancelling] = useState<Parcel | null>(null);
   const hasDepot = info.depots.some((d) => d.stationId === station.id);
 
-  async function run(action: () => Promise<unknown>, success = ""): Promise<boolean> {
+  const run: RunAction = async (action, success = "") => {
     setError("");
     setNotice("");
     try {
-      await action();
-      setNotice(success);
+      const result = await action();
+      setNotice(typeof success === "function" ? success(result) : success);
       reload();
       return true;
     } catch (err) {
       setError(errorMessage(err));
       return false;
     }
-  }
+  };
 
   if (!hasDepot) return <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.parcels.staff.noDepot}</p>;
   const list = parcels ?? [];
@@ -488,7 +425,7 @@ function StationParcels({
   const incoming = list.filter((p) => p.toStationId === station.id && p.status === "in_transit" && !p.express);
   const waiting = list.filter((p) => p.toStationId === station.id && p.status === "arrived");
   const history = list.filter((p) => !["deposited", "in_transit", "arrived"].includes(p.status)).slice(0, 30);
-  const small = "rounded-full border border-black/15 px-2 py-0.5 text-xs dark:border-white/20";
+  const small = "min-h-11 rounded-full border border-black/15 px-3 py-1 text-sm dark:border-white/20";
   const s = t.parcels.staff;
 
   if (!section) {
@@ -573,36 +510,12 @@ function StationParcels({
       )}
       {section === "expedier" && (
         <Section icon={BoxOutIcon} title={s.outgoing} hint={s.outgoingHint}>
-          <BatchList
-            parcels={outgoing}
-            stations={stations}
-            actionLabel={(n) => format(s.markInTransit, { n })}
-            onAction={(ids) => run(() => backend.markParcelsInTransit(station.id, ids))}
-            extra={(p) => (
-              <>
-                <button type="button" className={small} onClick={() => setSlip(p)}>
-                  {t.parcels.slip}
-                </button>
-                <button
-                  type="button"
-                  className={small}
-                  onClick={() => window.confirm(s.confirmCancel) && void run(() => backend.cancelParcel(p.id))}
-                >
-                  {s.cancel}
-                </button>
-              </>
-            )}
-          />
+          <OutgoingRuns station={station} stations={stations} outgoing={outgoing} run={run} onSlip={setSlip} onCancelParcel={setCancelling} />
         </Section>
       )}
       {section === "arrivees" && (
         <Section icon={TruckIcon} title={s.incoming}>
-          <BatchList
-            parcels={incoming}
-            stations={stations}
-            actionLabel={(n) => format(s.markArrived, { n })}
-            onAction={(ids) => run(() => backend.markParcelsArrived(station.id, ids))}
-          />
+          <ReceiveParcels station={station} stations={stations} incoming={incoming} run={run} />
         </Section>
       )}
       {section === "a-retirer" && (
@@ -651,6 +564,21 @@ function StationParcels({
         </Section>
       )}
       {slip && <SlipDialog parcel={slip} stations={stations} onClose={() => setSlip(null)} />}
+      <ConfirmSheet
+        open={!!cancelling}
+        title={s.confirmCancel}
+        confirmLabel={s.cancel}
+        cancelLabel={t.runs.cancelParcelKeep}
+        danger
+        onCancel={() => setCancelling(null)}
+        onConfirm={() => {
+          const p = cancelling;
+          setCancelling(null);
+          if (p) void run(() => backend.cancelParcel(p.id));
+        }}
+      >
+        {cancelling && <p className="font-mono">{cancelling.trackingNo}</p>}
+      </ConfirmSheet>
     </div>
   );
 }

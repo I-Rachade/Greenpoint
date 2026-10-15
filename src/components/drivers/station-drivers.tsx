@@ -12,6 +12,8 @@ import { MenuTile } from "../parcels/menu-tile";
 import { useApp } from "../app-provider";
 import { useI18n } from "../i18n-provider";
 import { canScanQr, QrScanner } from "../parcels/qr-scanner";
+import { ConfirmSheet } from "../confirm-sheet";
+import { Input } from "../ui";
 import { JobStatusPill, Notice, primary, secondary, useFcfa, useJobRoute } from "./shared";
 
 function Section({
@@ -62,6 +64,10 @@ function DriverAtCounter({
   const fcfa = useFcfa();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [settling, setSettling] = useState(false);
+  // Every parcel changing hands is scanned (plan phase 7): the slip QR or the typed number.
+  const [parcel, setParcel] = useState("");
+  const [scanning, setScanning] = useState(false);
   const b = found.balanceFcfa;
 
   async function act(action: () => Promise<unknown>, msg: string) {
@@ -89,13 +95,43 @@ function DriverAtCounter({
       </div>
       <div>{format(t.drivers.staff.balance, { text: b === 0 ? t.drivers.page.even : fcfa(b) })}</div>
       {!found.handOver && !found.receive && <p className="text-zinc-500">{t.drivers.staff.nothing}</p>}
+      {(found.handOver || found.receive) && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              autoCapitalize="characters"
+              autoComplete="off"
+              value={parcel}
+              onChange={(e) => setParcel(e.target.value)}
+              placeholder="GP-…"
+              aria-label={t.runs.counterParcel}
+              className="min-w-0 flex-1 basis-48 font-mono"
+            />
+            {canScanQr() && !scanning && (
+              <button type="button" className={secondary} onClick={() => setScanning(true)}>
+                {t.runs.scanCamera}
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-zinc-500">{t.runs.counterParcel}</p>
+          {scanning && (
+            <QrScanner
+              onClose={() => setScanning(false)}
+              onResult={(text) => {
+                setScanning(false);
+                setParcel(text);
+              }}
+            />
+          )}
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         {found.handOver && (
           <button
             type="button"
             className={primary}
-            disabled={busy}
-            onClick={() => void act(() => backend.handToDriver(stationId, badge, found.handOver!.id), t.drivers.staff.handedOver)}
+            disabled={busy || !parcel.trim()}
+            onClick={() => void act(() => backend.handToDriver(stationId, badge, found.handOver!.id, parcel.trim()), t.drivers.staff.handedOver)}
           >
             {format(t.drivers.staff.handOver, { no: found.handOver.trackingNo ?? "" })}
           </button>
@@ -104,8 +140,8 @@ function DriverAtCounter({
           <button
             type="button"
             className={primary}
-            disabled={busy}
-            onClick={() => void act(() => backend.receiveFromDriver(stationId, badge, found.receive!.id), t.drivers.staff.received)}
+            disabled={busy || !parcel.trim()}
+            onClick={() => void act(() => backend.receiveFromDriver(stationId, badge, found.receive!.id, parcel.trim()), t.drivers.staff.received)}
           >
             {format(t.drivers.staff.receive, { no: found.receive.trackingNo ?? "" })}
           </button>
@@ -115,13 +151,24 @@ function DriverAtCounter({
             type="button"
             className={secondary}
             disabled={busy}
-            onClick={() => window.confirm(`${settleText} ?`) && void act(() => backend.settleDriver(stationId, badge, b), t.drivers.staff.settled)}
+            onClick={() => setSettling(true)}
           >
             {settleText}
           </button>
         )}
       </div>
       <Notice error={error} notice="" />
+      <ConfirmSheet
+        open={settling}
+        title={t.runs.settleTitle}
+        confirmLabel={settleText}
+        busy={busy}
+        onCancel={() => setSettling(false)}
+        onConfirm={() => {
+          setSettling(false);
+          void act(() => backend.settleDriver(stationId, badge, b), t.drivers.staff.settled);
+        }}
+      />
     </div>
   );
 }

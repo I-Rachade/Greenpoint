@@ -457,6 +457,12 @@ export function JobDetails({ job: j, stations, showRoute = true }: { job: Delive
           )}
         </div>
       )}
+      {j.handoverCode && (
+        <div className="rounded-lg bg-gp-green/10 p-3">
+          <p className="font-mono text-lg font-semibold tracking-widest">{format(t.runs.handoverCode, { code: j.handoverCode })}</p>
+          <p className="text-xs text-gp-muted">{t.runs.handoverCodeHint}</p>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         {j.collectFcfa > 0 && <span className="font-semibold">{fcfa(j.collectFcfa)}</span>}
         <span className="flex-1" />

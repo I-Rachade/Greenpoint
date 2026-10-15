@@ -11,14 +11,17 @@ import {
   PARCEL_SIZES,
   parseHandoverInput,
   sizeFor,
+  sortHistory,
   validMeasures,
   type AdminParcels,
   type Parcel,
   type ParcelDepot,
   type ParcelDepotInput,
+  type ParcelHistoryEntry,
   type ParcelInfo,
   type ParcelInput,
   type ParcelMeasures,
+  type ParcelScanKind,
   type ParcelSize,
   type ParcelSizeTier,
   type ParcelStatus,
@@ -30,13 +33,16 @@ import { cancelParcelJob, createExpressJob, driverSettings, bookableVehicles } f
 import { requireDrivers } from "./features";
 import { stationUnlocked, unlockedSql } from "./services";
 import { ApiError, nowIso, randomDigits, uuid } from "./http";
-import { roleToDb } from "./roles";
+import { DB_CUSTOMER, roleToDb } from "./roles";
+import { stationActor, type StationActor } from "./station-work";
 import { notifyPerson, type Message } from "./notify";
 
 /** What the parcel handlers need from the request context (worker/api.ts). */
 export interface ParcelCtx {
   env: Env;
   db: D1Database;
+  /** The request, for the active station header (station actions, plan phase 3). */
+  request?: Request;
   user(): Promise<Profile | null>;
   requireUser(): Promise<Profile>;
   requireAdmin(): Promise<Profile>;
@@ -86,6 +92,7 @@ export interface ParcelRow {
   express: number;
   delivery_status: DeliveryStatus | null;
   job_id: string | null;
+  run_id?: string | null;
 }
 
 interface SizeRow {
@@ -130,6 +137,7 @@ export function toParcel(r: ParcelRow, withCode: boolean): Parcel {
     express: !!r.express,
     deliveryStatus: r.delivery_status ?? null,
     jobId: r.job_id ?? null,
+    runId: r.run_id ?? null,
     ...(withCode && r.status === "arrived" && r.pickup_code ? { pickupCode: r.pickup_code } : {}),
   };
 }
@@ -200,6 +208,28 @@ export async function requireStaff(c: ParcelCtx, stationId: string): Promise<Pro
   const user = await c.requireUser();
   if (!(await c.isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
   return user;
+}
+
+/**
+ * Who acts at the station for a parcel scan or handover, as what (staff, owner, admin):
+ * the active-station rule of worker/station-work.ts (403 without rights there, 409 when
+ * an owner or admin did not choose this station as the one they work at).
+ */
+export async function parcelStationActor(c: ParcelCtx, stationId: string): Promise<StationActor> {
+  return stationActor(
+    { env: c.env, db: c.db, request: c.request ?? new Request("https://api.invalid/"), requireUser: () => c.requireUser() },
+    stationId,
+  );
+}
+
+/**
+ * R14: parcels are for customers only. A phone number that belongs to staff, an owner,
+ * a driver, a fleet manager (W5) or an admin is refused when the parcel is created; the
+ * sender gives another number.
+ */
+export async function requireCustomerNumber(db: D1Database, phone: string, error: "recipient_not_customer" | "sender_not_customer") {
+  const row = await db.prepare("select role from users where phone = ?").bind(phone).first<{ role: string }>();
+  if (row && row.role !== DB_CUSTOMER) throw new ApiError(error);
 }
 
 export function cleanName(value: unknown): string | null {
@@ -347,6 +377,7 @@ export async function createParcel(c: ParcelCtx, fromStationId: string, input: P
   const senderPhone = normalizeTogoPhone(String(input.senderPhone ?? ""));
   const recipientPhone = normalizeTogoPhone(String(input.recipientPhone ?? ""));
   if (!senderPhone || !recipientPhone) throw new ApiError("phone_not_allowed");
+  await requireCustomerNumber(c.db, senderPhone, "sender_not_customer");
   const toStationId = String(input.toStationId ?? "");
   if (toStationId === fromStationId) throw new ApiError("same_station");
   const content = String(input.content ?? "").trim().slice(0, 300);
@@ -412,6 +443,7 @@ export interface NewParcel {
  * for unknown phone numbers and tells sender and recipient. Inputs are checked.
  */
 export async function storeParcel(c: ParcelCtx, actor: string, p: NewParcel): Promise<Parcel> {
+  await requireCustomerNumber(c.db, p.recipient.phone, "recipient_not_customer");
   const tier = await tierFor(c.db, p.measures);
   const { fromStationId, toStationId, measures } = p;
   const senderPhone = p.sender.phone;
@@ -473,33 +505,6 @@ export async function stationParcels(c: ParcelCtx, stationId: string): Promise<P
   return results.map((r) => toParcel(r, false));
 }
 
-async function loadParcels(c: ParcelCtx, ids: unknown): Promise<ParcelRow[]> {
-  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 200) throw new ApiError("bad_request");
-  const clean = ids.map(String);
-  const { results } = await c.db
-    .prepare(`select * from parcels where id in (${clean.map(() => "?").join(", ")})`)
-    .bind(...clean)
-    .all<ParcelRow>();
-  if (results.length !== clean.length) throw new ApiError("parcel_not_found", 404);
-  return results;
-}
-
-/** Staff at station A load the collected parcels for the run to their stations. */
-export async function markInTransit(c: ParcelCtx, stationId: string, ids: unknown) {
-  const staff = await requireStaff(c, stationId);
-  const rows = await loadParcels(c, ids);
-  // Express parcels go with a driver, not on the collection run.
-  if (rows.some((r) => r.from_station_id !== stationId || r.status !== "deposited" || r.express)) throw new ApiError("parcel_wrong_status");
-  const now = nowIso();
-  await c.db.batch(
-    rows.flatMap((r) => [
-      c.db.prepare("update parcels set status = 'in_transit', in_transit_at = ? where id = ? and status = 'deposited'").bind(now, r.id),
-      event(c, r.id, staff.id, "in_transit", stationId),
-      c.audit(staff.id, "parcels", "update", r.id, { status: ["deposited", "in_transit"] }, { stationId }),
-    ]),
-  );
-}
-
 function deadlineFrom(iso: string): string {
   return new Date(new Date(iso).getTime() + PARCEL_PICKUP_DAYS * 86_400_000).toISOString();
 }
@@ -512,20 +517,6 @@ function arrivalMessage(r: ParcelRow, to: StationInfo | null, reminder: boolean)
     subject: reminder ? `Rappel : votre colis ${r.tracking_no} vous attend` : `Votre colis ${r.tracking_no} est arrivé`,
     text: `poinderecharge : ${reminder ? "rappel, " : ""}votre colis ${r.tracking_no} ${reminder ? "vous attend" : "est arrivé"} à ${where}. Code de retrait : ${r.pickup_code}.${deadline}${hours} Code et QR code aussi dans l'app : ${APP_URL}`,
   };
-}
-
-/**
- * Staff at station B confirm the parcels that came in. Each gets a 6-digit
- * pickup code, unique among the parcels waiting at this station, and the
- * recipient is told.
- */
-export async function markArrived(c: ParcelCtx, stationId: string, ids: unknown) {
-  const staff = await requireStaff(c, stationId);
-  const rows = await loadParcels(c, ids);
-  // Express parcels arrive when staff scan the driver who brings them (worker/drivers.ts).
-  if (rows.some((r) => r.to_station_id !== stationId || r.status !== "in_transit" || r.express)) throw new ApiError("parcel_wrong_status");
-  const to = await station(c.db, stationId);
-  for (const r of rows) await arriveParcel(c, r, staff.id, stationId, to);
 }
 
 /** One parcel arrives at its station: it gets its pickup code and the recipient is told. */
@@ -680,11 +671,41 @@ export async function myParcels(c: ParcelCtx): Promise<Parcel[]> {
     )
     .bind(user.id, user.phone)
     .all<ParcelRow>();
+  const history = await parcelHistories(c.db, results.map((r) => r.id));
   return results.map((r) => {
     const received = r.recipient_user_id === user.id || (!!user.phone && r.recipient_phone === user.phone);
-    return { ...toParcel(r, received), direction: received ? "received" : "sent" };
+    return { ...toParcel(r, received), direction: received ? "received" : "sent", history: history.get(r.id) ?? [] };
   });
 }
+
+/**
+ * What happened to each parcel, oldest first: its status changes (parcel_events) and the
+ * scans when it changed hands (parcel_scans, plan phase 7). Customers see where and when,
+ * never who.
+ */
+export async function parcelHistories(db: D1Database, ids: string[]): Promise<Map<string, ParcelHistoryEntry[]>> {
+  const out = new Map<string, ParcelHistoryEntry[]>();
+  if (!ids.length) return out;
+  const marks = ids.map(() => "?").join(", ");
+  const [events, scans] = await Promise.all([
+    db
+      .prepare(`select parcel_id, at, status as kind, station_id from parcel_events where parcel_id in (${marks}) order by id`)
+      .bind(...ids)
+      .all<{ parcel_id: string; at: string; kind: ParcelStatus; station_id: string | null }>(),
+    db
+      .prepare(`select parcel_id, created_at as at, kind, station_id from parcel_scans where parcel_id in (${marks}) order by id`)
+      .bind(...ids)
+      .all<{ parcel_id: string; at: string; kind: ParcelScanKind; station_id: string | null }>(),
+  ]);
+  for (const r of [...events.results, ...scans.results]) {
+    const list = out.get(r.parcel_id) ?? [];
+    list.push({ at: r.at, kind: r.kind, stationId: r.station_id });
+    out.set(r.parcel_id, list);
+  }
+  for (const [id, list] of out) out.set(id, sortHistory(list));
+  return out;
+}
+
 
 // Backoffice -------------------------------------------------------------------
 

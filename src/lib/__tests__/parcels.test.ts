@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
 import {
   DEFAULT_PARCEL_SIZES,
@@ -8,6 +9,7 @@ import {
   normalizeTrackingNo,
   PARCEL_PICKUP_DAYS,
   parseHandoverInput,
+  parseParcelScan,
   parsePickupInput,
   pickupQrPayload,
   sizeFor,
@@ -62,6 +64,14 @@ describe("tracking numbers and pickup codes", () => {
     expect(parsePickupInput("12345")).toBeNull();
   });
 
+  it("reads a scanned slip, a pickup QR code or a typed number as the parcel, never a bare code", () => {
+    expect(parseParcelScan("poinderecharge colis GP-9NR78V\nDe: Station A")).toBe("GP-9NR78V");
+    expect(parseParcelScan(pickupQrPayload("GP-9NR78V", "123456"))).toBe("GP-9NR78V");
+    expect(parseParcelScan(" gp 9nr78v ")).toBe("GP-9NR78V");
+    expect(parseParcelScan("123456")).toBeNull();
+    expect(parseParcelScan("hello")).toBeNull();
+  });
+
   it("takes the parcel number alone at the handover counter, but a bare 6-digit number stays a code", () => {
     expect(parseHandoverInput("gp-9nr78v")).toEqual({ trackingNo: "GP-9NR78V", code: null });
     expect(parseHandoverInput("9NR78V")).toEqual({ trackingNo: "GP-9NR78V", code: null });
@@ -83,8 +93,28 @@ describe("DemoBackend parcel depot", () => {
     measures: { lengthCm: 35, widthCm: 25, heightCm: 15, weightKg: 1.5 },
   };
 
-  async function as(role: "operator" | "customer", phone = "+22890000002") {
+  async function as(role: "operator" | "customer" | "driver", phone = "+22890000002") {
     await backend.register(phone, DEMO_CODE, "2580", role);
+  }
+
+  /** The demo driver's code (the demo driver login comes with an approved driver). */
+  async function driverCode(): Promise<string> {
+    await as("driver", "+22893000009");
+    const code = (await backend.driverHome()).driver!.code!;
+    await as("operator");
+    return code;
+  }
+
+  /** A collection run from FROM to TO as staff do it (plan phase 7): driver recorded, each parcel scanned out and in. */
+  async function carry(...parcels: { id: string; trackingNo: string }[]) {
+    const code = await driverCode();
+    setActiveStation(FROM);
+    const run = await backend.startRun(FROM, code, parcels.map((p) => p.id));
+    for (const p of parcels) await backend.scanRunParcel(FROM, run.id, p.trackingNo);
+    await backend.departRun(FROM, run.id);
+    setActiveStation(TO);
+    for (const p of parcels) await backend.receiveParcel(TO, p.trackingNo);
+    return run;
   }
 
   beforeEach(() => {
@@ -94,6 +124,7 @@ describe("DemoBackend parcel depot", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+    setActiveStation(null);
   });
 
   it("goes from drop-off to pickup, and only the recipient sees the code", async () => {
@@ -103,9 +134,9 @@ describe("DemoBackend parcel depot", () => {
     expect(parcel.priceFcfa).toBe(500);
     expect(parcel.status).toBe("deposited");
 
-    await expect(backend.markParcelsArrived(TO, [parcel.id])).rejects.toMatchObject({ code: "parcel_wrong_status" });
-    await backend.markParcelsInTransit(FROM, [parcel.id]);
-    await backend.markParcelsArrived(TO, [parcel.id]);
+    setActiveStation(TO);
+    await expect(backend.receiveParcel(TO, parcel.trackingNo)).rejects.toMatchObject({ code: "parcel_wrong_status" });
+    await carry(parcel);
 
     const staffView = (await backend.stationParcels(TO)).find((p) => p.id === parcel.id)!;
     expect(staffView.status).toBe("arrived");
@@ -115,6 +146,7 @@ describe("DemoBackend parcel depot", () => {
     const [mine] = await backend.myParcels();
     expect(mine.direction).toBe("received");
     expect(mine.pickupCode).toMatch(/^\d{6}$/);
+    expect(mine.history?.map((h) => h.kind)).toEqual(["deposited", "handover_to_driver", "in_transit", "received_at_station", "arrived"]);
 
     await as("customer", "+22890112233");
     const [sent] = await backend.myParcels();
@@ -133,8 +165,7 @@ describe("DemoBackend parcel depot", () => {
     await as("operator");
     const parcel = await backend.createParcel(FROM, input);
     await expect(backend.pickUpParcel(TO, parcel.trackingNo)).rejects.toMatchObject({ code: "parcel_not_arrived" });
-    await backend.markParcelsInTransit(FROM, [parcel.id]);
-    await backend.markParcelsArrived(TO, [parcel.id]);
+    await carry(parcel);
     const done = await backend.pickUpParcel(TO, parcel.trackingNo.toLowerCase());
     expect(done.status).toBe("picked_up");
   });
@@ -159,11 +190,42 @@ describe("DemoBackend parcel depot", () => {
   it("puts a parcel into storage after the pickup deadline", async () => {
     await as("operator");
     const parcel = await backend.createParcel(FROM, input);
-    await backend.markParcelsInTransit(FROM, [parcel.id]);
-    await backend.markParcelsArrived(TO, [parcel.id]);
+    await carry(parcel);
     vi.setSystemTime(new Date(Date.now() + (PARCEL_PICKUP_DAYS + 1) * 86_400_000));
     const stored = (await backend.stationParcels(TO)).find((p) => p.id === parcel.id)!;
     expect(stored.status).toBe("stored");
+  });
+
+  it("needs every parcel of a run scanned, refuses parcels not on it, and records each scan once", async () => {
+    await as("operator");
+    const p1 = await backend.createParcel(FROM, input);
+    const p2 = await backend.createParcel(FROM, input);
+    const code = await driverCode();
+    // An owner or admin, and staff of several stations, choose the active station first.
+    await expect(backend.startRun(FROM, code, [p1.id])).rejects.toMatchObject({ code: "active_station_required" });
+    setActiveStation(FROM);
+    const run = await backend.startRun(FROM, code, [p1.id]);
+    expect(run.driver.userId).toBe("demo-driver");
+    await expect(backend.departRun(FROM, run.id)).rejects.toMatchObject({ code: "run_unscanned" });
+    await expect(backend.scanRunParcel(FROM, run.id, p2.trackingNo)).rejects.toMatchObject({ code: "parcel_not_in_run" });
+    await backend.scanRunParcel(FROM, run.id, `poinderecharge colis ${p1.trackingNo}\nDe: X`);
+    const again = await backend.scanRunParcel(FROM, run.id, p1.trackingNo);
+    expect(again.parcels).toMatchObject([{ id: p1.id, scanned: true, received: false }]);
+    const gone = await backend.departRun(FROM, run.id);
+    expect(gone.status).toBe("under_way");
+    setActiveStation(TO);
+    await backend.receiveParcel(TO, p1.trackingNo);
+    await backend.receiveParcel(TO, p1.trackingNo);
+    setActiveStation(FROM);
+    expect((await backend.stationRuns(FROM))[0]).toMatchObject({ status: "done", parcels: [{ scanned: true, received: true }] });
+  });
+
+  it("refuses parcels to a staff, driver or fleet manager number (R14)", async () => {
+    await as("driver", "+22893000009");
+    await as("operator");
+    await expect(backend.createParcel(FROM, { ...input, recipientPhone: "93 00 00 09" })).rejects.toMatchObject({ code: "recipient_not_customer" });
+    await expect(backend.createParcel(FROM, { ...input, recipientPhone: "90 00 00 02" })).rejects.toMatchObject({ code: "recipient_not_customer" });
+    await expect(backend.createParcel(FROM, { ...input, senderPhone: "90 00 00 02" })).rejects.toMatchObject({ code: "sender_not_customer" });
   });
 
   it("creates an account without PIN for unknown recipients", async () => {

@@ -96,13 +96,19 @@ import {
   PARCEL_PICKUP_DAYS,
   parseHandoverInput,
   parsePickupInput,
+  parseParcelScan,
   sizeFor,
+  sortHistory,
   type AdminParcels,
   type Parcel,
   type ParcelDepot,
   type ParcelDepotInput,
+  type ParcelHistoryEntry,
   type ParcelInput,
   type ParcelMeasures,
+  type ParcelRun,
+  type ParcelRunStatus,
+  type ParcelScanKind,
   type ParcelSizeTier,
 } from "../parcels";
 import {
@@ -288,6 +294,9 @@ interface DemoState {
   typeBatteries?: Record<string, Record<string, number>>;
   parcelSizes?: ParcelSizeTier[];
   parcelCodeFailures?: { stationId: string; at: string }[];
+  /** Collection runs and parcel scans (plan phase 7), as parcel_runs and parcel_scans (migration 0034). */
+  parcelRuns?: DemoRun[];
+  parcelScans?: DemoScan[];
   /** Wrong pickup codes per reservation (as reservation_code_failures, migration 0029). */
   reservationCodeFailures?: { reservationId: string; at: string }[];
   /** Drivers (see src/lib/drivers.ts). */
@@ -509,6 +518,29 @@ interface DemoJob extends Omit<DeliveryJob, "driver" | "trackingNo"> {
   driverId: string | null;
   driverStationId: string | null;
   declined: string[];
+}
+
+interface DemoRun {
+  id: string;
+  stationId: string;
+  driverId: string;
+  status: ParcelRunStatus;
+  createdAt: string;
+  departedAt: string | null;
+  createdBy: string;
+  role: StationRole;
+}
+
+interface DemoScan {
+  parcelId: string;
+  /** The collection run or the driver trip; "" for a parcel that left before scans. */
+  runId: string;
+  kind: ParcelScanKind;
+  driverId: string | null;
+  stationId: string | null;
+  by: string;
+  role: StationRole | "driver";
+  at: string;
 }
 
 interface DemoLedger extends LedgerEntry {
@@ -2242,7 +2274,12 @@ export class DemoBackend implements Backend {
       .filter((p) => mine(p.sender) || mine(p.recipient))
       .map((p) => {
         const received = mine(p.recipient);
-        return { ...p, pickupCode: received && p.status === "arrived" ? p.pickupCode : undefined, direction: received ? "received" : "sent" } as Parcel;
+        return {
+          ...p,
+          pickupCode: received && p.status === "arrived" ? p.pickupCode : undefined,
+          direction: received ? "received" : "sent",
+          history: this.historyOf(state, p),
+        } as Parcel;
       })
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
@@ -2279,6 +2316,8 @@ export class DemoBackend implements Backend {
     const senderPhone = normalizeTogoPhone(input.senderPhone ?? "");
     const recipientPhone = normalizeTogoPhone(input.recipientPhone ?? "");
     if (!senderPhone || !recipientPhone) throw new BackendError("phone_not_allowed");
+    this.requireCustomerNumber(state, senderPhone, "sender_not_customer");
+    this.requireCustomerNumber(state, recipientPhone, "recipient_not_customer");
     if (input.toStationId === stationId) throw new BackendError("same_station");
     if (!this.depotOpen(state, stationId) || !this.depotOpen(state, input.toStationId)) throw new BackendError("depot_inactive");
     if (input.express) this.requireDrivers(state);
@@ -2334,49 +2373,224 @@ export class DemoBackend implements Backend {
     return parcel;
   }
 
-  async markParcelsInTransit(stationId: string, ids: string[]) {
+  // Collection runs and scans (plan phase 7), as worker/parcel-runs.ts ----------------
+
+  /** R14: parcels are for customers only; a staff, owner, driver, fleet manager or admin number is refused. */
+  private requireCustomerNumber(state: DemoState, phone: string, error: "recipient_not_customer" | "sender_not_customer") {
+    const users = state.users ?? demoUsers(new Date());
+    const holder = users.find((u) => u.phone === phone) ?? (state.profile?.phone === phone ? state.profile : null);
+    if (holder && holder.role !== "customer") throw new BackendError(error);
+  }
+
+  /** Adds a scan unless the same one is there (parcel, run, kind): scanning twice is one record. */
+  private withScan(state: DemoState, scan: Omit<DemoScan, "at"> & { at?: string }): DemoState {
+    const scans = state.parcelScans ?? [];
+    if (scans.some((x) => x.parcelId === scan.parcelId && x.runId === scan.runId && x.kind === scan.kind)) return state;
+    return { ...state, parcelScans: [...scans, { ...scan, at: scan.at ?? new Date().toISOString() }] };
+  }
+
+  /** What happened to the parcel, as parcelHistories() in worker/parcels.ts (status times stand in for parcel_events). */
+  private historyOf(state: DemoState, p: Parcel): ParcelHistoryEntry[] {
+    const fromHome = p.paymentMethod === "cash_driver";
+    const entries: ParcelHistoryEntry[] = [];
+    if (!fromHome) entries.push({ at: p.createdAt, kind: "deposited", stationId: p.fromStationId });
+    if (p.inTransitAt) entries.push({ at: p.inTransitAt, kind: "in_transit", stationId: fromHome ? null : p.fromStationId });
+    if (p.arrivedAt) entries.push({ at: p.arrivedAt, kind: "arrived", stationId: p.toStationId });
+    if (p.pickedUpAt) entries.push({ at: p.pickedUpAt, kind: "picked_up", stationId: p.deliveryStatus === "delivered" ? null : p.toStationId });
+    for (const x of state.parcelScans ?? []) if (x.parcelId === p.id) entries.push({ at: x.at, kind: x.kind, stationId: x.stationId });
+    return sortHistory(entries);
+  }
+
+  private runView(state: DemoState, run: DemoRun): ParcelRun {
+    const driver = (state.drivers ?? []).find((d) => d.userId === run.driverId);
+    const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === driver?.vehicleId);
+    const scanned = (parcelId: string, kind: ParcelScanKind) =>
+      (state.parcelScans ?? []).some((x) => x.parcelId === parcelId && x.runId === run.id && x.kind === kind);
+    return {
+      id: run.id,
+      stationId: run.stationId,
+      driver: { userId: run.driverId, name: driver?.fullName ?? "?", phone: driver?.phone ?? null, plate: vehicle?.plate ?? null },
+      status: run.status,
+      createdAt: run.createdAt,
+      departedAt: run.departedAt,
+      parcels: this.parcelsOf(state)
+        .filter((p) => p.runId === run.id)
+        .sort((a, b) => a.trackingNo.localeCompare(b.trackingNo))
+        .map((p) => ({
+          id: p.id,
+          trackingNo: p.trackingNo,
+          toStationId: p.toStationId,
+          size: p.size,
+          scanned: scanned(p.id, "handover_to_driver"),
+          received: scanned(p.id, "received_at_station"),
+        })),
+    };
+  }
+
+  private loadingRun(state: DemoState, stationId: string, runId: string): DemoRun {
+    const run = (state.parcelRuns ?? []).find((r) => r.id === runId);
+    if (!run || run.stationId !== stationId) throw new BackendError("run_not_found");
+    if (run.status !== "loading") throw new BackendError("run_wrong_status");
+    return run;
+  }
+
+  private scannedParcel(state: DemoState, code: string): Parcel {
+    const trackingNo = parseParcelScan(code);
+    const parcel = trackingNo ? this.parcelsOf(state).find((p) => p.trackingNo === trackingNo) : undefined;
+    if (!parcel) throw new BackendError("parcel_not_found");
+    return parcel;
+  }
+
+  private saveRun(state: DemoState, run: DemoRun, audit?: AuditInput, parcels?: Parcel[]): ParcelRun {
+    const next = { ...state, parcelRuns: (state.parcelRuns ?? []).map((r) => (r.id === run.id ? run : r)), ...(parcels ? { parcels } : {}) };
+    this.save(audit ? withAudit(next, audit) : next);
+    return this.runView(this.load(), run);
+  }
+
+  async stationRuns(stationId: string): Promise<ParcelRun[]> {
     const state = this.load();
-    this.requireStaff(state);
+    this.stationReader(state, stationId);
+    const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+    return (state.parcelRuns ?? [])
+      .filter((r) => r.stationId === stationId && (r.status === "loading" || r.status === "under_way" || r.createdAt > since))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((r) => this.runView(state, r));
+  }
+
+  async startRun(stationId: string, badge: string, parcelIds: string[]): Promise<ParcelRun> {
+    const state = this.load();
+    const { profile, role } = this.stationActor(state, stationId);
+    if (!this.depotOpen(state, stationId)) throw new BackendError("depot_inactive");
+    const driver = this.byBadge(state, badge);
+    const ids = [...new Set(parcelIds)];
+    if (!ids.length) throw new BackendError("unknown", "no parcels");
     const parcels = this.parcelsOf(state);
     const chosen = parcels.filter((p) => ids.includes(p.id));
-    if (chosen.length !== ids.length || chosen.some((p) => p.fromStationId !== stationId || p.status !== "deposited" || p.express)) {
-      throw new BackendError("parcel_wrong_status");
-    }
-    const now = new Date().toISOString();
-    this.saveParcels(
-      state,
-      parcels.map((p) => (ids.includes(p.id) ? { ...p, status: "in_transit" as const, inTransitAt: now } : p)),
-      { table: "parcels", action: "update", rowId: ids.join(","), stationId, changes: { status: ["deposited", "in_transit"] } },
+    if (chosen.length !== ids.length) throw new BackendError("parcel_not_found");
+    if (chosen.some((p) => p.fromStationId !== stationId || p.status !== "deposited" || p.express || p.runId)) throw new BackendError("parcel_wrong_status");
+    const run: DemoRun = {
+      id: crypto.randomUUID(),
+      stationId,
+      driverId: driver.userId,
+      status: "loading",
+      createdAt: new Date().toISOString(),
+      departedAt: null,
+      createdBy: profile.id,
+      role,
+    };
+    const next = { ...state, parcelRuns: [run, ...(state.parcelRuns ?? [])] };
+    return this.saveRun(
+      next,
+      run,
+      { table: "parcel_runs", action: "insert", rowId: run.id, stationId, userId: driver.userId, changes: { driver: driver.userId, parcels: chosen.map((p) => p.trackingNo), role } },
+      parcels.map((p) => (ids.includes(p.id) ? { ...p, runId: run.id } : p)),
     );
   }
 
-  async markParcelsArrived(stationId: string, ids: string[]) {
+  async scanRunParcel(stationId: string, runId: string, code: string): Promise<ParcelRun> {
     const state = this.load();
-    this.requireStaff(state);
+    const { profile, role } = this.stationActor(state, stationId);
+    const run = this.loadingRun(state, stationId, runId);
+    const parcel = this.scannedParcel(state, code);
+    if (parcel.runId !== run.id || parcel.status !== "deposited") throw new BackendError("parcel_not_in_run");
+    const next = this.withScan(state, { parcelId: parcel.id, runId: run.id, kind: "handover_to_driver", driverId: run.driverId, stationId, by: profile.id, role });
+    if (next === state) return this.runView(state, run);
+    return this.saveRun(next, run, {
+      table: "parcels",
+      action: "update",
+      rowId: parcel.id,
+      stationId,
+      changes: { scan: "handover_to_driver", run: run.id, driver: run.driverId, role },
+    });
+  }
+
+  async removeRunParcel(stationId: string, runId: string, parcelId: string): Promise<ParcelRun> {
+    const state = this.load();
+    const { role } = this.stationActor(state, stationId);
+    const run = this.loadingRun(state, stationId, runId);
     const parcels = this.parcelsOf(state);
-    const chosen = parcels.filter((p) => ids.includes(p.id));
-    if (chosen.length !== ids.length || chosen.some((p) => p.toStationId !== stationId || p.status !== "in_transit" || p.express)) {
-      throw new BackendError("parcel_wrong_status");
-    }
-    const now = new Date();
-    const deadline = new Date(now.getTime() + PARCEL_PICKUP_DAYS * 86_400_000).toISOString();
-    const taken = new Set(parcels.filter((p) => p.toStationId === stationId && p.status === "arrived").map((p) => p.pickupCode));
-    const newCode = () => {
-      let code: string;
-      do code = String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0");
-      while (taken.has(code));
-      taken.add(code);
-      return code;
-    };
-    this.saveParcels(
-      state,
-      parcels.map((p) =>
-        ids.includes(p.id)
-          ? { ...p, status: "arrived" as const, arrivedAt: now.toISOString(), pickupDeadline: deadline, pickupCode: newCode() }
-          : p,
-      ),
-      { table: "parcels", action: "update", rowId: ids.join(","), stationId, changes: { status: ["in_transit", "arrived"] } },
+    if (!parcels.some((p) => p.id === parcelId && p.runId === run.id && p.status === "deposited")) throw new BackendError("parcel_not_in_run");
+    return this.saveRun(
+      { ...state, parcelScans: (state.parcelScans ?? []).filter((x) => !(x.parcelId === parcelId && x.runId === run.id)) },
+      run,
+      { table: "parcel_runs", action: "update", rowId: run.id, stationId, changes: { removed: parcelId, role } },
+      parcels.map((p) => (p.id === parcelId ? { ...p, runId: null } : p)),
     );
+  }
+
+  async cancelRun(stationId: string, runId: string) {
+    const state = this.load();
+    const { role } = this.stationActor(state, stationId);
+    const run = this.loadingRun(state, stationId, runId);
+    this.saveRun(
+      { ...state, parcelScans: (state.parcelScans ?? []).filter((x) => x.runId !== run.id) },
+      { ...run, status: "cancelled" },
+      { table: "parcel_runs", action: "update", rowId: run.id, stationId, changes: { status: ["loading", "cancelled"], role } },
+      this.parcelsOf(state).map((p) => (p.runId === run.id && p.status === "deposited" ? { ...p, runId: null } : p)),
+    );
+  }
+
+  async departRun(stationId: string, runId: string): Promise<ParcelRun> {
+    const state = this.load();
+    const { role } = this.stationActor(state, stationId);
+    const run = this.loadingRun(state, stationId, runId);
+    const view = this.runView(state, run);
+    if (!view.parcels.length) throw new BackendError("run_wrong_status");
+    if (view.parcels.some((p) => !p.scanned)) throw new BackendError("run_unscanned");
+    const now = new Date().toISOString();
+    return this.saveRun(
+      state,
+      { ...run, status: "under_way", departedAt: now },
+      { table: "parcel_runs", action: "update", rowId: run.id, stationId, userId: run.driverId, changes: { status: ["loading", "under_way"], role } },
+      this.parcelsOf(state).map((p) => (p.runId === run.id && p.status === "deposited" ? { ...p, status: "in_transit" as const, inTransitAt: now } : p)),
+    );
+  }
+
+  /** A new 6-digit pickup code, unique among the parcels waiting at the station. */
+  private newPickupCode(state: DemoState, stationId: string): string {
+    const taken = new Set(this.parcelsOf(state).filter((p) => p.toStationId === stationId && p.status === "arrived").map((p) => p.pickupCode));
+    let code: string;
+    do code = String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0");
+    while (taken.has(code));
+    return code;
+  }
+
+  async receiveParcel(stationId: string, code: string): Promise<Parcel> {
+    const state = this.load();
+    const { profile, role } = this.stationActor(state, stationId);
+    const parcel = this.scannedParcel(state, code);
+    if (parcel.toStationId !== stationId) throw new BackendError("parcel_wrong_status");
+    const runId = parcel.runId ?? "";
+    const scannedIn = (state.parcelScans ?? []).some((x) => x.parcelId === parcel.id && x.runId === runId && x.kind === "received_at_station");
+    if (parcel.status === "arrived" && scannedIn) return { ...parcel, pickupCode: undefined };
+    if (parcel.status !== "in_transit") throw new BackendError("parcel_wrong_status");
+    if (parcel.express) throw new BackendError("parcel_with_driver");
+    const run = (state.parcelRuns ?? []).find((r) => r.id === parcel.runId);
+    const now = new Date();
+    const arrived: Parcel = {
+      ...parcel,
+      status: "arrived",
+      arrivedAt: now.toISOString(),
+      pickupDeadline: new Date(now.getTime() + PARCEL_PICKUP_DAYS * 86_400_000).toISOString(),
+      pickupCode: this.newPickupCode(state, stationId),
+    };
+    const parcels = this.parcelsOf(state).map((p) => (p.id === parcel.id ? arrived : p));
+    // The run is done once none of its parcels is still on the road.
+    const runs = (state.parcelRuns ?? []).map((r) =>
+      r === run && r.status === "under_way" && !parcels.some((p) => p.runId === r.id && p.status === "in_transit") ? { ...r, status: "done" as const } : r,
+    );
+    const next = this.withScan({ ...state, parcelRuns: runs }, {
+      parcelId: parcel.id,
+      runId,
+      kind: "received_at_station",
+      driverId: run?.driverId ?? null,
+      stationId,
+      by: profile.id,
+      role,
+      at: now.toISOString(),
+    });
+    this.saveParcels(next, parcels, { table: "parcels", action: "update", rowId: parcel.id, stationId, changes: { status: ["in_transit", "arrived"], scan: "received_at_station", role } });
+    return { ...arrived, pickupCode: undefined };
   }
 
   async pickUpParcel(stationId: string, codeOrQr: string): Promise<Parcel> {
@@ -2920,8 +3134,8 @@ export class DemoBackend implements Backend {
     if (!tier) throw new BackendError("parcel_too_large");
     const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === driver.vehicleId);
     if (!vehicle || !vehicleFits(vehicle.type, tier.size, measures.weightKg, this.settingsOf(state))) throw new BackendError("vehicle_too_small");
-    const from = nearestStation(job.home, this.depotPoints(state).filter((st) => st.id !== job.toStationId && stationUnlocked(state, st.id, "parcels")));
-    if (!from) throw new BackendError("depot_inactive");
+    const from = this.originDepot(state, job.home, job.toStationId);
+    if (!from) throw new BackendError("no_origin_depot");
     const recipient = this.demoAccount(state, job.recipient.phone, job.recipient.name);
     state = recipient.state;
     const now = new Date().toISOString();
@@ -2959,6 +3173,8 @@ export class DemoBackend implements Backend {
       weightKg: measures.weightKg,
       collectFcfa: collect,
     });
+    // The parcel is numbered at the door, in the driver's hands: the driver's record is the handover.
+    state = this.withScan(state, { parcelId: parcel.id, runId: job.id, kind: "handover_to_driver", driverId: driver.userId, stationId: null, by: driver.userId, role: "driver" });
     this.saveJobs(
       state,
       jobs,
@@ -2967,6 +3183,11 @@ export class DemoBackend implements Backend {
     );
     const saved = this.load();
     return this.viewJob(saved, (saved.jobs ?? []).find((j) => j.id === job.id)!);
+  }
+
+  /** The depot a parcel collected at home counts as handed in at: the nearest open one other than the destination. */
+  private originDepot(state: DemoState, home: LatLng, toStationId: string) {
+    return nearestStation(home, this.depotPoints(state).filter((st) => st.id !== toStationId && stationUnlocked(state, st.id, "parcels")));
   }
 
   async arriveAtDoor(id: string) {
@@ -2979,7 +3200,9 @@ export class DemoBackend implements Backend {
   async uploadDeliveryPhoto(id: string, image: Blob) {
     const state = this.load();
     const { job } = this.myDemoJob(state, id);
-    if (job.kind !== "delivery" || !["picked_up", "at_door"].includes(job.status)) throw new BackendError("job_wrong_status");
+    // Home deliveries and couriers: the photo of the handover at the door.
+    const atDoor: JobStatus[] = job.kind === "delivery" ? ["picked_up", "at_door"] : job.kind === "courier" ? ["picked_up"] : [];
+    if (!atDoor.includes(job.status)) throw new BackendError("job_wrong_status");
     if (image.size > MAX_PROMO_IMAGE_BYTES / 4) throw new BackendError("image_too_large");
     const key = `proofs/${job.id}-${Date.now().toString(36)}.jpg`;
     const url = await readAsDataUrl(image as File);
@@ -3008,7 +3231,7 @@ export class DemoBackend implements Backend {
     const now = new Date().toISOString();
     const jobs = this.updateJob(state, job.id, ["picked_up", "at_door"], { status: "done", doneAt: now });
     this.saveJobs(
-      state,
+      this.withScan(state, { parcelId: parcel.id, runId: job.id, kind: "delivered", driverId: driver.userId, stationId: null, by: driver.userId, role: "driver" }),
       jobs,
       { table: "parcels", action: "update", rowId: parcel.id, userId: parcel.recipient.userId, changes: { status: ["arrived", "picked_up"], delivery_status: ["out_for_delivery", "delivered"] } },
       {
@@ -3038,17 +3261,20 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const { driver, job } = this.myDemoJob(state, id);
     if (job.kind !== "ride" && job.kind !== "courier") throw new BackendError("job_wrong_status");
-    const jobs = this.updateJob(state, job.id, ["accepted"], { status: "picked_up", pickedUpAt: new Date().toISOString() });
+    // Courier: the code the recipient gives at the door, made now; the sender sees it in the app.
+    const handoverCode = job.kind === "courier" ? String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0") : undefined;
+    const jobs = this.updateJob(state, job.id, ["accepted"], { status: "picked_up", pickedUpAt: new Date().toISOString(), handoverCode });
     if (job.kind === "ride") return this.saveJobs(state, jobs);
     this.saveJobs(state, jobs, undefined, {
       ledger: [this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null), ...(state.ledger ?? [])],
     });
   }
 
-  async finishRide(id: string) {
+  async finishRide(id: string, code?: string) {
     const state = this.load();
     const { driver, job } = this.myDemoJob(state, id);
     if (job.kind !== "ride" && job.kind !== "courier") throw new BackendError("job_wrong_status");
+    if (job.kind === "courier") this.checkCourierHandover(state, job, code);
     const jobs = this.updateJob(state, job.id, ["picked_up"], { status: "done", doneAt: new Date().toISOString() });
     this.saveJobs(
       state,
@@ -3066,13 +3292,31 @@ export class DemoBackend implements Backend {
     );
   }
 
+  /** Courier at the door, as checkCourierHandover() in worker/drivers.ts: the recipient's code, or a photo without one. */
+  private checkCourierHandover(state: DemoState, job: DemoJob, code: string | undefined) {
+    const typed = (code ?? "").replace(/\s/g, "");
+    if (!typed) {
+      if (!job.proofKey) throw new BackendError("proof_required");
+      return;
+    }
+    const lockKey = `job:${job.id}`;
+    const since = Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000;
+    const failures = (state.parcelCodeFailures ?? []).filter((f) => f.stationId === lockKey && new Date(f.at).getTime() > since);
+    if (failures.length >= PARCEL_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    if (!job.handoverCode || typed !== job.handoverCode) {
+      this.save({ ...state, parcelCodeFailures: [...(state.parcelCodeFailures ?? []), { stationId: lockKey, at: new Date().toISOString() }] });
+      throw new BackendError("wrong_pickup_code");
+    }
+  }
+
   async myJobs(): Promise<DeliveryJob[]> {
     const state = this.load();
     if (!state.profile) return [];
     return (state.jobs ?? [])
       .filter((j) => j.customerUserId === state.profile!.id)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map((j) => this.viewJob(state, j));
+      // The sender of a courier sees the code the recipient gives at the door, to pass it on.
+      .map((j) => ({ ...this.viewJob(state, j), ...(j.kind === "courier" && j.handoverCode && j.status === "picked_up" ? { handoverCode: j.handoverCode } : {}) }));
   }
 
   private cleanHome(home: HomePoint): HomePoint {
@@ -3092,10 +3336,13 @@ export class DemoBackend implements Backend {
     if (!this.depotOpen(state, input.toStationId)) throw new BackendError("depot_inactive");
     const recipientPhone = normalizeTogoPhone(input.recipientPhone ?? "");
     if (!recipientPhone) throw new BackendError("phone_not_allowed");
+    this.requireCustomerNumber(state, recipientPhone, "recipient_not_customer");
     const content = (input.content ?? "").trim().slice(0, 300);
     if (!content) throw new BackendError("unknown", "content missing");
     const tier = (state.parcelSizes ?? DEFAULT_PARCEL_SIZES).find((t) => t.size === input.size);
     if (!tier) throw new BackendError("parcel_too_large");
+    // Checked at booking, not only at the door: another depot must take the parcel in.
+    if (!this.originDepot(state, home, input.toStationId)) throw new BackendError("no_origin_depot");
     const to = this.stationAt(state, input.toStationId)!;
     const distanceM = Math.round(distanceMeters(home, to));
     const fare = fareFor(distanceM, false, this.settingsOf(state));
@@ -3179,6 +3426,7 @@ export class DemoBackend implements Backend {
     if (!dropoff.note) throw new BackendError("unknown", "directions missing");
     const recipientPhone = normalizeTogoPhone(input.recipientPhone ?? "");
     if (!recipientPhone) throw new BackendError("phone_not_allowed");
+    this.requireCustomerNumber(state, recipientPhone, "recipient_not_customer");
     const content = (input.content ?? "").trim().slice(0, 300);
     if (!content) throw new BackendError("unknown", "content missing");
     const tier = (state.parcelSizes ?? DEFAULT_PARCEL_SIZES).find((t) => t.size === input.size);
@@ -3331,12 +3579,20 @@ export class DemoBackend implements Backend {
     };
   }
 
-  async handToDriver(stationId: string, badge: string, jobId: string) {
+  /** The parcel staff scanned must be the trip's (as tripParcel() in worker/drivers.ts). */
+  private tripParcel(state: DemoState, job: DemoJob, code: string): Parcel {
+    const parcel = this.scannedParcel(state, code);
+    if (parcel.id !== job.parcelId) throw new BackendError("parcel_not_in_run");
+    return parcel;
+  }
+
+  async handToDriver(stationId: string, badge: string, jobId: string, parcelCode: string) {
     const state = this.load();
-    this.requireStaff(state);
+    const { profile, role } = this.stationActor(state, stationId);
     const d = this.byBadge(state, badge);
     const { handOver: job } = this.stationJobs(state, stationId, d.userId);
     if (!job || job.id !== jobId) throw new BackendError("job_wrong_status");
+    this.tripParcel(state, job, parcelCode);
     const now = new Date().toISOString();
     const parcels = (state.parcels ?? []).map((p) => {
       if (p.id !== job.parcelId) return p;
@@ -3348,20 +3604,31 @@ export class DemoBackend implements Backend {
       return { ...p, deliveryStatus: "out_for_delivery" as const };
     });
     this.saveJobs(
-      state,
+      this.withScan(state, { parcelId: job.parcelId!, runId: job.id, kind: "handover_to_driver", driverId: d.userId, stationId, by: profile.id, role }),
       this.updateJob(state, job.id, ["assigned", "accepted"], { status: "picked_up", pickedUpAt: now, acceptedAt: job.acceptedAt ?? now }),
-      { table: "delivery_jobs", action: "update", rowId: job.id, stationId, userId: d.userId, changes: { status: [job.status, "picked_up"] } },
+      { table: "delivery_jobs", action: "update", rowId: job.id, stationId, userId: d.userId, changes: { status: [job.status, "picked_up"], role } },
       { parcels },
     );
   }
 
-  async receiveFromDriver(stationId: string, badge: string, jobId: string) {
-    const state = this.load();
-    this.requireStaff(state);
-    const d = this.byBadge(state, badge);
-    const { receive: job } = this.stationJobs(state, stationId, d.userId);
+  async receiveFromDriver(stationId: string, badge: string, jobId: string, parcelCode: string) {
+    const loaded = this.load();
+    const { profile, role } = this.stationActor(loaded, stationId);
+    const d = this.byBadge(loaded, badge);
+    const { receive: job } = this.stationJobs(loaded, stationId, d.userId);
     if (!job || job.id !== jobId) throw new BackendError("job_wrong_status");
+    this.tripParcel(loaded, job, parcelCode);
     const now = new Date();
+    const state = this.withScan(loaded, {
+      parcelId: job.parcelId!,
+      runId: job.id,
+      kind: "received_at_station",
+      driverId: d.userId,
+      stationId,
+      by: profile.id,
+      role,
+      at: now.toISOString(),
+    });
     if (job.status === "returning") {
       this.saveJobs(
         state,
@@ -3371,10 +3638,7 @@ export class DemoBackend implements Backend {
       );
       return;
     }
-    const taken = new Set((state.parcels ?? []).filter((p) => p.toStationId === stationId && p.status === "arrived").map((p) => p.pickupCode));
-    let code: string;
-    do code = String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0");
-    while (taken.has(code));
+    const code = this.newPickupCode(state, stationId);
     const deadline = new Date(now.getTime() + PARCEL_PICKUP_DAYS * 86_400_000).toISOString();
     this.saveJobs(
       state,

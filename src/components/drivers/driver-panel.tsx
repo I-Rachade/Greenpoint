@@ -577,15 +577,57 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
           {format(t.drivers.page.courierPickButton, { n: job.collectFcfa })}
         </button>
       )}
-      {job.kind === "courier" && job.status === "picked_up" && (
-        <button type="button" className={primary} disabled={busy} onClick={() => void run(() => backend.finishRide(job.id), t.drivers.page.courierDone)}>
-          {t.drivers.page.courierDoneButton}
-        </button>
-      )}
+      {job.kind === "courier" && job.status === "picked_up" && <CourierFinish job={job} />}
       {job.status === "accepted" && <AbandonButton job={job} />}
       <Notice error="" notice={collected} />
       {status}
     </Card>
+  );
+}
+
+/**
+ * Courier at the recipient's door (plan phase 7): the recipient's 6-digit code, or a
+ * photo of the handover when they have no code. The server refuses the end without one.
+ */
+function CourierFinish({ job }: { job: DeliveryJob }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { run, busy, status } = useAction();
+  const [code, setCode] = useState("");
+  const digits = code.replace(/\D/g, "");
+  return (
+    <div className="space-y-3 rounded-lg bg-zinc-100 p-3 dark:bg-zinc-900">
+      <p className="text-sm">{t.runs.courierCodeHint}</p>
+      <form
+        className="flex flex-wrap items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void run(() => backend.finishRide(job.id, digits), t.drivers.page.courierDone);
+        }}
+      >
+        <input
+          inputMode="numeric"
+          autoComplete="off"
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/[^\d ]/g, ""))}
+          placeholder="000000"
+          aria-label={t.runs.courierCode}
+          className="min-h-11 w-36 rounded-lg border border-black/20 bg-white px-3 py-2 text-center font-mono text-lg tracking-widest dark:border-white/20 dark:bg-zinc-950"
+        />
+        <button type="submit" className={primary} disabled={busy || (digits.length !== 6 && !job.proofKey)}>
+          {t.drivers.page.courierDoneButton}
+        </button>
+      </form>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="flex-1">{t.drivers.page.doorPhoto}</span>
+        {job.proofKey && <span className="text-gp-green-dark dark:text-gp-green">✓</span>}
+        <PhotoButton
+          label={t.drivers.page.choosePhoto}
+          onPhoto={(file) => run(async () => backend.uploadDeliveryPhoto(job.id, await shrinkImage(file)), t.drivers.page.photoSaved)}
+        />
+      </div>
+      {status}
+    </div>
   );
 }
 

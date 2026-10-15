@@ -5,7 +5,7 @@ import { Pill, useDateTime } from "@/components/backoffice/shared";
 import type { DeliveryJob } from "@/lib/drivers";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { pickupQrPayload, type Parcel, type ParcelInfo } from "@/lib/parcels";
+import { pickupQrPayload, type Parcel, type ParcelInfo, type ParcelStatus } from "@/lib/parcels";
 import type { StationView } from "@/lib/types";
 import { useApp } from "../app-provider";
 import { BookCourier, BookDelivery, BookPickup, JobDetails, MyJobs, scrollIntoViewOnce, useFocusedJob } from "../drivers/customer-jobs";
@@ -17,40 +17,61 @@ import { ParcelStatusPill } from "./status";
 import { SlipDialog } from "./slip-dialog";
 import { parcelTracking, splitJobs } from "./tracking";
 
-/** Déposé → En route → Arrivé → Retiré / Livré, with the time of each step reached. */
-function ParcelTimeline({ parcel }: { parcel: Parcel }) {
+/**
+ * Déposé → En route → Arrivé → Retiré / Livré, with the time of each step reached,
+ * and below it every recorded scan (handed to the driver, scanned in at the station, …).
+ */
+function ParcelTimeline({ parcel, stations }: { parcel: Parcel; stations: StationView[] }) {
   const { t } = useI18n();
   const when = useDateTime();
   const tracking = parcelTracking(parcel);
   if (!tracking) return null;
+  const stationName = (id: string | null) => (id ? stations.find((s) => s.id === id)?.name : undefined);
+  const label = (kind: string) => (kind in t.runs.history ? t.runs.history[kind as keyof typeof t.runs.history] : t.parcels.status[kind as ParcelStatus]);
   return (
-    <ol className="grid grid-cols-4" aria-label={t.phase1b.parcels.tracking}>
-      {tracking.steps.map((step, i) => {
-        const reached = i <= tracking.current;
-        const current = i === tracking.current;
-        return (
-          <li key={step.key} aria-current={current ? "step" : undefined} className="relative flex flex-col items-center px-0.5 text-center">
-            {i > 0 && (
-              // The line from the previous step, filling in once this step is reached.
-              <span aria-hidden className="absolute top-2 right-1/2 h-0.5 w-full -translate-y-1/2 bg-gp-border">
-                <span className="block h-full bg-gp-green transition-[width] duration-500 ease-gp-out" style={{ width: reached ? "100%" : "0%" }} />
+    <div className="space-y-2">
+      <ol className="grid grid-cols-4" aria-label={t.phase1b.parcels.tracking}>
+        {tracking.steps.map((step, i) => {
+          const reached = i <= tracking.current;
+          const current = i === tracking.current;
+          return (
+            <li key={step.key} aria-current={current ? "step" : undefined} className="relative flex flex-col items-center px-0.5 text-center">
+              {i > 0 && (
+                // The line from the previous step, filling in once this step is reached.
+                <span aria-hidden className="absolute top-2 right-1/2 h-0.5 w-full -translate-y-1/2 bg-gp-border">
+                  <span className="block h-full bg-gp-green transition-[width] duration-500 ease-gp-out" style={{ width: reached ? "100%" : "0%" }} />
+                </span>
+              )}
+              <span
+                aria-hidden
+                className={`relative h-4 w-4 rounded-full border-2 transition-colors duration-240 ${
+                  reached ? "border-gp-green bg-gp-green" : "border-gp-border bg-gp-surface"
+                } ${current ? "ring-4 ring-gp-green/25" : ""}`}
+              />
+              <span className={`mt-1 text-xs leading-tight ${current ? "font-semibold" : "text-gp-muted"}`}>
+                {t.phase1b.parcels.steps[step.key]}
+                {!reached && <span className="sr-only"> ({t.phase1b.parcels.notYet})</span>}
               </span>
-            )}
-            <span
-              aria-hidden
-              className={`relative h-4 w-4 rounded-full border-2 transition-colors duration-240 ${
-                reached ? "border-gp-green bg-gp-green" : "border-gp-border bg-gp-surface"
-              } ${current ? "ring-4 ring-gp-green/25" : ""}`}
-            />
-            <span className={`mt-1 text-xs leading-tight ${current ? "font-semibold" : "text-gp-muted"}`}>
-              {t.phase1b.parcels.steps[step.key]}
-              {!reached && <span className="sr-only"> ({t.phase1b.parcels.notYet})</span>}
-            </span>
-            {reached && step.at && <span className="text-[11px] text-gp-muted tabular-nums">{when(step.at)}</span>}
-          </li>
-        );
-      })}
-    </ol>
+              {reached && step.at && <span className="text-[11px] text-gp-muted tabular-nums">{when(step.at)}</span>}
+            </li>
+          );
+        })}
+      </ol>
+      {tracking.events.length > 0 && (
+        <details className="text-sm">
+          <summary className="flex min-h-11 cursor-pointer items-center text-gp-green-dark dark:text-gp-green">{t.runs.historyTitle}</summary>
+          <ol className="space-y-1 border-l-2 border-gp-border pl-3">
+            {tracking.events.map((e, i) => (
+              <li key={`${e.kind}-${e.at}-${i}`} className="flex flex-wrap gap-x-2">
+                <span className="font-medium">{label(e.kind)}</span>
+                {stationName(e.stationId) && <span className="text-gp-muted">{stationName(e.stationId)}</span>}
+                <span className="ml-auto text-xs text-gp-muted tabular-nums">{when(e.at)}</span>
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
+    </div>
   );
 }
 
@@ -90,7 +111,7 @@ function ParcelCard({
         {p.deliveryStatus && <Pill tone={p.deliveryStatus === "failed" ? "red" : "blue"}>{t.drivers.delivery[p.deliveryStatus]}</Pill>}
         <span className="ml-auto text-xs text-gp-muted">{received ? t.parcels.received : t.parcels.sent}</span>
       </div>
-      <ParcelTimeline parcel={p} />
+      <ParcelTimeline parcel={p} stations={stations} />
       <div className="text-sm text-zinc-700 dark:text-zinc-300">
         {station(p.fromStationId)?.name ?? "?"} → {to?.name ?? "?"}
         <br />

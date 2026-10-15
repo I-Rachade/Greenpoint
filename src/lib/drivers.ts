@@ -422,6 +422,11 @@ export interface DeliveryJob {
   proofKey: string | null;
   /** Called off because no driver took it in time (OPEN_JOB_EXPIRY_MINUTES). */
   noDriver?: boolean;
+  /**
+   * Couriers, for the sender only: the code the recipient gives the driver at the door
+   * (made when the driver takes the parcel). The driver hands over for this code or a photo.
+   */
+  handoverCode?: string;
 }
 
 export interface PickupBooking {

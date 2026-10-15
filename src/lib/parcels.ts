@@ -115,6 +115,20 @@ export function pickupQrPayload(trackingNo: string, code: string): string {
   return `${PICKUP_QR_PREFIX}:${trackingNo}:${code}`;
 }
 
+/**
+ * What staff scan when a parcel changes hands (plan phase 7): the QR code of the drop-off
+ * slip, the recipient's pickup QR code, or the parcel number typed in. Never a bare
+ * 6-digit pickup code: a scan names the parcel, not the recipient.
+ */
+export function parseParcelScan(input: string): string | null {
+  const text = input.trim();
+  const slip = /^poinderecharge colis (GP-[A-Z0-9]{6})/i.exec(text);
+  if (slip) return normalizeTrackingNo(slip[1]);
+  const pickup = parsePickupInput(text);
+  if (pickup) return pickup.trackingNo;
+  return /[a-z]/i.test(text) ? normalizeTrackingNo(text) : null;
+}
+
 /** Reads a scanned pickup QR code, or a typed 6-digit code. */
 export function parsePickupInput(input: string): { trackingNo: string | null; code: string } | null {
   const text = input.trim();
@@ -195,6 +209,10 @@ export interface Parcel {
   deliveryStatus: DeliveryStatus | null;
   /** The driver trip for this parcel (express, pickup or home delivery). */
   jobId: string | null;
+  /** The collection run the parcel is on or went on (plan phase 7). */
+  runId?: string | null;
+  /** For the customer: what happened to the parcel, oldest first (status changes and scans). */
+  history?: ParcelHistoryEntry[];
   /** Only for the recipient, and only once the parcel has arrived. */
   pickupCode?: string;
   /** For the signed-in customer: did they send it, or is it for them? */
@@ -231,6 +249,57 @@ export interface AdminParcels {
   /** Every depot, also switched-off ones. */
   depots: ParcelDepot[];
   sizes: ParcelSizeTier[];
+}
+
+// Scans and collection runs (plan phase 7, migration 0034) -----------------------------
+
+/** Someone scanned the parcel as it changed hands: staff to driver, driver to staff, driver to recipient. */
+export type ParcelScanKind = "handover_to_driver" | "received_at_station" | "delivered";
+
+/** One line of a parcel's history as the customer sees it: never who scanned, only where and when. */
+export interface ParcelHistoryEntry {
+  at: string;
+  kind: ParcelStatus | ParcelScanKind;
+  stationId: string | null;
+}
+
+/** The order steps happen in, for entries with the same time. */
+const HISTORY_ORDER: ParcelHistoryEntry["kind"][] = ["deposited", "handover_to_driver", "in_transit", "received_at_station", "arrived", "delivered", "picked_up"];
+
+/** Oldest first; entries of the same moment in the order the steps happen. */
+export function sortHistory(entries: ParcelHistoryEntry[]): ParcelHistoryEntry[] {
+  const rank = (kind: ParcelHistoryEntry["kind"]) => {
+    const i = HISTORY_ORDER.indexOf(kind);
+    return i < 0 ? HISTORY_ORDER.length : i;
+  };
+  return [...entries].sort((a, b) => a.at.localeCompare(b.at) || rank(a.kind) - rank(b.kind));
+}
+
+export type ParcelRunStatus = "loading" | "under_way" | "done" | "cancelled";
+
+/** One parcel on a collection run, and whether it was scanned into the driver's hands and in at its station. */
+export interface ParcelRunItem {
+  id: string;
+  trackingNo: string;
+  toStationId: string;
+  size: ParcelSize;
+  scanned: boolean;
+  received: boolean;
+}
+
+/**
+ * A collection run: staff choose the parcels a driver takes, scan each one into the
+ * driver's hands, and the run leaves only when every parcel was scanned. Staff at each
+ * destination scan the parcels in.
+ */
+export interface ParcelRun {
+  id: string;
+  stationId: string;
+  driver: { userId: string; name: string; phone: string | null; plate: string | null };
+  status: ParcelRunStatus;
+  createdAt: string;
+  departedAt: string | null;
+  parcels: ParcelRunItem[];
 }
 
 /** The statuses in which a parcel is still on its way to the recipient. */

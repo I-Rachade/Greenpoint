@@ -81,8 +81,6 @@ import {
   adminParcels,
   cancelParcel,
   createParcel,
-  markArrived,
-  markInTransit,
   closeStoredParcel,
   myParcels,
   parcelInfo,
@@ -93,6 +91,7 @@ import {
   saveSizes,
   stationParcels,
 } from "./parcels";
+import { cancelRun, departRun, receiveParcel, removeRunParcel, scanRunParcel, startRun, stationRuns } from "./parcel-runs";
 import {
   abandonJob,
   acceptJob,
@@ -1673,15 +1672,30 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/parcels\/([\w-]+)\/resend$/, (c, [id]) => resendPickupCode(c, id)],
   ["GET", /^\/api\/stations\/([\w-]+)\/parcels$/, (c, [id]) => stationParcels(c, id)],
   ["POST", /^\/api\/stations\/([\w-]+)\/parcels$/, async (c, [id]) => createParcel(c, id, await readJson<ParcelInput>(c.request))],
+  // Collection runs and scans (worker/parcel-runs.ts, plan phase 7)
+  ["GET", /^\/api\/stations\/([\w-]+)\/runs$/, (c, [id]) => stationRuns(c, id)],
   [
     "POST",
-    /^\/api\/stations\/([\w-]+)\/parcels\/transit$/,
-    async (c, [id]) => markInTransit(c, id, (await readJson<{ ids: string[] }>(c.request)).ids),
+    /^\/api\/stations\/([\w-]+)\/runs$/,
+    async (c, [id]) => {
+      const { badge, parcelIds } = await readJson<{ badge: string; parcelIds: string[] }>(c.request);
+      return startRun(c, id, badge, parcelIds);
+    },
   ],
   [
     "POST",
-    /^\/api\/stations\/([\w-]+)\/parcels\/arrived$/,
-    async (c, [id]) => markArrived(c, id, (await readJson<{ ids: string[] }>(c.request)).ids),
+    /^\/api\/stations\/([\w-]+)\/runs\/([\w-]+)\/(scan|remove|depart|cancel)$/,
+    async (c, [id, run, action]) => {
+      if (action === "depart") return departRun(c, id, run);
+      if (action === "cancel") return cancelRun(c, id, run);
+      const body = await readJson<{ code?: string; parcelId?: string }>(c.request);
+      return action === "scan" ? scanRunParcel(c, id, run, body.code) : removeRunParcel(c, id, run, String(body.parcelId));
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/parcels\/receive$/,
+    async (c, [id]) => receiveParcel(c, id, (await readJson<{ code: string }>(c.request)).code),
   ],
   [
     "POST",
@@ -1772,7 +1786,12 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/deliver$/, async (c, [id]) => deliverJob(c, id, (await readJson<{ code: string }>(c.request)).code)],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/absent$/, (c, [id]) => failDelivery(c, id)],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/board$/, (c, [id]) => boardRide(c, id)],
-  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/finish$/, (c, [id]) => finishRide(c, id)],
+  [
+    "POST",
+    /^\/api\/driver\/jobs\/([\w-]+)\/finish$/,
+    // Couriers send the recipient's code (or none, after a photo); rides send nothing.
+    async (c, [id]) => finishRide(c, id, (await c.request.json().catch(() => null) as { code?: string } | null)?.code),
+  ],
   ["GET", /^\/api\/jobs\/mine$/, (c) => myJobs(c)],
   ["POST", /^\/api\/jobs\/pickup$/, async (c) => bookPickup(c, await readJson<PickupBooking>(c.request))],
   ["POST", /^\/api\/jobs\/ride$/, async (c) => bookRide(c, await readJson<RideBooking>(c.request))],
@@ -1789,8 +1808,8 @@ const ROUTES: [string, RegExp, Handler][] = [
     "POST",
     /^\/api\/stations\/([\w-]+)\/drivers\/(handover|receive)$/,
     async (c, [id, action]) => {
-      const { badge, jobId } = await readJson<{ badge: string; jobId: string }>(c.request);
-      return action === "handover" ? handToDriver(c, id, badge, String(jobId)) : receiveFromDriver(c, id, badge, String(jobId));
+      const { badge, jobId, parcel } = await readJson<{ badge: string; jobId: string; parcel: string }>(c.request);
+      return action === "handover" ? handToDriver(c, id, badge, String(jobId), parcel) : receiveFromDriver(c, id, badge, String(jobId), parcel);
     },
   ],
   [

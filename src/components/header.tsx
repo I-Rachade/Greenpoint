@@ -20,8 +20,10 @@ export function Header() {
   const { unread } = useAlerts();
   // The map has its own green header on phones; only the demo notice stays above it.
   const onMap = pathname === "/";
-  // Drivers are never customers (plan phase 5): their home is the driver page.
-  const customer = !!profile && !isDriverAccount(profile);
+  // Drivers and fleet managers are never customers (plan phases 5 and 7): their home is
+  // the driver page or the fleet page, with no customer links.
+  const fleet = profile?.role === "fleet_manager";
+  const customer = !!profile && !isDriverAccount(profile) && !fleet;
 
   const links: { href: string; label: string; show: boolean }[] = [
     { href: "/", label: t.nav.map, show: true },
@@ -34,7 +36,7 @@ export function Header() {
     { href: "/greenpoint", label: t.nav.greenpoint, show: customer && !isStationStaff(profile) },
     { href: "/chauffeur", label: t.nav.driver, show: !!profile?.driverStatus && features.parcels },
     { href: "/compte", label: t.nav.account, show: !!profile },
-    { href: "/flotte", label: t.nav.fleet, show: profile?.role === "fleet_manager" && features.parcels },
+    { href: "/flotte", label: t.nav.fleet, show: fleet && features.parcels },
     { href: "/exploitant", label: t.nav.owner, show: runsOperator(profile) },
     { href: "/operator", label: t.nav.operator, show: worksAtStations(profile) },
     { href: "/admin", label: t.nav.admin, show: profile?.role === "admin" },

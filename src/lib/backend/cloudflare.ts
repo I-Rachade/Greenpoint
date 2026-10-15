@@ -4,7 +4,7 @@ import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { EvCharger, EvChargerInput } from "../ev-chargers";
 import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
-import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
+import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
 import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
 import type { Promotion, PromotionInput } from "../promo";
@@ -179,6 +179,14 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "invite_not_found",
   "already_in_fleet",
   "account_exists",
+  "parcel_not_in_run",
+  "run_not_found",
+  "run_wrong_status",
+  "run_unscanned",
+  "recipient_not_customer",
+  "sender_not_customer",
+  "no_origin_depot",
+  "proof_required",
 ];
 
 /**
@@ -555,14 +563,40 @@ export class CloudflareBackend implements Backend {
     return parcel;
   }
 
-  async markParcelsInTransit(stationId: string, ids: string[]) {
-    await this.call("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels/transit`, { ids });
-    this.changed();
+  stationRuns(stationId: string) {
+    return this.call<ParcelRun[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/runs`);
   }
 
-  async markParcelsArrived(stationId: string, ids: string[]) {
-    await this.call("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels/arrived`, { ids });
+  private async runCall(stationId: string, path: string, body?: unknown): Promise<ParcelRun> {
+    const run = await this.call<ParcelRun>("POST", `/api/stations/${encodeURIComponent(stationId)}/runs${path}`, body);
     this.changed();
+    return run;
+  }
+
+  startRun(stationId: string, badge: string, parcelIds: string[]) {
+    return this.runCall(stationId, "", { badge, parcelIds });
+  }
+
+  scanRunParcel(stationId: string, runId: string, code: string) {
+    return this.runCall(stationId, `/${encodeURIComponent(runId)}/scan`, { code });
+  }
+
+  removeRunParcel(stationId: string, runId: string, parcelId: string) {
+    return this.runCall(stationId, `/${encodeURIComponent(runId)}/remove`, { parcelId });
+  }
+
+  departRun(stationId: string, runId: string) {
+    return this.runCall(stationId, `/${encodeURIComponent(runId)}/depart`);
+  }
+
+  async cancelRun(stationId: string, runId: string) {
+    await this.runCall(stationId, `/${encodeURIComponent(runId)}/cancel`);
+  }
+
+  async receiveParcel(stationId: string, code: string) {
+    const parcel = await this.call<Parcel>("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels/receive`, { code });
+    this.changed();
+    return parcel;
   }
 
   async pickUpParcel(stationId: string, codeOrQr: string) {
@@ -682,8 +716,8 @@ export class CloudflareBackend implements Backend {
     return this.job(id, "board");
   }
 
-  finishRide(id: string) {
-    return this.job(id, "finish");
+  finishRide(id: string, code?: string) {
+    return this.job(id, "finish", { code: code ?? "" });
   }
 
   async myJobs() {
@@ -727,12 +761,12 @@ export class CloudflareBackend implements Backend {
     return this.call<DriverAtStation>("POST", `/api/stations/${encodeURIComponent(stationId)}/drivers/scan`, { badge });
   }
 
-  handToDriver(stationId: string, badge: string, jobId: string) {
-    return this.act("POST", `/api/stations/${encodeURIComponent(stationId)}/drivers/handover`, { badge, jobId });
+  handToDriver(stationId: string, badge: string, jobId: string, parcelCode: string) {
+    return this.act("POST", `/api/stations/${encodeURIComponent(stationId)}/drivers/handover`, { badge, jobId, parcel: parcelCode });
   }
 
-  receiveFromDriver(stationId: string, badge: string, jobId: string) {
-    return this.act("POST", `/api/stations/${encodeURIComponent(stationId)}/drivers/receive`, { badge, jobId });
+  receiveFromDriver(stationId: string, badge: string, jobId: string, parcelCode: string) {
+    return this.act("POST", `/api/stations/${encodeURIComponent(stationId)}/drivers/receive`, { badge, jobId, parcel: parcelCode });
   }
 
   settleDriver(stationId: string, badge: string, amountFcfa: number) {
