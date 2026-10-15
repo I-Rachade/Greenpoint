@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { signWebhook } from "../src/lib/partners";
 import type { Profile } from "../src/lib/types";
 import type { Env } from "./env";
-import { markArrived, markInTransit, type ParcelCtx } from "./parcels";
+import type { ParcelCtx } from "./parcels";
+import { departRun, receiveParcel, scanRunParcel, startRun } from "./parcel-runs";
 import {
   acceptBooking,
   adminPartners,
@@ -121,6 +122,26 @@ async function setup() {
   return { db, env, c, partnerId, key, keyId, api };
 }
 
+/** Carries a parcel from st-a to st-b as staff do it (plan phase 7): driver recorded, scanned out and in. */
+async function carry(env: Env, db: DatabaseSync, parcel: { id: string; trackingNo: string }) {
+  const now = new Date().toISOString();
+  if (!db.prepare("select 1 from users where id = 'drv'").get()) {
+    db.exec(`
+      insert into users (id, phone, role, created_at) values ('drv', '+22893000009', 'driver', '${now}');
+      insert into drivers (user_id, status, full_name, id_number, license_number, wanted_type, code, created_at)
+        values ('drv', 'active', 'Kodjo', 'ID123', 'LIC123', 'moto', 'ABCDEFGH', '${now}');
+    `);
+  }
+  const at = (station: string): ParcelCtx => ({
+    ...ctxFor(env, ADMIN),
+    request: new Request("https://app.poinderecharge.com/api", { headers: { "X-Active-Station": station } }),
+  });
+  const run = await startRun(at("st-a"), "st-a", "ABCDEFGH", [parcel.id]);
+  await scanRunParcel(at("st-a"), "st-a", run.id, parcel.trackingNo);
+  await departRun(at("st-a"), "st-a", run.id);
+  await receiveParcel(at("st-b"), "st-b", parcel.trackingNo);
+}
+
 const BOOKING = {
   reference: "CMD-1",
   fromStationId: "st-a",
@@ -168,6 +189,10 @@ describe("partner API", () => {
     expect(await phone.json()).toMatchObject({ error: "phone_not_allowed", field: "recipient.phone" });
     const station = await api("POST", "/bookings", { ...BOOKING, toStationId: "st-c" });
     expect(await station.json()).toMatchObject({ error: "station_not_found", field: "toStationId" });
+    // R14: a staff, driver or fleet account cannot receive parcels.
+    const staff = await api("POST", "/bookings", { ...BOOKING, recipient: { phone: "90 00 00 01" } });
+    expect(staff.status).toBe(422);
+    expect(await staff.json()).toMatchObject({ error: "recipient_not_customer", field: "recipient.phone" });
     const heavy = await api("POST", "/bookings", { ...BOOKING, parcel: { ...BOOKING.parcel, weightKg: 80 } });
     expect(await heavy.json()).toMatchObject({ error: "parcel_too_large" });
     expect((await api("POST", "/bookings", { ...BOOKING, reference: "" })).status).toBe(422);
@@ -201,8 +226,7 @@ describe("partner API", () => {
     expect(await stationBookings(c, "st-a")).toHaveLength(0);
     await expect(acceptBooking(c, "st-a", booking.id, { lengthCm: 10, widthCm: 10, heightCm: 10, weightKg: 1 })).rejects.toThrow("parcel_wrong_status");
 
-    await markInTransit(c, "st-a", [parcel.id]);
-    await markArrived(c, "st-b", [parcel.id]);
+    await carry(env, db, parcel);
     await runPartnerEvents(env);
 
     expect(calls.map((call) => call.headers.get("Poinderecharge-Event"))).toEqual([
@@ -235,7 +259,7 @@ describe("partner API", () => {
   });
 
   it("shares the pickup code when allowed", async () => {
-    const { api, env, c, partnerId } = await setup();
+    const { api, env, c, db, partnerId } = await setup();
     await savePartner(c, partnerId, {
       name: "Boutique",
       contactEmail: "",
@@ -246,8 +270,7 @@ describe("partner API", () => {
     });
     const booking = (await (await api("POST", "/bookings", BOOKING)).json()) as { id: string };
     const parcel = await acceptBooking(c, "st-a", booking.id, BOOKING.parcel);
-    await markInTransit(c, "st-a", [parcel.id]);
-    await markArrived(c, "st-b", [parcel.id]);
+    await carry(env, db, parcel);
     await runPartnerEvents(env);
     const detail = (await (await api("GET", `/bookings/${booking.id}`)).json()) as { pickupCode?: string };
     expect(detail.pickupCode).toMatch(/^\d{6}$/);

@@ -31,6 +31,7 @@ import {
 import type { Env } from "./env";
 import { ApiError, json, nowIso, sha256, uuid } from "./http";
 import { unlockedSql } from "./services";
+import { DB_CUSTOMER } from "./roles";
 import { cleanMeasures, cleanName, requireDepot, requireStaff, sizes, storeParcel, tierFor, type ParcelCtx } from "./parcels";
 
 const TRACKING_URL = "https://app.poinderecharge.com/colis";
@@ -378,6 +379,7 @@ const MESSAGES: Record<string, string> = {
   invalid_request: "A field is missing or invalid, see 'field'.",
   invalid_json: "The body is not valid JSON.",
   phone_not_allowed: "Only Togolese phone numbers (+228) are accepted.",
+  recipient_not_customer: "This phone number belongs to a staff, driver or fleet account and cannot receive parcels. Ask for another number.",
   station_not_found: "This station does not exist or takes no parcels.",
   same_station: "Drop-off and pickup station must differ.",
   parcel_too_large: "The parcel is too large or too heavy (50 kg at most).",
@@ -490,6 +492,9 @@ async function createBooking(env: Env, partner: PartnerRow, input: BookingInput)
   const recipient = input.recipient ?? {};
   const sender = input.sender ?? {};
   const recipientPhone = phone(recipient.phone, "recipient.phone");
+  // R14: parcels are for customers; staff, owners, drivers and fleet managers are refused.
+  const holder = await env.DB.prepare("select role from users where phone = ?").bind(recipientPhone).first<{ role: string }>();
+  if (holder && holder.role !== DB_CUSTOMER) throw new PartnerError("recipient_not_customer", 422, "recipient.phone");
   const recipientName = cleanName(text(recipient.name, "recipient.name", 80, false));
   const senderPhone = sender.phone ? phone(sender.phone, "sender.phone") : partner.contact_phone;
   const senderName = cleanName(text(sender.name, "sender.name", 80, false)) ?? (sender.phone ? null : partner.name);

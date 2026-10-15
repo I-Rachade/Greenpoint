@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { useApp } from "./app-provider";
-import { BoxIcon, ListIcon, MapIcon, ScooterIcon, StoreIcon, UserIcon } from "./icons";
+import { BoxIcon, ListIcon, MapIcon, ScooterIcon, StoreIcon, TruckIcon, UserIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
 import { isStationStaff } from "@/lib/operators";
@@ -25,6 +25,9 @@ export function BottomNav() {
   const staff = isStationStaff(profile);
   // Drivers get the map, their driver page and their account (plan phase 5).
   const driver = isDriverAccount(profile);
+  // Fleet managers get the map, the stations, their fleet and their account (plan phase 7).
+  const fleet = profile?.role === "fleet_manager";
+  const customer = !staff && !driver && !fleet;
   const hidden = (staff ? STAFF_HIDDEN_PREFIXES : HIDDEN_PREFIXES).some((p) => pathname.startsWith(p));
 
   useEffect(() => {
@@ -40,8 +43,9 @@ export function BottomNav() {
     { href: "/stations", label: t.ui.tabs.stations, icon: ListIcon, active: pathname.startsWith("/stations") || pathname.startsWith("/station"), show: !staff },
     { href: "/operator", label: t.ui.tabs.myStation, icon: StoreIcon, active: pathname.startsWith("/operator"), show: staff },
     { href: "/chauffeur", label: t.nav.driver, icon: ScooterIcon, active: pathname.startsWith("/chauffeur"), show: driver },
-    { href: "/colis", label: t.ui.tabs.parcels, icon: BoxIcon, active: pathname.startsWith("/colis"), show: features.parcels && !staff && !driver },
-    { href: "/courses", label: t.ui.tabs.trips, icon: ScooterIcon, active: pathname.startsWith("/courses"), show: features.parcels && !staff && !driver },
+    { href: "/flotte", label: t.nav.fleet, icon: TruckIcon, active: pathname.startsWith("/flotte"), show: fleet && features.parcels },
+    { href: "/colis", label: t.ui.tabs.parcels, icon: BoxIcon, active: pathname.startsWith("/colis"), show: features.parcels && customer },
+    { href: "/courses", label: t.ui.tabs.trips, icon: ScooterIcon, active: pathname.startsWith("/courses"), show: features.parcels && customer },
     {
       href: profile ? "/compte" : "/login",
       label: t.ui.tabs.account,

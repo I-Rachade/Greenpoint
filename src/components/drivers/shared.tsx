@@ -6,9 +6,9 @@ import { MAX_DRIVER_IMAGE_BYTES, type DeliveryJob, type JobKind, type JobStatus 
 import { format } from "@/lib/i18n/format";
 import { useI18n } from "../i18n-provider";
 
-export const input = "w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-sm dark:border-white/20 dark:bg-zinc-900";
-export const primary = "rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40";
-export const secondary = "rounded-full border border-black/15 px-4 py-2 text-sm disabled:opacity-40 dark:border-white/20";
+export const input = "min-h-11 w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-base dark:border-white/20 dark:bg-zinc-900";
+export const primary = "min-h-11 rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40";
+export const secondary = "min-h-11 rounded-full border border-black/15 px-4 py-2 text-sm disabled:opacity-40 dark:border-white/20";
 export const small = "rounded-full border border-black/15 px-2 py-0.5 text-xs dark:border-white/20";
 
 const TONE: Record<JobStatus, "green" | "amber" | "red" | "gray" | "blue"> = {

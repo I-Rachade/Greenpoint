@@ -11,7 +11,7 @@ import { ApiError, nowIso } from "./http";
  */
 
 /** Customer and staff routes of the parcel depot and of partner bookings. */
-export const PARCEL_ROUTE = /^\/api\/(parcels(\/|$)|stations\/[\w-]+\/(parcels|bookings)(\/|$))/;
+export const PARCEL_ROUTE = /^\/api\/(parcels(\/|$)|stations\/[\w-]+\/(parcels|bookings|runs)(\/|$))/;
 
 /** The Lite preset: hides parcels, drivers, Cashplus and car chargers for everyone. Off without the row. */
 export async function liteEnabled(db: D1Database): Promise<boolean> {

@@ -37,7 +37,8 @@ import {
   uploadProof,
 } from "./drivers";
 import type { Env } from "./env";
-import { createParcel, markInTransit, parcelInfo, pickUpParcel, type ParcelCtx } from "./parcels";
+import { createParcel, parcelInfo, pickUpParcel, type ParcelCtx } from "./parcels";
+import { startRun } from "./parcel-runs";
 import { fakeD1 } from "./test-d1";
 
 const OWN_OPERATOR = "00000000-0000-4000-8000-000000000001";
@@ -77,9 +78,11 @@ function setup() {
     },
   };
   const env = { DB: d1, MEDIA: media } as unknown as Env;
-  const ctx = (user: Profile | null): ParcelCtx => ({
+  // `active`: the station the person works at now (header X-Active-Station, plan phase 3).
+  const ctx = (user: Profile | null, active?: string): ParcelCtx => ({
     env,
     db: env.DB,
+    request: new Request("https://app.poinderecharge.com/api", { headers: active ? { "X-Active-Station": active } : {} }),
     user: async () => user,
     requireUser: async () => {
       if (!user) throw new Error("not_authenticated");
@@ -95,7 +98,7 @@ function setup() {
         "insert into audit_log (at, actor, table_name, action, row_id, station_id, user_id, changes) values (?, ?, ?, ?, ?, ?, ?, ?)",
       ).bind(new Date().toISOString(), actor, table, action, rowId, ids.stationId ?? null, ids.userId ?? null, JSON.stringify(changes)),
   });
-  return { db, env, files, ctx, admin: ctx(ADMIN), sender: ctx(SENDER) };
+  return { db, env, files, ctx, admin: ctx(ADMIN), sender: ctx(SENDER), at: (stationId: string) => ctx(ADMIN, stationId) };
 }
 
 const photo = () =>
@@ -128,7 +131,6 @@ const parcelInput = (express: boolean) => ({
 
 async function arrivedParcelAtB(t: ReturnType<typeof setup>) {
   const parcel = await createParcel(t.admin, A.id, parcelInput(false));
-  await markInTransit(t.admin, A.id, [parcel.id]);
   t.db.exec(`update parcels set status = 'arrived', pickup_code = '654321', arrived_at = '${new Date().toISOString()}' where id = '${parcel.id}'`);
   return parcel;
 }
@@ -199,7 +201,7 @@ describe("express trip", () => {
     const parcel = await createParcel(t.admin, A.id, parcelInput(true));
     expect(parcel.express).toBe(true);
     // Not on the collection run.
-    await expect(markInTransit(t.admin, A.id, [parcel.id])).rejects.toMatchObject({ code: "parcel_wrong_status" });
+    await expect(startRun(t.at(A.id), A.id, second.badge, [parcel.id])).rejects.toMatchObject({ code: "parcel_wrong_status" });
 
     const offered = (await driverHome(first.me)).job!;
     expect(offered).toMatchObject({ kind: "express", status: "assigned", fromStationId: A.id, toStationId: B.id });
@@ -211,13 +213,17 @@ describe("express trip", () => {
     expect((await stationDrivers(t.admin, A.id)).outgoing).toHaveLength(1);
     const scan = await driverAtStation(t.admin, A.id, first.badge);
     expect(scan.handOver?.id).toBe(offered.id);
-    await handToDriver(t.admin, A.id, first.code, offered.id);
+    // The parcel is scanned into the driver's hands: another parcel is refused.
+    const other = await createParcel(t.admin, A.id, parcelInput(false));
+    await expect(handToDriver(t.at(A.id), A.id, first.code, offered.id, other.trackingNo)).rejects.toMatchObject({ code: "parcel_not_in_run" });
+    await expect(handToDriver(t.admin, A.id, first.code, offered.id, parcel.trackingNo)).rejects.toMatchObject({ code: "active_station_required" });
+    await handToDriver(t.at(A.id), A.id, first.code, offered.id, parcel.trackingNo);
     expect(t.db.prepare("select status from parcels where id = ?").get(parcel.id)).toMatchObject({ status: "in_transit" });
 
     // Station A cannot "receive" it; station B can.
     expect((await driverAtStation(t.admin, A.id, first.badge)).receive).toBeNull();
     expect((await stationDrivers(t.admin, B.id)).incoming).toHaveLength(1);
-    await receiveFromDriver(t.admin, B.id, first.badge, offered.id);
+    await receiveFromDriver(t.at(B.id), B.id, first.badge, offered.id, `poinderecharge colis ${parcel.trackingNo}\nDe: Station A`);
     const row = t.db.prepare("select status, pickup_code from parcels where id = ?").get(parcel.id) as { status: string; pickup_code: string };
     expect(row.status).toBe("arrived");
     expect(row.pickup_code).toMatch(/^\d{6}$/);
@@ -280,7 +286,7 @@ describe("home delivery", () => {
     expect(JSON.stringify(await driverHome(driver.me))).not.toContain("654321");
     await acceptJob(driver.me, job.id);
     await expect(cancelJob(t.sender, job.id)).rejects.toMatchObject({ code: "forbidden" });
-    await handToDriver(t.admin, B.id, driver.badge, job.id);
+    await handToDriver(t.at(B.id), B.id, driver.badge, job.id, parcel.trackingNo);
     // While out with the driver it cannot be picked up at the counter.
     await expect(pickUpParcel(t.admin, B.id, "654321")).rejects.toMatchObject({ code: "parcel_with_driver" });
     await expect(cancelJob(recipient, job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
@@ -307,13 +313,13 @@ describe("home delivery", () => {
     await joinQueue(driver.me, B.id, B);
     const job = await bookDelivery(recipient, parcel.id, HOME);
     await acceptJob(driver.me, job.id);
-    await handToDriver(t.admin, B.id, driver.badge, job.id);
+    await handToDriver(t.at(B.id), B.id, driver.badge, job.id, parcel.trackingNo);
     await arriveAtDoor(driver.me, job.id);
     await expect(failDelivery(driver.me, job.id)).rejects.toMatchObject({ code: "wait_longer" });
     t.db.exec(`update delivery_jobs set at_door_at = '${new Date(Date.now() - 11 * 60_000).toISOString()}' where id = '${job.id}'`);
     await failDelivery(driver.me, job.id);
     expect((await driverAtStation(t.admin, B.id, driver.badge)).receive?.id).toBe(job.id);
-    await receiveFromDriver(t.admin, B.id, driver.badge, job.id);
+    await receiveFromDriver(t.at(B.id), B.id, driver.badge, job.id, parcel.trackingNo);
     expect(t.db.prepare("select status, delivery_status from parcels where id = ?").get(parcel.id)).toMatchObject({
       status: "arrived",
       delivery_status: "failed",
@@ -338,7 +344,6 @@ describe("handover at the counter", () => {
     const t = setup();
     const parcel = await createParcel(t.admin, A.id, parcelInput(false));
     await expect(pickUpParcel(t.admin, B.id, parcel.trackingNo)).rejects.toMatchObject({ code: "parcel_not_arrived" });
-    await markInTransit(t.admin, A.id, [parcel.id]);
     t.db.exec(`update parcels set status = 'arrived', pickup_code = '654321', arrived_at = '${new Date().toISOString()}' where id = '${parcel.id}'`);
     const done = await pickUpParcel(t.admin, B.id, parcel.trackingNo);
     expect(done.status).toBe("picked_up");
@@ -373,7 +378,8 @@ describe("pickup at home", () => {
     expect(collected).toMatchObject({ status: "picked_up", size: "L", collectFcfa: 1000 + job.fareFcfa });
     expect(collected.trackingNo).toMatch(/^GP-/);
     expect((await myJobs(t.sender))[0].trackingNo).toBe(collected.trackingNo);
-    await receiveFromDriver(t.admin, A.id, driver.badge, job.id);
+    await expect(receiveFromDriver(t.at(A.id), A.id, driver.badge, job.id, "GP-ZZZZZZ")).rejects.toMatchObject({ code: "parcel_not_found" });
+    await receiveFromDriver(t.at(A.id), A.id, driver.badge, job.id, collected.trackingNo!);
     expect(t.db.prepare("select status, from_station_id from parcels where id = ?").get(collected.parcelId)).toMatchObject({
       status: "arrived",
       from_station_id: B.id,
@@ -456,11 +462,31 @@ describe("express parcel door to door", () => {
     // Paid at the door: owed to us as soon as the driver has the parcel.
     expect((await driverHome(driver.me)).driver?.balanceFcfa).toBe(job.fareFcfa);
     await expect(cancelJob(t.sender, job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
-    await finishRide(driver.me, job.id);
+    // Not one tap at the door: the recipient's code (the sender sees it, the driver does not) or a photo.
+    const code = (await myJobs(t.sender))[0].handoverCode!;
+    expect(code).toMatch(/^\d{6}$/);
+    expect(JSON.stringify(await driverHome(driver.me))).not.toContain(code);
+    await expect(finishRide(driver.me, job.id)).rejects.toMatchObject({ code: "proof_required" });
+    await expect(finishRide(driver.me, job.id, code === "000000" ? "111111" : "000000")).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    await finishRide(driver.me, job.id, code);
     const home = await driverHome(driver.me);
     expect(home.job).toBeNull();
     expect(home.driver?.balanceFcfa).toBe(job.fareFcfa - driverEarning(job.fareFcfa, DEFAULT_DRIVER_SETTINGS));
     expect((await myJobs(t.sender))[0]).toMatchObject({ kind: "courier", status: "done" });
+  });
+
+  it("hands over with a photo of the handover when the recipient has no code", async () => {
+    const t = setup();
+    const job = await bookCourier(t.sender, booking);
+    const driver = await approvedDriver(t, "d1", "moto");
+    await joinQueue(driver.me, B.id, B);
+    await acceptJob(driver.me, job.id);
+    await expect(uploadProof(driver.me, job.id, photo())).rejects.toMatchObject({ code: "job_wrong_status" });
+    await boardRide(driver.me, job.id);
+    await expect(finishRide(driver.me, job.id, "")).rejects.toMatchObject({ code: "proof_required" });
+    await uploadProof(driver.me, job.id, photo());
+    await finishRide(driver.me, job.id);
+    expect(t.db.prepare("select status from delivery_jobs where id = ?").get(job.id)).toMatchObject({ status: "done" });
   });
 
   it("only goes to vehicles big enough and refuses bad bookings", async () => {
@@ -629,7 +655,7 @@ describe("giving back an accepted trip", () => {
     expect(JSON.parse(audit.changes)).toMatchObject({ status: ["accepted", "open"], abandon_reason: "too_big" });
     // Nor can it be given back once the parcel is handed over.
     await acceptJob(second.me, job.id);
-    await handToDriver(t.admin, A.id, (await driverHome(second.me)).driver!.code!, job.id);
+    await handToDriver(t.at(A.id), A.id, (await driverHome(second.me)).driver!.code!, job.id, job.trackingNo!);
     await expect(abandonJob(second.me, job.id, "other")).rejects.toMatchObject({ code: "job_wrong_status" });
   });
 });

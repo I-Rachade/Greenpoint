@@ -15,7 +15,7 @@ import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { EvCharger, EvChargerInput } from "../ev-chargers";
 import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
-import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelSizeTier } from "../parcels";
+import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
 import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
 import type { Promotion, PromotionInput } from "../promo";
@@ -197,6 +197,14 @@ export type BackendErrorCode =
   | "invite_not_found"
   | "already_in_fleet"
   | "account_exists"
+  | "parcel_not_in_run"
+  | "run_not_found"
+  | "run_wrong_status"
+  | "run_unscanned"
+  | "recipient_not_customer"
+  | "sender_not_customer"
+  | "no_origin_depot"
+  | "proof_required"
   | "unknown";
 
 export class BackendError extends Error {
@@ -358,10 +366,20 @@ export interface Backend {
   stationParcels(stationId: string): Promise<Parcel[]>;
   /** Staff at the sending station register a parcel paid in cash; creates accounts for unknown phone numbers. */
   createParcel(stationId: string, input: ParcelInput): Promise<Parcel>;
-  /** Staff at the sending station load parcels for the collection run. */
-  markParcelsInTransit(stationId: string, ids: string[]): Promise<void>;
-  /** Staff at the destination confirm arrival; each parcel gets its pickup code and the recipient is told. */
-  markParcelsArrived(stationId: string, ids: string[]): Promise<void>;
+  /** Collection runs leaving this station: being loaded, under way, and those of the last days (its staff). */
+  stationRuns(stationId: string): Promise<ParcelRun[]>;
+  /** Staff choose the parcels a driver takes on a collection run and record the driver (QR or typed code). */
+  startRun(stationId: string, badge: string, parcelIds: string[]): Promise<ParcelRun>;
+  /** Staff scan one parcel into the driver's hands; a parcel not on the run is refused, a second scan changes nothing. */
+  scanRunParcel(stationId: string, runId: string, code: string): Promise<ParcelRun>;
+  /** Takes a parcel off a run that is still being loaded. */
+  removeRunParcel(stationId: string, runId: string, parcelId: string): Promise<ParcelRun>;
+  /** The run leaves, only once every parcel on it was scanned; its parcels go on the road. */
+  departRun(stationId: string, runId: string): Promise<ParcelRun>;
+  /** Calls off a run that has not left; its parcels wait for the next one. */
+  cancelRun(stationId: string, runId: string): Promise<void>;
+  /** Staff at the destination scan a parcel in from a collection run: it gets its pickup code and the recipient is told. */
+  receiveParcel(stationId: string, code: string): Promise<Parcel>;
   /** Staff at the destination hand out a parcel for its code or scanned QR code. */
   pickUpParcel(stationId: string, codeOrQr: string): Promise<Parcel>;
   /** Cancels a parcel that has not left the sending station. */
@@ -406,8 +424,8 @@ export interface Backend {
   failDelivery(id: string): Promise<void>;
   /** Ride: the customer got on. */
   boardRide(id: string): Promise<void>;
-  /** Ride: the customer got off and paid the fare. */
-  finishRide(id: string): Promise<void>;
+  /** Ride: the customer got off and paid the fare. Courier: handed over for the recipient's code, or after a photo (no code). */
+  finishRide(id: string, code?: string): Promise<void>;
   /** Trips the signed-in customer booked. */
   myJobs(): Promise<DeliveryJob[]>;
   bookPickup(input: PickupBooking): Promise<DeliveryJob>;
@@ -423,8 +441,10 @@ export interface Backend {
   stationDrivers(stationId: string): Promise<StationDrivers>;
   /** Station staff scanned a driver's QR code (or typed the code). */
   driverAtStation(stationId: string, badge: string): Promise<DriverAtStation>;
-  handToDriver(stationId: string, badge: string, jobId: string): Promise<void>;
-  receiveFromDriver(stationId: string, badge: string, jobId: string): Promise<void>;
+  /** Staff scan the trip's parcel into the driver's hands (another parcel is refused). */
+  handToDriver(stationId: string, badge: string, jobId: string, parcelCode: string): Promise<void>;
+  /** Staff scan in the parcel a driver brings. */
+  receiveFromDriver(stationId: string, badge: string, jobId: string, parcelCode: string): Promise<void>;
   /** Daily settlement for the balance staff saw. */
   settleDriver(stationId: string, badge: string, amountFcfa: number): Promise<void>;
   /** Backoffice: drivers, vehicles, trips and prices (admins only). */
