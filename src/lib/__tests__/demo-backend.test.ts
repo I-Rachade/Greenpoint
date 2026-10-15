@@ -49,6 +49,8 @@ describe("DemoBackend reservations", () => {
     await expect(swap("req-0000001", r.pickupCode!)).rejects.toMatchObject({ code: "forbidden" });
 
     await asRole(backend, "operator");
+    // Kossi works at this station only (W2); another chosen station is refused.
+    setActiveStation("st-tokoin");
     await expect(swap("req-0000001", r.pickupCode!)).rejects.toMatchObject({ code: "active_station_required" });
     setActiveStation(STATION);
     // The code alone no longer completes a battery reservation: the swap does.
@@ -87,7 +89,8 @@ describe("DemoBackend reservations", () => {
   it("locks a reservation after 5 wrong codes", async () => {
     await asRole(backend, "customer");
     const r = await reserveAny(backend, "st-universite", "slot");
-    await asRole(backend, "operator");
+    // No staff at the Université (W2): an admin completes, with the station chosen.
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
     setActiveStation("st-universite");
     const wrong = r.pickupCode === "0000" ? "1111" : "0000";
     for (let i = 0; i < 5; i++) await expect(backend.completeReservation(r.id, wrong)).rejects.toMatchObject({ code: "wrong_pickup_code" });
@@ -165,6 +168,7 @@ describe("DemoBackend connected sockets", () => {
     expect((await backend.listDevices()).find((d) => d.externalId === "123456")!.points[1].status).toBe("charging");
 
     // Not while a charge runs on one of its outlets (as the Worker).
+    setActiveStation(STATION);
     const charge = await backend.startCharge(STATION, { pointId: added.points[0].id });
     await expect(backend.deleteDevice("123456")).rejects.toMatchObject({ code: "charge_busy" });
     await backend.stopCharge(STATION, charge.id);
@@ -193,7 +197,7 @@ describe("DemoBackend station points", () => {
       vehicleTypes: [],
       chargingSlots: 5,
       batteryCapacity: 0,
-      openingHours: "",
+      openingHours: "07:00-21:00",
       phone: null,
     };
     await expect(backend.saveStation(null, { ...base, kind: "parcel" })).rejects.toMatchObject({ code: "station_without_point" });

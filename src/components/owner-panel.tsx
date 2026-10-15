@@ -1,241 +1,130 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
-import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
+import { useState } from "react";
+import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { OperatorStaff } from "@/lib/operators";
-import { canRequest, serviceDisplay, type ServiceDisplay, type StationServiceInfo } from "@/lib/station-services";
-import type { StationView } from "@/lib/types";
+import type { ReportPeriod } from "@/lib/owner-backoffice";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
-import { LoadFailed } from "./load-state";
-import { StaleNotice } from "./stale-notice";
-import { Badge, Button, useToast, type BadgeTone } from "./ui";
+import { LoadFailed, StaleNotice } from "./load-state";
+import { HistoryView } from "./owner/history";
+import { LiveView } from "./owner/live";
+import { ReportView } from "./owner/report";
+import { PeriodPicker } from "./owner/shared";
+import { StaffView } from "./owner/staff";
+import { StationsView } from "./owner/stations";
+import { EmptyState, SkeletonCard } from "./ui";
 
-const card = "space-y-3 rounded-xl border border-black/10 p-4 dark:border-white/10";
-const field = "rounded-lg border border-black/15 bg-white px-3 py-1.5 text-sm dark:border-white/20 dark:bg-zinc-900";
-const button = "rounded-full bg-gp-green-dark px-4 py-1.5 text-sm text-white disabled:opacity-30";
-const outline = "rounded-full border border-black/15 px-3 py-1 text-xs dark:border-white/20";
+export { SERVICE_TONE } from "./owner/stations";
 
-export const SERVICE_TONE: Record<ServiceDisplay, BadgeTone> = {
-  active: "green",
-  globalOff: "amber",
-  pending: "blue",
-  rejected: "red",
-  locked: "neutral",
-};
+const TABS = ["live", "report", "history", "staff", "stations"] as const;
+type Tab = (typeof TABS)[number];
 
-/** The station's services with their state; the owner asks the admin for the ones not unlocked. */
-function ServicesSection({ station, services, onChanged }: { station: StationView; services: StationServiceInfo[]; onChanged: () => void }) {
-  const { t } = useI18n();
-  const { backend } = useApp();
-  const errorMessage = useErrorMessage();
-  const toast = useToast();
-  const [busy, setBusy] = useState<string | null>(null);
-
-  async function ask(info: StationServiceInfo) {
-    setBusy(info.service);
-    try {
-      await backend.requestStationService(station.id, info.service);
-      toast(format(t.services.requested, { service: t.services.names[info.service], station: station.name }), { tone: "success" });
-      onChanged();
-    } catch (err) {
-      toast(errorMessage(err), { tone: "error" });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  return (
-    <div className="space-y-2">
-      <h3 className="text-sm font-medium">{t.services.title}</h3>
-      <p className="text-xs text-zinc-500">{t.services.ownerIntro}</p>
-      <ul className="divide-y divide-black/5 text-sm dark:divide-white/10">
-        {services.map((info) => {
-          const display = serviceDisplay(info);
-          return (
-            <li key={info.service} className="flex min-h-11 flex-wrap items-center gap-2 py-1.5">
-              <span className="flex-1">{t.services.names[info.service]}</span>
-              <Badge tone={SERVICE_TONE[display]}>{t.services.status[display]}</Badge>
-              {canRequest(info) && (
-                <Button variant="secondary" busy={busy === info.service} disabled={busy !== null} onClick={() => ask(info)}>
-                  {t.services.request}
-                </Button>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-
-function StationCard({
-  station,
-  staff,
-  services,
-  onChanged,
-  onMessage,
-}: {
-  station: StationView;
-  staff: OperatorStaff[];
-  services: StationServiceInfo[];
-  onChanged: () => void;
-  onMessage: (text: string, ok: boolean) => void;
-}) {
-  const { t } = useI18n();
-  const { backend } = useApp();
-  const errorMessage = useErrorMessage();
-  const [contact, setContact] = useState("");
-  const [hours, setHours] = useState(station.openingHours);
-  const [phone, setPhone] = useState(station.phone ?? "");
-  const [busy, setBusy] = useState(false);
-
-  async function run(action: () => Promise<unknown>, success?: string) {
-    setBusy(true);
-    try {
-      await action();
-      if (success) onMessage(success, true);
-      onChanged();
-      return true;
-    } catch (err) {
-      onMessage(errorMessage(err), false);
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function addStaff(e: FormEvent) {
-    e.preventDefault();
-    const ok = await run(
-      () => backend.ownerAddStaff(station.id, contact),
-      format(t.owner.added, { user: contact.trim(), station: station.name }),
-    );
-    if (ok) setContact("");
-  }
-
-  function saveDetails(e: FormEvent) {
-    e.preventDefault();
-    run(() => backend.ownerSaveStation(station.id, { openingHours: hours, phone: phone.trim() || null }), t.owner.saved);
-  }
-
-  return (
-    <section className={card}>
-      <div className="flex flex-wrap items-baseline gap-2">
-        <h2 className="text-lg font-semibold">{station.name}</h2>
-        <span className="text-sm text-zinc-500">{station.address}</span>
-      </div>
-
-      {services.length > 0 && <ServicesSection station={station} services={services} onChanged={onChanged} />}
-
-      <div className="space-y-2">
-        <h3 className="text-sm font-medium">{t.owner.staff}</h3>
-        {staff.length === 0 ? (
-          <p className="text-sm text-zinc-500">{t.owner.noStaff}</p>
-        ) : (
-          <ul className="divide-y divide-black/5 text-sm dark:divide-white/10">
-            {staff.map((s) => (
-              <li key={s.userId} className="flex items-center gap-2 py-1.5">
-                <span className="flex-1">{s.label}</span>
-                <button
-                  type="button"
-                  className={outline}
-                  disabled={busy}
-                  onClick={() => {
-                    if (window.confirm(format(t.owner.confirmRemove, { user: s.label, station: station.name }))) {
-                      run(() => backend.ownerRemoveStaff(station.id, s.userId));
-                    }
-                  }}
-                >
-                  {t.owner.remove}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <form onSubmit={addStaff} className="space-y-1">
-          <label className="block text-sm">
-            <span className="sr-only">{t.owner.staffContact}</span>
-            <div className="flex gap-2">
-              <input
-                className={`${field} min-w-0 flex-1`}
-                required
-                value={contact}
-                onChange={(e) => setContact(e.target.value)}
-                placeholder={t.owner.staffContact}
-              />
-              <button type="submit" className={button} disabled={busy}>
-                {t.owner.add}
-              </button>
-            </div>
-          </label>
-          <p className="text-xs text-zinc-500">{t.owner.staffHint}</p>
-        </form>
-      </div>
-
-      <form onSubmit={saveDetails} className="space-y-2">
-        <h3 className="text-sm font-medium">{t.owner.details}</h3>
-        <label className="block space-y-1 text-sm">
-          <span>{t.station.openingHours}</span>
-          <input className={`${field} w-full`} required maxLength={200} value={hours} onChange={(e) => setHours(e.target.value)} />
-        </label>
-        <label className="block space-y-1 text-sm">
-          <span>{t.owner.phone}</span>
-          <input className={`${field} w-full`} type="tel" maxLength={40} value={phone} onChange={(e) => setPhone(e.target.value)} />
-        </label>
-        <button type="submit" className={button} disabled={busy}>
-          {t.owner.save}
-        </button>
-      </form>
-    </section>
-  );
-}
-
-/** /exploitant: the stations of the operators the signed-in account runs, their staff and details. */
+/**
+ * /exploitant: the owner's backoffice (plan phase 8) for the stations of the operators the
+ * account runs; an admin sees every station. Staff get none (the server answers 403).
+ * Live queue and handovers, settlement (W12) and statistics, swap and counter history,
+ * staff with the list to re-staff, services, hours and prices.
+ */
 export function OwnerPanel() {
   const { t } = useI18n();
-  const { backend } = useApp();
+  const { backend, profile } = useApp();
   const { data, error, reload } = useLiveQuery(() => backend.ownerView());
   // Shown when it loads; the rest of the page does not wait for it.
   const { data: services, reload: reloadServices } = useLiveQuery(() => backend.stationServices());
-  const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
+  const [tab, setTab] = useState<Tab>("live");
+  const [stationId, setStationId] = useState<string>("");
+  const [days, setDays] = useState<ReportPeriod>(7);
+  const o = t.owner;
 
   // A failed refresh keeps the last data on screen; only nothing at all is an error page.
-  if (!data) return error ? <LoadFailed error={error} onRetry={reload} /> : <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
+  if (!data) {
+    return error ? (
+      <LoadFailed error={error} onRetry={reload} />
+    ) : (
+      <div className="mx-auto w-full max-w-3xl space-y-3 p-4" aria-busy>
+        <SkeletonCard />
+        <SkeletonCard />
+      </div>
+    );
+  }
+
+  const selected = data.stations.find((s) => s.id === stationId) ?? null;
+  const shown = selected ? [selected] : data.stations;
+  const stationName = (id: string) => data.stations.find((s) => s.id === id)?.name ?? "–";
+  const changed = () => {
+    reload();
+    reloadServices();
+  };
 
   return (
-    <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
-      <h1 className="text-2xl font-semibold">{t.owner.title}</h1>
+    <div className="mx-auto w-full max-w-3xl space-y-4 overflow-y-auto p-4 sm:p-6">
+      <h1 className="font-heading text-2xl font-semibold">{o.title}</h1>
       <StaleNotice error={error} onRetry={reload} />
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">
-        {format(t.owner.intro, { operators: data.operators.map((o) => o.name).join(", ") })}
+      <p className="text-sm text-gp-muted">
+        {profile?.role === "admin" ? o.introAdmin : format(o.intro, { operators: data.operators.map((x) => x.name).join(", ") })}
       </p>
-      {data.stations.length > 0 && (
-        <Link href="/operator" className="inline-block text-sm text-gp-green-dark underline dark:text-gp-green">
-          {t.owner.statusLink}
-        </Link>
+      {data.stations.length === 0 ? (
+        <EmptyState text={o.noStations} />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-end gap-3">
+            <label htmlFor="owner-station" className="space-y-1 text-sm">
+              <span className="block">{o.station}</span>
+              <select
+                id="owner-station"
+                className="min-h-11 rounded-xl border border-gp-border bg-gp-surface px-3 text-base"
+                value={stationId}
+                onChange={(e) => setStationId(e.target.value)}
+              >
+                <option value="">{format(o.allStations, { n: data.stations.length })}</option>
+                {data.stations.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Link href="/operator" className="inline-flex min-h-11 items-center text-sm text-gp-green-dark underline dark:text-gp-green">
+              {o.statusLink}
+            </Link>
+          </div>
+
+          <div role="tablist" aria-label={o.title} className="flex gap-1 overflow-x-auto border-b border-gp-border pb-2">
+            {TABS.map((k) => (
+              <button
+                key={k}
+                id={`owner-tab-${k}`}
+                type="button"
+                role="tab"
+                aria-selected={tab === k}
+                aria-controls="owner-tabpanel"
+                onClick={() => setTab(k)}
+                className={`inline-flex min-h-11 items-center whitespace-nowrap rounded-full px-4 text-sm font-semibold ${
+                  tab === k ? "bg-gp-forest text-white" : "text-zinc-700 hover:bg-black/5 dark:text-zinc-300 dark:hover:bg-white/10"
+                }`}
+              >
+                {o.tabs[k]}
+                {k === "staff" && data.reassignments.length > 0 && (
+                  <span className="ml-1.5 rounded-full bg-amber-400 px-1.5 text-xs text-black" aria-label={format(o.reassign.title, { n: data.reassignments.length })}>
+                    {data.reassignments.length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          <div id="owner-tabpanel" role="tabpanel" aria-labelledby={`owner-tab-${tab}`} className="space-y-4">
+            {(tab === "report" || tab === "history") && <PeriodPicker value={days} onChange={setDays} />}
+            {tab === "live" && <LiveView stationId={selected?.id ?? null} stationName={stationName} />}
+            {tab === "report" && <ReportView stationId={selected?.id ?? null} days={days} />}
+            {tab === "history" && <HistoryView stationId={selected?.id ?? null} days={days} />}
+            {tab === "staff" && <StaffView view={data} stations={shown} onChanged={changed} />}
+            {tab === "stations" && <StationsView stations={shown} prices={data.prices} services={services ?? []} onChanged={changed} />}
+          </div>
+        </>
       )}
-      {message && (
-        <p role="status" className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>
-          {message.text}
-        </p>
-      )}
-      {data.stations.length === 0 && <p className="text-sm">{t.owner.noStations}</p>}
-      {data.stations.map((s) => (
-        <StationCard
-          key={s.id}
-          station={s}
-          staff={data.staff.filter((p) => p.stationId === s.id)}
-          services={(services ?? []).filter((x) => x.stationId === s.id)}
-          onChanged={() => {
-            reload();
-            reloadServices();
-          }}
-          onMessage={(text, ok) => setMessage({ text, ok })}
-        />
-      ))}
     </div>
   );
 }

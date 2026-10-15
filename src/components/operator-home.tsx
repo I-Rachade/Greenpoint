@@ -64,8 +64,9 @@ function OpenToggle({ station, activeReservations }: { station: StationView; act
   async function setOpen(open: boolean) {
     setBusy(true);
     try {
-      await backend.updateStatus(station.id, { isOpen: open });
-      toast(t.work.saved);
+      const { cancelled } = await backend.updateStatus(station.id, { isOpen: open });
+      // R17: what closing cancelled, so it can be checked against the warning.
+      toast(cancelled > 0 ? format(t.operator.closedCancelled, { n: cancelled }) : t.work.saved, { tone: "success" });
     } catch (err) {
       toast(errorMessage(err), { tone: "error" });
     } finally {

@@ -18,13 +18,24 @@ export function demoUsers(now: Date): AdminUser[] {
   ];
 }
 
-export const DEMO_STAFF: StaffAssignment[] = [
-  { stationId: "st-grand-marche", userId: "demo-operator" },
-  { stationId: "st-tokoin", userId: "demo-operator" },
-  { stationId: "st-universite", userId: "demo-operator" },
-  { stationId: "st-be", userId: "demo-operator" },
-  { stationId: "st-agoe", userId: "demo-operator" },
-];
+/** Staff work at exactly one station (W2, migration 0033): Kossi keeps the Grand Marché. */
+export const DEMO_STAFF: StaffAssignment[] = [{ stationId: "st-grand-marche", userId: "demo-operator" }];
+
+/**
+ * His other former stations, as migration 0033 lists them for the owner to re-staff
+ * (staff_reassignments). Kossi was last seen at the Grand Marché.
+ */
+export function demoReassignments(now: Date): { id: string; userId: string; stationId: string; operatorId: string; createdAt: string; resolvedAt: string | null }[] {
+  const at = new Date(now.getTime() - 86_400_000).toISOString();
+  return ["st-tokoin", "st-universite", "st-be", "st-agoe"].map((stationId) => ({
+    id: `reassign-${stationId}`,
+    userId: "demo-operator",
+    stationId,
+    operatorId: "op-poinderecharge",
+    createdAt: at,
+    resolvedAt: null,
+  }));
+}
 
 /** Past reservations over the last two weeks, including a customer who never shows up. */
 export function demoHistory(now: Date): Reservation[] {

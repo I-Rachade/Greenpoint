@@ -32,7 +32,7 @@ import type { Env } from "./env";
 import { ApiError, json, nowIso, sha256, uuid } from "./http";
 import { unlockedSql } from "./services";
 import { DB_CUSTOMER } from "./roles";
-import { cleanMeasures, cleanName, requireDepot, requireStaff, sizes, storeParcel, tierFor, type ParcelCtx } from "./parcels";
+import { cleanMeasures, cleanName, requireDepot, requireStaff, requireStationActor, sizes, storeParcel, tierFor, type ParcelCtx } from "./parcels";
 
 const TRACKING_URL = "https://app.poinderecharge.com/colis";
 
@@ -776,7 +776,7 @@ export async function stationBookings(c: ParcelCtx, stationId: string): Promise<
  * booked gets the larger size and price.
  */
 export async function acceptBooking(c: ParcelCtx, stationId: string, bookingId: string, measuresInput: Partial<ParcelMeasures>): Promise<Parcel> {
-  const staff = await requireStaff(c, stationId);
+  const staff = await requireStationActor(c, stationId);
   const measures = cleanMeasures(measuresInput);
   const row = await c.db.prepare("select * from partner_bookings where id = ? or tracking_no = upper(?)").bind(bookingId, bookingId).first<BookingRow>();
   if (!row || row.from_station_id !== stationId) throw new ApiError("parcel_not_found", 404);

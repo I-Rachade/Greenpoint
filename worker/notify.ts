@@ -63,3 +63,17 @@ export async function notifyPerson(
     console.error("Parcel notification failed", parcelId, kind, (err as Error).message);
   }
 }
+
+/**
+ * Tells an account holder about something outside parcels (e.g. a reservation cancelled
+ * because the station closed) by e-mail when the account has an address. The app shows it
+ * too (alerts). Never throws.
+ */
+export async function notifyUser(env: Env, userId: string, message: Message): Promise<void> {
+  try {
+    const user = await env.DB.prepare("select email from users where id = ?").bind(userId).first<{ email: string | null }>();
+    if (user?.email) await sendEmail(env, user.email, message);
+  } catch (err) {
+    console.error("Notification failed", userId, (err as Error).message);
+  }
+}

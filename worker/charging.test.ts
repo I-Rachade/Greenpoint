@@ -53,7 +53,7 @@ async function setup() {
       ('st', '${OPERATOR}', 'Bè', 6.13, 1.22, 'charging', 0, 1, '${now}'),
       ('other', 'partner', 'Partenaire', 6.14, 1.23, 'charging', 0, 0, '${now}');
     insert into station_status (station_id, free_slots, full_batteries, updated_at) values ('st', 2, 0, '${now}'), ('other', 1, 0, '${now}');
-    insert into station_staff (station_id, user_id) values ('st', 'staff'), ('other', 'staff');
+    insert into station_staff (station_id, user_id) values ('st', 'staff');
     insert into devices (external_id, station_id, vendor, link, outlets, last_seen_at, created_at) values
       ('123456', 'st', 'Xingke', 'own_server', 2, '${now}', '${now}'),
       ('654321', 'other', 'Xingke', 'own_server', 1, '${now}', '${now}');
@@ -70,7 +70,8 @@ async function api<T>(env: Env, who: string, method: string, path: string, body?
   const res = await handleApi(
     new Request(`https://app.poinderecharge.com${path}`, {
       method,
-      headers: { Authorization: `Bearer ${TOKENS[who]}`, "Content-Type": "application/json" },
+      // The station the person works at now (R7): the one the path names.
+      headers: { Authorization: `Bearer ${TOKENS[who]}`, "Content-Type": "application/json", "X-Active-Station": /^\/api\/stations\/([\w-]+)/.exec(path)?.[1] ?? "" },
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
     env,
@@ -282,6 +283,8 @@ describe("paying in the app", () => {
   it("is not offered at a partner's station, where only cash is taken", async () => {
     const { db, env } = await setup();
     db.exec(`insert into wallets (user_id, balance_xof, created_at, updated_at) values ('kofi', 1000, 'x', 'x')`);
+    // Staff work at one station (W2): this one now.
+    db.exec("update station_staff set station_id = 'other' where user_id = 'staff'");
     const id = await stoppedCharge(env, 1000, "q1", "other");
     expect((await myCharges(env, KOFI))[0].payOptions).toEqual({ wallet: false, mobile: false });
     expect(await code(payWithWallet(env, KOFI, id, walletReq({ pin: PIN, idempotencyKey: "key-00000001" })))).toBe("payment_not_offered");

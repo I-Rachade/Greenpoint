@@ -14,6 +14,7 @@ import { useApp } from "./app-provider";
 import { StationMediaFields, StationReviewsAdmin } from "./backoffice/station-media";
 import { BatteryIcon, BoltIcon, BoxIcon, CarIcon, SunIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
+import { hoursOf, OpeningHoursInput, openingHoursLine } from "./opening-hours-input";
 import { SolarBadge } from "./solar-badge";
 
 /** The form's view of a station: general fields plus each point switched on or off. */
@@ -137,6 +138,8 @@ function StationForm({
   const { t } = useI18n();
   const p = t.admin.points;
   const [form, setForm] = useState(initial);
+  // Days and times, never free text or empty (plan phase 8).
+  const [hours, setHours] = useState(() => hoursOf(initial.input.openingHours));
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const set = <K extends keyof StationInput>(key: K, value: StationInput[K]) => setForm({ ...form, input: { ...form.input, [key]: value } });
@@ -151,6 +154,10 @@ function StationForm({
       setProblem(t.errors.station_without_point);
       return;
     }
+    if (!hours.days.length) {
+      setProblem(t.errors.opening_hours_invalid);
+      return;
+    }
     setProblem(null);
     const hadDepot = initial.parcelCounter || initial.parcelLockers || initial.note !== "" || initial.lockers > 0;
     const parcels = form.parcelCounter || form.parcelLockers;
@@ -158,6 +165,7 @@ function StationForm({
     try {
       await onSave({
         ...form.input,
+        openingHours: openingHoursLine(hours),
         kind: kindFor(form.swap, form.charging),
         batteryCapacity: form.swap ? form.input.batteryCapacity : 0,
         batteryTypeIds: form.swap ? form.batteryTypeIds : [],
@@ -221,16 +229,10 @@ function StationForm({
         />
       </label>
       <p className="text-xs text-zinc-500 sm:col-span-2">{t.admin.coordsHint}</p>
-      <label className={label}>
-        <span>{t.admin.openingHours}</span>
-        <input
-          className={input}
-          placeholder="07:00-21:00"
-          value={form.input.openingHours}
-          onChange={(e) => set("openingHours", e.target.value)}
-        />
-        <span className="text-xs text-zinc-500">{t.admin.openingHoursHint}</span>
-      </label>
+      <div className="space-y-1 sm:col-span-2">
+        <OpeningHoursInput value={hours} onChange={setHours} />
+        <p className="text-xs text-zinc-500">{t.admin.openingHoursHint}</p>
+      </div>
       <label className={label}>
         <span>{t.admin.phone}</span>
         <input
@@ -280,6 +282,7 @@ function StationForm({
               value={form.input.batteryCapacity}
               onChange={(e) => set("batteryCapacity", Number(e.target.value))}
             />
+            <span className="text-xs text-zinc-500">{stationId ? t.admin.capacityHint : t.admin.newStationHint}</span>
           </label>
           <fieldset className="space-y-1 text-sm">
             <legend>{p.batteryTypes}</legend>
@@ -610,7 +613,7 @@ export function AdminStations() {
     vehicleTypes: ["scooter"],
     chargingSlots: 0,
     batteryCapacity: 0,
-    openingHours: "",
+    openingHours: "07:00-21:00",
     phone: null,
     isSolar: false,
     photos: [],

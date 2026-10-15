@@ -29,6 +29,7 @@ import {
 import { getActiveStation } from "../active-station";
 import {
   applyBatteryEvent,
+  CAPACITY_REASON,
   cleanBatteryLabel,
   cleanReason,
   dayStartLome,
@@ -76,9 +77,15 @@ import {
 import { cleanAmenities, cleanPhotos, cleanReview, ratingOf, shortName, type ReviewInput, type StationReview } from "../station-extras";
 import { depotPoints, hasAnyPoint, kindFor } from "../station-points";
 import { validBatteryType, type BatteryType, type BatteryTypeInput } from "../battery-types";
-import { DEMO_STAFF, demoHistory, demoUsers } from "../admin/demo-seed";
+import { DEMO_STAFF, demoHistory, demoReassignments, demoUsers } from "../admin/demo-seed";
+import { cleanOpeningHours } from "../opening-hours";
+import { emptyDays, periodStart, reportPeriod, type Handover, type OwnerLive, type OwnerReport, type ReportPeriod, type StaffStats } from "../owner-backoffice";
 import {
   ADMIN_HISTORY_DAYS,
+  ADMIN_PAGE_SIZE,
+  SNAPSHOT_RESERVATION_DAYS,
+  type AdminReservationPage,
+  type AdminReservationQuery,
   type AdminSnapshot,
   type AdminUser,
   type AuditEntry,
@@ -242,7 +249,7 @@ import {
   type GreenpointRewardInput,
   type GreenpointView,
 } from "../greenpoint";
-import { OPERATOR_NAME_MAX, type AdminOperator, type OperatorInput, type OwnerStationInput, type OwnerView } from "../operators";
+import { OPERATOR_NAME_MAX, validPrice, type AdminOperator, type OperatorInput, type OwnerStationInput, type OwnerView } from "../operators";
 import { validEvCharger, type EvCharger, type EvChargerInput } from "../ev-chargers";
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 import { ocppKey } from "../iot/ocpp";
@@ -349,6 +356,19 @@ interface DemoState {
   fleets?: DemoFleet[];
   /** Fleet invites, newest first (as table fleet_invites). */
   fleetInvites?: DemoInvite[];
+  /** The owner's list to re-staff (as table staff_reassignments, migration 0033); missing = the seed. */
+  staffReassignments?: DemoReassignment[];
+  /** Every station action, newest first (as table station_actions, migration 0033). */
+  stationActions?: { stationId: string; personId: string; role: StationRole; createdAt: string }[];
+}
+
+interface DemoReassignment {
+  id: string;
+  userId: string;
+  stationId: string;
+  operatorId: string;
+  createdAt: string;
+  resolvedAt: string | null;
 }
 
 interface DemoFleet {
@@ -381,7 +401,7 @@ interface DemoServiceRow {
   decidedAt: string | null;
 }
 
-type DemoCharge = ChargeSession & { userId: string | null; pointId: string };
+type DemoCharge = ChargeSession & { userId: string | null; pointId: string; startedBy?: string };
 
 /** The demo socket draws this much while charging, so energy and price move on screen. */
 const DEMO_CHARGE_WATTS = 360;
@@ -545,6 +565,8 @@ interface DemoScan {
 
 interface DemoLedger extends LedgerEntry {
   driverId: string;
+  /** Who settled at the station (driver_ledger.actor). */
+  by?: string;
 }
 
 /** Three of our vehicles, so drivers can be approved right away. */
@@ -754,6 +776,8 @@ export class DemoBackend implements Backend {
   readonly mode = "demo" as const;
   private listeners = new Set<() => void>();
   private memory: DemoState | null = null;
+  /** The station action under way (stationActor), logged by the save that completes it. */
+  private pendingAction: { stationId: string; personId: string; role: StationRole; at: number } | null = null;
 
   private load(): DemoState {
     try {
@@ -768,7 +792,18 @@ export class DemoBackend implements Backend {
 
   private save(next: DemoState) {
     // Whatever the admin set up is unlocked, as the triggers of migration 0026 do.
-    const state = withServiceRows(next);
+    let state = withServiceRows(next);
+    // The station action this save completes is logged with station, person and role, as
+    // logStationAction() in worker/api.ts does once a request succeeded. A refused action
+    // never reaches a save; what it left behind is dropped after a moment.
+    const action = this.pendingAction;
+    this.pendingAction = null;
+    if (action && Date.now() - action.at < 2000) {
+      state = {
+        ...state,
+        stationActions: [{ stationId: action.stationId, personId: action.personId, role: action.role, createdAt: new Date().toISOString() }, ...(state.stationActions ?? [])].slice(0, 2000),
+      };
+    }
     this.memory = state;
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -970,9 +1005,9 @@ export class DemoBackend implements Backend {
     };
   }
 
-  /** R11: driver and fleet manager accounts are never customers (refuseDriver in worker/roles.ts). */
-  private refuseDriver(profile: Profile) {
-    if (profile.role === "driver" || profile.role === "fleet_manager") throw new BackendError("forbidden");
+  /** R11/R2: drivers, fleet managers and station staff/owners are never customers (refuseNonCustomer in worker/roles.ts). */
+  private refuseNonCustomer(profile: Profile) {
+    if (profile.role === "driver" || profile.role === "fleet_manager" || profile.role === "operator") throw new BackendError("forbidden");
   }
 
   /** R15 (customerThingsOpen in worker/drivers.ts): money, an active reservation, an open parcel or a booked trip. */
@@ -1173,15 +1208,12 @@ export class DemoBackend implements Backend {
   async staffStations() {
     const state = this.load();
     const profile = this.requireProfile(state);
-    // Menu and rights follow the role, like on Cloudflare.
-    if (profile.role !== "operator" && profile.role !== "admin") return [];
+    // Menu and rights follow the role, like on Cloudflare: station work is for staff, owners and admins (R2).
+    if (profile.role !== "operator" && profile.role !== "admin") throw new BackendError("forbidden");
     const owned = new Set(profile.ownerOf ?? []);
-    // Demo staff run every own station, operator accounts their operator's stations; admins see all.
+    // Staff their one station, owners their operators' stations; admins see all.
     const active = this.activeStations(state);
-    const stations =
-      profile.role === "admin"
-        ? active
-        : active.filter((s) => owned.has(s.operatorId) || (profile.role === "operator" && s.isOwn));
+    const stations = profile.role === "admin" ? active : active.filter((s) => this.roleAt(state, profile, s.id) !== null);
     // With the services active there and the person's role, as staffStations() in worker/api.ts.
     return this.views(state, stations).map((s) => ({
       ...s,
@@ -1197,13 +1229,17 @@ export class DemoBackend implements Backend {
     const raw = patch as StatusPatch & { fullBatteries?: unknown; typeBatteries?: unknown };
     if (raw.fullBatteries !== undefined || raw.typeBatteries !== undefined) throw new BackendError("unknown", "bad_request");
     const closing = patch.isOpen === false && state.statuses.some((s) => s.stationId === stationId && s.isOpen);
-    // Closing cancels the station's active reservations, like the trigger in SQL.
+    // Closing cancels the reservations still holding (R17, as updateStatus() in worker/api.ts);
+    // those already past their expiry become expired.
+    const now = new Date();
+    let cancelled = 0;
     const reservations = closing
-      ? state.reservations.map((r) =>
-          r.stationId === stationId && r.status === "active"
-            ? { ...r, status: "cancelled" as const, cancelReason: "station_closed" }
-            : r,
-        )
+      ? state.reservations.map((r) => {
+          if (r.stationId !== stationId || r.status !== "active") return r;
+          if (!isHolding(r, now)) return { ...r, status: "expired" as const };
+          cancelled++;
+          return { ...r, status: "cancelled" as const, cancelReason: "station_closed" };
+        })
       : state.reservations;
     const statuses = state.statuses.map((s) =>
       s.stationId === stationId
@@ -1223,6 +1259,7 @@ export class DemoBackend implements Backend {
         ? withAudit({ ...state, statuses, reservations }, { table: "station_status", action: "update", rowId: stationId, stationId, changes })
         : { ...state, statuses, reservations },
     );
+    return { cancelled };
   }
 
   async stationReservations(stationId: string) {
@@ -1272,8 +1309,8 @@ export class DemoBackend implements Backend {
     const station = state.stations.find((s) => s.id === stationId);
     if (!station) return null;
     if (ownedOperators(state, profile.id).includes(station.operatorId)) return "owner";
-    // Demo staff work at every own station (as staffStations()).
-    return station.isOwn ? "staff" : null;
+    // Staff work at exactly one station (W2, station_staff).
+    return (state.staff ?? DEMO_STAFF).some((a) => a.userId === profile.id && a.stationId === stationId) ? "staff" : null;
   }
 
   /** As stationActor(): 403 without rights, 409 without the matching active station (staff with one station need none). */
@@ -1283,9 +1320,10 @@ export class DemoBackend implements Backend {
     if (!role) throw new BackendError("forbidden");
     if (!this.activeStations(state).some((s) => s.id === stationId)) throw new BackendError("station_not_found");
     const active = getActiveStation();
-    if (active === stationId) return { profile, role };
-    if (role === "staff" && active === null && this.activeStations(state).filter((s) => s.isOwn).length <= 1) return { profile, role };
-    throw new BackendError("active_station_required");
+    // Staff have one station (W2): without a chosen station they act at theirs.
+    if (active !== stationId && !(role === "staff" && active === null)) throw new BackendError("active_station_required");
+    this.pendingAction = { stationId, personId: profile.id, role, at: Date.now() };
+    return { profile, role };
   }
 
   private stationReader(state: DemoState, stationId: string): { profile: Profile; role: StationRole } {
@@ -1567,17 +1605,30 @@ export class DemoBackend implements Backend {
   async stationSwaps(stationId: string, filter: SwapFilter = {}): Promise<SwapEntry[]> {
     const state = this.load();
     const { profile, role } = this.stationReader(state, stationId);
-    const today = dayStartLome();
+    // Staff see today's own swaps; owners and admins may look back (backoffice, plan phase 8).
+    const since = role === "staff" ? dayStartLome() : periodStart(reportPeriod(filter.days ?? 1));
     return (state.swaps ?? [])
       .filter(
         (x) =>
           x.stationId === stationId &&
-          x.createdAt >= today &&
+          x.createdAt >= since &&
           (!filter.customerType || x.customerType === filter.customerType) &&
           (role !== "staff" || x.staffId === profile.id),
       )
-      .slice(0, 200)
+      .slice(0, 500)
       .map(swapView);
+  }
+
+  /** Counter history of a report period: owners and admins only (stationBatteryEvents in the Worker). */
+  async stationBatteryEvents(stationId: string, days: ReportPeriod): Promise<BatteryEventView[]> {
+    const state = this.load();
+    const { role } = this.stationReader(state, stationId);
+    if (role === "staff") throw new BackendError("forbidden");
+    const since = periodStart(reportPeriod(days));
+    return (state.batteryEvents ?? [])
+      .filter((e) => e.stationId === stationId && e.createdAt >= since)
+      .slice(0, 500)
+      .map(eventView);
   }
 
   async listOperators() {
@@ -1598,8 +1649,12 @@ export class DemoBackend implements Backend {
     }
     const before = id ? state.stations.find((s) => s.id === id) : undefined;
     const extras = id ? DEMO_STATION_EXTRAS[id] : undefined;
+    // Days and times, never empty (src/lib/opening-hours.ts), as in worker/api.ts.
+    const openingHours = cleanOpeningHours(fields.openingHours);
+    if (!openingHours) throw new BackendError("opening_hours_invalid");
     const station: Station = {
       ...fields,
+      openingHours,
       // Left out: unchanged, as in the Worker.
       isSolar: fields.isSolar ?? (id ? !!state.stations.find((s) => s.id === id)?.isSolar : false),
       id: id ?? crypto.randomUUID(),
@@ -1610,18 +1665,20 @@ export class DemoBackend implements Backend {
       amenities: input.amenities ? cleanAmenities(input.amenities) : (before?.amenities ?? extras?.amenities ?? []),
     };
     if (id) {
-      this.save(
-        withAudit(
-          { ...state, stations: state.stations.map((s) => (s.id === id ? station : s)) },
-          { table: "stations", action: "update", rowId: id, stationId: id, changes: before ? diff(before, station) : {} },
-        ),
+      let next = withAudit(
+        { ...state, stations: state.stations.map((s) => (s.id === id ? station : s)) },
+        { table: "stations", action: "update", rowId: id, stationId: id, changes: before ? diff(before, station) : {} },
       );
+      // A lower capacity brings the full batteries down to it, as counter corrections (capacityTrimStatements).
+      if (before && station.batteryCapacity < before.batteryCapacity) next = this.trimToCapacity(next, id, station.batteryCapacity);
+      this.save(next);
     } else {
+      // A new station starts closed and empty: staff open it and mark batteries full as they come.
       const status: StationStatus = {
         stationId: station.id,
-        isOpen: true,
+        isOpen: false,
         freeSlots: 0,
-        fullBatteries: station.batteryCapacity,
+        fullBatteries: 0,
         updatedAt: new Date().toISOString(),
       };
       this.save(
@@ -1642,6 +1699,36 @@ export class DemoBackend implements Backend {
       });
     }
     if (parcelDepot) await this.writeDepot(station.id, parcelDepot);
+  }
+
+  /** As capacityTrimStatements() in worker/station-work.ts: one correction per counter, largest first. */
+  private trimToCapacity(state: DemoState, stationId: string, capacity: number): DemoState {
+    const profile = this.requireProfile(state);
+    const rows = this.counterRows(state, stationId).map((r) => ({ key: r.batteryTypeId, full: r.full }));
+    let excess = rows.reduce((a, r) => a + r.full, 0) - capacity;
+    const trim = new Map<string, number>();
+    while (excess > 0) {
+      const top = rows.reduce((a, r) => (r.full > a.full ? r : a));
+      if (top.full <= 0) break;
+      top.full--;
+      trim.set(top.key, (trim.get(top.key) ?? 0) + 1);
+      excess--;
+    }
+    let next = state;
+    for (const [key, n] of trim) {
+      const done = this.counterEvent(next, {
+        stationId,
+        key,
+        type: "correction",
+        delta: -n,
+        reason: CAPACITY_REASON,
+        requestId: `capacity-${crypto.randomUUID()}`,
+        swapId: null,
+        actor: { profile, role: "admin" },
+      });
+      if (done) next = done.state;
+    }
+    return next;
   }
 
   async listBatteryTypes() {
@@ -1754,7 +1841,8 @@ export class DemoBackend implements Backend {
     const state = this.load();
     this.requireAdmin(state);
     const inactive = new Set(state.inactive ?? []);
-    const since = Date.now() - ADMIN_HISTORY_DAYS * 86_400_000;
+    // The dashboard's figures; the reservations table pages through adminReservations().
+    const since = Date.now() - SNAPSHOT_RESERVATION_DAYS * 86_400_000;
     return {
       stations: this.views(state, state.stations).map((s) => ({ ...s, isActive: !inactive.has(s.id) })),
       users: state.users ?? demoUsers(new Date()),
@@ -1763,6 +1851,38 @@ export class DemoBackend implements Backend {
         .filter((r) => new Date(r.createdAt).getTime() >= since)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       chargingPoints: [],
+    };
+  }
+
+  /** As adminReservations() in worker/api.ts: one page of the last ADMIN_HISTORY_DAYS days, and the total. */
+  async adminReservations(query: AdminReservationQuery): Promise<AdminReservationPage> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const now = new Date().toISOString();
+    const since = new Date(Date.now() - ADMIN_HISTORY_DAYS * 86_400_000).toISOString();
+    const users = state.users ?? demoUsers(new Date());
+    const search = (query.search ?? "").trim().toLowerCase().slice(0, 80);
+    const matches = state.reservations
+      .filter((r) => {
+        if (r.createdAt < since) return false;
+        if (query.stationId && r.stationId !== query.stationId) return false;
+        const expired = r.status === "expired" || (r.status === "active" && r.expiresAt <= now);
+        if (query.status === "active" && !(r.status === "active" && r.expiresAt > now)) return false;
+        if (query.status === "expired" && !expired) return false;
+        if ((query.status === "completed" || query.status === "cancelled") && r.status !== query.status) return false;
+        if (search) {
+          const u = users.find((x) => x.id === r.userId);
+          const hay = [u?.fullName ?? "", u?.phone ?? "", u?.email ?? ""].join(" ").toLowerCase();
+          if (!hay.includes(search)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const limit = Math.min(Math.max(Number(query.limit) || ADMIN_PAGE_SIZE, 1), 200);
+    const offset = Math.max(Number(query.offset) || 0, 0);
+    return {
+      rows: matches.slice(offset, offset + limit).map((r) => ({ ...r, customer: this.customerLabel(r.userId) })),
+      total: matches.length,
     };
   }
 
@@ -1790,6 +1910,8 @@ export class DemoBackend implements Backend {
     if (role === "driver") throw new BackendError("unknown", "bad_request");
     if (before.role === role) return;
     if (before.role === "driver") throw new BackendError("has_other_role");
+    // R15: staff become something else only once removed from their station.
+    if (role !== "operator" && (state.staff ?? DEMO_STAFF).some((a) => a.userId === userId)) throw new BackendError("role_change_blocked");
     let next = withAudit(
       { ...state, users: users.map((u) => (u.id === userId ? { ...u, role } : u)) },
       { table: "profiles", action: "update", rowId: userId, userId, changes: { role: [before.role, role] } },
@@ -1833,18 +1955,78 @@ export class DemoBackend implements Backend {
     this.save(this.withStaff(state, stationId, userId));
   }
 
+  /** As addStaff() in worker/api.ts: staff work at exactly one station (W2); owners and other roles are refused. */
   private withStaff(state: DemoState, stationId: string, userId: string): DemoState {
     const staff = state.staff ?? DEMO_STAFF;
-    if (staff.some((a) => a.stationId === stationId && a.userId === userId)) return state;
+    const user = (state.users ?? demoUsers(new Date())).find((u) => u.id === userId);
+    if (user?.role === "fleet_manager" || user?.role === "driver") throw new BackendError("has_other_role");
+    if (!user) throw new BackendError("account_not_found");
+    const current = staff.find((a) => a.userId === userId);
+    if (current?.stationId === stationId) return state;
+    if (current) throw new BackendError("staff_other_station");
+    if ((state.operatorOwners ?? []).some((o) => o.userId === userId)) throw new BackendError("has_other_role");
+    if (user.role === "customer" && this.customerThingsOpen(state, userId, user.phone)) throw new BackendError("role_change_blocked");
     return withAudit(
       {
         ...state,
         staff: [...staff, { stationId, userId }],
         // The role follows the assignment, like on Cloudflare.
         users: promoted(state, userId),
+        staffReassignments: this.resolvedReassignments(state, userId, stationId),
       },
       { table: "station_staff", action: "insert", rowId: `${stationId}:${userId}`, stationId, userId, changes: {} },
     );
+  }
+
+  private reassignmentsOf(state: DemoState): DemoReassignment[] {
+    return state.staffReassignments ?? demoReassignments(new Date());
+  }
+
+  /** Open entries of the re-staff list for this person at this station are done. */
+  private resolvedReassignments(state: DemoState, userId: string, stationId: string): DemoReassignment[] {
+    const now = new Date().toISOString();
+    return this.reassignmentsOf(state).map((r) => (r.userId === userId && r.stationId === stationId && !r.resolvedAt ? { ...r, resolvedAt: now } : r));
+  }
+
+  /** An owner of some operator, or an admin (requireAnyOwner in worker/api.ts). */
+  private requireAnyOwner(state: DemoState): Profile {
+    const profile = this.requireProfile(state);
+    if (profile.role === "admin") return profile;
+    if (profile.role !== "operator" || !ownedOperators(state, profile.id).length) throw new BackendError("forbidden");
+    return profile;
+  }
+
+  async ownerMoveStaff(userId: string, stationId: string) {
+    const state = this.load();
+    this.requireAnyOwner(state);
+    const staff = state.staff ?? DEMO_STAFF;
+    const current = staff.find((a) => a.userId === userId);
+    if (!current) throw new BackendError("unknown", "not_found");
+    this.requireOwnerOf(state, current.stationId);
+    this.requireOwnerOf(state, stationId);
+    if (!this.activeStations(state).some((s) => s.id === stationId)) throw new BackendError("station_not_found");
+    if (current.stationId === stationId) return;
+    this.save(
+      withAudit(
+        {
+          ...state,
+          staff: staff.map((a) => (a === current ? { stationId, userId } : a)),
+          staffReassignments: this.resolvedReassignments(state, userId, stationId),
+        },
+        { table: "station_staff", action: "update", rowId: `${stationId}:${userId}`, stationId, userId, changes: { station_id: [current.stationId, stationId] } },
+      ),
+    );
+  }
+
+  async resolveReassignment(id: string) {
+    const state = this.load();
+    const profile = this.requireAnyOwner(state);
+    const r = this.reassignmentsOf(state).find((x) => x.id === id);
+    if (!r) throw new BackendError("unknown", "not_found");
+    if (profile.role !== "admin" && !ownedOperators(state, profile.id).includes(r.operatorId)) throw new BackendError("forbidden");
+    if (r.resolvedAt) return;
+    const now = new Date().toISOString();
+    this.save({ ...state, staffReassignments: this.reassignmentsOf(state).map((x) => (x.id === id ? { ...x, resolvedAt: now } : x)) });
   }
 
   async unassignStaff(stationId: string, userId: string) {
@@ -1891,16 +2073,35 @@ export class DemoBackend implements Backend {
   async ownerView(): Promise<OwnerView> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    const owned = new Set(ownedOperators(state, profile.id));
-    if ((profile.role !== "operator" && profile.role !== "admin") || !owned.size) throw new BackendError("forbidden");
+    if (profile.role !== "operator" && profile.role !== "admin") throw new BackendError("forbidden");
+    // An admin sees every operator (backoffice: admin all), an owner the operators they run.
+    const admin = profile.role === "admin";
+    const owned = new Set(admin ? state.operators.map((o) => o.id) : ownedOperators(state, profile.id));
+    if (!owned.size && !admin) throw new BackendError("forbidden");
     const stations = this.activeStations(state).filter((s) => owned.has(s.operatorId));
     const ids = new Set(stations.map((s) => s.id));
+    const staff = state.staff ?? DEMO_STAFF;
+    const tariffs = state.stationTariffs ?? {};
     return {
-      operators: state.operators.filter((o) => owned.has(o.id)),
+      operators: state.operators.filter((o) => owned.has(o.id)).sort((a, b) => a.name.localeCompare(b.name)),
       stations: this.views(state, stations),
-      staff: (state.staff ?? DEMO_STAFF)
-        .filter((a) => ids.has(a.stationId))
-        .map((a) => ({ stationId: a.stationId, ...this.label(state, a.userId) })),
+      staff: staff.filter((a) => ids.has(a.stationId)).map((a) => ({ stationId: a.stationId, ...this.label(state, a.userId) })),
+      reassignments: this.reassignmentsOf(state)
+        .filter((r) => !r.resolvedAt && owned.has(r.operatorId))
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .map((r) => ({
+          id: r.id,
+          stationId: r.stationId,
+          currentStationId: staff.find((a) => a.userId === r.userId)?.stationId ?? null,
+          createdAt: r.createdAt,
+          ...this.label(state, r.userId),
+        })),
+      prices: stations.map((s) => ({
+        stationId: s.id,
+        swapXof: swapPrice(state, s),
+        chargeKwhXof: tariffs[s.id]?.kwhXof ?? null,
+        chargeMinXof: tariffs[s.id]?.minXof ?? null,
+      })),
     };
   }
 
@@ -1916,15 +2117,205 @@ export class DemoBackend implements Backend {
     this.save(this.withoutStaff(state, stationId, userId));
   }
 
+  // Owner backoffice (as worker/owner.ts) ---------------------------------------------
+
+  /** The stations a backoffice request covers: the one asked for, or every station of the owner's operators (admins: all). */
+  private backofficeStations(state: DemoState, stationId: string | null): { ids: string[]; thirdParty: boolean } {
+    const profile = this.requireProfile(state);
+    if (profile.role !== "admin" && profile.role !== "operator") throw new BackendError("forbidden");
+    const owned = new Set(ownedOperators(state, profile.id));
+    const stations = state.stations.filter((s) => (profile.role === "admin" || owned.has(s.operatorId)) && (!stationId || s.id === stationId));
+    if (!stations.length) throw new BackendError(stationId && profile.role === "admin" ? "station_not_found" : "forbidden");
+    return { ids: stations.map((s) => s.id), thirdParty: stations.some((s) => !s.isOwn) };
+  }
+
+  private personName(state: DemoState, userId: string | null | undefined): string | null {
+    if (!userId) return null;
+    const u = (state.users ?? demoUsers(new Date())).find((x) => x.id === userId) ?? (state.profile?.id === userId ? state.profile : null);
+    const d = (state.drivers ?? []).find((x) => x.userId === userId);
+    if (d) return personLabel({ fullName: d.fullName, phone: d.phone, email: null });
+    return u ? personLabel(u) : null;
+  }
+
+  async ownerLive(stationId: string | null): Promise<OwnerLive> {
+    const state = this.load();
+    const { ids } = this.backofficeStations(state, stationId);
+    const set = new Set(ids);
+    const now = new Date().toISOString();
+    const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
+    const parcels = this.parcelsOf(state);
+    const vehicles = state.fleet ?? seedFleet();
+    const handovers: Handover[] = [
+      ...(state.parcelScans ?? [])
+        .filter((x) => x.stationId && set.has(x.stationId) && (x.kind === "handover_to_driver" || x.kind === "received_at_station") && x.at >= weekAgo)
+        .map((x) => ({
+          at: x.at,
+          stationId: x.stationId!,
+          kind: x.kind as "handover_to_driver" | "received_at_station",
+          driver: this.personName(state, x.driverId),
+          parcel: parcels.find((p) => p.id === x.parcelId)?.trackingNo ?? null,
+          amountXof: null,
+          by: this.personName(state, x.by),
+        })),
+      ...(state.ledger ?? [])
+        .filter((l) => l.kind === "settlement" && l.stationId && set.has(l.stationId) && l.at >= weekAgo)
+        .map((l) => ({
+          at: l.at,
+          stationId: l.stationId!,
+          kind: "driver_settlement" as const,
+          driver: this.personName(state, l.driverId),
+          parcel: null,
+          amountXof: l.amountFcfa,
+          by: this.personName(state, l.by),
+        })),
+    ]
+      .sort((a, b) => b.at.localeCompare(a.at))
+      .slice(0, 50);
+    return {
+      reservations: state.reservations
+        .filter((r) => set.has(r.stationId) && r.status === "active" && r.expiresAt > now)
+        .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt))
+        .map((r) => ({ ...r, pickupCode: undefined, customer: this.customerLabel(r.userId) })),
+      drivers: (state.driverQueue ?? [])
+        .filter((q) => set.has(q.stationId))
+        .sort((a, b) => a.since.localeCompare(b.since))
+        .map((q) => {
+          const d = (state.drivers ?? []).find((x) => x.userId === q.driverId);
+          return { stationId: q.stationId, name: this.personName(state, q.driverId) ?? "?", plate: vehicles.find((v) => v.id === d?.vehicleId)?.plate ?? null, since: q.since };
+        }),
+      runs: (state.parcelRuns ?? [])
+        .filter((r) => r.status === "loading" || r.status === "under_way")
+        .map((r) => {
+          const mine = parcels.filter((p) => p.runId === r.id);
+          return { r, parcels: mine.length, incoming: mine.filter((p) => set.has(p.toStationId)).length };
+        })
+        .filter(({ r, incoming }) => set.has(r.stationId) || incoming > 0)
+        .sort((a, b) => a.r.createdAt.localeCompare(b.r.createdAt))
+        .map(({ r, parcels: n, incoming }) => ({
+          id: r.id,
+          stationId: r.stationId,
+          driver: this.personName(state, r.driverId) ?? "?",
+          status: r.status as "loading" | "under_way",
+          parcels: n,
+          incoming,
+          createdAt: r.createdAt,
+        })),
+      parcels: ids.map((id) => ({
+        stationId: id,
+        toSend: parcels.filter((p) => p.fromStationId === id && p.status === "deposited").length,
+        incoming: parcels.filter((p) => p.toStationId === id && p.status === "in_transit").length,
+        toPickUp: parcels.filter((p) => p.toStationId === id && p.status === "arrived").length,
+      })),
+      handovers,
+    };
+  }
+
+  async ownerReport(stationId: string | null, days: ReportPeriod): Promise<OwnerReport> {
+    const state = this.load();
+    const { ids, thirdParty } = this.backofficeStations(state, stationId);
+    const set = new Set(ids);
+    const from = periodStart(days);
+    const perDay = emptyDays(days);
+    const index = new Map(perDay.map((d, i) => [d.day, i]));
+    const dayOf = (iso: string) => perDay[index.get(iso.slice(0, 10)) ?? -1];
+    const hours = Array.from({ length: 24 }, () => 0);
+    const revenue = { swapCashXof: 0, swapAppXof: 0, swapFleetXof: 0, chargeCashXof: 0, chargeAppXof: 0, cashXof: 0, totalXof: 0 };
+    const people = new Map<string, StaffStats>();
+    const entry = (id: string, role: StaffStats["role"] | null) => {
+      const e = people.get(id) ?? { personId: id, person: "", role: role ?? "staff", swaps: 0, charges: 0, actions: 0 };
+      if (role) e.role = role;
+      people.set(id, e);
+      return e;
+    };
+    for (const x of (state.swaps ?? []).filter((x) => set.has(x.stationId) && x.createdAt >= from)) {
+      const d = dayOf(x.createdAt);
+      if (d) {
+        d.swaps++;
+        d.swapXof += x.amountXof;
+      }
+      hours[new Date(x.createdAt).getUTCHours()]++;
+      if (x.payment === "cash") revenue.swapCashXof += x.amountXof;
+      else if (x.payment === "wallet") revenue.swapAppXof += x.amountXof;
+      else if (x.payment === "fleet") revenue.swapFleetXof += x.amountXof;
+      entry(x.staffId, x.role).swaps++;
+    }
+    for (const ch of state.charges ?? []) {
+      if (!set.has(ch.stationId)) continue;
+      if (ch.status === "paid" && ch.paidAt && ch.paidAt >= from) {
+        const d = dayOf(ch.paidAt);
+        if (d) {
+          d.charges++;
+          d.chargeXof += ch.amountXof;
+        }
+        hours[new Date(ch.paidAt).getUTCHours()]++;
+        if (ch.paymentMethod === "cash") revenue.chargeCashXof += ch.amountXof;
+        else revenue.chargeAppXof += ch.amountXof;
+      }
+      if (ch.startedBy && ch.startedAt >= from) entry(ch.startedBy, null).charges++;
+    }
+    let parcelsXof = 0;
+    for (const p of this.parcelsOf(state).filter((p) => set.has(p.fromStationId) && p.createdAt >= from)) {
+      const d = dayOf(p.createdAt);
+      if (d) d.parcels++;
+      // Paid at the counter and not refunded (a cancelled parcel is refunded there).
+      if (p.paymentMethod === "cash" && p.paidAt && p.status !== "cancelled") parcelsXof += p.priceFcfa;
+    }
+    revenue.cashXof = revenue.swapCashXof + revenue.chargeCashXof;
+    revenue.totalXof = revenue.cashXof + revenue.swapAppXof + revenue.swapFleetXof + revenue.chargeAppXof;
+    const driversXof = (state.ledger ?? []).filter((l) => l.kind === "settlement" && l.stationId && set.has(l.stationId) && l.at >= from).reduce((a, l) => a + l.amountFcfa, 0);
+    for (const a of (state.stationActions ?? []).filter((a) => set.has(a.stationId) && a.createdAt >= from)) entry(a.personId, a.role).actions++;
+    for (const p of people.values()) p.person = this.personName(state, p.personId) ?? "?";
+    return {
+      days,
+      from,
+      perDay,
+      revenue,
+      poinderecharge: { parcelsXof, driversXof, totalXof: parcelsXof + driversXof, thirdParty },
+      hours,
+      staff: [...people.values()].sort((a, b) => b.swaps + b.charges + b.actions - (a.swaps + a.charges + a.actions)),
+    };
+  }
+
+  /** As ownerSaveStation() in worker/api.ts: hours as days and times (never empty), phone and prices. */
   async ownerSaveStation(stationId: string, input: OwnerStationInput) {
     const state = this.load();
     this.requireOwnerOf(state, stationId);
-    const openingHours = input.openingHours.trim().slice(0, 200);
-    const phone = input.phone?.trim().slice(0, 40) || null;
+    const station = state.stations.find((s) => s.id === stationId);
+    if (!station) throw new BackendError("station_not_found");
+    const openingHours = cleanOpeningHours(input?.openingHours);
+    if (!openingHours) throw new BackendError("opening_hours_invalid");
+    const tariff = state.stationTariffs?.[stationId] ?? { kwhXof: null, minXof: null };
+    const price = (key: "swapXof" | "chargeKwhXof" | "chargeMinXof", old: number | null) => {
+      if (input?.[key] === undefined) return old;
+      if (!validPrice(input[key])) throw new BackendError("unknown", "bad_request");
+      return input[key] ?? null;
+    };
+    const before = {
+      opening_hours: station.openingHours,
+      phone: station.phone ?? null,
+      price_battery_xof: state.swapPrices?.[stationId] !== undefined ? state.swapPrices[stationId] : swapPrice(state, station),
+      charge_kwh_xof: tariff.kwhXof,
+      charge_min_xof: tariff.minXof,
+    };
+    const after = {
+      opening_hours: openingHours,
+      phone: String(input?.phone ?? "").trim().slice(0, 40) || null,
+      price_battery_xof: price("swapXof", before.price_battery_xof),
+      charge_kwh_xof: price("chargeKwhXof", before.charge_kwh_xof),
+      charge_min_xof: price("chargeMinXof", before.charge_min_xof),
+    };
+    if (after.charge_kwh_xof === 0 || after.price_battery_xof === 0) throw new BackendError("unknown", "bad_request");
+    const changes = diff(before, after);
+    if (!Object.keys(changes).length) return;
     this.save(
       withAudit(
-        { ...state, stations: state.stations.map((s) => (s.id === stationId ? { ...s, openingHours, phone } : s)) },
-        { table: "stations", action: "update", rowId: stationId, stationId, changes: { opening_hours: openingHours, phone } },
+        {
+          ...state,
+          stations: state.stations.map((s) => (s.id === stationId ? { ...s, openingHours, phone: after.phone } : s)),
+          swapPrices: { ...state.swapPrices, [stationId]: after.price_battery_xof },
+          stationTariffs: { ...state.stationTariffs, [stationId]: { kwhXof: after.charge_kwh_xof, minXof: after.charge_min_xof } },
+        },
+        { table: "stations", action: "update", rowId: stationId, stationId, changes },
       ),
     );
   }
@@ -2286,7 +2677,7 @@ export class DemoBackend implements Backend {
 
   async stationParcels(stationId: string): Promise<Parcel[]> {
     const state = this.load();
-    this.requireStaff(state);
+    this.stationReader(state, stationId);
     return this.parcelsOf(state)
       .filter((p) => p.fromStationId === stationId || p.toStationId === stationId)
       .map((p) => ({ ...p, pickupCode: undefined }))
@@ -2312,7 +2703,7 @@ export class DemoBackend implements Backend {
 
   async createParcel(stationId: string, input: ParcelInput): Promise<Parcel> {
     let state = this.load();
-    const staff = this.requireStaff(state);
+    const staff = this.stationActor(state, stationId).profile;
     const senderPhone = normalizeTogoPhone(input.senderPhone ?? "");
     const recipientPhone = normalizeTogoPhone(input.recipientPhone ?? "");
     if (!senderPhone || !recipientPhone) throw new BackendError("phone_not_allowed");
@@ -2595,7 +2986,7 @@ export class DemoBackend implements Backend {
 
   async pickUpParcel(stationId: string, codeOrQr: string): Promise<Parcel> {
     const state = this.load();
-    this.requireStaff(state);
+    this.stationActor(state, stationId);
     const since = Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000;
     const failures = (state.parcelCodeFailures ?? []).filter((f) => f.stationId === stationId && new Date(f.at).getTime() > since);
     if (failures.length >= PARCEL_MAX_CODE_FAILURES) throw new BackendError("code_locked");
@@ -2635,6 +3026,7 @@ export class DemoBackend implements Backend {
     const parcels = this.parcelsOf(state);
     const parcel = parcels.find((p) => p.id === id);
     if (!parcel) throw new BackendError("parcel_not_found");
+    this.stationActor(state, parcel.fromStationId);
     if (parcel.status !== "deposited") throw new BackendError("parcel_wrong_status");
     this.saveParcels(
       state,
@@ -2649,6 +3041,7 @@ export class DemoBackend implements Backend {
     this.requireStaff(state);
     const parcel = this.parcelsOf(state).find((p) => p.id === id);
     if (!parcel) throw new BackendError("parcel_not_found");
+    this.stationActor(state, parcel.toStationId);
     if (parcel.status !== "arrived") throw new BackendError("parcel_wrong_status");
     // Nothing is sent in demo mode.
   }
@@ -3051,7 +3444,7 @@ export class DemoBackend implements Backend {
     this.requireDrivers(state);
     if (profile.role !== "customer" && profile.role !== "driver") throw new BackendError("forbidden");
     const driver = (state.drivers ?? []).find((d) => d.userId === profile.id);
-    if (!driver || (driver.status !== "pending" && driver.status !== "rejected")) throw new BackendError("forbidden");
+    if (!driver || (driver.status !== "pending" && driver.status !== "rejected")) throw new BackendError("driver_not_found");
     if (image.size > MAX_PROMO_IMAGE_BYTES / 4) throw new BackendError("image_too_large");
     const key = `drivers/${profile.id}/${kind}-${Date.now().toString(36)}.jpg`;
     const url = await readAsDataUrl(image as File);
@@ -3330,7 +3723,7 @@ export class DemoBackend implements Backend {
   async bookPickup(input: PickupBooking): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    this.refuseDriver(profile);
+    this.refuseNonCustomer(profile);
     this.requireDrivers(state);
     const home = this.cleanHome(input.home);
     if (!this.depotOpen(state, input.toStationId)) throw new BackendError("depot_inactive");
@@ -3377,7 +3770,7 @@ export class DemoBackend implements Backend {
   async bookRide(input: RideBooking): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    this.refuseDriver(profile);
+    this.refuseNonCustomer(profile);
     this.requireDrivers(state);
     const pickup = this.cleanHome(input.pickup);
     const d = this.cleanDropoff(input.dropoff);
@@ -3419,7 +3812,7 @@ export class DemoBackend implements Backend {
   async bookCourier(input: CourierBooking): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    this.refuseDriver(profile);
+    this.refuseNonCustomer(profile);
     this.requireDrivers(state);
     const pickup = this.cleanHome(input.pickup);
     const dropoff = this.cleanDropoff(input.dropoff);
@@ -3469,7 +3862,7 @@ export class DemoBackend implements Backend {
   async bookDelivery(parcelId: string, input: HomePoint): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    this.refuseDriver(profile);
+    this.refuseNonCustomer(profile);
     this.requireDrivers(state);
     const home = this.cleanHome(input);
     const parcel = this.parcelsOf(state).find((p) => p.id === parcelId);
@@ -3519,7 +3912,7 @@ export class DemoBackend implements Backend {
   async stationDrivers(stationId: string): Promise<StationDrivers> {
     this.dispatch();
     const state = this.load();
-    this.requireStaff(state);
+    this.stationReader(state, stationId);
     const jobs = state.jobs ?? [];
     const drivers = state.drivers ?? [];
     const fleet = state.fleet ?? seedFleet();
@@ -3656,14 +4049,14 @@ export class DemoBackend implements Backend {
 
   async settleDriver(stationId: string, badge: string, amountFcfa: number) {
     const state = this.load();
-    this.requireStaff(state);
+    const actor = this.stationActor(state, stationId);
     const d = this.byBadge(state, badge);
     const current = this.balanceOfDriver(state, d.userId);
     if (amountFcfa !== current) throw new BackendError("balance_changed");
     if (current === 0) return;
     this.save(
       withAudit(
-        { ...state, ledger: [this.ledgerEntry(d.userId, "settlement", current, null, stationId), ...(state.ledger ?? [])] },
+        { ...state, ledger: [{ ...this.ledgerEntry(d.userId, "settlement", current, null, stationId), by: actor.profile.id }, ...(state.ledger ?? [])] },
         { table: "driver_ledger", action: "insert", rowId: d.userId, stationId, userId: d.userId, changes: { settlement: current } },
       ),
     );
@@ -3681,7 +4074,7 @@ export class DemoBackend implements Backend {
 
   async stationBookings(stationId: string): Promise<StationBooking[]> {
     const state = this.load();
-    this.requireStaff(state);
+    this.stationReader(state, stationId);
     return this.bookingsOf(state).filter((b) => b.fromStationId === stationId);
   }
 
@@ -4586,7 +4979,7 @@ export class DemoBackend implements Backend {
 
   private walletAccess(state: DemoState): Profile {
     const profile = this.requireProfile(state);
-    this.refuseDriver(profile);
+    this.refuseNonCustomer(profile);
     if (!demoFeatures(state).wallet || (!this.wallet(state).enabled && profile.role !== "admin")) throw new BackendError("wallet_disabled");
     return profile;
   }
@@ -5046,7 +5439,7 @@ export class DemoBackend implements Backend {
 
   async recordGreenpointVisit(stationId: string, input: { contact: string; service: "swap" | "charge"; vehicle?: VehicleType }): Promise<GreenpointReceipt> {
     const state = this.load();
-    const profile = this.requireStaff(state);
+    const profile = this.stationActor(state, stationId).profile;
     const station = state.stations.find((s) => s.id === stationId);
     if (!station) throw new BackendError("station_not_found");
     const offered = input.service === "swap" ? offersSwap(station.kind) : offersCharging(station.kind);
@@ -5071,7 +5464,7 @@ export class DemoBackend implements Backend {
 
   async confirmRedemption(stationId: string, code: string): Promise<GreenpointReceipt> {
     const state = this.load();
-    const profile = this.requireStaff(state);
+    const profile = this.stationActor(state, stationId).profile;
     const g = this.gp(state);
     const now = new Date().toISOString();
     const r = g.redemptions.find((x) => x.code === code.trim() && x.status === "open" && x.expiresAt > now);
@@ -5152,7 +5545,7 @@ export class DemoBackend implements Backend {
 
   /** A running demo charge gains energy with time; the price follows. */
   private chargeView(c: DemoCharge, now = Date.now()): ChargeSession {
-    const { userId: _userId, pointId: _pointId, ...view } = c;
+    const { userId: _userId, pointId: _pointId, startedBy: _startedBy, ...view } = c;
     if (c.status !== "charging") return view;
     const energyWh = Math.round(((now - new Date(c.startedAt).getTime()) / 3_600_000) * DEMO_CHARGE_WATTS);
     return { ...view, energyWh, powerWatts: DEMO_CHARGE_WATTS, amountXof: chargePrice(energyWh, c.tariff) };
@@ -5168,7 +5561,7 @@ export class DemoBackend implements Backend {
 
   async stationCharging(stationId: string): Promise<StationCharging> {
     const state = this.load();
-    this.requireStaff(state);
+    this.stationReader(state, stationId);
     const all = (state.charges ?? []).filter((c) => c.stationId === stationId).map((c) => this.chargeView(c));
     const day = dayStart();
     const paid = all.filter((c) => c.status === "paid" && (c.paidAt ?? "") >= day);
@@ -5187,7 +5580,7 @@ export class DemoBackend implements Backend {
   /** As startCharge() in worker/charging.ts: from an outlet reservation, its code is checked and starting completes it. */
   async startCharge(stationId: string, input: StartChargeInput): Promise<ChargeSession> {
     const state = this.load();
-    const staff = this.requireStaff(state);
+    const staff = this.stationActor(state, stationId).profile;
     if (!serviceActive(state, stationId, "charging")) throw new BackendError("service_not_offered");
     const station = state.stations.find((s) => s.id === stationId);
     const point = (state.devices ?? seedDevices()).flatMap((d) => d.points).find((p) => p.id === input.pointId && p.stationId === stationId);
@@ -5226,6 +5619,7 @@ export class DemoBackend implements Backend {
       stationName: station.name,
       pointLabel: point.label,
       pointId: point.id,
+      startedBy: staff.id,
       status: "charging",
       userId: customer?.id ?? null,
       customer: customer ? personLabel(customer) : null,
@@ -5246,7 +5640,7 @@ export class DemoBackend implements Backend {
 
   async stopCharge(stationId: string, id: string): Promise<ChargeSession> {
     const state = this.load();
-    this.requireStaff(state);
+    this.stationActor(state, stationId);
     return this.updateCharge(state, id, (c) => {
       if (c.status !== "charging") return c;
       const live = this.chargeView(c);
@@ -5256,7 +5650,7 @@ export class DemoBackend implements Backend {
 
   async cancelCharge(stationId: string, id: string): Promise<ChargeSession> {
     const state = this.load();
-    this.requireStaff(state);
+    this.stationActor(state, stationId);
     return this.updateCharge(state, id, (c) => {
       if (c.status !== "stopped" || c.energyWh > 0) throw new BackendError("charge_wrong_status");
       return { ...c, status: "cancelled" };
@@ -5298,7 +5692,7 @@ export class DemoBackend implements Backend {
 
   async payChargeCash(stationId: string, id: string): Promise<ChargeSession> {
     const state = this.load();
-    this.requireStaff(state);
+    this.stationActor(state, stationId);
     const next = this.payCharge(state, id, "cash");
     this.save(next);
     return this.chargeView(next.charges!.find((c) => c.id === id)!);

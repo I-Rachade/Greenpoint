@@ -4,6 +4,7 @@ import { brandFullBatteries, stationBrands } from "./battery-types";
 import { chargesEvs } from "./ev-chargers";
 import { offersParcels } from "./station-points";
 import { STALE_STATUS_HOURS, type Reservation, type StationView, type VehicleType, type StationKind } from "./types";
+import { openAt, parseOpeningHours } from "./opening-hours";
 
 export function offersCharging(kind: StationKind): boolean {
   return kind === "charging" || kind === "both";
@@ -14,18 +15,12 @@ export function offersSwap(kind: StationKind): boolean {
 }
 
 /**
- * Whether `now` falls inside opening hours written as "07:00-21:00" (Lomé time, which is UTC).
- * Ranges past midnight work; any other text counts as open. Mirrors within_opening_hours() in SQL.
+ * Whether `now` falls inside the opening hours (src/lib/opening-hours.ts: "07:00-21:00",
+ * "Mo-Sa 07:00-21:00", Lomé time = UTC). Ranges past midnight work; any other text counts as open.
  */
 export function withinOpeningHours(hours: string, now: Date = new Date()): boolean {
-  const m = /^\s*(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})\s*$/.exec(hours ?? "");
-  if (!m) return true;
-  const open = Number(m[1]) * 60 + Number(m[2]);
-  const close = Number(m[3]) * 60 + Number(m[4]);
-  const t = now.getUTCHours() * 60 + now.getUTCMinutes();
-  if (open === close) return true;
-  if (open < close) return t >= open && t < close;
-  return t >= open || t < close;
+  const h = parseOpeningHours(hours);
+  return h ? openAt(h, now) : true;
 }
 
 /** Open according to staff and to the opening hours. */

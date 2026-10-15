@@ -254,7 +254,7 @@ describe("staff jump from the reservation into the flow", () => {
     expect((await call(env, "efo", "POST", "/api/stations/ch/charging", { pointId: "p1", reservationId: ev.id, pickupCode: ev.pickupCode })).status).toBe(403);
     expect((await call(env, "efo", "POST", `/api/reservations/${ev.id}/complete`, { pickupCode: ev.pickupCode })).status).toBe(200);
     expect(status(db, ev.id)).toBe("completed");
-    db.exec("insert into station_staff (station_id, user_id) values ('cnt', 'afi')");
+    db.exec("update station_staff set station_id = 'cnt' where user_id = 'afi'");
     const place = (await reserve(env, "kofi", { stationId: "cnt", kind: "charging_point" })).body;
     expect((await call(env, "admin", "POST", `/api/reservations/${place.id}/complete`, { pickupCode: place.pickupCode })).body).toEqual({ error: "active_station_required" });
     const done = await handleApi(
@@ -275,8 +275,8 @@ describe("wrong pickup codes (as parcels)", () => {
   it("locks a reservation after 5 wrong codes, also for the right one", async () => {
     const { env, db } = await setup();
     const r = (await reserve(env, "ama", { stationId: "cnt", kind: "charging_point" })).body;
-    db.exec("insert into station_staff (station_id, user_id) values ('cnt', 'afi')");
-    // afi now works at two stations: the active station goes along.
+    // afi works at one station (W2), now this one; the active station goes along all the same.
+    db.exec("update station_staff set station_id = 'cnt' where user_id = 'afi'");
     const complete = (code: string) =>
       handleApi(
         new Request(`https://app.poinderecharge.com/api/reservations/${r.id}/complete`, {

@@ -18,6 +18,7 @@ import {
   UmbrellaIcon,
   WifiIcon,
 } from "./icons";
+import { parseOpeningHours, type Weekday } from "@/lib/opening-hours";
 import { useI18n } from "./i18n-provider";
 
 // Pieces shared by the station cards and the station screen: photos, stars, amenities.
@@ -35,15 +36,36 @@ export const AMENITY_ICONS: Record<Amenity, typeof StarIcon> = {
   parking: ParkingIcon,
 };
 
-/** "00:00-24:00" and other all-day hours read as "24h/24". */
+/**
+ * Opening hours as people read them: "24h/24", "lun–sam 07:00 – 21:00", "lun, mer, ven 08:00 – 18:00"
+ * (src/lib/opening-hours.ts). Older free text is shown as it is.
+ */
 export function useHoursLabel() {
   const { t } = useI18n();
   return (hours: string) => {
     const h = (hours ?? "").trim();
     if (!h) return "–";
-    if (/^0?0:00\s*[-–]\s*(24:00|0?0:00|23:59)$/.test(h) || /^24\s*h/i.test(h)) return t.stationLook.allDay;
-    return h.replace(/\s*[-–]\s*/, " – ");
+    const parsed = parseOpeningHours(h);
+    if (!parsed) return h;
+    const allWeek = parsed.days.length === 7;
+    const allDay = (parsed.open === "00:00" && parsed.close === "24:00") || parsed.open === parsed.close;
+    if (allWeek && allDay) return t.stationLook.allDay;
+    const days = allWeek ? "" : `${dayRanges(parsed.days, t.stationLook.weekdays)} `;
+    return `${days}${allDay ? t.stationLook.allDay : `${parsed.open} – ${parsed.close}`}`;
   };
+}
+
+/** "lun–ven, dim": runs of three days or more as a range. */
+function dayRanges(days: Weekday[], names: string[]): string {
+  const out: string[] = [];
+  for (let i = 0; i < days.length; ) {
+    let j = i;
+    while (j + 1 < days.length && days[j + 1] === days[j] + 1) j++;
+    if (j - i >= 2) out.push(`${names[days[i] - 1]}–${names[days[j] - 1]}`);
+    else for (let k = i; k <= j; k++) out.push(names[days[k] - 1]);
+    i = j + 1;
+  }
+  return out.join(", ");
 }
 
 /** Cover photo of a station, or its illustration while it has none. */
