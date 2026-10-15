@@ -2,7 +2,7 @@ import { handleApi } from "./api";
 import type { Env } from "./env";
 import { parcelsEnabled } from "./features";
 import { corsHeaders } from "./http";
-import { handleOcppUpgrade } from "./ocpp";
+import { handleOcppUpgrade, logOcppAttempt } from "./ocpp";
 import { runParcelDeadlines } from "./parcels";
 import { runPartnerDeadlines, runPartnerEvents } from "./partners";
 
@@ -13,7 +13,7 @@ export { OcppConnection } from "./ocpp";
  * OCPP charge points connect here (worker/ocpp.ts): /api/devices/ocpp/<id>, or
  * /api/devices/ocpp/k/<key>/<id> for chargers that cannot send a password.
  */
-const OCPP_PATH = /^\/api\/devices\/ocpp\/(?:k\/([^/]+)\/)?([^/]+)$/;
+const OCPP_PATH = /^\/api\/devices\/ocpp\/(?:k\/([^/]+)\/)?([^/]+)\/?$/;
 
 /** The daily cron in wrangler.jsonc. */
 const DAILY_CRON = "0 8 * * *";
@@ -30,8 +30,12 @@ export default {
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     // A WebSocket for a charge point, not a browser call: no CORS.
-    const ocpp = OCPP_PATH.exec(url.pathname);
-    if (ocpp) return handleOcppUpgrade(request, env, ocpp[2], ocpp[1]);
+    if (url.pathname.startsWith("/api/devices/ocpp")) {
+      const ocpp = OCPP_PATH.exec(url.pathname);
+      const response = ocpp ? await handleOcppUpgrade(request, env, ocpp[2], ocpp[1]) : new Response("Unknown charge point", { status: 404 });
+      ctx.waitUntil(logOcppAttempt(env.DB, request, ocpp?.[2], response.status).catch((err) => console.error("ocpp log", err)));
+      return response;
+    }
 
     const cors = corsHeaders(request);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
