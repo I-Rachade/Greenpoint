@@ -7,6 +7,17 @@ import type { EvChargerInput } from "../src/lib/ev-chargers";
 import { deleteEvCharger, evChargersByStation, listEvChargers, saveEvCharger } from "./ev-chargers";
 import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements } from "./battery-types";
 import { postBatteryEvent, recordSwap, stationActor, stationCounter, stationSwaps } from "./station-work";
+import {
+  checkPickupCode,
+  evTargetSql,
+  heldBatteriesSql,
+  heldTargetsByStation,
+  RESERVATION_SELECT,
+  stillActive,
+  toReservation,
+  type ReservationRow,
+} from "./reservations";
+import { kindFrom, typeOfKind } from "../src/lib/reservations";
 import type { BatteryEventInput, SwapFilter, SwapInput } from "../src/lib/station-work";
 import {
   ADMIN_HISTORY_DAYS,
@@ -35,7 +46,6 @@ import {
   VEHICLE_TYPES,
   type Profile,
   type Reservation,
-  type ReservationType,
   type StationInput,
   type StationView,
   type UserRole,
@@ -57,7 +67,6 @@ import {
   deleteDevice,
   handleDeviceCommands,
   handleDeviceEvents,
-  hasConnectedPointsSql,
   listDevices,
   liveFreePointsSql,
   onlineSince,
@@ -206,18 +215,6 @@ interface StationRow {
   rating_count: number;
 }
 
-interface ReservationRow {
-  id: string;
-  user_id: string;
-  station_id: string;
-  type: ReservationType;
-  status: Reservation["status"];
-  created_at: string;
-  expires_at: string;
-  cancel_reason: string | null;
-  pickup_code: string;
-}
-
 interface PromotionRow {
   id: string;
   title: string;
@@ -280,20 +277,6 @@ function parseJson(text: string | undefined): unknown {
   }
 }
 
-function toReservation(r: ReservationRow, withCode: boolean): Reservation {
-  return {
-    id: r.id,
-    userId: r.user_id,
-    stationId: r.station_id,
-    type: r.type,
-    status: r.status,
-    createdAt: r.created_at,
-    expiresAt: r.expires_at,
-    cancelReason: r.cancel_reason,
-    ...(withCode ? { pickupCode: r.pickup_code } : {}),
-  };
-}
-
 function toPromotion(r: PromotionRow): Promotion {
   return {
     id: r.id,
@@ -314,8 +297,9 @@ const STATION_SELECT = `
   select s.*, o.name as operator_name, o.is_own,
          st.is_open, st.free_slots, st.full_batteries, st.updated_at,
          pd.is_active as depot_active, pd.has_counter as depot_counter, pd.lockers as depot_lockers,
-         (select count(*) from reservations r where r.station_id = s.id and r.status = 'active' and r.expires_at > ?1 and r.type = 'slot') as reserved_slots,
-         (select count(*) from reservations r where r.station_id = s.id and r.status = 'active' and r.expires_at > ?1 and r.type = 'battery') as reserved_batteries,
+         (select count(*) from reservations r where r.station_id = s.id and r.status = 'active' and r.expires_at > ?1
+            and r.kind = 'charging_point' and not ${evTargetSql("r")}) as reserved_slots,
+         (select count(*) from reservations r where r.station_id = s.id and r.status = 'active' and r.expires_at > ?1 and r.kind = 'swap') as reserved_batteries,
          (select avg(rating) from station_reviews sr where sr.station_id = s.id) as rating_avg,
          (select count(*) from station_reviews sr where sr.station_id = s.id) as rating_count
   from stations s
@@ -390,14 +374,21 @@ class Ctx {
       .prepare(`${STATION_SELECT} ${where} order by s.name`)
       .bind(nowIso(), ...params)
       .all<StationRow>();
-    const [points, batteryTypes, evChargers] = await Promise.all([
+    const [points, batteryTypes, evChargers, held] = await Promise.all([
       chargingPointsByStation(this.db),
       batteryTypesByStation(this.db),
       evChargersByStation(this.db),
+      heldTargetsByStation(this.db),
     ]);
     return results.map((r) => {
-      const station = { ...toStationView(r), batteryTypes: batteryTypes.get(r.id) ?? [], evChargers: evChargers.get(r.id) ?? [] };
-      const chargingPoints = points.get(r.id);
+      // What active reservations hold here: per battery type, outlet and car charger (src/lib/reservations.ts).
+      const holds = held.get(r.id) ?? new Map<string, number>();
+      const station = {
+        ...toStationView(r),
+        batteryTypes: (batteryTypes.get(r.id) ?? []).map((t) => ({ ...t, reserved: holds.get(`swap:${t.id}`) ?? 0 })),
+        evChargers: (evChargers.get(r.id) ?? []).map((ev) => (holds.has(`charging_point:${ev.id}`) ? { ...ev, reserved: true } : ev)),
+      };
+      const chargingPoints = points.get(r.id)?.map((p) => (holds.has(`charging_point:${p.id}`) ? { ...p, reserved: true } : p));
       return chargingPoints ? { ...station, chargingPoints } : station;
     });
   }
@@ -420,9 +411,21 @@ function int(value: unknown): number {
 
 // Customers --------------------------------------------------------------------
 
-async function reserve(c: Ctx, stationId: string, type: ReservationType): Promise<Reservation> {
+/**
+ * POST /api/reservations { stationId, kind, target } (or the older { stationId, type }).
+ * Riders only. A swap reservation names a battery type the station has a free full
+ * battery of; a charging reservation names a free connected outlet or car charger, or,
+ * at a station without connected outlets, takes a free place of the staff's count.
+ * Holding never changes the battery counter (src/lib/reservations.ts).
+ */
+async function reserve(c: Ctx, input: { stationId?: unknown; kind?: unknown; type?: unknown; target?: unknown }): Promise<Reservation> {
   const user = await c.requireUser();
-  if (type !== "battery" && type !== "slot") throw new ApiError("bad_request");
+  // Only riders reserve; staff, drivers' fleet managers and admins do not (role matrix).
+  if (user.role !== "customer") throw new ApiError("forbidden", 403);
+  const stationId = String(input?.stationId ?? "");
+  const kind = kindFrom(input?.kind ?? input?.type);
+  if (!kind) throw new ApiError("bad_request");
+  const wanted = input?.target === undefined || input?.target === null || input?.target === "" ? null : String(input.target);
   const now = nowIso();
 
   await c.db
@@ -448,62 +451,106 @@ async function reserve(c: Ctx, stationId: string, type: ReservationType): Promis
   const [station] = await c.stations("where s.id = ?2 and s.is_active = 1", stationId);
   if (!station) throw new ApiError("station_not_found", 404);
   if (!station.status.isOpen || !withinOpeningHours(station.openingHours)) throw new ApiError("station_closed");
-  if ((type === "slot" && !offersCharging(station.kind)) || (type === "battery" && !offersSwap(station.kind))) {
-    throw new ApiError("service_not_offered");
+
+  // What the reservation holds, and the condition for it to be free (checked in the insert itself).
+  let target: string | null = null;
+  let free: string;
+  let refused: "none_available" | "battery_type_unavailable" | "outlet_busy" = "none_available";
+  if (kind === "swap") {
+    if (!offersSwap(station.kind)) throw new ApiError("service_not_offered");
+    // The station must be unlocked for the service, and its global switch on (worker/services.ts).
+    await requireService(c.db, stationId, "swap");
+    const types = station.batteryTypes ?? [];
+    if (types.length) {
+      // A type: one the station swaps (active), named by the customer unless it is the only one.
+      if (!wanted && types.length > 1) throw new ApiError("battery_type_required");
+      const type = wanted ? types.find((t) => t.id === wanted) : types[0];
+      if (!type || !type.isActive) throw new ApiError("battery_type_unavailable");
+      target = type.id;
+      refused = "battery_type_unavailable";
+      free = `(select full_batteries from station_battery_types where station_id = ?3 and battery_type_id = ?9) - ${heldBatteriesSql("?3", "?9", "?5")} > 0`;
+    } else {
+      if (wanted) throw new ApiError("battery_type_unavailable");
+      free = `(select full_batteries from station_status where station_id = ?3) - ${heldBatteriesSql("?3", "''", "?5")} > 0`;
+    }
+  } else if (wanted) {
+    const point = (station.chargingPoints ?? []).find((p) => p.id === wanted && p.deviceId);
+    const ev = point ? null : (station.evChargers ?? []).find((x) => x.id === wanted);
+    if (!point && !ev) throw new ApiError("not_found", 404);
+    const notHeld = `not exists (select 1 from reservations where station_id = ?3 and kind = 'charging_point' and target = ?9 and status = 'active' and expires_at > ?5)`;
+    refused = "outlet_busy";
+    if (point) {
+      if (!offersCharging(station.kind)) throw new ApiError("service_not_offered");
+      await requireService(c.db, stationId, "charging");
+      // A connected outlet: reporting, free, held by nobody; older holds without an outlet still count.
+      free = `exists (select 1 from charging_points where id = ?9 and station_id = ?3 and device_id is not null and status = 'free' and last_seen_at > ?8)
+        and ${notHeld}
+        and ${liveFreePointsSql("?3", "?8")} - (select count(*) from reservations r where r.station_id = ?3 and r.kind = 'charging_point' and r.status = 'active'
+              and r.expires_at > ?5 and not ${evTargetSql("r")}) > 0`;
+    } else {
+      // A car charger: active at this station, held by nobody (chargers report no status).
+      await requireService(c.db, stationId, "ev");
+      free = `exists (select 1 from ev_chargers where id = ?9 and station_id = ?3 and is_active = 1) and ${notHeld}`;
+    }
+    target = wanted;
+  } else {
+    if (!offersCharging(station.kind)) throw new ApiError("service_not_offered");
+    await requireService(c.db, stationId, "charging");
+    // With connected outlets the customer picks one; otherwise a free place of the staff's count.
+    if ((station.chargingPoints ?? []).some((p) => p.deviceId)) throw new ApiError("outlet_required");
+    free = `(select free_slots from station_status where station_id = ?3)
+      - (select count(*) from reservations where station_id = ?3 and kind = 'charging_point' and target is null and status = 'active' and expires_at > ?5) > 0`;
   }
-  // The station must also be unlocked for the service, and its global switch on (worker/services.ts).
-  await requireService(c.db, stationId, type === "battery" ? "swap" : "charging");
 
   const id = uuid();
   const code = randomDigits(4);
   const expires = new Date(Date.now() + RESERVATION_MINUTES * 60_000).toISOString();
+  const type = typeOfKind(kind);
   let inserted: D1Result;
   try {
     // The availability check and the insert are one statement, so two customers
-    // cannot take the last battery at once. Stations with connected sockets count
-    // their outlets that reported in the last minutes instead of the staff counter.
+    // cannot take the last battery of a type or the same outlet at once.
     inserted = await c.db
       .prepare(
-        `insert into reservations (id, user_id, station_id, type, status, created_at, expires_at, pickup_code)
-         select ?1, ?2, ?3, ?4, 'active', ?5, ?6, ?7
-         where (select case when ?4 = 'battery' then full_batteries
-                            when ${hasConnectedPointsSql("?3")} then ${liveFreePointsSql("?3", "?8")}
-                            else free_slots end
-                from station_status where station_id = ?3)
-             - (select count(*) from reservations where station_id = ?3 and type = ?4 and status = 'active' and expires_at > ?5) > 0`,
+        `insert into reservations (id, user_id, station_id, type, kind, target, charging_point_id, status, created_at, expires_at, pickup_code)
+         select ?1, ?2, ?3, ?4, ?10, ?9, ?11, 'active', ?5, ?6, ?7
+         where ${free}`,
       )
-      .bind(id, user.id, stationId, type, now, expires, code, onlineSince())
+      .bind(
+        id,
+        user.id,
+        stationId,
+        type,
+        now,
+        expires,
+        code,
+        onlineSince(),
+        target,
+        kind,
+        kind === "charging_point" && target && (station.chargingPoints ?? []).some((p) => p.id === target) ? target : null,
+      )
       .run();
   } catch (err) {
     if (/UNIQUE/i.test(String(err))) throw new ApiError("already_reserved");
     throw err;
   }
-  if (!inserted.meta.changes) throw new ApiError("none_available");
-  await c.audit(user.id, "reservations", "insert", id, { type, status: "active", expires_at: expires }, {
+  if (!inserted.meta.changes) throw new ApiError(refused);
+  await c.audit(user.id, "reservations", "insert", id, { type, kind, target, status: "active", expires_at: expires }, {
     stationId,
     userId: user.id,
   }).run();
-  return {
-    id,
-    userId: user.id,
-    stationId,
-    type,
-    status: "active",
-    createdAt: now,
-    expiresAt: expires,
-    cancelReason: null,
-    pickupCode: code,
-  };
+  const row = await c.db.prepare(`${RESERVATION_SELECT} where r.id = ?`).bind(id).first<ReservationRow>();
+  return toReservation(row!, { withCode: true });
 }
 
 async function myReservations(c: Ctx): Promise<Reservation[]> {
   const user = await c.user();
   if (!user) return [];
   const { results } = await c.db
-    .prepare("select * from reservations where user_id = ? order by created_at desc limit 50")
+    .prepare(`${RESERVATION_SELECT} where r.user_id = ? order by r.created_at desc limit 50`)
     .bind(user.id)
     .all<ReservationRow>();
-  return results.map((r) => toReservation(r, true));
+  return results.map((r) => toReservation(r, { withCode: true }));
 }
 
 async function cancelReservation(c: Ctx, id: string) {
@@ -601,50 +648,47 @@ async function stationReservations(c: Ctx, stationId: string) {
   const user = await c.requireUser();
   if (!(await c.isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
   const { results } = await c.db
-    .prepare("select * from reservations where station_id = ? order by created_at desc limit 50")
+    .prepare(`${RESERVATION_SELECT} where r.station_id = ? order by r.created_at desc limit 50`)
     .bind(stationId)
     .all<ReservationRow>();
-  // Staff never see pickup codes: the customer tells them at the station.
-  return results.map((r) => toReservation(r, false));
+  // Staff never see pickup codes: the customer tells them at the station. They see who reserved what.
+  return results.map((r) => toReservation(r, { withCustomer: true }));
 }
 
-async function completeReservation(c: Ctx, id: string, pickupCode: string, batteryTypeId: unknown) {
+/**
+ * POST /api/reservations/:id/complete { pickupCode }: a charging reservation is used.
+ * A battery reservation is completed by its swap (the swap form, recordSwap with the
+ * reservation), so it is refused here. A charge at a connected outlet is completed by
+ * starting it (worker/charging.ts); this completes a car charger or a counted place,
+ * and a connected outlet whose socket cannot be started.
+ */
+async function completeReservation(c: Ctx, id: string, pickupCode: unknown) {
   const user = await c.requireUser();
-  const r = await c.db.prepare("select * from reservations where id = ?").bind(id).first<ReservationRow>();
+  const r = await c.db.prepare(`${RESERVATION_SELECT} where r.id = ?`).bind(id).first<ReservationRow>();
   if (!r || !(await c.isStaffOf(user, r.station_id))) throw new ApiError("forbidden", 403);
   // At the active station only (R7), logged with the person's role.
   await stationActor(c, r.station_id);
   if (r.user_id === user.id) throw new ApiError("own_reservation");
-  // A battery handed out is a swap: counter −1, empty battery in, one log row (R6), greenpoints.
-  if (r.type === "battery") {
-    await recordSwap(
-      c,
-      r.station_id,
-      {
-        requestId: `reservation:${id}`,
-        customerType: "app",
-        batteryTypeId: batteryTypeId === undefined || batteryTypeId === null ? null : String(batteryTypeId),
-        reservationId: id,
-        pickupCode,
-      },
-      { reservationOnly: true },
-    );
-    return;
-  }
-  if (r.status !== "active" || r.expires_at <= nowIso()) throw new ApiError("reservation_not_active");
-  if (r.pickup_code !== String(pickupCode ?? "").trim()) throw new ApiError("wrong_pickup_code");
+  if (r.kind === "swap") throw new ApiError("swap_required", 409);
+  if (!stillActive(r)) throw new ApiError("reservation_not_active");
+  await checkPickupCode(c.db, r, pickupCode);
   const done = await c.db
     .prepare("update reservations set status = 'completed' where id = ? and status = 'active'")
     .bind(id)
     .run();
   if (!done.meta.changes) throw new ApiError("reservation_not_active");
-  // The slot the customer took comes off the counter, so the map does not show it as free again.
   // The rider's CO2 and greenpoints for this charge (worker/greenpoint.ts).
   const earned = await earnStatement(c.db, { userId: r.user_id, type: r.type, stationId: r.station_id, reservationId: id, createdBy: user.id });
   await c.db.batch([
-    c.db
-      .prepare("update station_status set free_slots = max(free_slots - 1, 0), updated_at = ?, updated_by = ? where station_id = ?")
-      .bind(nowIso(), user.id, r.station_id),
+    // A counted place comes off the staff's count, so the map does not show it as free again.
+    // Connected outlets and car chargers have no such count.
+    ...(r.target_kind === "place"
+      ? [
+          c.db
+            .prepare("update station_status set free_slots = max(free_slots - 1, 0), updated_at = ?, updated_by = ? where station_id = ?")
+            .bind(nowIso(), user.id, r.station_id),
+        ]
+      : []),
     c.audit(user.id, "reservations", "update", id, { status: ["active", "completed"] }, {
       stationId: r.station_id,
       userId: r.user_id,
@@ -811,7 +855,7 @@ async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
       lastSignInAt: u.last_sign_in_at,
     })),
     staff: staff.results.map((s) => ({ stationId: s.station_id, userId: s.user_id })),
-    reservations: reservations.results.map((r) => toReservation(r, false)),
+    reservations: reservations.results.map((r) => toReservation(r)),
     chargingPoints: points.results.map((p) => ({
       id: p.id,
       stationId: p.station_id,
@@ -1374,8 +1418,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     "POST",
     /^\/api\/reservations$/,
     async (c) => {
-      const { stationId, type } = await readJson<{ stationId: string; type: ReservationType }>(c.request);
-      return reserve(c, String(stationId), type);
+      return reserve(c, await readJson<{ stationId?: unknown; kind?: unknown; type?: unknown; target?: unknown }>(c.request));
     },
   ],
   ["POST", /^\/api\/reservations\/([\w-]+)\/cancel$/, async (c, [id]) => cancelReservation(c, id)],
@@ -1383,8 +1426,8 @@ const ROUTES: [string, RegExp, Handler][] = [
     "POST",
     /^\/api\/reservations\/([\w-]+)\/complete$/,
     async (c, [id]) => {
-      const { pickupCode, batteryTypeId } = await readJson<{ pickupCode: string; batteryTypeId?: unknown }>(c.request);
-      return completeReservation(c, id, pickupCode, batteryTypeId);
+      const { pickupCode } = await readJson<{ pickupCode?: unknown }>(c.request);
+      return completeReservation(c, id, pickupCode);
     },
   ],
   ["GET", /^\/api\/staff\/stations$/, (c) => staffStations(c)],

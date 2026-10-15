@@ -21,7 +21,9 @@ import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { loginHref } from "@/lib/next-path";
 import { AMENITIES, stationPhotos } from "@/lib/station-extras";
-import { RESERVATION_MINUTES, type Reservation, type ReservationType, type StationView } from "@/lib/types";
+import { useBrandPref } from "@/lib/prefs";
+import { freeOfType, reservableEvChargers, reservableOutlets, reservableTypes, type ReservationKind } from "@/lib/reservations";
+import { RESERVATION_MINUTES, type Reservation, type StationView } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
 import { ConfirmSheet } from "./confirm-sheet";
@@ -130,20 +132,41 @@ export function StationDetail({ station, distance, onChanged }: Props) {
   const shared = useActiveReservation(station.id)?.reservation ?? null;
   const activeHere = reserved && isHolding(reserved, now) ? reserved : shared;
 
-  async function reserve(type: ReservationType) {
+  /** The type or outlet picker (src/lib/reservations.ts): only what is free now is offered. */
+  const [picker, setPicker] = useState<"swap" | "outlet" | null>(null);
+  const [choice, setChoice] = useState<string | null>(null);
+  const [allTypes, setAllTypes] = useState(false);
+  const [brand] = useBrandPref();
+
+  async function reserve(kind: ReservationKind, target: string | null) {
     if (busy || activeHere) return;
     setBusy(true);
     setMessage(null);
     try {
-      const reservation = await backend.reserve(station.id, type);
+      const reservation = await backend.reserve(station.id, kind, target);
       setReserved(reservation);
+      setPicker(null);
       setSheetOpen(true);
       onChanged();
     } catch (err) {
+      setPicker(null);
       setMessage({ ok: false, text: errorMessage(err) });
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Battery: pick the type where the station swaps several (or one, so the customer sees what is held). */
+  function reserveBattery() {
+    if (!(station.batteryTypes ?? []).length) return void reserve("swap", null);
+    setAllTypes(false);
+    setChoice(reservableTypes(station, brand)[0]?.id ?? null);
+    setPicker("swap");
+  }
+
+  function reserveOutlet() {
+    setChoice(reservableOutlets(station, now)[0]?.id ?? null);
+    setPicker("outlet");
   }
 
   async function share() {
@@ -177,6 +200,11 @@ export function StationDetail({ station, distance, onChanged }: Props) {
   const amenities = AMENITIES.filter((a) => station.amenities?.includes(a));
   const photos = station.photos ?? [];
   const evChargers = station.evChargers ?? [];
+  const typeChoices = reservableTypes(station, allTypes ? null : brand);
+  const brandNarrowed = !allTypes && typeChoices.length < reservableTypes(station).length;
+  const outletChoices = reservableOutlets(station, now);
+  const noFreeType = (station.batteryTypes ?? []).length > 0 && reservableTypes(station).length === 0;
+  const evFree = reservableEvChargers(station).length > 0;
   // Both reserve buttons leave room for the route as an icon only.
   const twoReserve = battery && !!profile && swap && charging && !connected;
 
@@ -329,10 +357,10 @@ export function StationDetail({ station, distance, onChanged }: Props) {
                       <span>{batteryTypeLabel(bt)}</span>
                       <span
                         className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                          bt.fullBatteries > 0 ? "bg-gp-green/10 text-gp-green-dark" : "bg-zinc-500/10 text-gp-muted"
+                          freeOfType(bt) > 0 ? "bg-gp-green/10 text-gp-green-dark" : "bg-zinc-500/10 text-gp-muted"
                         }`}
                       >
-                        {format(t.station.typeFull, { n: bt.fullBatteries })}
+                        {format(t.station.typeFull, { n: freeOfType(bt) })}
                       </span>
                     </li>
                   ))}
@@ -358,8 +386,8 @@ export function StationDetail({ station, distance, onChanged }: Props) {
                 {profile ? (
                   <button
                     type="button"
-                    disabled={busy || slots === 0 || !!activeHere}
-                    onClick={() => reserve("slot")}
+                    disabled={busy || slots === 0 || outletChoices.length === 0 || !!activeHere}
+                    onClick={reserveOutlet}
                     className="shrink-0 rounded-xl bg-gp-green-dark px-3 py-2 text-xs font-semibold text-white hover:bg-gp-forest disabled:opacity-40"
                   >
                     {t.station.moto.reserve}
@@ -418,12 +446,26 @@ export function StationDetail({ station, distance, onChanged }: Props) {
               {evChargers.length > 0 && (
                 <ul className="mt-2 divide-y divide-gp-border text-sm dark:divide-white/10">
                   {evChargers.map((c) => (
-                    <li key={c.id} className="py-1.5">
-                      {format(t.station.ev.charger, {
-                        name: c.name,
-                        connector: t.backoffice.evChargers.connectors[c.connector],
-                        power: c.powerKw,
-                      })}
+                    <li key={c.id} className="flex items-center justify-between gap-3 py-1.5">
+                      <span className="min-w-0">
+                        {format(t.station.ev.charger, {
+                          name: c.name,
+                          connector: t.backoffice.evChargers.connectors[c.connector],
+                          power: c.powerKw,
+                        })}
+                      </span>
+                      {c.reserved ? (
+                        <span className="shrink-0 rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-800 dark:text-amber-300">{t.reserveFlow.reserved}</span>
+                      ) : profile ? (
+                        <button
+                          type="button"
+                          disabled={busy || !!activeHere || !evFree || !station.status.isOpen}
+                          onClick={() => void reserve("charging_point", c.id)}
+                          className="min-h-11 shrink-0 rounded-xl bg-gp-green-dark px-3 text-xs font-semibold text-white hover:bg-gp-forest disabled:opacity-40"
+                        >
+                          {t.reserveFlow.reserve}
+                        </button>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
@@ -500,13 +542,13 @@ export function StationDetail({ station, distance, onChanged }: Props) {
             </Link>
           )}
           {battery && profile && swap && !activeHere && (
-            <button type="button" disabled={busy || availableBatteries(station) === 0} onClick={() => reserve("battery")} className={primary}>
+            <button type="button" disabled={busy || availableBatteries(station) === 0 || noFreeType} onClick={reserveBattery} className={primary}>
               <BatteryIcon size={18} />
               {t.station.reserveBattery}
             </button>
           )}
           {battery && profile && charging && !connected && !activeHere && (
-            <button type="button" disabled={busy || slots === 0} onClick={() => reserve("slot")} className={primary}>
+            <button type="button" disabled={busy || slots === 0} onClick={() => void reserve("charging_point", null)} className={primary}>
               <BoltIcon size={18} />
               {t.station.reserveSlot}
             </button>
@@ -530,6 +572,49 @@ export function StationDetail({ station, distance, onChanged }: Props) {
       </div>
 
       <ConfirmSheet
+        open={picker !== null}
+        title={picker === "swap" ? t.reserveFlow.chooseType : t.reserveFlow.chooseOutlet}
+        confirmLabel={t.reserveFlow.reserve}
+        busy={busy}
+        onConfirm={() => {
+          if (choice && picker) void reserve(picker === "swap" ? "swap" : "charging_point", choice);
+        }}
+        onCancel={() => setPicker(null)}
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-gp-muted">{picker === "swap" ? t.reserveFlow.chooseTypeHint : t.reserveFlow.chooseOutletHint}</p>
+          {picker === "swap" && brandNarrowed && brand && <p className="text-sm">{format(t.reserveFlow.brandOnly, { brand })}</p>}
+          <div role="radiogroup" aria-label={picker === "swap" ? t.reserveFlow.chooseType : t.reserveFlow.chooseOutlet} className="grid gap-2">
+            {(picker === "swap"
+              ? typeChoices.map((bt) => ({ id: bt.id, label: batteryTypeLabel(bt), note: format(t.reserveFlow.free, { n: freeOfType(bt) }) }))
+              : outletChoices.map((p) => ({ id: p.id, label: p.label, note: t.station.outletStatus.free }))
+            ).map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                role="radio"
+                aria-checked={choice === o.id}
+                onClick={() => setChoice(o.id)}
+                className={`flex min-h-12 items-center justify-between gap-3 rounded-2xl border-2 px-4 text-left text-sm font-semibold ${
+                  choice === o.id ? "border-gp-green-dark bg-gp-green/10 text-gp-green-dark dark:border-gp-green dark:text-gp-green" : "border-gp-border bg-gp-surface dark:border-white/10"
+                }`}
+              >
+                <span>{o.label}</span>
+                <span className="text-xs font-medium text-gp-muted">{o.note}</span>
+              </button>
+            ))}
+          </div>
+          {picker === "swap" && typeChoices.length === 0 && <p className="text-sm text-gp-closed">{t.reserveFlow.noType}</p>}
+          {picker === "outlet" && outletChoices.length === 0 && <p className="text-sm text-gp-closed">{t.reserveFlow.noOutlet}</p>}
+          {picker === "swap" && brandNarrowed && (
+            <button type="button" onClick={() => setAllTypes(true)} className="min-h-11 text-sm font-semibold text-gp-green-dark underline dark:text-gp-green">
+              {t.reserveFlow.allTypes}
+            </button>
+          )}
+        </div>
+      </ConfirmSheet>
+
+      <ConfirmSheet
         open={sheetOpen && !!reserved}
         title={t.phase1a.reservedTitle}
         confirmLabel={t.phase1a.viewReservation}
@@ -545,6 +630,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
               <span className="font-mono text-5xl font-bold tracking-[0.3em] text-gp-green-dark dark:text-gp-green">{reserved.pickupCode}</span>
             </>
           )}
+          {reserved?.targetLabel && <p className="font-semibold">{reserved.targetLabel}</p>}
           <p className="text-sm">{format(t.phase1a.reservedBody, { minutes: RESERVATION_MINUTES })}</p>
         </div>
       </ConfirmSheet>

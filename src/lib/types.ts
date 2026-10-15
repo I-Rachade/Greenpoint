@@ -4,6 +4,7 @@ import type { ParcelDepotInput } from "./parcels";
 import type { Amenity, StationRating } from "./station-extras";
 import type { StationService } from "./station-services";
 import type { StationRole } from "./station-work";
+import type { ReservationKind, ReservationTargetKind } from "./reservations";
 
 export type VehicleType = "scooter" | "tricycle" | "ebike" | "moped";
 /** Battery services of a station; "parcel" = neither swap nor charging, a parcel point only. See station-points.ts. */
@@ -56,6 +57,8 @@ export interface ChargingPoint {
   outlet: number | null;
   powerWatts: number | null;
   lastSeenAt: string | null;
+  /** Station list only: an active reservation holds this outlet (src/lib/reservations.ts). */
+  reserved?: boolean;
 }
 
 /** A station merged with its live status and the reservations currently holding capacity. */
@@ -98,6 +101,15 @@ export interface Reservation {
   pickupCode?: string;
   /** Set when the reservation was cancelled for the customer, e.g. "station_closed". */
   cancelReason?: string | null;
+  /** What it holds (src/lib/reservations.ts); missing on rows saved before kinds existed. */
+  kind?: ReservationKind;
+  /** Battery type, outlet or car charger id; null = any free place (or a station without battery types). */
+  target?: string | null;
+  /** "Spiro 72V 40Ah", the outlet's label or the car charger's name. */
+  targetLabel?: string | null;
+  targetKind?: ReservationTargetKind | null;
+  /** Station list only: who reserved (name, else masked phone or e-mail). */
+  customer?: string | null;
 }
 
 export interface Profile {

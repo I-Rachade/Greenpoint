@@ -1,10 +1,13 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { isHolding } from "@/lib/availability";
+import { reservationKind } from "@/lib/reservations";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
 import { newRequestId, SWAP_CUSTOMER_TYPES, takesBatteryIn, type StationCounter, type SwapCustomerType, type SwapInput } from "@/lib/station-work";
-import type { StationView } from "@/lib/types";
+import type { Reservation, StationView } from "@/lib/types";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { GreenpointStaff } from "../greenpoint/greenpoint-staff";
@@ -12,7 +15,8 @@ import { QrIcon } from "../icons";
 import { useI18n } from "../i18n-provider";
 import { LoadFailed } from "../load-state";
 import { canScanQr, QrScanner } from "../parcels/qr-scanner";
-import { Button, Card, Input, SkeletonCard, SuccessCheck, useToast } from "../ui";
+import { useReservationWhat } from "../reservation-list";
+import { Button, Card, EmptyState, Input, SkeletonCard, SuccessCheck, useToast } from "../ui";
 import { WorkShell } from "./work-shell";
 
 function Chips<T extends string>({ value, options, label, onChange }: { value: T; options: { id: T; label: string; disabled?: boolean }[]; label: string; onChange: (v: T) => void }) {
@@ -65,15 +69,23 @@ function ScanField({ label, hint, value, onChange, required, inputMode }: { labe
   );
 }
 
-function SwapForm({ station, counter }: { station: StationView; counter: StationCounter }) {
+/**
+ * The swap form. From a reservation (/operator/echange?reservation=…) it comes filled in:
+ * the reservation's customer and battery type, the customer's code first; the swap then
+ * completes the reservation (worker/station-work.ts recordSwap).
+ */
+function SwapForm({ station, counter, reservation, onReservationDone }: { station: StationView; counter: StationCounter; reservation?: Reservation; onReservationDone?: () => void }) {
   const { t, locale } = useI18n();
   const { backend, features } = useApp();
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const what = useReservationWhat();
   const s = t.work.swap;
   const rows = counter.rows;
-  const [typeId, setTypeId] = useState(rows.length === 1 ? rows[0].batteryTypeId : "");
-  const [customerType, setCustomerType] = useState<SwapCustomerType>("cash");
+  const heldOf = (id: string) => (station.batteryTypes ?? []).find((bt) => bt.id === id)?.reserved ?? 0;
+  const [typeId, setTypeId] = useState(reservation?.target ?? (rows.length === 1 ? rows[0].batteryTypeId : ""));
+  const [customerType, setCustomerType] = useState<SwapCustomerType>(reservation ? "app" : "cash");
+  const [code, setCode] = useState("");
   const [contact, setContact] = useState("");
   const [driverCode, setDriverCode] = useState("");
   const [payment, setPayment] = useState<"wallet" | "cash">(features.lite ? "cash" : "wallet");
@@ -107,7 +119,9 @@ function SwapForm({ station, counter }: { station: StationView; counter: Station
       customerType,
       batteryIn: takesBatteryIn(customerType) ? batteryIn : null,
       batteryOut,
-      contact: customerType === "app" || customerType === "first_purchase" ? contact || null : null,
+      contact: !reservation && (customerType === "app" || customerType === "first_purchase") ? contact || null : null,
+      reservationId: reservation?.id ?? null,
+      pickupCode: reservation ? code : null,
       driverCode: customerType === "fleet" ? driverCode : null,
       payment: customerType === "app" ? (wallet ? "wallet" : "cash") : undefined,
       pin: wallet ? pin : null,
@@ -117,6 +131,7 @@ function SwapForm({ station, counter }: { station: StationView; counter: Station
     try {
       await backend.recordSwap(station.id, input);
       toast(t.work.saved);
+      if (reservation) return onReservationDone?.();
       setDone(true);
       setRequestId(newRequestId());
       setContact("");
@@ -149,6 +164,29 @@ function SwapForm({ station, counter }: { station: StationView; counter: Station
 
   return (
     <form onSubmit={submit} className="space-y-5">
+      {reservation && (
+        <Card className="space-y-3 p-4">
+          <div>
+            <p className="font-semibold">{format(t.work.reservations.fromReservation, { customer: reservation.customer ?? t.work.reservations.customer })}</p>
+            <p className="text-sm text-gp-muted">{what(reservation)}</p>
+          </div>
+          <label className="block space-y-1">
+            <span className="text-sm font-medium">{t.work.reservations.code}</span>
+            <Input
+              inputMode="numeric"
+              pattern="[0-9]{4}"
+              maxLength={4}
+              required
+              autoFocus
+              autoComplete="off"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+              placeholder="0000"
+              className="w-32 text-center font-mono tracking-widest"
+            />
+          </label>
+        </Card>
+      )}
       {rows.length > 1 && (
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium">{s.type}</legend>
@@ -156,23 +194,33 @@ function SwapForm({ station, counter }: { station: StationView; counter: Station
             value={typeId}
             label={s.type}
             onChange={setTypeId}
-            options={rows.map((r) => ({ id: r.batteryTypeId, label: `${r.label ?? ""} · ${format(s.full, { n: r.full })}`, disabled: r.full <= 0 }))}
+            options={rows.map((r) => {
+              const held = heldOf(r.batteryTypeId);
+              return {
+                id: r.batteryTypeId,
+                label: `${r.label ?? ""} · ${format(s.full, { n: r.full })}${held ? ` · ${format(s.held, { n: held })}` : ""}`,
+                // From a reservation only its type; without one, only what no reservation holds.
+                disabled: r.full <= 0 || (reservation?.target ? r.batteryTypeId !== reservation.target : !reservation && r.full - held <= 0),
+              };
+            })}
           />
         </fieldset>
       )}
       {rows.length === 1 && <p className="text-sm text-gp-muted">{format(s.full, { n: rows[0].full })}</p>}
 
-      <fieldset className="space-y-2">
-        <legend className="text-sm font-medium">{s.customer}</legend>
-        <Chips
-          value={customerType}
-          label={s.customer}
-          onChange={setCustomerType}
-          options={SWAP_CUSTOMER_TYPES.map((id) => ({ id, label: s.customerTypes[id], disabled: id === "fleet" && features.lite }))}
-        />
-      </fieldset>
+      {!reservation && (
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium">{s.customer}</legend>
+          <Chips
+            value={customerType}
+            label={s.customer}
+            onChange={setCustomerType}
+            options={SWAP_CUSTOMER_TYPES.map((id) => ({ id, label: s.customerTypes[id], disabled: id === "fleet" && features.lite }))}
+          />
+        </fieldset>
+      )}
 
-      {customerType === "app" && <ScanField label={s.contact} hint={s.contactHint} value={contact} onChange={setContact} required inputMode="tel" />}
+      {customerType === "app" && !reservation && <ScanField label={s.contact} hint={s.contactHint} value={contact} onChange={setContact} required inputMode="tel" />}
       {customerType === "first_purchase" && <ScanField label={s.contactOptional} value={contact} onChange={setContact} inputMode="tel" />}
       {customerType === "fleet" && <ScanField label={s.driverCode} hint={s.fleetHint} value={driverCode} onChange={setDriverCode} required />}
 
@@ -233,11 +281,33 @@ function SwapForm({ station, counter }: { station: StationView; counter: Station
 function SwapView({ station }: { station: StationView }) {
   const { t } = useI18n();
   const { backend } = useApp();
-  const { data, error, reload } = useLiveQuery(() => backend.stationCounter(station.id), station.id);
+  const reservationId = useSearchParams().get("reservation");
+  // Kept once the swap completed the reservation, while the list reloads without it.
+  const [finished, setFinished] = useState(false);
+  const { data, error, reload } = useLiveQuery(
+    () => Promise.all([backend.stationCounter(station.id), reservationId ? backend.stationReservations(station.id) : Promise.resolve([])]),
+    `${station.id}:${reservationId ?? ""}`,
+  );
+  if (finished) {
+    return (
+      <Card className="flex flex-col items-center gap-3 p-6 text-center">
+        <SuccessCheck />
+        <p className="font-semibold">{t.work.reservations.done}</p>
+        <Button size="lg" href="/operator/reservations">
+          {t.work.reservations.back}
+        </Button>
+      </Card>
+    );
+  }
   if (!data) return error ? <LoadFailed error={error} onRetry={reload} /> : <SkeletonCard />;
+  const [counter, reservations] = data;
+  const reservation = reservationId ? reservations.find((r) => r.id === reservationId && reservationKind(r) === "swap") : undefined;
+  if (reservationId && (!reservation || !isHolding(reservation))) {
+    return <EmptyState text={t.work.reservations.gone} action={<Button href="/operator/reservations">{t.work.reservations.back}</Button>} />;
+  }
   return (
     <>
-      <SwapForm station={station} counter={data} />
+      <SwapForm key={reservation?.id ?? "walk-in"} station={station} counter={counter} reservation={reservation} onReservationDone={() => setFinished(true)} />
       <Button variant="ghost" href="/operator/journal">
         {t.work.swap.log}
       </Button>

@@ -24,6 +24,7 @@ import type { ChargingPoint, ChargingPointStatus } from "../src/lib/types";
 import type { Env } from "./env";
 import { ApiError, nowIso, sha256, uuid } from "./http";
 import { dispatchXingkeCommand } from "./xingke";
+import { evTargetSql } from "./reservations";
 import { ocppIdTag, ocppKey, remoteStartRequest, remoteStopRequest } from "../src/lib/iot/ocpp";
 import { sendOcppCommand } from "./ocpp";
 import { earnStatement } from "./greenpoint";
@@ -105,6 +106,8 @@ export function ingest(db: D1Database): Ingest {
     ];
     let updated = 0;
     let plugIns = 0;
+    /** Outlets a customer plugged into now: a reservation for one of them is the one used. */
+    const plugged: string[] = [];
     for (const o of outlets) {
       const point = await db
         .prepare("select id, status from charging_points where device_id = ? and outlet = ?")
@@ -124,19 +127,23 @@ export function ingest(db: D1Database): Ingest {
       statements.push(chargeReadingStatement(db, point.id, o.status, o.energy_wh, now));
       updated++;
       // A charge staff started is not a reservation's plug-in.
-      if (o.status === "charging" && point.status !== "charging" && !(await hasOpenCharge(db, point.id))) plugIns++;
+      if (o.status === "charging" && point.status !== "charging" && !(await hasOpenCharge(db, point.id))) {
+        plugIns++;
+        plugged.push(point.id);
+      }
     }
 
-    // A customer plugged in: their slot reservation is used up, otherwise it would keep
-    // holding a second outlet until it expires. The oldest ones are taken, since the
-    // socket cannot tell who plugged in.
+    // A customer plugged in: their outlet reservation is used up, otherwise it would keep
+    // holding a second outlet until it expires. A reservation for that outlet first, then
+    // the oldest ones, since the socket cannot tell who plugged in. Car chargers never.
     if (plugIns) {
       const { results } = await db
         .prepare(
-          `select id, user_id from reservations where station_id = ? and type = 'slot' and status = 'active' and expires_at > ?
-           order by created_at limit ?`,
+          `select r.id, r.user_id from reservations r where r.station_id = ?1 and r.kind = 'charging_point' and r.status = 'active' and r.expires_at > ?2
+             and not ${evTargetSql("r")}
+           order by case when r.target in (select value from json_each(?4)) then 0 else 1 end, r.created_at limit ?3`,
         )
-        .bind(device.station_id, now, plugIns)
+        .bind(device.station_id, now, plugIns, JSON.stringify(plugged))
         .all<{ id: string; user_id: string }>();
       for (const r of results) {
         // The rider's CO2 and greenpoints for this charge (worker/greenpoint.ts).

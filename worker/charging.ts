@@ -22,6 +22,7 @@ import { ApiError, nowIso, readJson, uuid } from "./http";
 import { requireService } from "./services";
 import { mobilePaymentOffered, startChargePayment, type Payment } from "./payments";
 import { walletAccess } from "./wallet";
+import { checkPickupCode, evTargetSql, stillActive, type ReservationRow } from "./reservations";
 
 // Charging at a connected socket, run by station staff (plan: planung/laden-vor-ort-plan.md,
 // schema: migrations/0025_charging_sessions.sql). Staff start an outlet for a cash or app
@@ -186,12 +187,17 @@ async function findCustomer(db: D1Database, raw: unknown): Promise<{ id: string 
   return row;
 }
 
-/** POST /api/stations/:id/charging { pointId, contact? }: switches an outlet on for a customer. */
+/**
+ * POST /api/stations/:id/charging { pointId, contact? | reservationId + pickupCode }: switches
+ * an outlet on for a customer. From a reservation (staff open it from the reservation list,
+ * outlet prefilled, another free one can be chosen): the code is checked (locked after 5
+ * wrong ones) and starting the charge completes the reservation, exactly once.
+ */
 export async function startCharge(env: Env, user: Profile, isStaffOf: StaffCheck, stationId: string, request: Request): Promise<ChargeSession> {
   if (!(await isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
   // A new charge needs the station unlocked for its motorbike outlets (worker/services.ts).
   await requireService(env.DB, stationId, "charging");
-  const body = await readJson<{ pointId?: unknown; contact?: unknown }>(request);
+  const body = await readJson<{ pointId?: unknown; contact?: unknown; reservationId?: unknown; pickupCode?: unknown }>(request);
   const db = env.DB;
   const point = await db
     .prepare("select id, station_id, label, status, device_id, outlet, last_seen_at from charging_points where id = ?")
@@ -200,7 +206,21 @@ export async function startCharge(env: Env, user: Profile, isStaffOf: StaffCheck
   if (!point || point.station_id !== stationId || !point.device_id || !point.outlet) throw new ApiError("not_found", 404);
   if (!point.last_seen_at || point.last_seen_at <= onlineSince()) throw new ApiError("device_offline", 409);
   if (point.status === "charging" || point.status === "fault") throw new ApiError("charge_busy", 409);
-  const customer = await findCustomer(db, body.contact);
+  let reservation: ReservationRow | null = null;
+  if (body.reservationId) {
+    reservation = await db
+      .prepare(`select r.*, ${evTargetSql("r")} as is_ev from reservations r where r.id = ?`)
+      .bind(String(body.reservationId))
+      .first<ReservationRow & { is_ev: number }>();
+    // A motorbike outlet reservation of this station; a car charger's has no outlet to start.
+    if (!reservation || reservation.station_id !== stationId || reservation.kind !== "charging_point" || (reservation as { is_ev?: number }).is_ev) {
+      throw new ApiError("forbidden", 403);
+    }
+    if (reservation.user_id === user.id) throw new ApiError("own_reservation");
+    if (!stillActive(reservation)) throw new ApiError("reservation_not_active");
+    await checkPickupCode(db, reservation, body.pickupCode);
+  }
+  const customer = reservation ? { id: reservation.user_id } : await findCustomer(db, body.contact);
   // Staff never charge for themselves through the counter (greenpoints, cash).
   if (customer?.id === user.id) throw new ApiError("own_reservation");
 
@@ -208,24 +228,40 @@ export async function startCharge(env: Env, user: Profile, isStaffOf: StaffCheck
   const now = nowIso();
   const id = uuid();
   const row = { id, station_id: stationId, user_id: customer?.id ?? null };
-  const statements = [
+  const statements: D1PreparedStatement[] = [];
+  if (reservation) {
+    // The reservation first: the charge only starts if this request completed it.
+    statements.push(
+      db
+        .prepare("update reservations set status = 'completed', charging_point_id = ? where id = ? and status = 'active'")
+        .bind(point.id, reservation.id),
+    );
+  }
+  statements.push(
     db
       .prepare(
         `insert into charging_sessions (id, station_id, charging_point_id, device_id, outlet, point_label, user_id, kwh_xof, min_xof, started_by, started_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11 where ?12 = 0 or changes() > 0`,
       )
-      .bind(id, stationId, point.id, point.device_id, point.outlet, point.label, row.user_id, tariff.kwhXof, tariff.minXof, user.id, now),
+      .bind(id, stationId, point.id, point.device_id, point.outlet, point.label, row.user_id, tariff.kwhXof, tariff.minXof, user.id, now, reservation ? 1 : 0),
     // Old values of the previous charge must not show as this one's.
-    db.prepare("update charging_points set power_watts = null, energy_wh = null where id = ?").bind(point.id),
-    audit(db, user.id, "insert", row, { point: point.label, customer: row.user_id, tariff }),
-  ];
-  // The customer's slot reservation here is used now; the charge earns the greenpoints.
-  if (customer) {
+    db.prepare("update charging_points set power_watts = null, energy_wh = null where id = ? and exists (select 1 from charging_sessions where id = ?)").bind(point.id, id),
+    db
+      .prepare(
+        `insert into audit_log (at, actor, table_name, action, row_id, station_id, user_id, changes)
+         select ?, ?, 'charging_sessions', 'insert', ?, ?, ?, ? where exists (select 1 from charging_sessions where id = ?)`,
+      )
+      .bind(nowIso(), user.id, id, stationId, row.user_id, JSON.stringify({ point: point.label, customer: row.user_id, tariff, reservation: reservation?.id ?? null }), id),
+  );
+  // Without a reservation named: the customer's charging reservation here is used now (the
+  // one for this outlet first, never a car charger's); the charge earns the greenpoints.
+  if (customer && !reservation) {
     statements.push(
       db
         .prepare(
           `update reservations set status = 'completed', charging_point_id = ?3
-           where id = (select id from reservations where user_id = ?1 and station_id = ?2 and type = 'slot' and status = 'active' order by created_at limit 1)`,
+           where id = (select r.id from reservations r where r.user_id = ?1 and r.station_id = ?2 and r.kind = 'charging_point' and r.status = 'active'
+                         and not ${evTargetSql("r")} order by (r.target = ?3) desc, r.created_at limit 1)`,
         )
         .bind(customer.id, stationId, point.id),
     );
@@ -236,14 +272,18 @@ export async function startCharge(env: Env, user: Profile, isStaffOf: StaffCheck
     if (/UNIQUE/i.test(String(err))) throw new ApiError("charge_busy", 409);
     throw err;
   }
+  if (!(await db.prepare("select 1 from charging_sessions where id = ?").bind(id).first())) throw new ApiError("reservation_not_active");
   try {
     const { order } = await startOutlet(env, point.device_id, point.outlet, user.id);
     await db.prepare("update charging_sessions set order_no = ? where id = ?").bind(order, id).run();
   } catch (err) {
-    // The outlet did not switch on: nothing was charged.
+    // The outlet did not switch on: nothing was charged, and the reservation holds again.
     await db.batch([
       db.prepare("update charging_sessions set status = 'cancelled', stopped_at = ?, stopped_by = ? where id = ?").bind(nowIso(), user.id, id),
       audit(db, user.id, "update", row, { status: ["charging", "cancelled"], reason: "start_failed" }),
+      ...(reservation
+        ? [db.prepare("update reservations set status = 'active', charging_point_id = null where id = ? and status = 'completed'").bind(reservation.id)]
+        : []),
     ]);
     throw err;
   }

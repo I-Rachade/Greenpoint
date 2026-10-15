@@ -1,12 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
+import { reservableOutlets, reservableTypes } from "../reservations";
 
 // Runs without a browser: the demo falls back to in-memory storage.
 const STATION = "st-grand-marche"; // open around the clock in the demo data
 
 async function asRole(backend: DemoBackend, role: "customer" | "operator") {
   await backend.register("+22890123456", DEMO_CODE, "2580", role);
+}
+
+/** Reserves what the station offers: its first free battery type, or its first free outlet (none at a counted station). */
+async function reserveAny(backend: DemoBackend, stationId: string, kind: "battery" | "slot") {
+  const station = (await backend.listStations()).find((s) => s.id === stationId)!;
+  const target = kind === "battery" ? (reservableTypes(station)[0]?.id ?? null) : (reservableOutlets(station)[0]?.id ?? null);
+  return backend.reserve(stationId, kind, target);
 }
 
 describe("DemoBackend reservations", () => {
@@ -24,38 +32,71 @@ describe("DemoBackend reservations", () => {
 
   it("gives the customer a pickup code that staff never see", async () => {
     await asRole(backend, "customer");
-    const r = await backend.reserve(STATION, "battery");
+    const r = await reserveAny(backend, STATION, "battery");
     expect(r.pickupCode).toMatch(/^\d{4}$/);
     const staffView = await backend.stationReservations(STATION);
     expect(staffView.find((x) => x.id === r.id)?.pickupCode).toBeUndefined();
   });
 
-  it("completes only with the right code and takes the battery off the counter", async () => {
+  it("completes a battery reservation by its swap, only with the right code, once", async () => {
     await asRole(backend, "customer");
-    const r = await backend.reserve(STATION, "battery");
+    const r = await reserveAny(backend, STATION, "battery");
     const before = (await backend.listStations()).find((s) => s.id === STATION)!.status.fullBatteries;
+    const swap = (requestId: string, pickupCode: string, batteryTypeId?: string | null) =>
+      backend.recordSwap(STATION, { requestId, customerType: "app", reservationId: r.id, pickupCode, batteryTypeId, payment: "cash" });
 
     // Only station staff complete, at their active station (as in the Worker).
-    await expect(backend.completeReservation(r.id, r.pickupCode!)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(swap("req-0000001", r.pickupCode!)).rejects.toMatchObject({ code: "forbidden" });
 
     await asRole(backend, "operator");
-    await expect(backend.completeReservation(r.id, r.pickupCode!)).rejects.toMatchObject({ code: "active_station_required" });
+    await expect(swap("req-0000001", r.pickupCode!)).rejects.toMatchObject({ code: "active_station_required" });
     setActiveStation(STATION);
+    // The code alone no longer completes a battery reservation: the swap does.
+    await expect(backend.completeReservation(r.id, r.pickupCode!)).rejects.toMatchObject({ code: "swap_required" });
     const wrong = r.pickupCode === "0000" ? "1111" : "0000";
-    await expect(backend.completeReservation(r.id, wrong)).rejects.toMatchObject({ code: "wrong_pickup_code" });
-    // A battery handed out is a swap: at a station with several battery types, of the type given.
-    const type = (await backend.listStations()).find((s) => s.id === STATION)!.batteryTypes?.[0]?.id ?? null;
-    await backend.completeReservation(r.id, r.pickupCode!, type);
-    expect(await backend.stationSwaps(STATION)).toMatchObject([{ customerType: "app", payment: "none", reservationId: r.id }]);
+    await expect(swap("req-0000001", wrong)).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    const other = (await backend.listStations()).find((s) => s.id === STATION)!.batteryTypes?.find((t) => t.id !== r.target);
+    if (r.target && other) await expect(swap("req-0000001", r.pickupCode!, other.id)).rejects.toMatchObject({ code: "battery_type_mismatch" });
+    await swap("req-0000001", r.pickupCode!);
+    expect(await backend.stationSwaps(STATION)).toMatchObject([{ customerType: "app", payment: "cash", reservationId: r.id, batteryTypeId: r.target ?? "" }]);
+    await expect(swap("req-0000002", r.pickupCode!)).rejects.toMatchObject({ code: "reservation_not_active" });
 
     const after = (await backend.listStations()).find((s) => s.id === STATION)!;
     expect(after.status.fullBatteries).toBe(before - 1);
     expect(after.reservedBatteries).toBe(0);
   });
 
+  it("reserves by type as the Worker: type named, free battery of it, free outlet, riders only", async () => {
+    await asRole(backend, "operator");
+    await expect(backend.reserve(STATION, "swap", null)).rejects.toMatchObject({ code: "forbidden" });
+    await asRole(backend, "customer");
+    await expect(backend.reserve(STATION, "swap", null)).rejects.toMatchObject({ code: "battery_type_required" });
+    await expect(backend.reserve(STATION, "swap", "nope")).rejects.toMatchObject({ code: "battery_type_unavailable" });
+    // A station with connected outlets: the customer picks one.
+    await expect(backend.reserve(STATION, "charging_point", null)).rejects.toMatchObject({ code: "outlet_required" });
+    const station = (await backend.listStations()).find((s) => s.id === STATION)!;
+    const type = reservableTypes(station)[0];
+    const r = await backend.reserve(STATION, "swap", type.id);
+    expect(r).toMatchObject({ kind: "swap", target: type.id, targetKind: "battery_type" });
+    const after = (await backend.listStations()).find((s) => s.id === STATION)!;
+    expect(after.batteryTypes?.find((t) => t.id === type.id)?.reserved).toBe(1);
+    expect((await backend.stationReservations(STATION))[0].customer).toBeTruthy();
+
+  });
+
+  it("locks a reservation after 5 wrong codes", async () => {
+    await asRole(backend, "customer");
+    const r = await reserveAny(backend, "st-universite", "slot");
+    await asRole(backend, "operator");
+    setActiveStation("st-universite");
+    const wrong = r.pickupCode === "0000" ? "1111" : "0000";
+    for (let i = 0; i < 5; i++) await expect(backend.completeReservation(r.id, wrong)).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    await expect(backend.completeReservation(r.id, r.pickupCode!)).rejects.toMatchObject({ code: "code_locked" });
+  });
+
   it("cancels active reservations when the station closes", async () => {
     await asRole(backend, "customer");
-    const r = await backend.reserve(STATION, "slot");
+    const r = await reserveAny(backend, STATION, "slot");
     await asRole(backend, "operator");
     setActiveStation(STATION);
     await backend.updateStatus(STATION, { isOpen: false });
@@ -67,18 +108,18 @@ describe("DemoBackend reservations", () => {
 
   it("pauses re-reserving at a station after cancelling there", async () => {
     await asRole(backend, "customer");
-    const r = await backend.reserve(STATION, "battery");
+    const r = await reserveAny(backend, STATION, "battery");
     await backend.cancelReservation(r.id);
-    await expect(backend.reserve(STATION, "battery")).rejects.toMatchObject({ code: "cooldown" });
+    await expect(reserveAny(backend, STATION, "battery")).rejects.toMatchObject({ code: "cooldown" });
   });
 
   it("limits unused reservations per day", async () => {
     await asRole(backend, "customer");
     for (const station of ["st-tokoin", "st-agoe", "st-universite"]) {
-      const r = await backend.reserve(station, station === "st-universite" ? "slot" : "battery");
+      const r = await reserveAny(backend, station, station === "st-universite" ? "slot" : "battery");
       await backend.cancelReservation(r.id);
     }
-    await expect(backend.reserve(STATION, "battery")).rejects.toMatchObject({ code: "daily_limit" });
+    await expect(reserveAny(backend, STATION, "battery")).rejects.toMatchObject({ code: "daily_limit" });
   });
 });
 
@@ -88,7 +129,7 @@ describe("DemoBackend account deletion", () => {
     vi.setSystemTime(new Date("2026-10-12T12:00:00Z"));
     const backend = new DemoBackend();
     await asRole(backend, "customer");
-    await backend.reserve(STATION, "battery");
+    await reserveAny(backend, STATION, "battery");
 
     // The account has no e-mail address, so no code can go there.
     await expect(backend.sendDeleteCode("email")).rejects.toBeTruthy();

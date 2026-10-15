@@ -15,7 +15,17 @@ import {
   type UserRole,
   type VehicleType,
 } from "../types";
-import { BackendError, type Backend, type CodeChannel, type StatusPatch } from "./backend";
+import { BackendError, type Backend, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
+import {
+  freeOfType,
+  heldTargets,
+  kindFrom,
+  RESERVATION_CODE_LOCK_MINUTES,
+  RESERVATION_MAX_CODE_FAILURES,
+  reservationKind,
+  typeOfKind,
+  type ReservationKind,
+} from "../reservations";
 import { getActiveStation } from "../active-station";
 import {
   applyBatteryEvent,
@@ -251,6 +261,8 @@ interface DemoState {
   typeBatteries?: Record<string, Record<string, number>>;
   parcelSizes?: ParcelSizeTier[];
   parcelCodeFailures?: { stationId: string; at: string }[];
+  /** Wrong pickup codes per reservation (as reservation_code_failures, migration 0029). */
+  reservationCodeFailures?: { reservationId: string; at: string }[];
   /** Drivers (see src/lib/drivers.ts). */
   drivers?: DemoDriver[];
   fleet?: FleetVehicle[];
@@ -691,11 +703,13 @@ export class DemoBackend implements Backend {
         status = { ...status, updatedAt: new Date().toISOString() };
       }
       const held = countHolding(state.reservations, s.id);
+      // What active reservations hold, per battery type, outlet and car charger (as stations() in worker/api.ts).
+      const holds = heldTargets(state.reservations, s.id);
       // Demo sockets pretend to report all the time.
       const chargingPoints = (state.devices ?? seedDevices())
         .flatMap((d) => d.points)
         .filter((p) => p.stationId === s.id)
-        .map((p) => ({ ...p, lastSeenAt: seen }));
+        .map((p) => ({ ...p, lastSeenAt: seen, ...(holds.has(`charging_point:${p.id}`) ? { reserved: true } : {}) }));
       // Charging places are the connected outlets.
       const chargingSlots = chargingPoints.filter((p) => p.deviceId).length;
       const depot = (state.parcelDepots ?? seedDepots()).find((d) => d.stationId === s.id);
@@ -706,11 +720,11 @@ export class DemoBackend implements Backend {
       const batteryTypes = types
         .filter((t) => swapped.includes(t.id))
         .sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name))
-        .map((t) => ({ ...t, fullBatteries: counts[t.id] ?? 0 }));
+        .map((t) => ({ ...t, fullBatteries: counts[t.id] ?? 0, reserved: holds.get(`swap:${t.id}`) ?? 0 }));
       const evChargers = (state.evChargers ?? DEMO_EV_CHARGERS)
         .filter((c) => c.stationId === s.id && c.isActive)
         .sort((a, b) => a.name.localeCompare(b.name))
-        .map(({ id, name, connector, powerKw }) => ({ id, name, connector, powerKw }));
+        .map(({ id, name, connector, powerKw }) => ({ id, name, connector, powerKw, ...(holds.has(`charging_point:${id}`) ? { reserved: true } : {}) }));
       const extras = DEMO_STATION_EXTRAS[s.id];
       return {
         ...s,
@@ -881,9 +895,13 @@ export class DemoBackend implements Backend {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  async reserve(stationId: string, type: ReservationType) {
+  /** As reserve() in worker/api.ts: riders only; a free battery of the type, or a free outlet or car charger. */
+  async reserve(stationId: string, kindOrType: ReservationKind | ReservationType, wanted?: string | null) {
     const state = this.load();
     const profile = this.requireProfile(state);
+    if (profile.role !== "customer") throw new BackendError("forbidden");
+    const kind = kindFrom(kindOrType);
+    if (!kind) throw new BackendError("unknown", "bad_request");
     const now = new Date();
     if (state.reservations.some((r) => r.userId === profile.id && isHolding(r, now))) {
       throw new BackendError("already_reserved");
@@ -910,19 +928,51 @@ export class DemoBackend implements Backend {
     const status = state.statuses.find((s) => s.stationId === stationId);
     if (!station || !status) throw new BackendError("station_not_found");
     if (!status.isOpen || !withinOpeningHours(station.openingHours, now)) throw new BackendError("station_closed");
-    if ((type === "slot" && !offersCharging(station.kind)) || (type === "battery" && !offersSwap(station.kind))) {
-      throw new BackendError("service_not_offered");
+    const view = this.views(state, [station])[0];
+    const held = countHolding(state.reservations, stationId, now);
+    const target = wanted || null;
+    let picked: Pick<Reservation, "target" | "targetLabel" | "targetKind"> = { target: null, targetLabel: null, targetKind: null };
+    if (kind === "swap") {
+      if (!offersSwap(station.kind) || !serviceActive(state, stationId, "swap")) throw new BackendError("service_not_offered");
+      const types = view.batteryTypes ?? [];
+      if (types.length) {
+        if (!target && types.length > 1) throw new BackendError("battery_type_required");
+        const type = target ? types.find((t) => t.id === target) : types[0];
+        if (!type || !type.isActive || freeOfType(type) <= 0) throw new BackendError("battery_type_unavailable");
+        picked = { target: type.id, targetLabel: `${type.brand} ${type.name}`, targetKind: "battery_type" };
+      } else {
+        if (target) throw new BackendError("battery_type_unavailable");
+        if (status.fullBatteries - held.batteries <= 0) throw new BackendError("none_available");
+      }
+    } else if (target) {
+      const point = (view.chargingPoints ?? []).find((p) => p.id === target && p.deviceId);
+      const ev = point ? null : (view.evChargers ?? []).find((x) => x.id === target);
+      if (!point && !ev) throw new BackendError("unknown", "not_found");
+      if (point) {
+        if (!offersCharging(station.kind) || !serviceActive(state, stationId, "charging")) throw new BackendError("service_not_offered");
+        const freePoints = (view.chargingPoints ?? []).filter((p) => p.deviceId && p.status === "free").length;
+        if (point.status !== "free" || point.reserved || freePoints - held.slots <= 0) throw new BackendError("outlet_busy");
+        picked = { target: point.id, targetLabel: point.label, targetKind: "outlet" };
+      } else {
+        if (!serviceActive(state, stationId, "ev")) throw new BackendError("service_not_offered");
+        if (ev!.reserved) throw new BackendError("outlet_busy");
+        picked = { target: ev!.id, targetLabel: ev!.name, targetKind: "ev" };
+      }
+    } else {
+      if (!offersCharging(station.kind) || !serviceActive(state, stationId, "charging")) throw new BackendError("service_not_offered");
+      if ((view.chargingPoints ?? []).some((p) => p.deviceId)) throw new BackendError("outlet_required");
+      const places = state.reservations.filter((r) => r.stationId === stationId && isHolding(r, now) && reservationKind(r) === "charging_point" && !r.target).length;
+      if (status.freeSlots - places <= 0) throw new BackendError("none_available");
+      picked = { target: null, targetLabel: null, targetKind: "place" };
     }
-    if (!serviceActive(state, stationId, type === "battery" ? "swap" : "charging")) throw new BackendError("service_not_offered");
-    const held = countHolding(state.reservations, stationId);
-    const left = type === "slot" ? status.freeSlots - held.slots : status.fullBatteries - held.batteries;
-    if (left <= 0) throw new BackendError("none_available");
-
+    const type = typeOfKind(kind);
     const reservation: Reservation = {
       id: crypto.randomUUID(),
       userId: profile.id,
       stationId,
       type,
+      kind,
+      ...picked,
       status: "active",
       createdAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + RESERVATION_MINUTES * 60_000).toISOString(),
@@ -931,10 +981,34 @@ export class DemoBackend implements Backend {
     this.save(
       withAudit(
         { ...state, reservations: [...state.reservations, reservation] },
-        { table: "reservations", action: "insert", rowId: reservation.id, stationId, userId: profile.id, changes: { type, status: "active", station_id: stationId } },
+        {
+          table: "reservations",
+          action: "insert",
+          rowId: reservation.id,
+          stationId,
+          userId: profile.id,
+          changes: { type, kind, target: picked.target, status: "active", station_id: stationId },
+        },
       ),
     );
     return reservation;
+  }
+
+  /**
+   * As checkPickupCode() in worker/reservations.ts: 5 wrong codes within 15 minutes lock
+   * the reservation. A wrong code is saved, then refused.
+   */
+  private checkPickupCode(state: DemoState, r: Reservation, raw: unknown) {
+    const since = Date.now() - RESERVATION_CODE_LOCK_MINUTES * 60_000;
+    const failures = (state.reservationCodeFailures ?? []).filter((f) => f.reservationId === r.id && Date.parse(f.at) > since);
+    if (failures.length >= RESERVATION_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    if (String(raw ?? "").trim() === r.pickupCode) return;
+    const dayAgo = Date.now() - 86_400_000;
+    this.save({
+      ...state,
+      reservationCodeFailures: [...(state.reservationCodeFailures ?? []).filter((f) => Date.parse(f.at) > dayAgo), { reservationId: r.id, at: new Date().toISOString() }],
+    });
+    throw new BackendError("wrong_pickup_code");
   }
 
   async cancelReservation(id: string) {
@@ -1000,33 +1074,38 @@ export class DemoBackend implements Backend {
     // Staff never see the pickup code; the customer shows it.
     return this.load()
       .reservations.filter((r) => r.stationId === stationId)
-      .map((r) => ({ ...r, pickupCode: undefined }))
+      .map((r) => ({ ...r, pickupCode: undefined, customer: this.customerLabel(r.userId) }))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  async completeReservation(id: string, code: string, batteryTypeId?: string | null) {
+  /** As completeReservation() in worker/api.ts: charging reservations only; a swap reservation is completed by its swap. */
+  async completeReservation(id: string, code: string) {
     const state = this.load();
     const profile = this.requireProfile(state);
     const r = state.reservations.find((x) => x.id === id);
     if (!r) throw new BackendError("forbidden");
     this.stationActor(state, r.stationId);
     if (r.userId === profile.id) throw new BackendError("own_reservation");
-    // A battery handed out is a swap (counter −1, empty battery in, one log row), as in worker/api.ts.
-    if (r.type === "battery") {
-      await this.swapAt(state, r.stationId, { requestId: `reservation:${id}`, customerType: "app", batteryTypeId, reservationId: id, pickupCode: code }, true);
-      return;
-    }
+    if (reservationKind(r) === "swap") throw new BackendError("swap_required");
     if (!isHolding(r)) throw new BackendError("reservation_not_active");
-    if (code.trim() !== r.pickupCode) throw new BackendError("wrong_pickup_code");
-    // Taking the slot off the counter is part of completing (as in complete_reservation()).
-    const statuses = state.statuses.map((s) =>
-      s.stationId === r.stationId ? { ...s, freeSlots: Math.max(0, s.freeSlots - 1), updatedAt: new Date().toISOString() } : s,
-    );
+    this.checkPickupCode(state, r, code);
+    // A counted place comes off the free places; connected outlets and car chargers have no such count.
+    const place = !r.target;
+    const statuses = place
+      ? state.statuses.map((s) => (s.stationId === r.stationId ? { ...s, freeSlots: Math.max(0, s.freeSlots - 1), updatedAt: new Date().toISOString() } : s))
+      : state.statuses;
     this.save({
       ...this.earn(state, { userId: r.userId, type: r.type, stationId: r.stationId, reservationId: r.id }),
       statuses,
       reservations: state.reservations.map((x) => (x.id === id ? { ...x, status: "completed" as const } : x)),
     });
+  }
+
+  /** Name, else masked phone or e-mail of an account (as staff see customers). */
+  private customerLabel(userId: string): string | null {
+    const state = this.load();
+    const user = (state.users ?? demoUsers(new Date())).find((u) => u.id === userId) ?? (state.profile?.id === userId ? state.profile : null);
+    return user ? personLabel(user) : null;
   }
 
   // Station work (src/lib/station-work.ts), as worker/station-work.ts ------------------
@@ -1177,11 +1256,11 @@ export class DemoBackend implements Backend {
   }
 
   async recordSwap(stationId: string, input: SwapInput): Promise<SwapEntry> {
-    return this.swapAt(this.load(), stationId, input, false);
+    return this.swapAt(this.load(), stationId, input);
   }
 
-  /** As recordSwap() in the Worker; `reservationOnly`: a reservation completed with its code, paid outside the app. */
-  private async swapAt(state: DemoState, stationId: string, input: SwapInput, reservationOnly: boolean): Promise<SwapEntry> {
+  /** As recordSwap() in the Worker: from a reservation, the customer and type come from it and the swap completes it. */
+  private async swapAt(state: DemoState, stationId: string, input: SwapInput): Promise<SwapEntry> {
     const actor = this.stationActor(state, stationId);
     this.requireSwapService(state, stationId);
     if (!input || !validRequestId(input.requestId) || !isSwapCustomerType(input.customerType)) throw new BackendError("unknown", "bad_request");
@@ -1211,10 +1290,15 @@ export class DemoBackend implements Backend {
     if (input.reservationId) {
       if (type !== "app") throw new BackendError("unknown", "bad_request");
       reservation = state.reservations.find((r) => r.id === input.reservationId) ?? null;
-      if (!reservation || reservation.stationId !== stationId || reservation.type !== "battery") throw new BackendError("forbidden");
+      if (!reservation || reservation.stationId !== stationId || reservationKind(reservation) !== "swap") throw new BackendError("forbidden");
       if (reservation.userId === actor.profile.id) throw new BackendError("own_reservation");
       if (!isHolding(reservation)) throw new BackendError("reservation_not_active");
-      if (String(input.pickupCode ?? "").trim() !== reservation.pickupCode) throw new BackendError("wrong_pickup_code");
+      this.checkPickupCode(state, reservation, input.pickupCode);
+      if (reservation.target) {
+        const given = input.batteryTypeId === undefined || input.batteryTypeId === null || input.batteryTypeId === "" ? null : String(input.batteryTypeId);
+        if (given !== null && given !== reservation.target) throw new BackendError("battery_type_mismatch");
+        input = { ...input, batteryTypeId: reservation.target };
+      }
       const userId = reservation.userId;
       customer = users.find((u) => u.id === userId) ?? null;
     } else if (type === "app") {
@@ -1236,10 +1320,7 @@ export class DemoBackend implements Backend {
     let payment: SwapPayment;
     let amount: number;
     const price = swapPrice(state, station);
-    if (reservationOnly) {
-      payment = "none";
-      amount = 0;
-    } else if (type === "fleet") {
+    if (type === "fleet") {
       payment = "fleet";
       amount = price ?? 0;
     } else if (type === "app" && input.payment !== "cash") {
@@ -1255,6 +1336,12 @@ export class DemoBackend implements Backend {
       amount = raw;
     }
 
+    if (!reservation) {
+      // Full batteries held by active reservations are not for a swap without one.
+      const full = this.counterRows(state, stationId).find((r) => r.batteryTypeId === key)?.full ?? 0;
+      const held = state.reservations.filter((r) => r.stationId === stationId && isHolding(r) && reservationKind(r) === "swap" && (r.target ?? "") === key).length;
+      if (full > 0 && full - held <= 0) throw new BackendError("battery_reserved");
+    }
     const swapId = crypto.randomUUID();
     const out = this.counterEvent(state, { stationId, key, type: "issue", delta: -1, reason: null, requestId: `${input.requestId}:out`, swapId, actor });
     if (!out) throw new BackendError("no_full_battery");
@@ -4238,7 +4325,8 @@ export class DemoBackend implements Backend {
     };
   }
 
-  async startCharge(stationId: string, input: { pointId: string; contact?: string }): Promise<ChargeSession> {
+  /** As startCharge() in worker/charging.ts: from an outlet reservation, its code is checked and starting completes it. */
+  async startCharge(stationId: string, input: StartChargeInput): Promise<ChargeSession> {
     const state = this.load();
     const staff = this.requireStaff(state);
     if (!serviceActive(state, stationId, "charging")) throw new BackendError("service_not_offered");
@@ -4246,9 +4334,33 @@ export class DemoBackend implements Backend {
     const point = (state.devices ?? seedDevices()).flatMap((d) => d.points).find((p) => p.id === input.pointId && p.stationId === stationId);
     if (!station || !point) throw new BackendError("unknown", "not_found");
     if ((state.charges ?? []).some((c) => c.pointId === point.id && c.status === "charging")) throw new BackendError("charge_busy");
+    let reservation: Reservation | null = null;
+    if (input.reservationId) {
+      reservation = state.reservations.find((r) => r.id === input.reservationId) ?? null;
+      if (!reservation || reservation.stationId !== stationId || reservationKind(reservation) !== "charging_point" || reservation.targetKind === "ev") {
+        throw new BackendError("forbidden");
+      }
+      if (reservation.userId === staff.id) throw new BackendError("own_reservation");
+      if (!isHolding(reservation)) throw new BackendError("reservation_not_active");
+      this.checkPickupCode(state, reservation, input.pickupCode);
+    }
+    const users = state.users ?? demoUsers(new Date());
     const text = contactFromCode(input.contact ?? "");
-    const customer = text ? this.findWalletUser(state, text) : null;
+    const customer = reservation
+      ? (users.find((u) => u.id === reservation.userId) ?? (state.profile?.id === reservation.userId ? state.profile : null))
+      : text
+        ? this.findWalletUser(state, text)
+        : null;
     if (customer?.id === staff.id) throw new BackendError("own_reservation");
+    // The reservation used now: the one named, else the customer's outlet reservation here (this outlet first, never a car charger's).
+    const used =
+      reservation ??
+      (customer
+        ? (state.reservations
+            .filter((r) => r.userId === customer.id && r.stationId === stationId && r.status === "active" && reservationKind(r) === "charging_point" && r.targetKind !== "ev")
+            .sort((a, b) => Number(b.target === point.id) - Number(a.target === point.id) || a.createdAt.localeCompare(b.createdAt))[0] ?? null)
+        : null);
+    const reservations = used ? state.reservations.map((r) => (r.id === used.id ? { ...r, status: "completed" as const } : r)) : state.reservations;
     const charge: DemoCharge = {
       id: crypto.randomUUID(),
       stationId,
@@ -4269,7 +4381,7 @@ export class DemoBackend implements Backend {
       paidAt: null,
       greenpoints: 0,
     };
-    this.save({ ...state, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
+    this.save({ ...state, reservations, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
     return this.chargeView(charge);
   }
 

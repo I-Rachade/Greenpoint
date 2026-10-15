@@ -96,7 +96,14 @@ const mine = async (env: Env) => (await call<GreenpointView>(env, "kofi", "GET",
 
 async function swapWithReservation(env: Env) {
   const r = (await call<Reservation>(env, "kofi", "POST", "/api/reservations", { stationId: "st", type: "battery" })).body;
-  return call(env, "staff", "POST", `/api/reservations/${r.id}/complete`, { pickupCode: r.pickupCode });
+  // A battery reservation is completed by its swap (worker/station-work.ts).
+  return call(env, "staff", "POST", "/api/stations/st/swaps", {
+    requestId: `req-${r.id.slice(0, 12)}`,
+    customerType: "app",
+    reservationId: r.id,
+    pickupCode: r.pickupCode,
+    payment: "cash",
+  });
 }
 
 const visit = (env: Env, body: unknown) => call<GreenpointReceipt>(env, "staff", "POST", "/api/stations/st/greenpoint/visits", body);
