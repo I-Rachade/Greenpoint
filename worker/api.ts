@@ -55,6 +55,7 @@ import {
   currentUser,
   deleteAccount,
   register,
+  registerFleetManager,
   sendCode,
   sendContactCode,
   sendDeleteCode,
@@ -128,7 +129,25 @@ import {
   uploadProof,
 } from "./drivers";
 import type { DriverApplication, DriverDecision, FleetVehicleInput, PickupBooking, RideBooking, CourierBooking } from "../src/lib/drivers";
-import { fleetAssign, fleetStats, fleetView, setDriverManager } from "./fleet";
+import {
+  acceptInvite,
+  adminFleets,
+  approvedFleetFor,
+  declineInvite,
+  fleetAssign,
+  fleetStatement,
+  fleetStats,
+  fleetView,
+  inviteDriver,
+  myFleetInvites,
+  removeDriver,
+  reviewFleet,
+  revokeInvite,
+  revokeOpenInvites,
+  setDriverManager,
+  setFleetTier,
+} from "./fleet";
+import type { FleetDecision, FleetInviteAnswer, FleetTier } from "../src/lib/fleet";
 import type { PartnerInput } from "../src/lib/partners";
 import { PARTNER_API_BASE } from "../src/lib/partners";
 import {
@@ -927,9 +946,13 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
     role === "fleet_manager"
       ? []
       : (await c.db.prepare("select driver_id from fleet_manager_drivers where manager_id = ?").bind(userId).all<{ driver_id: string }>()).results;
+  const name = role === "fleet_manager" ? (await c.db.prepare("select full_name from users where id = ?").bind(userId).first<{ full_name: string | null }>())?.full_name ?? null : null;
   await c.db.batch([
     c.db.prepare("update users set role = ? where id = ?").bind(roleToDb(role), userId),
     c.audit(admin.id, "profiles", "update", userId, { role: [before, role] }, { userId }),
+    // A fleet manager made by an admin gets an approved fleet (worker/fleet.ts); leaving the role ends its open invites.
+    ...(role === "fleet_manager" ? [approvedFleetFor(c.db, userId, name, admin.id)] : []),
+    ...(before === "fleet_manager" ? [revokeOpenInvites(c.db, userId)] : []),
     ...(staff.length ? [c.db.prepare("delete from station_staff where user_id = ?").bind(userId)] : []),
     ...staff.map((s) => c.audit(admin.id, "station_staff", "delete", `${s.station_id}:${userId}`, {}, { stationId: s.station_id, userId })),
     ...(owned.length ? [c.db.prepare("delete from operator_owners where user_id = ?").bind(userId)] : []),
@@ -1368,6 +1391,14 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
   [
     "POST",
+    /^\/api\/auth\/register-fleet$/,
+    async (c) => {
+      const body = await readJson<{ contact?: string; code: string; pin: string; fleetName: string }>(c.request);
+      return registerFleetManager(c.env, body.contact ?? "", body.code, body.pin, body.fleetName);
+    },
+  ],
+  [
+    "POST",
     /^\/api\/auth\/login$/,
     async (c) => {
       const body = await readJson<{ contact?: string; phone?: string; pin: string }>(c.request);
@@ -1701,6 +1732,17 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/fleet$/, (c) => fleetView(c)],
   ["GET", /^\/api\/fleet\/stats$/, (c) => fleetStats(c, c.url.searchParams.get("from") ?? "", c.url.searchParams.get("to") ?? "")],
   ["POST", /^\/api\/fleet\/jobs\/([\w-]+)\/assign$/, async (c, [id]) => fleetAssign(c, id, String((await readJson<{ driverId: string }>(c.request)).driverId))],
+  ["GET", /^\/api\/fleet\/statement$/, (c) => fleetStatement(c, c.url.searchParams.get("from") ?? "", c.url.searchParams.get("to") ?? "")],
+  ["POST", /^\/api\/fleet\/invites$/, async (c) => inviteDriver(c, (await readJson<{ phone: string }>(c.request)).phone)],
+  ["POST", /^\/api\/fleet\/invites\/([\w-]+)\/revoke$/, (c, [id]) => revokeInvite(c, id)],
+  ["POST", /^\/api\/fleet\/drivers\/([\w-]+)\/remove$/, (c, [id]) => removeDriver(c, id)],
+  // The invited person (worker/fleet.ts): open invites for their number, accept or decline by code.
+  ["GET", /^\/api\/fleet-invites$/, (c) => myFleetInvites(c)],
+  ["POST", /^\/api\/fleet-invites\/(\w+)\/accept$/, async (c, [token]) => acceptInvite(c, token, await readJson<FleetInviteAnswer>(c.request).catch(() => null))],
+  ["POST", /^\/api\/fleet-invites\/(\w+)\/decline$/, (c, [token]) => declineInvite(c, token)],
+  ["GET", /^\/api\/admin\/fleets$/, (c) => adminFleets(c)],
+  ["POST", /^\/api\/admin\/fleets\/([\w-]+)\/review$/, async (c, [id]) => reviewFleet(c, id, (await readJson<{ action: FleetDecision }>(c.request)).action)],
+  ["POST", /^\/api\/admin\/fleets\/([\w-]+)\/tier$/, async (c, [id]) => setFleetTier(c, id, (await readJson<{ tier: FleetTier }>(c.request)).tier)],
   ["POST", /^\/api\/admin\/drivers\/([\w-]+)\/manager$/, async (c, [id]) => setDriverManager(c, id, (await readJson<{ contact: string | null }>(c.request)).contact)],
   ["GET", /^\/api\/driver$/, (c) => driverHome(c)],
   ["GET", /^\/api\/driver\/pass$/, (c) => driverPass(c)],

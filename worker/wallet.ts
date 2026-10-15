@@ -26,7 +26,7 @@ import { verifyPin } from "./auth";
 import { cardProviderFromEnv, providerFromEnv } from "./payment-providers";
 import type { Env } from "./env";
 import { liteEnabled } from "./features";
-import { DB_DRIVER, refuseDriver } from "./roles";
+import { notCustomerRole, refuseDriver } from "./roles";
 import { ApiError, nowIso, readJson, uuid } from "./http";
 
 // Wallet (Cashplus phase 1). Every booking is one D1 batch, which D1 runs as a
@@ -226,7 +226,7 @@ export async function findRecipient(env: Env, user: Profile, contact: string | n
   await walletAccess(env, user);
   const recipient = await findUser(env, contact);
   if (recipient.id === user.id) throw new ApiError("self_transfer");
-  if (recipient.role === DB_DRIVER) throw new ApiError("not_a_customer", 409);
+  if (notCustomerRole(recipient.role ?? "")) throw new ApiError("not_a_customer", 409);
   return { label: label(recipient) };
 }
 
@@ -247,8 +247,8 @@ export async function sendMoney(env: Env, user: Profile, request: Request): Prom
 
   const recipient = await findUser(env, input.contact);
   if (recipient.id === user.id) throw new ApiError("self_transfer");
-  // Drivers have no wallet (R11).
-  if (recipient.role === DB_DRIVER) throw new ApiError("not_a_customer", 409);
+  // Drivers and fleet managers have no wallet (R11).
+  if (notCustomerRole(recipient.role ?? "")) throw new ApiError("not_a_customer", 409);
   await verifyPin(env, user.id, input.pin);
 
   const setting = await feeSetting(env, "transfer");

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { AppProvider } from "@/components/app-provider";
 import { BottomNav } from "@/components/bottom-nav";
+import { FleetInviteBanner } from "@/components/drivers/fleet-invites";
 import { Header } from "@/components/header";
 import { I18nProvider } from "@/components/i18n-provider";
 import { NativeShell } from "@/components/native-shell";
@@ -68,6 +69,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <ThemeController />
               <NativeShell />
               <Header />
+              <FleetInviteBanner />
               <main className="flex min-h-0 flex-1 flex-col">{children}</main>
               <BottomNav />
               <PromoPopup />

@@ -46,7 +46,17 @@ import type {
   CourierBooking,
   StationDrivers,
 } from "../drivers";
-import type { FleetStats, FleetView } from "../fleet";
+import type {
+  AdminFleet,
+  FleetDecision,
+  FleetInvite,
+  FleetRemoval,
+  FleetStatement,
+  FleetStats,
+  FleetTier,
+  FleetView,
+  MyFleetInvite,
+} from "../fleet";
 import type { StationService, StationServiceInfo } from "../station-services";
 import type { ReservationKind } from "../reservations";
 import type { BatteryEventInput, BatteryEventView, StationCounter, SwapEntry, SwapFilter, SwapInput } from "../station-work";
@@ -178,6 +188,15 @@ export type BackendErrorCode =
   | "driver_pass_invalid"
   | "driver_pass_expired"
   | "role_change_blocked"
+  | "fleet_not_approved"
+  | "fleet_locked"
+  | "fleet_limit"
+  | "invite_number_taken"
+  | "invite_account_not_empty"
+  | "invite_pending"
+  | "invite_not_found"
+  | "already_in_fleet"
+  | "account_exists"
   | "unknown";
 
 export class BackendError extends Error {
@@ -426,6 +445,27 @@ export interface Backend {
   fleetStats(from: string, to: string): Promise<FleetStats>;
   /** Gives an open trip to one of the manager's drivers; the driver confirms as usual. */
   fleetAssign(jobId: string, driverId: string): Promise<void>;
+  /**
+   * Fleet manager registration: its own path, never a customer account (W5). Makes the
+   * account and its fleet (pending until an admin approves it) and signs in.
+   */
+  registerFleetManager(contact: string, code: string, pin: string, fleetName: string): Promise<Profile>;
+  /** Battery swaps billed to the fleet in the period, with their amounts (approved fleets). */
+  fleetStatement(from: string, to: string): Promise<FleetStatement>;
+  /** Invites a driver by phone number (R12: free number or empty customer account; R13: tier limit). */
+  inviteFleetDriver(phone: string): Promise<FleetInvite>;
+  revokeFleetInvite(inviteId: string): Promise<void>;
+  /** Takes a driver out of the fleet; back to customer when nothing is open (R15). */
+  removeFleetDriver(driverId: string): Promise<FleetRemoval>;
+  /** Open fleet invites for the signed-in customer's phone number. */
+  myFleetInvites(): Promise<MyFleetInvite[]>;
+  /** Accepts an invite by its code; the account becomes a driver account in the fleet. */
+  acceptFleetInvite(token: string, application?: DriverApplication): Promise<void>;
+  declineFleetInvite(token: string): Promise<void>;
+  /** Backoffice: every fleet, pending ones first (admins only). */
+  adminFleets(): Promise<AdminFleet[]>;
+  reviewFleet(managerId: string, action: FleetDecision): Promise<void>;
+  setFleetTier(managerId: string, tier: FleetTier): Promise<void>;
 
   // Partner API (see src/lib/partners.ts)
   /** Parcels other apps booked for drop-off at this station (its staff). */

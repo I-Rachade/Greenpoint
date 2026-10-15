@@ -1,5 +1,6 @@
 import type { CodeChannel } from "../src/lib/backend/backend";
 import { type Contact, parseContact } from "../src/lib/contact";
+import { cleanFleetName } from "../src/lib/fleet";
 import { validPinFormat, weakPin } from "../src/lib/pin";
 import type { Profile, UserRole } from "../src/lib/types";
 import type { Env } from "./env";
@@ -311,6 +312,54 @@ export async function register(env: Env, rawContact: string, rawCode: string, ra
     ),
     env.DB.prepare("delete from sessions where user_id = ?").bind(user.id),
   ]);
+  return openSession(env, user);
+}
+
+/**
+ * Fleet manager registration (plan phase 6, M1): its own path, never through a customer
+ * account (W5). The code proves the number or address, a new account with the role
+ * fleet_manager and its fleet (status pending) are made together, and a session opens.
+ * Until an admin approves the fleet its functions answer fleet_not_approved (worker/fleet.ts).
+ * A number or address that already has an account is refused (one role per account):
+ * whoever is also a customer registers the fleet with another number or address.
+ */
+export async function registerFleetManager(env: Env, rawContact: string, rawCode: string, rawPin: string, rawName: unknown) {
+  const contact = contactOrThrow(rawContact);
+  const column = contactColumn(contact);
+  const pin = String(rawPin ?? "").trim();
+  const name = cleanFleetName(rawName);
+  if (!name) throw new ApiError("bad_request");
+  // Checked before the code, so a mistake does not use up the code.
+  checkPinFormat(pin);
+  const findUser = () => env.DB.prepare(`select ${USER_COLUMNS} from users where ${column} = ?`).bind(contact.value).first<UserRow>();
+  if (await findUser()) throw new ApiError("account_exists", 409);
+  await checkCode(env, contact.value, String(rawCode ?? "").trim());
+  const now = nowIso();
+  const id = uuid();
+  try {
+    await env.DB.batch([
+      env.DB.prepare(`insert into users (id, ${column}, full_name, role, created_at, pin_hash) values (?, ?, ?, 'fleet_manager', ?, ?)`).bind(
+        id,
+        contact.value,
+        name,
+        now,
+        await hashPin(pin),
+      ),
+      env.DB.prepare("insert into fleets (manager_id, name, status, tier, created_at) values (?, ?, 'pending', 'standard', ?)").bind(id, name, now),
+      env.DB.prepare(
+        "insert into audit_log (at, actor, table_name, action, row_id, user_id, changes) values (?, ?, 'profiles', 'insert', ?, ?, ?)",
+      ).bind(now, id, id, id, JSON.stringify({ [column]: contact.value, role: "fleet_manager" })),
+      env.DB.prepare(
+        "insert into audit_log (at, actor, table_name, action, row_id, user_id, changes) values (?, ?, 'fleets', 'insert', ?, ?, ?)",
+      ).bind(now, id, id, id, JSON.stringify({ name, status: "pending", tier: "standard" })),
+    ]);
+  } catch (err) {
+    // Registered at the same moment from elsewhere.
+    if (/UNIQUE/i.test(String(err))) throw new ApiError("account_exists", 409);
+    throw err;
+  }
+  const user = await findUser();
+  if (!user) throw new ApiError("unknown", 500);
   return openSession(env, user);
 }
 

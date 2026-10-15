@@ -37,7 +37,17 @@ import type {
   StationDrivers,
 } from "../drivers";
 import type { ReviewInput, StationReview } from "../station-extras";
-import type { FleetStats, FleetView } from "../fleet";
+import type {
+  AdminFleet,
+  FleetDecision,
+  FleetInvite,
+  FleetRemoval,
+  FleetStatement,
+  FleetStats,
+  FleetTier,
+  FleetView,
+  MyFleetInvite,
+} from "../fleet";
 import type { LatLng } from "../geo";
 import type {
   Operator,
@@ -160,6 +170,15 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "driver_pass_invalid",
   "driver_pass_expired",
   "role_change_blocked",
+  "fleet_not_approved",
+  "fleet_locked",
+  "fleet_limit",
+  "invite_number_taken",
+  "invite_account_not_empty",
+  "invite_pending",
+  "invite_not_found",
+  "already_in_fleet",
+  "account_exists",
 ];
 
 /**
@@ -754,6 +773,57 @@ export class CloudflareBackend implements Backend {
 
   fleetAssign(jobId: string, driverId: string) {
     return this.act("POST", `/api/fleet/jobs/${encodeURIComponent(jobId)}/assign`, { driverId });
+  }
+
+  registerFleetManager(contact: string, code: string, pin: string, fleetName: string) {
+    return this.startSession("/api/auth/register-fleet", { contact, code: code.trim(), pin, fleetName });
+  }
+
+  fleetStatement(from: string, to: string) {
+    return this.call<FleetStatement>("GET", `/api/fleet/statement?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  }
+
+  async inviteFleetDriver(phone: string) {
+    const invite = await this.call<FleetInvite>("POST", "/api/fleet/invites", { phone });
+    this.changed();
+    return invite;
+  }
+
+  revokeFleetInvite(inviteId: string) {
+    return this.act("POST", `/api/fleet/invites/${encodeURIComponent(inviteId)}/revoke`);
+  }
+
+  async removeFleetDriver(driverId: string) {
+    const result = await this.call<FleetRemoval>("POST", `/api/fleet/drivers/${encodeURIComponent(driverId)}/remove`);
+    this.changed();
+    return result;
+  }
+
+  myFleetInvites() {
+    return this.call<MyFleetInvite[]>("GET", "/api/fleet-invites");
+  }
+
+  async acceptFleetInvite(token: string, application?: DriverApplication) {
+    await this.act("POST", `/api/fleet-invites/${encodeURIComponent(token)}/accept`, { application });
+    // The account is a driver account now: the menu follows the role.
+    const profile = await this.getProfile();
+    this.authListeners.forEach((fn) => fn(profile));
+  }
+
+  declineFleetInvite(token: string) {
+    return this.act("POST", `/api/fleet-invites/${encodeURIComponent(token)}/decline`);
+  }
+
+  adminFleets() {
+    return this.call<AdminFleet[]>("GET", "/api/admin/fleets");
+  }
+
+  reviewFleet(managerId: string, action: FleetDecision) {
+    return this.act("POST", `/api/admin/fleets/${encodeURIComponent(managerId)}/review`, { action });
+  }
+
+  setFleetTier(managerId: string, tier: FleetTier) {
+    return this.act("POST", `/api/admin/fleets/${encodeURIComponent(managerId)}/tier`, { tier });
   }
 
   /** Private photos need the session, so they are fetched and shown from memory. */

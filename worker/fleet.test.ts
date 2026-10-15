@@ -57,7 +57,7 @@ function setup() {
 }
 
 describe("fleet managers", () => {
-  it("linking makes a customer a fleet manager, unlinking the last driver makes them a customer again", async () => {
+  it("linking makes a customer a fleet manager with an approved fleet, which stays after the last driver", async () => {
     const t = setup();
     await setDriverManager(t.admin, "d1", "91 00 00 01");
     await setDriverManager(t.admin, "d2", "+22891000001");
@@ -66,8 +66,10 @@ describe("fleet managers", () => {
     await setDriverManager(t.admin, "d2", "flotte@example.tg");
     expect(t.role("mgr2")).toBe("fleet_manager");
     expect(t.role("mgr")).toBe("fleet_manager");
+    expect(t.db.prepare("select status, tier, name from fleets where manager_id = 'mgr'").get()).toEqual({ status: "approved", tier: "standard", name: "Flotte Est" });
     await setDriverManager(t.admin, "d1", null);
-    expect(t.role("mgr")).toBe("rider");
+    // A fleet manager is an account of its own since phase 6: no drivers, still a fleet manager.
+    expect(t.role("mgr")).toBe("fleet_manager");
     const log = t.db.prepare("select action from audit_log where table_name = 'fleet_manager_drivers' order by id").all() as { action: string }[];
     expect(log.map((l) => l.action)).toEqual(["insert", "insert", "delete", "insert", "delete"]);
   });
@@ -134,7 +136,14 @@ describe("fleet managers", () => {
         ('r3', 'd1', 'st-a', 'battery', 'cancelled', '${at}', '${at}', '1236');
       insert into payments (id, identifier, user_id, station_id, reservation_id, amount_xof, network, provider, status, created_at, updated_at, paid_at) values
         ('p1', 'PAY-1', 'd1', 'st-a', 'r1', 1500, 'flooz', 'mock', 'succeeded', '${at}', '${at}', '${at}');
+      insert into greenpoint_ledger (id, user_id, kind, co2_grams, points, job_id, distance_m, created_at) values
+        ('g1', 'd1', 'delivery', 240, 0, 'a', 3000, '${at}'), ('g2', 'd1', 'delivery', 400, 0, 'b', 5000, '${at}');
+      insert into swap_log (id, request_id, station_id, has_battery_in, customer_type, driver_id, fleet_manager_id, payment, amount_xof, staff_id, role, created_at) values
+        ('s1', 'rq1', 'st-a', 1, 'fleet', 'd1', 'mgr', 'fleet', 1000, 'admin', 'admin', '${at}');
     `);
+    // Standard tier: no statistics (M4) until an admin unlocks the fleet.
+    await expect(fleetStats(t.ctx(manager("mgr")), "2026-10-01", "2026-10-31")).rejects.toMatchObject({ code: "fleet_locked" });
+    t.db.exec("update fleets set tier = 'unlocked' where manager_id = 'mgr'");
     const stats = await fleetStats(t.ctx(manager("mgr")), "2026-10-01", "2026-10-31");
     expect(stats.drivers).toEqual([
       {
@@ -145,9 +154,13 @@ describe("fleet managers", () => {
         earningFcfa: 990,
         collectedFcfa: 4300,
         settledFcfa: 2000,
-        batterySwaps: 1,
+        batterySwaps: 2,
         chargingSlots: 1,
         chargingPaidFcfa: 1500,
+        fleetSwaps: 1,
+        fleetSwapsXof: 1000,
+        distanceKm: 8,
+        co2Grams: 640,
       },
     ]);
     // The last day counts in full; a reversed or open-ended period does not.

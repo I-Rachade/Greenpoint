@@ -334,7 +334,7 @@ async function toDriver(db: D1Database, r: DriverRow, withCode: boolean): Promis
   };
 }
 
-async function driverRow(db: D1Database, userId: string): Promise<DriverRow | null> {
+export async function driverRow(db: D1Database, userId: string): Promise<DriverRow | null> {
   return db.prepare(`${DRIVER_SELECT} where d.user_id = ?`).bind(userId).first<DriverRow>();
 }
 
@@ -358,7 +358,7 @@ export async function loadJob(db: D1Database, id: string): Promise<JobRow> {
   return row;
 }
 
-async function currentJob(db: D1Database, driverId: string): Promise<JobRow | null> {
+export async function currentJob(db: D1Database, driverId: string): Promise<JobRow | null> {
   return db.prepare(`${JOB_SELECT} where j.driver_id = ? and j.status in ${BUSY_SQL}`).bind(driverId).first<JobRow>();
 }
 
@@ -613,19 +613,29 @@ function cleanText(value: unknown, min: number, max: number): string {
   return text;
 }
 
-/** Applies (or applies again after a refusal) to drive one of our vehicles. */
-export async function applyDriver(c: ParcelCtx, input: DriverApplication) {
-  const user = await c.requireUser();
-  // Customers apply; staff, owners, fleet managers and admins keep their role (F1, one role per account).
-  if (user.role !== "customer") throw new ApiError("forbidden", 403);
-  await requireDrivers(c.db);
-  if (!user.phone) throw new ApiError("phone_required");
+/** The fields of a driver application, checked (400 otherwise). */
+export function cleanApplication(input: DriverApplication | null | undefined): DriverApplication {
   const fullName = cleanText(input?.fullName, 2, 80);
   const idNumber = cleanText(input?.idNumber, 3, 40);
   const licenseNumber = cleanText(input?.licenseNumber, 3, 40);
-  if (!FLEET_VEHICLE_TYPES.includes(input?.wantedType)) throw new ApiError("bad_request");
+  if (!input || !FLEET_VEHICLE_TYPES.includes(input.wantedType)) throw new ApiError("bad_request");
+  return { fullName, idNumber, licenseNumber, wantedType: input.wantedType };
+}
+
+/**
+ * Applies (or applies again after a refusal) to drive one of our vehicles. A driver account
+ * whose application is still open (invited by a fleet, worker/fleet.ts) completes it here.
+ */
+export async function applyDriver(c: ParcelCtx, input: DriverApplication) {
+  const user = await c.requireUser();
+  // Customers apply; staff, owners, fleet managers and admins keep their role (F1, one role per account).
+  if (user.role !== "customer" && user.role !== "driver") throw new ApiError("forbidden", 403);
+  await requireDrivers(c.db);
+  if (!user.phone) throw new ApiError("phone_required");
+  const { fullName, idNumber, licenseNumber } = cleanApplication(input);
   const existing = await driverRow(c.db, user.id);
   if (existing && (existing.status === "active" || existing.status === "suspended")) throw new ApiError("forbidden", 403);
+  if (!existing && user.role === "driver") throw new ApiError("forbidden", 403);
   const now = nowIso();
   if (existing) {
     await c.db.batch([
@@ -677,7 +687,8 @@ const DOC_COLUMN: Record<DriverDocument, "id_doc_key" | "license_doc_key" | "por
 /** A photo of the ID card, the licence or the driver. Private: only admins see it. */
 export async function uploadDriverDocument(c: ParcelCtx, kind: string, request: Request) {
   const user = await c.requireUser();
-  if (user.role !== "customer") throw new ApiError("forbidden", 403);
+  // A customer applying, or a driver account invited by a fleet whose application is still open.
+  if (user.role !== "customer" && user.role !== "driver") throw new ApiError("forbidden", 403);
   await requireDrivers(c.db);
   const column = DOC_COLUMN[kind as DriverDocument];
   if (!column) throw new ApiError("bad_request");

@@ -167,7 +167,28 @@ import {
 } from "../drivers";
 import { distanceMeters, type LatLng } from "../geo";
 import { parseContact } from "../contact";
-import { fleetRange, jobForManager, managesFleet, type FleetStats, type FleetView } from "../fleet";
+import {
+  cleanFleetName,
+  driverLimit,
+  FLEET_INVITE_DAYS,
+  FLEET_TIERS,
+  fleetRange,
+  jobForManager,
+  managesFleet,
+  STANDARD_DRIVER_LIMIT,
+  statsUnlocked,
+  type AdminFleet,
+  type FleetDecision,
+  type FleetInfo,
+  type FleetInvite,
+  type FleetRemoval,
+  type FleetStatement,
+  type FleetStats,
+  type FleetStatus,
+  type FleetTier,
+  type FleetView,
+  type MyFleetInvite,
+} from "../fleet";
 import {
   checkLimits,
   DEFAULT_FEE_SETTINGS,
@@ -314,7 +335,30 @@ interface DemoState {
   /** Swap price per station in FCFA (stations.price_battery_xof); missing = DEMO_SWAP_PRICE at own stations. */
   swapPrices?: Record<string, number | null>;
   /** Swap log, newest first (as table swap_log). */
-  swaps?: (SwapEntry & { requestId: string; staffId: string; customerId: string | null; driverId?: string | null })[];
+  swaps?: (SwapEntry & { requestId: string; staffId: string; customerId: string | null; driverId?: string | null; fleetManagerId?: string | null })[];
+  /** Fleets (as table fleets, 0032); missing = the demo fleet manager's approved fleet. */
+  fleets?: DemoFleet[];
+  /** Fleet invites, newest first (as table fleet_invites). */
+  fleetInvites?: DemoInvite[];
+}
+
+interface DemoFleet {
+  managerId: string;
+  name: string;
+  status: FleetStatus;
+  tier: FleetTier;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
+interface DemoInvite extends FleetInvite {
+  managerId: string;
+  userId: string | null;
+}
+
+/** The demo fleet manager starts with an approved fleet of the standard tier, as existing fleets after 0032. */
+function seedFleets(): DemoFleet[] {
+  return [{ managerId: "demo-fleet_manager", name: "Flotte Express", status: "approved", tier: "standard", createdAt: "2026-10-01T08:00:00.000Z", reviewedAt: "2026-10-01T08:00:00.000Z" }];
 }
 
 interface DemoServiceRow {
@@ -894,9 +938,9 @@ export class DemoBackend implements Backend {
     };
   }
 
-  /** R11: a driver account is never a customer (refuseDriver in worker/roles.ts). */
+  /** R11: driver and fleet manager accounts are never customers (refuseDriver in worker/roles.ts). */
   private refuseDriver(profile: Profile) {
-    if (profile.role === "driver") throw new BackendError("forbidden");
+    if (profile.role === "driver" || profile.role === "fleet_manager") throw new BackendError("forbidden");
   }
 
   /** R15 (customerThingsOpen in worker/drivers.ts): money, an active reservation, an open parcel or a booked trip. */
@@ -1476,7 +1520,7 @@ export class DemoBackend implements Backend {
       role: actor.role,
       createdAt: new Date().toISOString(),
     };
-    next = { ...next, swaps: [{ ...entry, requestId: input.requestId, staffId: actor.profile.id, customerId: customer?.id ?? null, driverId: driver?.driverId ?? null }, ...(next.swaps ?? [])].slice(0, 1000) };
+    next = { ...next, swaps: [{ ...entry, requestId: input.requestId, staffId: actor.profile.id, customerId: customer?.id ?? null, driverId: driver?.driverId ?? null, fleetManagerId: driver?.managerId ?? null }, ...(next.swaps ?? [])].slice(0, 1000) };
     if (reservation) {
       const done = reservation.id;
       next = { ...next, reservations: next.reservations.map((x) => (x.id === done ? { ...x, status: "completed" as const } : x)) };
@@ -1732,6 +1776,12 @@ export class DemoBackend implements Backend {
           { table: "operator_owners", action: "delete", rowId: `${o.operatorId}:${userId}`, userId, changes: { operator_id: o.operatorId } },
         );
       }
+    }
+    // A fleet manager made by an admin gets an approved fleet; leaving the role ends its open invites.
+    if (role === "fleet_manager") next = this.withApprovedFleet(next, userId, before.fullName);
+    if (before.role === "fleet_manager") {
+      const now = new Date().toISOString();
+      next = { ...next, fleetInvites: this.invitesOf(next).map((i) => (i.managerId === userId && i.status === "pending" ? { ...i, status: "revoked" as const, decidedAt: now } : i)) };
     }
     // Leaving "fleet_manager" ends the links to the drivers.
     if (role !== "fleet_manager") {
@@ -2758,8 +2808,8 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const profile = this.requireProfile(state);
     this.requireDrivers(state);
-    // Customers apply; a driver account already drives, staff and managers keep their role.
-    if (profile.role !== "customer") throw new BackendError("forbidden");
+    // Customers apply; staff and managers keep their role. A driver account invited by a fleet completes its open application.
+    if (profile.role !== "customer" && profile.role !== "driver") throw new BackendError("forbidden");
     if (!profile.phone) throw new BackendError("phone_required");
     const text = (v: string, min: number) => {
       const t = (v ?? "").trim();
@@ -2769,6 +2819,7 @@ export class DemoBackend implements Backend {
     const fields = { fullName: text(input.fullName, 2), idNumber: text(input.idNumber, 3), licenseNumber: text(input.licenseNumber, 3), wantedType: input.wantedType };
     const existing = (state.drivers ?? []).find((d) => d.userId === profile.id);
     if (existing && (existing.status === "active" || existing.status === "suspended")) throw new BackendError("forbidden");
+    if (!existing && profile.role === "driver") throw new BackendError("forbidden");
     const driver: DemoDriver = existing
       ? { ...existing, ...fields, status: "pending" }
       : { userId: profile.id, status: "pending", phone: profile.phone, documents: {}, vehicleId: null, code: newDriverCode(), createdAt: new Date().toISOString(), reviewedAt: null, ...fields };
@@ -2784,7 +2835,7 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const profile = this.requireProfile(state);
     this.requireDrivers(state);
-    if (profile.role !== "customer") throw new BackendError("forbidden");
+    if (profile.role !== "customer" && profile.role !== "driver") throw new BackendError("forbidden");
     const driver = (state.drivers ?? []).find((d) => d.userId === profile.id);
     if (!driver || (driver.status !== "pending" && driver.status !== "rejected")) throw new BackendError("forbidden");
     if (image.size > MAX_PROMO_IMAGE_BYTES / 4) throw new BackendError("image_too_large");
@@ -3597,6 +3648,56 @@ export class DemoBackend implements Backend {
     );
   }
 
+  // Fleets (as worker/fleet.ts) ------------------------------------------------------
+
+  private fleetsOf(state: DemoState): DemoFleet[] {
+    return state.fleets ?? seedFleets();
+  }
+
+  /** Open invites whose time ran out are 'expired' (expireInvites in worker/fleet.ts). */
+  private invitesOf(state: DemoState): DemoInvite[] {
+    const now = new Date().toISOString();
+    return (state.fleetInvites ?? []).map((i) => (i.status === "pending" && i.expiresAt <= now ? { ...i, status: "expired" as const, decidedAt: i.expiresAt } : i));
+  }
+
+  /** R13: drivers in the fleet plus open invites. */
+  private usedPlaces(state: DemoState, managerId: string): number {
+    return (
+      (state.fleetLinks ?? []).filter((l) => l.managerId === managerId).length +
+      this.invitesOf(state).filter((i) => i.managerId === managerId && i.status === "pending").length
+    );
+  }
+
+  private fleetInfo(state: DemoState, f: DemoFleet, used = this.usedPlaces(state, f.managerId)): FleetInfo {
+    return { managerId: f.managerId, name: f.name, status: f.status, tier: f.tier, driverLimit: driverLimit(f.tier), used, createdAt: f.createdAt };
+  }
+
+  private viewInvite(i: DemoInvite): FleetInvite {
+    return { id: i.id, phone: i.phone, status: i.status, token: i.token, createdAt: i.createdAt, expiresAt: i.expiresAt, decidedAt: i.decidedAt };
+  }
+
+  /** A manager of an approved fleet, or an admin (fleet null): fleet_not_approved otherwise (M1). */
+  private requireApprovedFleet(state: DemoState): { profile: Profile; fleet: DemoFleet | null } {
+    const profile = this.requireProfile(state);
+    if (!managesFleet(profile)) throw new BackendError("forbidden");
+    if (profile.role === "admin") return { profile, fleet: null };
+    const fleet = this.fleetsOf(state).find((f) => f.managerId === profile.id);
+    if (!fleet || fleet.status !== "approved") throw new BackendError("fleet_not_approved");
+    return { profile, fleet };
+  }
+
+  /** An approved fleet for an account an admin makes fleet manager (approvedFleetFor in worker/fleet.ts). */
+  private withApprovedFleet(state: DemoState, userId: string, name: string | null): DemoState {
+    const fleets = this.fleetsOf(state);
+    const now = new Date().toISOString();
+    const existing = fleets.find((f) => f.managerId === userId);
+    if (existing?.status === "approved") return state;
+    const fleet: DemoFleet = existing
+      ? { ...existing, status: "approved", reviewedAt: now }
+      : { managerId: userId, name: name && name.trim().length >= 2 ? name.trim().slice(0, 80) : "Flotte", status: "approved", tier: "standard", createdAt: now, reviewedAt: now };
+    return { ...state, fleets: [fleet, ...fleets.filter((f) => f.managerId !== userId)] };
+  }
+
   async setDriverManager(driverId: string, contact: string | null) {
     const state = this.load();
     this.requireAdmin(state);
@@ -3607,11 +3708,9 @@ export class DemoBackend implements Backend {
     let users = state.users ?? demoUsers(new Date());
     let next: DemoState = state;
     if (before) {
-      // A manager left without drivers goes back to customer.
-      const idle = !rest.some((l) => l.managerId === before.managerId);
-      users = users.map((u) => (u.id === before.managerId && u.role === "fleet_manager" && idle ? { ...u, role: "customer" as const } : u));
+      // A fleet manager is an account of its own: losing the last driver does not end it.
       next = withAudit(
-        { ...next, fleetLinks: rest, users },
+        { ...next, fleetLinks: rest },
         { table: "fleet_manager_drivers", action: "delete", rowId: driverId, userId: driverId, changes: { manager_id: before.managerId } },
       );
     }
@@ -3620,6 +3719,13 @@ export class DemoBackend implements Backend {
       if (account.id === driverId) throw new BackendError("forbidden");
       if (!["customer", "fleet_manager", "admin"].includes(account.role)) throw new BackendError("has_other_role");
       if (before?.managerId === account.id) return;
+      if (account.role === "fleet_manager") {
+        const fleet = this.fleetsOf(state).find((f) => f.managerId === account.id);
+        if (fleet && fleet.status !== "approved") throw new BackendError("fleet_not_approved");
+        // R13 holds for the admin too.
+        if (fleet?.tier !== "unlocked" && this.usedPlaces(next, account.id) >= STANDARD_DRIVER_LIMIT) throw new BackendError("fleet_limit");
+      }
+      if (account.role === "customer") next = this.withApprovedFleet(next, account.id, account.fullName);
       users = users.map((u) => (u.id === account.id && u.role === "customer" ? { ...u, role: "fleet_manager" as const } : u));
       next = withAudit(
         { ...next, fleetLinks: [...rest, { driverId, managerId: account.id }], users },
@@ -3641,8 +3747,23 @@ export class DemoBackend implements Backend {
   async fleetView(): Promise<FleetView> {
     this.dispatch();
     const state = this.load();
+    const profile = this.requireProfile(state);
+    if (!managesFleet(profile)) throw new BackendError("forbidden");
+    let fleet: FleetInfo | null = null;
+    if (profile.role !== "admin") {
+      const row = this.fleetsOf(state).find((f) => f.managerId === profile.id);
+      // Not approved (yet): only the fleet itself, so the page can say what is missing.
+      if (!row || row.status !== "approved") {
+        const info: FleetInfo = row
+          ? this.fleetInfo(state, row, 0)
+          : { managerId: profile.id, name: profile.fullName ?? "", status: "pending", tier: "standard", driverLimit: STANDARD_DRIVER_LIMIT, used: 0, createdAt: new Date().toISOString() };
+        return { fleet: info, drivers: [], invites: [], openJobs: [], settings: this.settingsOf(state) };
+      }
+      fleet = this.fleetInfo(state, row);
+    }
     const drivers = this.managedDrivers(state).sort((a, b) => a.fullName.localeCompare(b.fullName));
     return {
+      fleet,
       drivers: drivers.map((d) => {
         const view = this.viewDriver(state, d, false);
         const job = this.busyJob(state, d.userId);
@@ -3657,6 +3778,12 @@ export class DemoBackend implements Backend {
           job: job ? jobForManager(this.viewJob(state, job)) : null,
         };
       }),
+      invites: fleet
+        ? this.invitesOf(state)
+            .filter((i) => i.managerId === profile.id)
+            .slice(0, 30)
+            .map((i) => this.viewInvite(i))
+        : [],
       openJobs: (state.jobs ?? [])
         .filter((j) => j.status === "open")
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -3668,19 +3795,29 @@ export class DemoBackend implements Backend {
 
   async fleetStats(from: string, to: string): Promise<FleetStats> {
     const state = this.load();
+    const { profile, fleet } = this.requireApprovedFleet(state);
+    if (!statsUnlocked(profile.role, fleet)) throw new BackendError("fleet_locked");
     const drivers = this.managedDrivers(state);
     const range = fleetRange(from, to);
     if (!range) throw new BackendError("unknown", "period");
     const inRange = (at: string | null) => !!at && at >= range.start && at < range.end;
+    const ledger = this.gp(state).ledger;
     return {
       from,
       to,
       drivers: drivers.map((d) => {
         const jobs = (state.jobs ?? []).filter((j) => j.driverId === d.userId && inRange(j.doneAt));
         const done = jobs.filter((j) => j.status === "done");
-        const ledger = (state.ledger ?? []).filter((e) => e.driverId === d.userId && inRange(e.at));
-        const sum = (kind: LedgerEntry["kind"]) => ledger.filter((e) => e.kind === kind).reduce((n, e) => n + e.amountFcfa, 0);
+        const money = (state.ledger ?? []).filter((e) => e.driverId === d.userId && inRange(e.at));
+        const sum = (kind: LedgerEntry["kind"]) => money.filter((e) => e.kind === kind).reduce((n, e) => n + e.amountFcfa, 0);
         const visits = state.reservations.filter((r) => r.userId === d.userId && r.status === "completed" && inRange(r.createdAt));
+        // Swaps at the counter with the driver's pass, billed to this fleet.
+        const swaps = (state.swaps ?? []).filter(
+          (x) => x.customerType === "fleet" && x.driverId === d.userId && inRange(x.createdAt) && (profile.role === "admin" || x.fleetManagerId === profile.id),
+        );
+        const trips = ledger.filter((l) => l.userId === d.userId && l.kind === "delivery" && inRange(l.createdAt));
+        // Km of the finished trips: the demo keeps them on the trips.
+        const km = done.reduce((n, j) => n + j.distanceM, 0);
         return {
           userId: d.userId,
           tripsDone: done.length,
@@ -3689,13 +3826,14 @@ export class DemoBackend implements Backend {
           earningFcfa: sum("earning"),
           collectedFcfa: sum("collected"),
           settledFcfa: sum("settlement"),
-          // Plus the swaps at the counter with the driver's pass, billed to the fleet.
-          batterySwaps:
-            visits.filter((r) => r.type === "battery").length +
-            (state.swaps ?? []).filter((x) => x.customerType === "fleet" && x.driverId === d.userId && inRange(x.createdAt)).length,
+          batterySwaps: visits.filter((r) => r.type === "battery").length + swaps.length,
           chargingSlots: visits.filter((r) => r.type === "slot").length,
           // The demo has no app payments.
           chargingPaidFcfa: 0,
+          fleetSwaps: swaps.length,
+          fleetSwapsXof: swaps.reduce((n, x) => n + x.amountXof, 0),
+          distanceKm: Math.round(km / 100) / 10,
+          co2Grams: trips.reduce((n, l) => n + l.co2Grams, 0),
         };
       }),
     };
@@ -3704,11 +3842,293 @@ export class DemoBackend implements Backend {
   async fleetAssign(jobId: string, driverId: string) {
     this.dispatch();
     const state = this.load();
+    this.requireApprovedFleet(state);
     if (!this.managedDrivers(state).some((d) => d.userId === driverId)) throw new BackendError("driver_not_found");
     const job = (state.jobs ?? []).find((j) => j.id === jobId);
     if (!job) throw new BackendError("job_not_found");
     if (job.status !== "open") throw new BackendError("job_wrong_status");
     this.handJob(state, job, driverId, "fleet");
+  }
+
+  async registerFleetManager(contact: string, code: string, pin: string, fleetName: string) {
+    if (HOSTED_DEMO) throw new BackendError("forbidden");
+    const name = cleanFleetName(fleetName);
+    if (!name) throw new BackendError("unknown", "bad_request");
+    if (!validPinFormat(pin)) throw new BackendError("bad_pin");
+    if (weakPin(pin)) throw new BackendError("weak_pin");
+    const state = this.load();
+    const users = state.users ?? demoUsers(new Date());
+    const isEmail = contact.includes("@");
+    if (state.pins?.[contact] !== undefined || users.some((u) => (isEmail ? u.email : u.phone) === contact)) throw new BackendError("account_exists");
+    if (code.trim() !== DEMO_CODE) throw new BackendError("invalid_code");
+    const now = new Date().toISOString();
+    const profile: Profile = {
+      id: `demo-fleet-${Date.now().toString(36)}`,
+      phone: isEmail ? null : contact,
+      email: isEmail ? contact : null,
+      fullName: name,
+      role: "fleet_manager",
+      ownerOf: [],
+    };
+    const next = withAudit(
+      {
+        ...state,
+        profile,
+        pins: { ...state.pins, [contact]: pin },
+        users: [{ ...profile, createdAt: now, lastSignInAt: now }, ...users],
+        fleets: [{ managerId: profile.id, name, status: "pending", tier: "standard", createdAt: now, reviewedAt: null }, ...this.fleetsOf(state)],
+      },
+      { table: "fleets", action: "insert", rowId: profile.id, userId: profile.id, changes: { name, status: "pending", tier: "standard" } },
+    );
+    this.save(withAudit(next, { table: "profiles", action: "insert", rowId: profile.id, userId: profile.id, changes: { [isEmail ? "email" : "phone"]: contact, role: "fleet_manager" } }));
+    return profile;
+  }
+
+  async fleetStatement(from: string, to: string): Promise<FleetStatement> {
+    const state = this.load();
+    const { profile } = this.requireApprovedFleet(state);
+    const range = fleetRange(from, to);
+    if (!range) throw new BackendError("unknown", "period");
+    const swaps = (state.swaps ?? [])
+      .filter((x) => x.customerType === "fleet" && x.createdAt >= range.start && x.createdAt < range.end && (profile.role === "admin" || x.fleetManagerId === profile.id))
+      .slice(0, 1000)
+      .map((x) => ({
+        id: x.id,
+        at: x.createdAt,
+        stationId: x.stationId,
+        stationName: state.stations.find((s) => s.id === x.stationId)?.name ?? "?",
+        driverId: x.driverId ?? null,
+        driverName: (state.drivers ?? []).find((d) => d.userId === x.driverId)?.fullName ?? x.driver,
+        batteryTypeId: x.batteryTypeId,
+        amountXof: x.amountXof,
+      }));
+    return { from, to, swaps, totalXof: swaps.reduce((n, s) => n + s.amountXof, 0) };
+  }
+
+  /** R12: only a free number or an empty customer account (checkInvitable in worker/fleet.ts). */
+  private checkInvitable(state: DemoState, phone: string) {
+    const account = (state.users ?? demoUsers(new Date())).find((u) => u.phone === phone);
+    if (!account) return;
+    const role = this.roleOf(state, account.id);
+    if (role !== "customer") throw new BackendError("invite_number_taken");
+    if (this.customerThingsOpen(state, account.id, phone)) throw new BackendError("invite_account_not_empty");
+    if ((state.fleetLinks ?? []).some((l) => l.driverId === account.id)) throw new BackendError("already_in_fleet");
+  }
+
+  async inviteFleetDriver(rawPhone: string): Promise<FleetInvite> {
+    const state = this.load();
+    const { profile, fleet } = this.requireApprovedFleet(state);
+    if (profile.role !== "fleet_manager" || !fleet) throw new BackendError("forbidden");
+    const phone = normalizeTogoPhone(rawPhone ?? "");
+    if (!phone) throw new BackendError("phone_not_allowed");
+    this.checkInvitable(state, phone);
+    const invites = this.invitesOf(state);
+    if (invites.some((i) => i.managerId === profile.id && i.phone === phone && i.status === "pending")) throw new BackendError("invite_pending");
+    // R13: standard tier at most 3 drivers, open invites included.
+    if (fleet.tier !== "unlocked" && this.usedPlaces(state, profile.id) >= STANDARD_DRIVER_LIMIT) throw new BackendError("fleet_limit");
+    const now = new Date();
+    const invite: DemoInvite = {
+      id: crypto.randomUUID(),
+      managerId: profile.id,
+      phone,
+      status: "pending",
+      token: newDriverCode(),
+      createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + FLEET_INVITE_DAYS * 86_400_000).toISOString(),
+      decidedAt: null,
+      userId: null,
+    };
+    this.save(
+      withAudit(
+        { ...state, fleetInvites: [invite, ...invites] },
+        { table: "fleet_invites", action: "insert", rowId: invite.id, changes: { phone, manager_id: profile.id } },
+      ),
+    );
+    return this.viewInvite(invite);
+  }
+
+  async revokeFleetInvite(inviteId: string) {
+    const state = this.load();
+    const { profile } = this.requireApprovedFleet(state);
+    const invites = this.invitesOf(state);
+    const invite = invites.find((i) => i.id === inviteId);
+    if (!invite || invite.status !== "pending" || (profile.role !== "admin" && invite.managerId !== profile.id)) throw new BackendError("invite_not_found");
+    const now = new Date().toISOString();
+    this.save(
+      withAudit(
+        { ...state, fleetInvites: invites.map((i) => (i.id === inviteId ? { ...i, status: "revoked" as const, decidedAt: now } : i)) },
+        { table: "fleet_invites", action: "update", rowId: inviteId, changes: { status: ["pending", "revoked"] } },
+      ),
+    );
+  }
+
+  async removeFleetDriver(driverId: string): Promise<FleetRemoval> {
+    const state = this.load();
+    const { profile } = this.requireApprovedFleet(state);
+    const link = (state.fleetLinks ?? []).find((l) => l.driverId === driverId);
+    if (!link || (profile.role !== "admin" && link.managerId !== profile.id)) throw new BackendError("driver_not_found");
+    if (this.busyJob(state, driverId)) throw new BackendError("driver_busy");
+    const d = (state.drivers ?? []).find((x) => x.userId === driverId);
+    // R15: back to customer with nothing open; with cash open the account stays a driver outside the fleet.
+    const release = !!d && this.roleOf(state, driverId) === "driver" && this.balanceOfDriver(state, driverId) === 0;
+    let next = withAudit(
+      { ...state, fleetLinks: (state.fleetLinks ?? []).filter((l) => l !== link) },
+      { table: "fleet_manager_drivers", action: "delete", rowId: driverId, userId: driverId, changes: { manager_id: link.managerId } },
+    );
+    if (release) {
+      next = withAudit(
+        {
+          ...this.withRole(next, driverId, "customer"),
+          drivers: (next.drivers ?? []).filter((x) => x.userId !== driverId),
+          driverQueue: (next.driverQueue ?? []).filter((q) => q.driverId !== driverId),
+        },
+        { table: "drivers", action: "update", rowId: driverId, userId: driverId, changes: { status: [d!.status, null], released: true } },
+      );
+      next = withAudit(next, { table: "profiles", action: "update", rowId: driverId, userId: driverId, changes: { role: ["driver", "customer"] } });
+    }
+    this.save(next);
+    return { released: release };
+  }
+
+  async myFleetInvites(): Promise<MyFleetInvite[]> {
+    const state = this.load();
+    const profile = state.profile;
+    if (!profile?.phone || profile.role !== "customer") return [];
+    const d = (state.drivers ?? []).find((x) => x.userId === profile.id);
+    const fleets = this.fleetsOf(state);
+    return this.invitesOf(state)
+      .filter((i) => i.phone === profile.phone && i.status === "pending" && fleets.find((f) => f.managerId === i.managerId)?.status === "approved")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((i) => ({
+        token: i.token,
+        fleetName: fleets.find((f) => f.managerId === i.managerId)!.name,
+        expiresAt: i.expiresAt,
+        needsApplication: !d || d.status === "rejected",
+      }));
+  }
+
+  private inviteForMe(state: DemoState, profile: Profile, token: string): DemoInvite {
+    const invite = this.invitesOf(state).find((i) => i.token === token.trim().toUpperCase());
+    if (!invite || invite.status !== "pending" || !profile.phone || invite.phone !== profile.phone) throw new BackendError("invite_not_found");
+    return invite;
+  }
+
+  async acceptFleetInvite(token: string, application?: DriverApplication) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const invite = this.inviteForMe(state, profile, token);
+    if (profile.role !== "customer") throw new BackendError("has_other_role");
+    this.requireDrivers(state);
+    if (this.fleetsOf(state).find((f) => f.managerId === invite.managerId)?.status !== "approved") throw new BackendError("invite_not_found");
+    if (this.customerThingsOpen(state, profile.id, profile.phone)) throw new BackendError("invite_account_not_empty");
+    if ((state.fleetLinks ?? []).some((l) => l.driverId === profile.id)) throw new BackendError("already_in_fleet");
+    const existing = (state.drivers ?? []).find((d) => d.userId === profile.id);
+    let drivers = state.drivers ?? [];
+    if (!existing || existing.status === "rejected") {
+      const text = (v: string | undefined, min: number, max: number) => {
+        const t = (v ?? "").trim();
+        if (t.length < min || t.length > max) throw new BackendError("unknown", "bad_request");
+        return t;
+      };
+      const a = application;
+      if (!a || !FLEET_VEHICLE_TYPES.includes(a.wantedType)) throw new BackendError("unknown", "bad_request");
+      const fields = { fullName: text(a.fullName, 2, 80), idNumber: text(a.idNumber, 3, 40), licenseNumber: text(a.licenseNumber, 3, 40), wantedType: a.wantedType };
+      const driver: DemoDriver = existing
+        ? { ...existing, ...fields, status: "pending" }
+        : { userId: profile.id, status: "pending", phone: profile.phone, documents: {}, vehicleId: null, code: newDriverCode(), createdAt: new Date().toISOString(), reviewedAt: null, ...fields };
+      drivers = [driver, ...drivers.filter((d) => d.userId !== profile.id)];
+    }
+    const now = new Date().toISOString();
+    const invites = this.invitesOf(state).map((i) =>
+      i.id === invite.id
+        ? { ...i, status: "accepted" as const, decidedAt: now, userId: profile.id }
+        : i.phone === invite.phone && i.status === "pending"
+          ? { ...i, status: "expired" as const, decidedAt: now }
+          : i,
+    );
+    let next = withAudit(
+      { ...this.withRole(state, profile.id, "driver"), drivers, fleetInvites: invites, fleetLinks: [...(state.fleetLinks ?? []), { driverId: profile.id, managerId: invite.managerId }] },
+      { table: "fleet_invites", action: "update", rowId: invite.id, userId: profile.id, changes: { status: ["pending", "accepted"] } },
+    );
+    next = withAudit(next, { table: "fleet_manager_drivers", action: "insert", rowId: profile.id, userId: profile.id, changes: { manager_id: invite.managerId, invite: invite.id } });
+    this.save(withAudit(next, { table: "profiles", action: "update", rowId: profile.id, userId: profile.id, changes: { role: ["customer", "driver"] } }));
+  }
+
+  async declineFleetInvite(token: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const invite = this.inviteForMe(state, profile, token);
+    const now = new Date().toISOString();
+    this.save(
+      withAudit(
+        { ...state, fleetInvites: this.invitesOf(state).map((i) => (i.id === invite.id ? { ...i, status: "declined" as const, decidedAt: now, userId: profile.id } : i)) },
+        { table: "fleet_invites", action: "update", rowId: invite.id, userId: profile.id, changes: { status: ["pending", "declined"] } },
+      ),
+    );
+  }
+
+  async adminFleets(): Promise<AdminFleet[]> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const users = state.users ?? demoUsers(new Date());
+    const order = { pending: 0, approved: 1, rejected: 2 };
+    const invites = this.invitesOf(state);
+    return [...this.fleetsOf(state)]
+      .sort((a, b) => order[a.status] - order[b.status] || b.createdAt.localeCompare(a.createdAt))
+      .map((f) => {
+        const u = users.find((x) => x.id === f.managerId);
+        const links = (state.fleetLinks ?? []).filter((l) => l.managerId === f.managerId);
+        return {
+          ...this.fleetInfo(state, f),
+          contact: u?.phone ?? u?.email ?? null,
+          reviewedAt: f.reviewedAt,
+          drivers: links
+            .map((l) => (state.drivers ?? []).find((d) => d.userId === l.driverId))
+            .filter((d): d is DemoDriver => !!d)
+            .map((d) => ({ userId: d.userId, fullName: d.fullName, status: d.status })),
+          invites: invites.filter((i) => i.managerId === f.managerId).map((i) => this.viewInvite(i)),
+        };
+      });
+  }
+
+  async reviewFleet(managerId: string, action: FleetDecision) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const fleets = this.fleetsOf(state);
+    const fleet = fleets.find((f) => f.managerId === managerId);
+    if (!fleet) throw new BackendError("unknown", "not_found");
+    let status: FleetStatus;
+    if (action === "approve") {
+      if (fleet.status === "approved") return;
+      status = "approved";
+    } else if (action === "reject") {
+      if (fleet.status !== "pending") throw new BackendError("forbidden");
+      status = "rejected";
+    } else {
+      throw new BackendError("unknown", "bad_request");
+    }
+    this.save(
+      withAudit(
+        { ...state, fleets: fleets.map((f) => (f.managerId === managerId ? { ...f, status, reviewedAt: new Date().toISOString() } : f)) },
+        { table: "fleets", action: "update", rowId: managerId, userId: managerId, changes: { status: [fleet.status, status] } },
+      ),
+    );
+  }
+
+  async setFleetTier(managerId: string, tier: FleetTier) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!FLEET_TIERS.includes(tier)) throw new BackendError("unknown", "bad_request");
+    const fleets = this.fleetsOf(state);
+    const fleet = fleets.find((f) => f.managerId === managerId);
+    if (!fleet) throw new BackendError("unknown", "not_found");
+    if (fleet.tier === tier) return;
+    this.save(
+      withAudit(
+        { ...state, fleets: fleets.map((f) => (f.managerId === managerId ? { ...f, tier } : f)) },
+        { table: "fleets", action: "update", rowId: managerId, userId: managerId, changes: { tier: [fleet.tier, tier] } },
+      ),
+    );
   }
 
   async driverFileUrl(key: string): Promise<string> {
@@ -3915,10 +4335,10 @@ export class DemoBackend implements Backend {
     return user;
   }
 
-  /** A wallet transfer goes to a customer only: a driver account has no wallet (R11). */
+  /** A wallet transfer goes to a customer only: driver and fleet manager accounts have no wallet (R11). */
   private findWalletRecipientUser(state: DemoState, contact: string): AdminUser {
     const user = this.findWalletUser(state, contact);
-    if (user.role === "driver") throw new BackendError("not_a_customer");
+    if (user.role === "driver" || user.role === "fleet_manager") throw new BackendError("not_a_customer");
     return user;
   }
 
@@ -4256,8 +4676,8 @@ export class DemoBackend implements Backend {
     const today = dayStart();
     const earnedToday = g.ledger.filter((l) => l.userId === input.userId && l.points > 0 && l.kind !== "admin_adjust" && l.createdAt >= today).length;
     if (earnedToday >= MAX_EARNINGS_PER_DAY) return state;
-    // W10: driver accounts earn no greenpoints.
-    if (this.roleOf(state, input.userId) === "driver") return state;
+    // W10: driver accounts earn no greenpoints, nor fleet managers (W5).
+    if (this.roleOf(state, input.userId) === "driver" || this.roleOf(state, input.userId) === "fleet_manager") return state;
     // Station staff have no greenpoints.
     if (this.isStationStaff(state, input.userId)) return state;
     if (input.reservationId && g.ledger.some((l) => l.reservationId === input.reservationId)) return state;
@@ -4296,7 +4716,7 @@ export class DemoBackend implements Backend {
   async myGreenpoint(): Promise<GreenpointView> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    if (profile.role === "operator" || profile.role === "driver") throw new BackendError("forbidden");
+    if (profile.role === "operator" || profile.role === "driver" || profile.role === "fleet_manager") throw new BackendError("forbidden");
     const g = this.gp(state);
     const { grams, points } = this.gpTotals(g, profile.id);
     const open = this.openCode(g, profile.id);
@@ -4316,7 +4736,7 @@ export class DemoBackend implements Backend {
   async setGreenpointVehicle(vehicle: VehicleType) {
     const state = this.load();
     const profile = this.requireProfile(state);
-    if (profile.role === "operator" || profile.role === "driver") throw new BackendError("forbidden");
+    if (profile.role === "operator" || profile.role === "driver" || profile.role === "fleet_manager") throw new BackendError("forbidden");
     const g = this.gp(state);
     this.save({ ...state, greenpoint: { ...g, vehicles: { ...g.vehicles, [profile.id]: vehicle } } });
   }
@@ -4324,7 +4744,7 @@ export class DemoBackend implements Backend {
   async startRedemption(rewardId: string): Promise<GreenpointRedemption> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    if (profile.role === "operator" || profile.role === "driver") throw new BackendError("forbidden");
+    if (profile.role === "operator" || profile.role === "driver" || profile.role === "fleet_manager") throw new BackendError("forbidden");
     const g = this.gp(state);
     const reward = g.rewards.find((r) => r.id === rewardId);
     if (!reward || !rewardAvailable(reward)) throw new BackendError("reward_unavailable");
@@ -4370,7 +4790,7 @@ export class DemoBackend implements Backend {
     if (!station.isSolar) throw new BackendError("greenpoint_not_solar");
     const rider = this.findWalletUser(state, input.contact);
     if (rider.id === profile.id) throw new BackendError("own_reservation");
-    if (rider.role === "driver") throw new BackendError("greenpoint_fleet_driver");
+    if (rider.role === "driver" || rider.role === "fleet_manager") throw new BackendError("greenpoint_fleet_driver");
     if (this.isStationStaff(state, rider.id)) throw new BackendError("greenpoint_station_staff");
     const next = this.earn(state, {
       userId: rider.id,

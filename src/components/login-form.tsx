@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { HOSTED_DEMO } from "@/lib/backend";
 import { useErrorMessage } from "@/lib/hooks";
@@ -17,6 +18,7 @@ import { useI18n } from "./i18n-provider";
 import { MailIcon, PhoneIcon } from "./icons";
 import { OtpInput } from "./otp-input";
 import { runsOperator } from "@/lib/operators";
+import { cleanFleetName, FLEET_NAME_MAX } from "@/lib/fleet";
 
 // On the public site the demo only offers the customer view (anyone could otherwise "log in" as admin).
 const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["customer"] : ["customer", "operator", "fleet_manager", "driver", "admin"];
@@ -34,12 +36,17 @@ type Method = Contact["kind"];
 
 const digits = (value: string, max: number) => value.replace(/\D/g, "").slice(0, max);
 
-export function LoginForm() {
+/**
+ * fleet: the fleet manager registration (/flotte/inscription). Only the "register" steps, plus
+ * the fleet name; the account is a fleet manager account with a fleet waiting for an admin.
+ */
+export function LoginForm({ fleet = false }: { fleet?: boolean }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const router = useRouter();
   const errorMessage = useErrorMessage();
-  const [mode, setMode] = useState<Mode>("pin");
+  const [mode, setMode] = useState<Mode>(fleet ? "register" : "pin");
+  const [fleetName, setFleetName] = useState("");
   const [method, setMethod] = useState<Method>("phone");
   const [country, setCountry] = useState(DEFAULT_PHONE_COUNTRY);
   const [phoneInput, setPhoneInput] = useState("");
@@ -92,7 +99,8 @@ export function LoginForm() {
     // Next.js keeps this page's state for back navigation, so start fresh next time.
     setPhoneInput("");
     setEmailInput("");
-    switchMode("pin");
+    setFleetName("");
+    switchMode(fleet ? "register" : "pin");
     // Customers go back to the page that sent them here (/login?next=/station?id=…), read
     // from the address bar because the page is static.
     const next = safeNextPath(new URLSearchParams(window.location.search).get("next"));
@@ -105,7 +113,9 @@ export function LoginForm() {
             ? "/operator"
             : profile.role === "driver"
               ? "/chauffeur"
-              : (next ?? "/"),
+              : profile.role === "fleet_manager"
+                ? "/flotte"
+                : (next ?? "/"),
     );
   }
 
@@ -120,6 +130,10 @@ export function LoginForm() {
     e.preventDefault();
     if (mode === "register" && !accepted) {
       setError(t.legal.mustAccept);
+      return;
+    }
+    if (fleet && !cleanFleetName(fleetName)) {
+      setError(t.fleet.nameInvalid);
       return;
     }
     const contact = contactOrError();
@@ -137,7 +151,13 @@ export function LoginForm() {
       setError(t.login.pinMismatch);
       return;
     }
-    void run(async () => done(await backend.register(codeSentTo.value, code, pin, demoRole)));
+    void run(async () =>
+      done(
+        fleet
+          ? await backend.registerFleetManager(codeSentTo.value, code, pin, cleanFleetName(fleetName) ?? "")
+          : await backend.register(codeSentTo.value, code, pin, demoRole),
+      ),
+    );
   }
 
   const input =
@@ -247,7 +267,7 @@ export function LoginForm() {
     </Fragment>
   ));
 
-  const roleField = backend.mode === "demo" && DEMO_ROLES.length > 1 && (
+  const roleField = !fleet && backend.mode === "demo" && DEMO_ROLES.length > 1 && (
     <label className="block space-y-1">
       <span className="text-sm font-medium">{t.demo.role}</span>
       <select className={input} value={demoRole} onChange={(e) => setDemoRole(e.target.value as UserRole)}>
@@ -281,19 +301,21 @@ export function LoginForm() {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/logo.svg" alt="" width={64} height={64} className="h-16 w-16" />
         <h1 className="text-2xl font-bold">
-          {codeSentTo ? t.ui.auth.otpTitle : mode === "reset" ? t.login.resetTitle : t.ui.auth.welcome}
+          {codeSentTo ? t.ui.auth.otpTitle : fleet ? t.fleet.registerTitle : mode === "reset" ? t.login.resetTitle : t.ui.auth.welcome}
         </h1>
         <p className="max-w-xs text-sm text-white/75">
           {codeSentTo
             ? format(codeSentTo.kind === "email" ? t.login.codeSentEmail : t.login.codeSentSms, { contact: codeSentTo.value })
-            : mode === "pin"
-              ? t.ui.auth.welcomeText
-              : t.login.codeIntro}
+            : fleet
+              ? t.fleet.registerIntro
+              : mode === "pin"
+                ? t.ui.auth.welcomeText
+                : t.login.codeIntro}
         </p>
       </div>
 
       <div className="mx-auto -mt-8 w-full max-w-sm flex-1 space-y-4 rounded-t-3xl bg-background px-6 pb-8 pt-6">
-        {!codeSentTo && mode !== "reset" && (
+        {!fleet && !codeSentTo && mode !== "reset" && (
           <div role="tablist" className="flex rounded-full bg-gp-border/60 p-1 dark:bg-white/10">
             {tab("pin", t.ui.auth.tabLogin)}
             {tab("register", t.ui.auth.tabRegister)}
@@ -314,9 +336,25 @@ export function LoginForm() {
             <button type="submit" className={button} disabled={busy || pin.length < PIN_LENGTH}>
               {t.login.signIn}
             </button>
+            <Link href="/flotte/inscription" className={`${link} flex min-h-11 items-center justify-center text-center`}>
+              {t.fleet.registerLink}
+            </Link>
           </form>
         ) : !codeSentTo ? (
           <form onSubmit={sendCode} className="space-y-4">
+            {fleet && (
+              <label className="block space-y-1.5">
+                <span className="text-sm font-medium">{t.fleet.fleetName}</span>
+                <input
+                  className={input}
+                  autoComplete="organization"
+                  maxLength={FLEET_NAME_MAX}
+                  value={fleetName}
+                  onChange={(e) => setFleetName(e.target.value)}
+                  required
+                />
+              </label>
+            )}
             {methodSwitch}
             {contactField}
             {mode === "register" && (
@@ -339,6 +377,11 @@ export function LoginForm() {
                 {t.login.backToLogin}
               </button>
             )}
+            {fleet && (
+              <Link href="/login" className={`${link} flex min-h-11 items-center justify-center text-center`}>
+                {t.fleet.backToLogin}
+              </Link>
+            )}
           </form>
         ) : (
           <form onSubmit={register} className="space-y-4">
@@ -357,7 +400,7 @@ export function LoginForm() {
               className={button}
               disabled={busy || code.length < 6 || pin.length < PIN_LENGTH || pinConfirm.length < PIN_LENGTH}
             >
-              {t.login.confirm}
+              {fleet ? t.fleet.registerSubmit : t.login.confirm}
             </button>
             <button
               type="button"
