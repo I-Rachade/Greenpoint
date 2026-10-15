@@ -184,6 +184,12 @@ describe("a charge at the counter", () => {
     expect((await start(env, { pointId: "p1" })).status).toBe(403);
   });
 
+  it("refuses a new charge where the station is locked for motorbike outlets (R8)", async () => {
+    const { db, env } = await setup();
+    db.exec("update station_services set unlocked = 0 where station_id = 'st' and service = 'charging'");
+    expect((await start(env, { pointId: "p1" })).data.error).toBe("service_not_offered");
+  });
+
   it("uses the station's own price, copied at the start", async () => {
     const { env } = await setup();
     await saveChargeTariff(env, ADMIN, new Request("https://x", { method: "POST", body: JSON.stringify({ stationId: "st", kwhXof: 200, minXof: 50 }) }));

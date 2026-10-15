@@ -180,6 +180,15 @@ import { OPERATOR_NAME_MAX, type AdminOperator, type OperatorInput, type OwnerSt
 import { validEvCharger, type EvCharger, type EvChargerInput } from "../ev-chargers";
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 import { ocppKey } from "../iot/ocpp";
+import {
+  customerStation,
+  globalServices,
+  isStationService,
+  STATION_SERVICES,
+  type ServiceRequestStatus,
+  type StationService,
+  type StationServiceInfo,
+} from "../station-services";
 
 const STORAGE_KEY = "poinderecharge-demo-v3";
 /** Every demo registration accepts this SMS code. */
@@ -255,6 +264,19 @@ interface DemoState {
   charges?: DemoCharge[];
   chargeTariff?: ChargeTariff;
   stationTariffs?: Record<string, { kwhXof: number | null; minXof: number | null }>;
+  /** Service unlock per station (as table station_services; filled in by withServiceRows). */
+  stationServices?: DemoServiceRow[];
+}
+
+interface DemoServiceRow {
+  stationId: string;
+  service: StationService;
+  unlocked: boolean;
+  status: ServiceRequestStatus | null;
+  requestedBy: string | null;
+  requestedAt: string | null;
+  decidedBy: string | null;
+  decidedAt: string | null;
 }
 
 type DemoCharge = ChargeSession & { userId: string | null; pointId: string };
@@ -527,6 +549,43 @@ function demotedIfIdle(state: DemoState, userId: string) {
   );
 }
 
+/**
+ * What a station's set-up offers: unlocked by itself, like the triggers and the backfill
+ * of migration 0026 (new station, kind changed, depot switched on, outlet registered,
+ * car charger assigned). Rows are only ever added, so a service an admin switched off stays off.
+ */
+function setUpServices(state: DemoState, station: Station): StationService[] {
+  const out: StationService[] = [];
+  if (offersSwap(station.kind)) out.push("swap");
+  const outlets = (state.devices ?? seedDevices()).some((d) => d.points.some((p) => p.stationId === station.id));
+  if (offersCharging(station.kind) || outlets) out.push("charging");
+  if ((state.evChargers ?? DEMO_EV_CHARGERS).some((c) => c.stationId === station.id)) out.push("ev");
+  if ((state.parcelDepots ?? seedDepots()).some((d) => d.stationId === station.id && d.isActive)) out.push("parcels", "drivers");
+  return out;
+}
+
+function withServiceRows(state: DemoState): DemoState {
+  const rows = state.stationServices ?? [];
+  const added: DemoServiceRow[] = [];
+  for (const station of state.stations) {
+    for (const service of setUpServices(state, station)) {
+      if (rows.some((r) => r.stationId === station.id && r.service === service)) continue;
+      added.push({ stationId: station.id, service, unlocked: true, status: "approved", requestedBy: null, requestedAt: null, decidedBy: null, decidedAt: null });
+    }
+  }
+  return added.length || !state.stationServices ? { ...state, stationServices: [...rows, ...added] } : state;
+}
+
+/** Station unlocked for the service (global switch not checked), as stationUnlocked() in worker/services.ts. */
+function stationUnlocked(state: DemoState, stationId: string, service: StationService): boolean {
+  return (withServiceRows(state).stationServices ?? []).some((r) => r.stationId === stationId && r.service === service && r.unlocked);
+}
+
+/** Global switch on AND station unlocked, as serviceActive() in worker/services.ts. */
+function serviceActive(state: DemoState, stationId: string, service: StationService): boolean {
+  return globalServices(demoFeatures(state))[service] && stationUnlocked(state, stationId, service);
+}
+
 /** Appends an activity log entry, like the Worker does on Cloudflare. */
 /** The modules shown, as worker/features.ts works them out. */
 function demoFeatures(state: DemoState): Features {
@@ -579,7 +638,9 @@ export class DemoBackend implements Backend {
     return this.memory;
   }
 
-  private save(state: DemoState) {
+  private save(next: DemoState) {
+    // Whatever the admin set up is unlocked, as the triggers of migration 0026 do.
+    const state = withServiceRows(next);
     this.memory = state;
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -648,10 +709,12 @@ export class DemoBackend implements Backend {
       ...s,
       batteryTypes: (s.batteryTypes ?? []).filter((t) => t.isActive),
     }));
+    // Only the services active at each station, as publicStations() in worker/api.ts.
     const features = demoFeatures(state);
-    const shown = features.evChargers ? views : views.map((s) => ({ ...s, evChargers: [] }));
-    if (features.parcels) return shown;
-    return shown.filter((s) => s.kind !== "parcel").map((s) => ({ ...s, parcelPoint: null }));
+    return views
+      .filter((s) => features.parcels || s.kind !== "parcel")
+      .map((s) => customerStation(s, new Set(STATION_SERVICES.filter((service) => serviceActive(state, s.id, service)))))
+      .filter((s) => s !== null);
   }
 
   private activeStations(state: DemoState): Station[] {
@@ -819,6 +882,7 @@ export class DemoBackend implements Backend {
     if ((type === "slot" && !offersCharging(station.kind)) || (type === "battery" && !offersSwap(station.kind))) {
       throw new BackendError("service_not_offered");
     }
+    if (!serviceActive(state, stationId, type === "battery" ? "swap" : "charging")) throw new BackendError("service_not_offered");
     const held = countHolding(state.reservations, stationId);
     const left = type === "slot" ? status.freeSlots - held.slots : status.fullBatteries - held.batteries;
     if (left <= 0) throw new BackendError("none_available");
@@ -1281,6 +1345,117 @@ export class DemoBackend implements Backend {
     );
   }
 
+  // Service unlock per station (as worker/services.ts) ------------------------------
+
+  async stationServices(): Promise<StationServiceInfo[]> {
+    const state = withServiceRows(this.load());
+    const profile = this.requireProfile(state);
+    let stations: Station[];
+    if (profile.role === "admin") {
+      stations = state.stations;
+    } else if (profile.role === "operator") {
+      const owned = new Set(ownedOperators(state, profile.id));
+      stations = this.activeStations(state).filter((s) => owned.has(s.operatorId));
+      if (!stations.length) throw new BackendError("forbidden");
+    } else {
+      throw new BackendError("forbidden");
+    }
+    const global = globalServices(demoFeatures(state));
+    const users = state.users ?? demoUsers(new Date());
+    return [...stations]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .flatMap((s) =>
+        STATION_SERVICES.map((service) => {
+          const r = state.stationServices?.find((x) => x.stationId === s.id && x.service === service);
+          const unlocked = !!r?.unlocked;
+          const by = r?.requestedBy ? users.find((u) => u.id === r.requestedBy) : undefined;
+          return {
+            stationId: s.id,
+            stationName: s.name,
+            service,
+            unlocked,
+            status: r?.status ?? null,
+            requestedBy: by ? personLabel(by) : null,
+            requestedAt: r?.requestedAt ?? null,
+            decidedAt: r?.decidedAt ?? null,
+            globalOn: global[service],
+            active: global[service] && unlocked,
+          };
+        }),
+      );
+  }
+
+  private serviceRow(state: DemoState, stationId: string, service: StationService) {
+    return withServiceRows(state).stationServices?.find((r) => r.stationId === stationId && r.service === service);
+  }
+
+  private saveServiceRow(state: DemoState, row: DemoServiceRow, audit: AuditInput) {
+    const rows = (withServiceRows(state).stationServices ?? []).filter((r) => !(r.stationId === row.stationId && r.service === row.service));
+    this.save(withAudit({ ...state, stationServices: [...rows, row] }, audit));
+  }
+
+  async requestStationService(stationId: string, service: StationService) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const station = state.stations.find((s) => s.id === stationId);
+    // The station's owner only; an admin switches directly.
+    if (profile.role !== "operator" || !station || !ownedOperators(state, profile.id).includes(station.operatorId)) throw new BackendError("forbidden");
+    if (!isStationService(service)) throw new BackendError("unknown", "unknown service");
+    const before = this.serviceRow(state, stationId, service);
+    if (before?.unlocked) throw new BackendError("service_already_unlocked");
+    if (before?.status === "pending") throw new BackendError("service_request_pending");
+    this.saveServiceRow(
+      state,
+      { stationId, service, unlocked: false, status: "pending", requestedBy: profile.id, requestedAt: new Date().toISOString(), decidedBy: null, decidedAt: null },
+      { table: "station_services", action: before ? "update" : "insert", rowId: `${stationId}:${service}`, stationId, changes: { service, status: [before?.status ?? null, "pending"] } },
+    );
+  }
+
+  async decideStationService(stationId: string, service: StationService, approve: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!isStationService(service)) throw new BackendError("unknown", "unknown service");
+    const before = this.serviceRow(state, stationId, service);
+    if (before?.status !== "pending") throw new BackendError("no_pending_request");
+    const status = approve ? "approved" : "rejected";
+    this.saveServiceRow(
+      state,
+      { ...before, status, unlocked: approve || before.unlocked, decidedBy: state.profile!.id, decidedAt: new Date().toISOString() },
+      {
+        table: "station_services",
+        action: "update",
+        rowId: `${stationId}:${service}`,
+        stationId,
+        changes: { service, status: ["pending", status], ...(approve && !before.unlocked ? { unlocked: [false, true] } : {}) },
+      },
+    );
+  }
+
+  async setStationService(stationId: string, service: StationService, unlocked: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!isStationService(service)) throw new BackendError("unknown", "unknown service");
+    if (!state.stations.some((s) => s.id === stationId)) throw new BackendError("station_not_found");
+    const before = this.serviceRow(state, stationId, service);
+    if (!!before?.unlocked === unlocked) return;
+    // A pending request is settled with it.
+    const settled = before?.status === "pending" ? (unlocked ? "approved" : "rejected") : null;
+    const now = new Date().toISOString();
+    this.saveServiceRow(
+      state,
+      before
+        ? { ...before, unlocked, status: settled ?? before.status, decidedBy: state.profile!.id, decidedAt: now }
+        : { stationId, service, unlocked, status: unlocked ? "approved" : null, requestedBy: null, requestedAt: null, decidedBy: state.profile!.id, decidedAt: now },
+      {
+        table: "station_services",
+        action: before ? "update" : "insert",
+        rowId: `${stationId}:${service}`,
+        stationId,
+        changes: { service, unlocked: [!!before?.unlocked, unlocked], ...(settled ? { status: ["pending", settled] } : {}) },
+      },
+    );
+  }
+
   async adminOperators(): Promise<AdminOperator[]> {
     const state = this.load();
     this.requireAdmin(state);
@@ -1486,10 +1661,15 @@ export class DemoBackend implements Backend {
     return (state.parcelDepots ?? seedDepots()).some((d) => d.stationId === stationId && d.isActive) && !inactive.has(stationId);
   }
 
+  /** An active depot at a station unlocked for parcels, as requireDepot() in worker/parcels.ts. */
+  private depotOpen(state: DemoState, stationId: string): boolean {
+    return this.activeDepot(state, stationId) && stationUnlocked(state, stationId, "parcels");
+  }
+
   async parcelInfo() {
     const state = this.load();
     return {
-      depots: (state.parcelDepots ?? seedDepots()).filter((d) => this.activeDepot(state, d.stationId)),
+      depots: (state.parcelDepots ?? seedDepots()).filter((d) => this.depotOpen(state, d.stationId)),
       sizes: state.parcelSizes ?? DEFAULT_PARCEL_SIZES,
       driverSettings: this.settingsOf(state),
       bookableVehicles: this.bookableVehiclesOf(state),
@@ -1548,7 +1728,7 @@ export class DemoBackend implements Backend {
     const recipientPhone = normalizeTogoPhone(input.recipientPhone ?? "");
     if (!senderPhone || !recipientPhone) throw new BackendError("phone_not_allowed");
     if (input.toStationId === stationId) throw new BackendError("same_station");
-    if (!this.activeDepot(state, stationId) || !this.activeDepot(state, input.toStationId)) throw new BackendError("depot_inactive");
+    if (!this.depotOpen(state, stationId) || !this.depotOpen(state, input.toStationId)) throw new BackendError("depot_inactive");
     if (input.express) this.requireDrivers(state);
     const content = (input.content ?? "").trim();
     if (!content) throw new BackendError("unknown", "content missing");
@@ -1943,7 +2123,8 @@ export class DemoBackend implements Backend {
       const start = job.kind === "pickup" || job.kind === "ride" || job.kind === "courier" ? job.home : this.stationAt(state, job.fromStationId);
       if (!start) continue;
       const entries = queue
-        .filter((q) => !job.declined.includes(q.driverId))
+        // No new trip for a line at a station locked for drivers.
+        .filter((q) => !job.declined.includes(q.driverId) && stationUnlocked(state, q.stationId, "drivers"))
         .map((q) => {
           const d = drivers.find((x) => x.userId === q.driverId);
           const v = fleet.find((x) => x.id === d?.vehicleId);
@@ -2086,7 +2267,9 @@ export class DemoBackend implements Backend {
     if (!vehicle?.isActive) throw new BackendError("no_vehicle");
     if (this.busyJob(state, driver.userId)) throw new BackendError("driver_busy");
     if (this.balanceOfDriver(state, driver.userId) >= this.settingsOf(state).cashLimitFcfa) throw new BackendError("cash_limit");
-    if (!this.activeDepot(state, stationId)) throw new BackendError("depot_inactive");
+    if (!this.depotOpen(state, stationId)) throw new BackendError("depot_inactive");
+    // Drivers queue only where the station is unlocked for them.
+    if (!serviceActive(state, stationId, "drivers")) throw new BackendError("service_not_offered");
     // The demo runs anywhere, so it does not check that the driver is at the station.
     void position;
     const queue = state.driverQueue ?? [];
@@ -2143,7 +2326,7 @@ export class DemoBackend implements Backend {
     if (!tier) throw new BackendError("parcel_too_large");
     const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === driver.vehicleId);
     if (!vehicle || !vehicleFits(vehicle.type, tier.size, measures.weightKg, this.settingsOf(state))) throw new BackendError("vehicle_too_small");
-    const from = nearestStation(job.home, this.depotPoints(state).filter((st) => st.id !== job.toStationId));
+    const from = nearestStation(job.home, this.depotPoints(state).filter((st) => st.id !== job.toStationId && stationUnlocked(state, st.id, "parcels")));
     if (!from) throw new BackendError("depot_inactive");
     const recipient = this.demoAccount(state, job.recipient.phone, job.recipient.name);
     state = recipient.state;
@@ -2311,7 +2494,7 @@ export class DemoBackend implements Backend {
     const profile = this.requireProfile(state);
     this.requireDrivers(state);
     const home = this.cleanHome(input.home);
-    if (!this.activeDepot(state, input.toStationId)) throw new BackendError("depot_inactive");
+    if (!this.depotOpen(state, input.toStationId)) throw new BackendError("depot_inactive");
     const recipientPhone = normalizeTogoPhone(input.recipientPhone ?? "");
     if (!recipientPhone) throw new BackendError("phone_not_allowed");
     const content = (input.content ?? "").trim().slice(0, 300);
@@ -2448,6 +2631,7 @@ export class DemoBackend implements Backend {
     const isRecipient = parcel.recipient.userId === profile.id || (!!profile.phone && parcel.recipient.phone === profile.phone);
     if (!isRecipient) throw new BackendError("forbidden");
     if (parcel.status !== "arrived" || (parcel.deliveryStatus && parcel.deliveryStatus !== "failed")) throw new BackendError("parcel_wrong_status");
+    if (!this.depotOpen(state, parcel.toStationId)) throw new BackendError("depot_inactive");
     const from = this.stationAt(state, parcel.toStationId)!;
     const distanceM = Math.round(distanceMeters(from, home));
     const fare = fareFor(distanceM, false, this.settingsOf(state));
@@ -3726,6 +3910,7 @@ export class DemoBackend implements Backend {
   async startCharge(stationId: string, input: { pointId: string; contact?: string }): Promise<ChargeSession> {
     const state = this.load();
     const staff = this.requireStaff(state);
+    if (!serviceActive(state, stationId, "charging")) throw new BackendError("service_not_offered");
     const station = state.stations.find((s) => s.id === stationId);
     const point = (state.devices ?? seedDevices()).flatMap((d) => d.points).find((p) => p.id === input.pointId && p.stationId === stationId);
     if (!station || !point) throw new BackendError("unknown", "not_found");

@@ -45,6 +45,7 @@ import type {
   StationDrivers,
 } from "../drivers";
 import type { FleetStats, FleetView } from "../fleet";
+import type { StationService, StationServiceInfo } from "../station-services";
 import type { ReviewInput, StationReview } from "../station-extras";
 import type { LatLng } from "../geo";
 import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
@@ -143,6 +144,9 @@ export type BackendErrorCode =
   | "greenpoint_not_solar"
   | "charge_busy"
   | "charge_wrong_status"
+  | "service_already_unlocked"
+  | "service_request_pending"
+  | "no_pending_request"
   | "invalid_review"
   | "unknown";
 
@@ -218,6 +222,16 @@ export interface Backend {
   ownerAddStaff(stationId: string, contact: string): Promise<void>;
   ownerRemoveStaff(stationId: string, userId: string): Promise<void>;
   ownerSaveStation(stationId: string, input: OwnerStationInput): Promise<void>;
+
+  // Service unlock per station (see src/lib/station-services.ts)
+  /** Every service of the owner's stations, or of all stations for an admin. */
+  stationServices(): Promise<StationServiceInfo[]>;
+  /** The station's owner asks an admin to unlock a service. */
+  requestStationService(stationId: string, service: StationService): Promise<void>;
+  /** An admin approves (unlocks) or rejects a pending request. */
+  decideStationService(stationId: string, service: StationService, approve: boolean): Promise<void>;
+  /** An admin switches a service on or off at a station directly. */
+  setStationService(stationId: string, service: StationService, unlocked: boolean): Promise<void>;
 
   // Admin
   listOperators(): Promise<Operator[]>;

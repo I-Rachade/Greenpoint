@@ -133,6 +133,8 @@ import {
 import type { Env } from "./env";
 import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setDriversEnabled, setLiteEnabled, setParcelsEnabled } from "./features";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
+import { activeServices, decideService, listStationServices, requestService, requireService, setService } from "./services";
+import { customerStation } from "../src/lib/station-services";
 import { DB_CUSTOMER, roleFromDb, roleToDb } from "./roles";
 import { refreshTopup, startTopup } from "./wallet-topups";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
@@ -447,6 +449,8 @@ async function reserve(c: Ctx, stationId: string, type: ReservationType): Promis
   if ((type === "slot" && !offersCharging(station.kind)) || (type === "battery" && !offersSwap(station.kind))) {
     throw new ApiError("service_not_offered");
   }
+  // The station must also be unlocked for the service, and its global switch on (worker/services.ts).
+  await requireService(c.db, stationId, type === "battery" ? "swap" : "charging");
 
   const id = uuid();
   const code = randomDigits(4);
@@ -733,18 +737,16 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
 }
 
 /**
- * Active stations for the app, with the active battery types they swap. With the
- * parcel module off, parcel points are left out; in the Lite version, car chargers too.
+ * Active stations for the app, with the active battery types they swap, showing only
+ * the services active there (global switch on AND station unlocked, worker/services.ts):
+ * with the parcel module off, parcel points are left out; in the Lite version, car chargers too.
  */
 async function publicStations(c: Ctx) {
-  const [all, features] = await Promise.all([c.stations("where s.is_active = 1"), getFeatures(c.env)]);
-  const stations = all.map((s) => ({
-    ...s,
-    batteryTypes: (s.batteryTypes ?? []).filter((t) => t.isActive),
-    evChargers: features.evChargers ? s.evChargers : [],
-  }));
-  if (features.parcels) return stations;
-  return stations.filter((s) => s.kind !== "parcel").map((s) => ({ ...s, parcelPoint: null }));
+  const [all, features, active] = await Promise.all([c.stations("where s.is_active = 1"), getFeatures(c.env), activeServices(c.db)]);
+  const stations = all
+    .filter((s) => features.parcels || s.kind !== "parcel")
+    .map((s) => customerStation({ ...s, batteryTypes: (s.batteryTypes ?? []).filter((t) => t.isActive) }, active.get(s.id) ?? new Set()));
+  return stations.filter((s) => s !== null);
 }
 
 async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
@@ -1382,6 +1384,32 @@ const ROUTES: [string, RegExp, Handler][] = [
     "POST",
     /^\/api\/owner\/stations\/([\w-]+)$/,
     async (c, [id]) => ownerSaveStation(c, id, await readJson<OwnerStationInput>(c.request)),
+  ],
+  // Service unlock per station (worker/services.ts): owners ask, admins decide.
+  ["GET", /^\/api\/station-services$/, (c) => listStationServices(c)],
+  [
+    "POST",
+    /^\/api\/station-services\/request$/,
+    async (c) => {
+      const { stationId, service } = await readJson<{ stationId: string; service: string }>(c.request);
+      return requestService(c, String(stationId), service);
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/admin\/station-services\/decide$/,
+    async (c) => {
+      const { stationId, service, approve } = await readJson<{ stationId: string; service: string; approve: boolean }>(c.request);
+      return decideService(c, String(stationId), service, approve === true);
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/admin\/station-services\/set$/,
+    async (c) => {
+      const { stationId, service, unlocked } = await readJson<{ stationId: string; service: string; unlocked: boolean }>(c.request);
+      return setService(c, String(stationId), service, unlocked === true);
+    },
   ],
   ["GET", /^\/api\/admin\/operators$/, (c) => adminOperators(c)],
   ["GET", /^\/api\/admin\/battery-types$/, async (c) => (await c.requireAdmin(), listBatteryTypes(c.db))],

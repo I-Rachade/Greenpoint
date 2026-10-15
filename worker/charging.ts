@@ -19,6 +19,7 @@ import { onlineSince, startOutlet, stopOutlet } from "./devices";
 import type { Env } from "./env";
 import { chargeEarnStatement } from "./greenpoint";
 import { ApiError, nowIso, readJson, uuid } from "./http";
+import { requireService } from "./services";
 import { mobilePaymentOffered, startChargePayment, type Payment } from "./payments";
 import { walletAccess } from "./wallet";
 
@@ -188,6 +189,8 @@ async function findCustomer(db: D1Database, raw: unknown): Promise<{ id: string 
 /** POST /api/stations/:id/charging { pointId, contact? }: switches an outlet on for a customer. */
 export async function startCharge(env: Env, user: Profile, isStaffOf: StaffCheck, stationId: string, request: Request): Promise<ChargeSession> {
   if (!(await isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
+  // A new charge needs the station unlocked for its motorbike outlets (worker/services.ts).
+  await requireService(env.DB, stationId, "charging");
   const body = await readJson<{ pointId?: unknown; contact?: unknown }>(request);
   const db = env.DB;
   const point = await db

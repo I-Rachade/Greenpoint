@@ -167,6 +167,18 @@ describe("queue", () => {
     expect((await driverHome(me)).driver?.queue).toMatchObject({ stationId: A.id, position: 1 });
   });
 
+  it("only at a station unlocked for drivers, and no trip for a queue there once locked (R8)", async () => {
+    const t = setup();
+    const first = await approvedDriver(t, "d1");
+    const second = await approvedDriver(t, "d2");
+    await joinQueue(first.me, A.id, A);
+    t.db.exec(`update station_services set unlocked = 0 where station_id = '${A.id}' and service = 'drivers'`);
+    await expect(joinQueue(second.me, A.id, A)).rejects.toMatchObject({ code: "service_not_offered" });
+    // The driver already in line there gets no new trip.
+    await createParcel(t.admin, A.id, parcelInput(true));
+    expect((await driverHome(first.me)).job).toBeNull();
+  });
+
   it("blocks a driver who owes the cash limit", async () => {
     const t = setup();
     const { me } = await approvedDriver(t, "d1");

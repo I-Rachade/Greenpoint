@@ -47,6 +47,7 @@ import type {
   StationView,
   UserRole,
 } from "../types";
+import type { StationService, StationServiceInfo } from "../station-services";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StatusPatch } from "./backend";
 
 const TOKEN_KEY = "poinderecharge-session";
@@ -130,6 +131,9 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "greenpoint_not_solar",
   "charge_busy",
   "charge_wrong_status",
+  "service_already_unlocked",
+  "service_request_pending",
+  "no_pending_request",
   "invalid_review",
 ];
 
@@ -335,6 +339,25 @@ export class CloudflareBackend implements Backend {
 
   async ownerSaveStation(stationId: string, input: OwnerStationInput) {
     await this.call("POST", `/api/owner/stations/${encodeURIComponent(stationId)}`, input);
+    this.changed();
+  }
+
+  stationServices() {
+    return this.call<StationServiceInfo[]>("GET", "/api/station-services");
+  }
+
+  async requestStationService(stationId: string, service: StationService) {
+    await this.call("POST", "/api/station-services/request", { stationId, service });
+    this.changed();
+  }
+
+  async decideStationService(stationId: string, service: StationService, approve: boolean) {
+    await this.call("POST", "/api/admin/station-services/decide", { stationId, service, approve });
+    this.changed();
+  }
+
+  async setStationService(stationId: string, service: StationService, unlocked: boolean) {
+    await this.call("POST", "/api/admin/station-services/set", { stationId, service, unlocked });
     this.changed();
   }
 

@@ -60,6 +60,7 @@ import { normalizeTogoPhone } from "../src/lib/phone";
 import type { Profile } from "../src/lib/types";
 import type { Env } from "./env";
 import { driversEnabled, requireDrivers } from "./features";
+import { requireService, unlockedStations, unlockedSql } from "./services";
 import { tripStatement } from "./greenpoint";
 import { ApiError, nowIso, uuid } from "./http";
 import { EMAIL_FROM, notifyPerson, type Message } from "./notify";
@@ -448,7 +449,7 @@ export async function dispatch(c: Pick<ParcelCtx, "db" | "audit"> & { env?: Env 
     .prepare(
       `select q.driver_id, q.station_id, q.since, v.type from driver_queue q
        join drivers d on d.user_id = q.driver_id join fleet_vehicles v on v.id = d.vehicle_id
-       where d.status = 'active' and v.is_active = 1`,
+       where d.status = 'active' and v.is_active = 1 and ${unlockedSql("q.station_id", "drivers")}`,
     )
     .all<{ driver_id: string; station_id: string; since: string; type: FleetVehicleType }>();
   let queue: QueueEntry[] = queueRows.map((q) => ({ driverId: q.driver_id, stationId: q.station_id, since: q.since, vehicleType: q.type }));
@@ -628,6 +629,8 @@ export async function joinQueue(c: ParcelCtx, stationId: string, position: unkno
   const s = await driverSettings(c.db);
   if ((await balance(c.db, user.id)).balance >= s.cashLimitFcfa) throw new ApiError("cash_limit");
   await requireDepot(c.db, stationId);
+  // Drivers queue only where the station is unlocked for them (worker/services.ts).
+  await requireService(c.db, stationId, "drivers");
   if (s.queueRadiusM > 0) {
     const at = await stationPoint(c.db, stationId);
     if (!validPoint(position) || !at || distanceMeters(position, at) > s.queueRadiusM) throw new ApiError("too_far");
@@ -733,7 +736,8 @@ export async function collectPickup(c: ParcelCtx, jobId: string, rawMeasures: Pa
   const senderAccount = sender ?? { id: (await accountFor(c, senderPhone, job.customer_name, user.id)).id };
   const recipient = await accountFor(c, job.recipient_phone!, job.recipient_name, user.id);
   // Counted as coming from the depot nearest the customer's home.
-  const depots = (await depotStations(c.db)).filter((d) => d.id !== job.to_station_id);
+  const unlocked = await unlockedStations(c.db, "parcels");
+  const depots = (await depotStations(c.db)).filter((d) => d.id !== job.to_station_id && unlocked.has(d.id));
   const from = nearestStation({ lat: job.home_lat!, lng: job.home_lng! }, depots);
   if (!from) throw new ApiError("depot_inactive");
   const collect = tier.priceFcfa + job.fare_fcfa;

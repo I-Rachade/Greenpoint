@@ -50,7 +50,11 @@ export async function requireDrivers(db: D1Database) {
 }
 
 export async function getFeatures(env: Env): Promise<Features> {
-  const [parcels, drivers, lite] = await Promise.all([storedParcels(env.DB), storedDrivers(env.DB), liteEnabled(env.DB)]);
+  return featuresOf(env.DB);
+}
+
+export async function featuresOf(db: D1Database): Promise<Features> {
+  const [parcels, drivers, lite] = await Promise.all([storedParcels(db), storedDrivers(db), liteEnabled(db)]);
   return effectiveFeatures({ parcels, drivers, lite });
 }
 
