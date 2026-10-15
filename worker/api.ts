@@ -5,7 +5,9 @@ import { deleteReview, saveReview, stationReviews } from "./reviews";
 import type { BatteryTypeInput } from "../src/lib/battery-types";
 import type { EvChargerInput } from "../src/lib/ev-chargers";
 import { deleteEvCharger, evChargersByStation, listEvChargers, saveEvCharger } from "./ev-chargers";
-import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements, typeBatteryStatements } from "./battery-types";
+import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements } from "./battery-types";
+import { postBatteryEvent, recordSwap, stationActor, stationCounter, stationSwaps } from "./station-work";
+import type { BatteryEventInput, SwapFilter, SwapInput } from "../src/lib/station-work";
 import {
   ADMIN_HISTORY_DAYS,
   type AdminSnapshot,
@@ -526,45 +528,51 @@ async function cancelReservation(c: Ctx, id: string) {
 
 // Station staff -------------------------------------------------------------
 
+/** The stations the person works at, each with its active services and the person's role there (station home tiles). */
 async function staffStations(c: Ctx) {
   const user = await c.requireUser();
-  if (user.role === "admin") return c.stations("where s.is_active = 1");
-  if (user.role !== "operator") return [];
-  return c.stations(
-    `where s.is_active = 1 and (s.id in (select station_id from station_staff where user_id = ?2)
-       or s.operator_id in (select operator_id from operator_owners where user_id = ?2))`,
-    user.id,
-  );
+  if (user.role !== "admin" && user.role !== "operator") return [];
+  const [stations, active, owned] = await Promise.all([
+    user.role === "admin"
+      ? c.stations("where s.is_active = 1")
+      : c.stations(
+          `where s.is_active = 1 and (s.id in (select station_id from station_staff where user_id = ?2)
+             or s.operator_id in (select operator_id from operator_owners where user_id = ?2))`,
+          user.id,
+        ),
+    activeServices(c.db),
+    c.db.prepare("select operator_id from operator_owners where user_id = ?").bind(user.id).all<{ operator_id: string }>(),
+  ]);
+  const owner = new Set(owned.results.map((r) => r.operator_id));
+  return stations.map((s) => ({
+    ...s,
+    activeServices: [...(active.get(s.id) ?? [])],
+    myRole: user.role === "admin" ? ("admin" as const) : owner.has(s.operatorId) ? ("owner" as const) : ("staff" as const),
+  }));
 }
 
-async function updateStatus(
-  c: Ctx,
-  stationId: string,
-  patch: { isOpen?: boolean; freeSlots?: number; fullBatteries?: number; typeBatteries?: Record<string, number> },
-) {
-  const user = await c.requireUser();
-  if (!(await c.isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
+/**
+ * PATCH /api/stations/:id/status: open/close and free charging places, at the active station (R7).
+ * Full batteries change only through counter events (worker/station-work.ts), never as a number.
+ */
+async function updateStatus(c: Ctx, stationId: string, patch: { isOpen?: boolean; freeSlots?: number; fullBatteries?: unknown; typeBatteries?: unknown }) {
+  const { user } = await stationActor(c, stationId);
+  if (patch.fullBatteries !== undefined || patch.typeBatteries !== undefined) throw new ApiError("bad_request");
   const before = await c.db
-    .prepare("select is_open, free_slots, full_batteries from station_status where station_id = ?")
+    .prepare("select is_open, free_slots from station_status where station_id = ?")
     .bind(stationId)
-    .first<{ is_open: number; free_slots: number; full_batteries: number }>();
+    .first<{ is_open: number; free_slots: number }>();
   if (!before) throw new ApiError("station_not_found", 404);
-  // Counts per battery type: the station's total becomes their sum.
-  const types = patch.typeBatteries ? await typeBatteryStatements(c.db, stationId, patch.typeBatteries) : null;
   const after = {
     is_open: patch.isOpen === undefined ? before.is_open : patch.isOpen ? 1 : 0,
     free_slots: patch.freeSlots === undefined ? before.free_slots : int(patch.freeSlots),
-    full_batteries: types ? types.total : patch.fullBatteries === undefined ? before.full_batteries : int(patch.fullBatteries),
   };
   const statements = [
-    ...(types?.statements ?? []),
     c.db
-      .prepare(
-        "update station_status set is_open = ?, free_slots = ?, full_batteries = ?, updated_at = ?, updated_by = ? where station_id = ?",
-      )
-      .bind(after.is_open, after.free_slots, after.full_batteries, nowIso(), user.id, stationId),
+      .prepare("update station_status set is_open = ?, free_slots = ?, updated_at = ?, updated_by = ? where station_id = ?")
+      .bind(after.is_open, after.free_slots, nowIso(), user.id, stationId),
   ];
-  const changes: Record<string, unknown> = { ...diff(before, after), ...types?.changes };
+  const changes: Record<string, unknown> = diff(before, after);
   if (Object.keys(changes).length) {
     statements.push(c.audit(user.id, "station_status", "update", stationId, changes, { stationId }));
   }
@@ -600,11 +608,29 @@ async function stationReservations(c: Ctx, stationId: string) {
   return results.map((r) => toReservation(r, false));
 }
 
-async function completeReservation(c: Ctx, id: string, pickupCode: string) {
+async function completeReservation(c: Ctx, id: string, pickupCode: string, batteryTypeId: unknown) {
   const user = await c.requireUser();
   const r = await c.db.prepare("select * from reservations where id = ?").bind(id).first<ReservationRow>();
   if (!r || !(await c.isStaffOf(user, r.station_id))) throw new ApiError("forbidden", 403);
+  // At the active station only (R7), logged with the person's role.
+  await stationActor(c, r.station_id);
   if (r.user_id === user.id) throw new ApiError("own_reservation");
+  // A battery handed out is a swap: counter −1, empty battery in, one log row (R6), greenpoints.
+  if (r.type === "battery") {
+    await recordSwap(
+      c,
+      r.station_id,
+      {
+        requestId: `reservation:${id}`,
+        customerType: "app",
+        batteryTypeId: batteryTypeId === undefined || batteryTypeId === null ? null : String(batteryTypeId),
+        reservationId: id,
+        pickupCode,
+      },
+      { reservationOnly: true },
+    );
+    return;
+  }
   if (r.status !== "active" || r.expires_at <= nowIso()) throw new ApiError("reservation_not_active");
   if (r.pickup_code !== String(pickupCode ?? "").trim()) throw new ApiError("wrong_pickup_code");
   const done = await c.db
@@ -612,13 +638,12 @@ async function completeReservation(c: Ctx, id: string, pickupCode: string) {
     .bind(id)
     .run();
   if (!done.meta.changes) throw new ApiError("reservation_not_active");
-  // The battery or slot the customer took comes off the counter, so the map does not show it as free again.
-  const column = r.type === "battery" ? "full_batteries" : "free_slots";
-  // The rider's CO2 and greenpoints for this swap or charge (worker/greenpoint.ts).
+  // The slot the customer took comes off the counter, so the map does not show it as free again.
+  // The rider's CO2 and greenpoints for this charge (worker/greenpoint.ts).
   const earned = await earnStatement(c.db, { userId: r.user_id, type: r.type, stationId: r.station_id, reservationId: id, createdBy: user.id });
   await c.db.batch([
     c.db
-      .prepare(`update station_status set ${column} = max(${column} - 1, 0), updated_at = ?, updated_by = ? where station_id = ?`)
+      .prepare("update station_status set free_slots = max(free_slots - 1, 0), updated_at = ?, updated_by = ? where station_id = ?")
       .bind(nowIso(), user.id, r.station_id),
     c.audit(user.id, "reservations", "update", id, { status: ["active", "completed"] }, {
       stationId: r.station_id,
@@ -1358,8 +1383,8 @@ const ROUTES: [string, RegExp, Handler][] = [
     "POST",
     /^\/api\/reservations\/([\w-]+)\/complete$/,
     async (c, [id]) => {
-      const { pickupCode } = await readJson<{ pickupCode: string }>(c.request);
-      return completeReservation(c, id, pickupCode);
+      const { pickupCode, batteryTypeId } = await readJson<{ pickupCode: string; batteryTypeId?: unknown }>(c.request);
+      return completeReservation(c, id, pickupCode, batteryTypeId);
     },
   ],
   ["GET", /^\/api\/staff\/stations$/, (c) => staffStations(c)],
@@ -1464,6 +1489,15 @@ const ROUTES: [string, RegExp, Handler][] = [
     async (c, [id]) => updateStatus(c, id, await readJson(c.request)),
   ],
   ["GET", /^\/api\/stations\/([\w-]+)\/reservations$/, (c, [id]) => stationReservations(c, id)],
+  // Station work (worker/station-work.ts): counter, swaps and their log.
+  ["GET", /^\/api\/stations\/([\w-]+)\/counter$/, (c, [id]) => stationCounter(c, id)],
+  ["POST", /^\/api\/stations\/([\w-]+)\/battery-events$/, async (c, [id]) => postBatteryEvent(c, id, await readJson<BatteryEventInput>(c.request))],
+  ["POST", /^\/api\/stations\/([\w-]+)\/swaps$/, async (c, [id]) => recordSwap(c, id, await readJson<SwapInput>(c.request))],
+  [
+    "GET",
+    /^\/api\/stations\/([\w-]+)\/swaps$/,
+    (c, [id]) => stationSwaps(c, id, { customerType: (c.url.searchParams.get("customerType") as SwapFilter["customerType"]) ?? null }),
+  ],
   ["GET", /^\/api\/promotions\/current$/, (c) => currentPromotion(c)],
   // Modules the backoffice switches off (worker/features.ts)
   ["GET", /^\/api\/features$/, (c) => getFeatures(c.env)],

@@ -12,13 +12,18 @@ import { useI18n } from "../i18n-provider";
 const input = "w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-base dark:border-white/20 dark:bg-zinc-900";
 const button = "rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-50";
 
-/** Station staff: enter a swap or charge without reservation, and confirm a reward code. */
-export function GreenpointStaff({ station }: { station: StationView }) {
+/**
+ * Station staff: enter a visit without reservation, and confirm a reward code. `only` limits
+ * the visits offered (the swap page records swaps itself, so it shows the reward code only).
+ */
+export function GreenpointStaff({ station, only }: { station: StationView; only?: ("swap" | "charge")[] }) {
   const { t, locale } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
   const s = t.greenpoint.staff;
-  const services = [...(offersSwap(station.kind) ? (["swap"] as const) : []), ...(offersCharging(station.kind) ? (["charge"] as const) : [])];
+  const services = [...(offersSwap(station.kind) ? (["swap"] as const) : []), ...(offersCharging(station.kind) ? (["charge"] as const) : [])].filter(
+    (x) => !only || only.includes(x),
+  );
   const [contact, setContact] = useState("");
   const [service, setService] = useState<"swap" | "charge">(services[0] ?? "swap");
   const [vehicle, setVehicle] = useState<VehicleType | "">("");

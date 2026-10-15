@@ -46,6 +46,7 @@ import type {
 } from "../drivers";
 import type { FleetStats, FleetView } from "../fleet";
 import type { StationService, StationServiceInfo } from "../station-services";
+import type { BatteryEventInput, BatteryEventView, StationCounter, SwapEntry, SwapFilter, SwapInput } from "../station-work";
 import type { ReviewInput, StationReview } from "../station-extras";
 import type { LatLng } from "../geo";
 import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
@@ -53,10 +54,8 @@ import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, Wallet
 /** Where a code goes: by SMS to the phone number or by e-mail. */
 export type CodeChannel = "sms" | "email";
 
-export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots" | "fullBatteries">> & {
-  /** Full batteries per battery type (id → count); the station's total becomes their sum. */
-  typeBatteries?: Record<string, number>;
-};
+/** Open/close and free charging places. Full batteries change only through counter events (station-work.ts). */
+export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots">>;
 
 /** Error codes shared by both backends, translated in the UI (see i18n `errors`). */
 export type BackendErrorCode =
@@ -148,6 +147,17 @@ export type BackendErrorCode =
   | "service_request_pending"
   | "no_pending_request"
   | "invalid_review"
+  | "active_station_required"
+  | "no_full_battery"
+  | "counter_full"
+  | "swap_price_missing"
+  | "same_battery"
+  | "battery_type_required"
+  | "cash_only"
+  | "wrong_fleet"
+  | "not_a_customer"
+  | "request_conflict"
+  | "reason_required"
   | "unknown";
 
 export class BackendError extends Error {
@@ -212,8 +222,22 @@ export interface Backend {
   staffStations(): Promise<StationView[]>;
   updateStatus(stationId: string, patch: StatusPatch): Promise<void>;
   stationReservations(stationId: string): Promise<Reservation[]>;
-  /** Needs the customer's pickup code; also takes the battery or slot off the station's counter. */
-  completeReservation(id: string, pickupCode: string): Promise<void>;
+  /**
+   * Needs the customer's pickup code; also takes the battery or slot off the station's counter.
+   * A battery reservation is completed as a swap (with its log row); `batteryTypeId` names the
+   * type at a station with several.
+   */
+  completeReservation(id: string, pickupCode: string, batteryTypeId?: string | null): Promise<void>;
+
+  // Station work (src/lib/station-work.ts): every action is sent with the active station.
+  /** Counters, today's changes and whether the viewer may correct. Needs the swap service. */
+  stationCounter(stationId: string): Promise<StationCounter>;
+  /** "Marked full" +1, "issue" −1, or a correction with reason (owner, admin). Same request id twice = one change. */
+  batteryEvent(stationId: string, input: BatteryEventInput): Promise<BatteryEventView>;
+  /** One swap: battery out (counter −1) and battery in (empty stock +1), logged with payment. */
+  recordSwap(stationId: string, input: SwapInput): Promise<SwapEntry>;
+  /** Today's swaps at the station, newest first (staff: their own). */
+  stationSwaps(stationId: string, filter?: SwapFilter): Promise<SwapEntry[]>;
 
   // Operator accounts (see src/lib/operators.ts)
   /** The operators the signed-in person runs, their stations and staff. */
