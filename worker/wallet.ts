@@ -310,7 +310,7 @@ export async function adminWallet(env: Env, url: URL): Promise<AdminWallet> {
   const userId = url.searchParams.get("user");
   const where: string[] = [];
   const params: unknown[] = [];
-  if (type === "transfer" || type === "admin_adjust" || type === "topup") {
+  if (type === "transfer" || type === "admin_adjust" || type === "topup" || type === "charge") {
     where.push("t.type = ?");
     params.push(type);
   }

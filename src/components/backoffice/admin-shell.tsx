@@ -16,6 +16,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     { href: "/admin/users", label: t.backoffice.nav.users },
     { href: "/admin/activity", label: t.backoffice.nav.activity },
     { href: "/admin/devices", label: t.backoffice.nav.devices },
+    { href: "/admin/charging", label: t.backoffice.nav.charging },
     { href: "/admin/ev-chargers", label: t.backoffice.nav.evChargers },
     { href: "/admin/promotions", label: t.backoffice.nav.promotions },
     { href: "/admin/parcels", label: t.backoffice.nav.parcels },

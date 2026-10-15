@@ -86,6 +86,7 @@ export function WalletManager() {
             <option value="transfer">{t.wallet.types.transfer}</option>
             <option value="admin_adjust">{t.wallet.types.admin_adjust}</option>
             <option value="topup">{t.wallet.types.topup}</option>
+            <option value="charge">{t.wallet.types.charge}</option>
           </select>
         </div>
         {data.transactions.length === 0 ? (

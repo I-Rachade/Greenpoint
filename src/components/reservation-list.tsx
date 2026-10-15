@@ -1,5 +1,6 @@
 "use client";
 
+import { MyCharges } from "./charging/charging";
 import { isHolding } from "@/lib/availability";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
@@ -43,6 +44,7 @@ export function ReservationList() {
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 p-6">
+      <MyCharges />
       <h1 className="text-2xl font-semibold">{t.reservations.title}</h1>
       {error && <p className="text-sm text-red-600">{error}</p>}
       {reservations.length === 0 && <p className="text-sm text-zinc-500">{t.reservations.empty}</p>}

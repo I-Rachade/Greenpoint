@@ -1,4 +1,5 @@
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
+import type { AdminCharging, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
 import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { EvCharger, EvChargerInput } from "../ev-chargers";
 import type { Features } from "../features";
@@ -125,6 +126,8 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "greenpoint_daily_limit",
   "greenpoint_fleet_driver",
   "greenpoint_not_solar",
+  "charge_busy",
+  "charge_wrong_status",
   "invalid_review",
 ];
 
@@ -863,5 +866,60 @@ export class CloudflareBackend implements Backend {
 
   async saveGreenpointReward(id: string | null, input: GreenpointRewardInput) {
     await this.call("POST", "/api/admin/greenpoint/rewards", { id, input });
+  }
+
+  // Charging at a socket --------------------------------------------------------------
+
+  stationCharging(stationId: string) {
+    return this.call<StationCharging>("GET", `/api/stations/${encodeURIComponent(stationId)}/charging`);
+  }
+
+  private async chargeAction(stationId: string, path: string, body?: unknown) {
+    const s = await this.call<ChargeSession>("POST", `/api/stations/${encodeURIComponent(stationId)}/charging${path}`, body);
+    this.changed();
+    return s;
+  }
+
+  startCharge(stationId: string, input: { pointId: string; contact?: string }) {
+    return this.chargeAction(stationId, "", input);
+  }
+
+  stopCharge(stationId: string, id: string) {
+    return this.chargeAction(stationId, `/${encodeURIComponent(id)}/stop`);
+  }
+
+  cancelCharge(stationId: string, id: string) {
+    return this.chargeAction(stationId, `/${encodeURIComponent(id)}/cancel`);
+  }
+
+  payChargeCash(stationId: string, id: string) {
+    return this.chargeAction(stationId, `/${encodeURIComponent(id)}/pay`);
+  }
+
+  myCharges() {
+    return this.call<ChargeSession[]>("GET", "/api/charging/mine");
+  }
+
+  async payChargeWallet(id: string, input: { pin: string; idempotencyKey: string }) {
+    const s = await this.call<ChargeSession>("POST", `/api/charging/${encodeURIComponent(id)}/pay/wallet`, input);
+    this.changed();
+    return s;
+  }
+
+  async payChargeMobile(id: string, input: { network: "flooz" | "tmoney"; phone: string }) {
+    await this.call("POST", `/api/charging/${encodeURIComponent(id)}/pay/mobile`, input);
+    this.changed();
+  }
+
+  async refreshChargePayment(paymentId: string) {
+    await this.call("POST", `/api/payments/${encodeURIComponent(paymentId)}/refresh`);
+  }
+
+  adminCharging() {
+    return this.call<AdminCharging>("GET", "/api/admin/charging");
+  }
+
+  async saveChargeTariff(input: ChargeTariffInput) {
+    await this.call("POST", "/api/admin/charging/tariff", input);
   }
 }

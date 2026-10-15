@@ -1,4 +1,5 @@
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
+import type { AdminCharging, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
 import type {
   Operator,
   VehicleType,
@@ -138,6 +139,8 @@ export type BackendErrorCode =
   | "greenpoint_daily_limit"
   | "greenpoint_fleet_driver"
   | "greenpoint_not_solar"
+  | "charge_busy"
+  | "charge_wrong_status"
   | "invalid_review"
   | "unknown";
 
@@ -410,4 +413,28 @@ export interface Backend {
   adminGreenpoint(): Promise<AdminGreenpoint>;
   saveGreenpointFactors(factors: GreenpointFactors): Promise<void>;
   saveGreenpointReward(id: string | null, input: GreenpointRewardInput): Promise<void>;
+
+  // Charging at a socket (see src/lib/charging.ts)
+  /** Station staff: the charges running or waiting for payment, today's charges and takings. */
+  stationCharging(stationId: string): Promise<StationCharging>;
+  /** Staff switch an outlet on for a cash customer, or an app customer by phone, e-mail or scanned QR code. */
+  startCharge(stationId: string, input: { pointId: string; contact?: string }): Promise<ChargeSession>;
+  /** Staff switch the outlet off; the price is then final. */
+  stopCharge(stationId: string, id: string): Promise<ChargeSession>;
+  /** Closes a stopped charge that took no energy. */
+  cancelCharge(stationId: string, id: string): Promise<ChargeSession>;
+  /** Staff took the cash. */
+  payChargeCash(stationId: string, id: string): Promise<ChargeSession>;
+  /** The signed-in customer's charges, newest first, with the ways to pay in the app. */
+  myCharges(): Promise<ChargeSession[]>;
+  /** Pays a stopped charge from the wallet; the PIN is checked on the server. */
+  payChargeWallet(id: string, input: { pin: string; idempotencyKey: string }): Promise<ChargeSession>;
+  /** Asks the customer's Flooz/T-Money account for the money; the charge is paid once the provider confirms. */
+  payChargeMobile(id: string, input: { network: "flooz" | "tmoney"; phone: string }): Promise<void>;
+  /** Asks the provider again while the customer confirms on the phone. */
+  refreshChargePayment(paymentId: string): Promise<void>;
+  /** Backoffice: tariffs and the latest charges (admins only). */
+  adminCharging(): Promise<AdminCharging>;
+  /** The network default (`stationId` null) or a station's own price (null values = default). */
+  saveChargeTariff(input: ChargeTariffInput): Promise<void>;
 }

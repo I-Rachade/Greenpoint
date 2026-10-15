@@ -2,6 +2,7 @@ import { normalizeTogoPhone } from "../src/lib/phone";
 import type { Profile } from "../src/lib/types";
 import type { Env } from "./env";
 import { TOPUP_IDENTIFIER_PREFIX, topupCallback } from "./wallet-topups";
+import { chargePaymentSucceeded } from "./charging";
 import { ApiError, nowIso, readJson, uuid } from "./http";
 import {
   PAYMENT_NETWORKS,
@@ -14,8 +15,8 @@ import {
   type ProviderStatus,
 } from "./payment-providers";
 
-// Flooz / T-Money payments for reservations. The price comes from the station,
-// never from the app; the provider's callback is only a hint to ask the
+// Flooz / T-Money payments for reservations and for charges at a socket (worker/charging.ts).
+// The price comes from the station or the charge, never from the app; the provider's callback is only a hint to ask the
 // provider for the status. See docs/ZAHLUNGEN.md.
 
 interface PaymentRow {
@@ -24,6 +25,7 @@ interface PaymentRow {
   user_id: string | null;
   station_id: string;
   reservation_id: string | null;
+  charging_session_id: string | null;
   amount_xof: number;
   network: PaymentNetwork;
   phone: string | null;
@@ -99,6 +101,10 @@ async function applyStatus(env: Env, actor: string | null, p: PaymentRow, s: Pro
       ...(updated.failure_reason ? { failure_reason: [p.failure_reason, updated.failure_reason] } : {}),
     }).run();
   }
+  // A paid charge is booked once: only the request that moved the payment out of pending gets here.
+  if (updated.status === "succeeded" && updated.charging_session_id) {
+    await chargePaymentSucceeded(env, { ...updated, charging_session_id: updated.charging_session_id });
+  }
   return updated;
 }
 
@@ -137,7 +143,35 @@ export async function startPayment(env: Env, user: Profile, request: Request): P
   // the provider offers split payments, only our own stations take payments.
   const price = r.type === "battery" ? r.price_battery_xof : r.price_slot_xof;
   if (!r.is_own || price == null) throw new ApiError("payment_not_offered", 409);
+  return createPayment(env, user, { stationId: r.station_id, reservationId: r.id, sessionId: null, amountXof: price, network, phone });
+}
 
+/** Whether a customer can pay a charge with Flooz/T-Money: never against the simulated provider, except admins testing. */
+export function mobilePaymentOffered(env: Env, user: Profile): boolean {
+  return provider(env).name !== "mock" || user.role === "admin";
+}
+
+/** A charge's Flooz/T-Money payment; the caller checked the charge and computed the amount. */
+export async function startChargePayment(
+  env: Env,
+  user: Profile,
+  charge: { sessionId: string; stationId: string; amountXof: number },
+  body: { network?: unknown; phone?: unknown },
+): Promise<Payment> {
+  const network = body.network as PaymentNetwork;
+  if (!PAYMENT_NETWORKS.includes(network)) throw new ApiError("bad_request");
+  const phone = typeof body.phone === "string" ? normalizeTogoPhone(body.phone) : null;
+  if (!phone) throw new ApiError("phone_not_allowed");
+  return createPayment(env, user, { stationId: charge.stationId, reservationId: null, sessionId: charge.sessionId, amountXof: charge.amountXof, network, phone });
+}
+
+async function createPayment(
+  env: Env,
+  user: Profile,
+  input: { stationId: string; reservationId: string | null; sessionId: string | null; amountXof: number; network: PaymentNetwork; phone: string },
+): Promise<Payment> {
+  const { network, phone } = input;
+  const price = input.amountXof;
   const pay = provider(env);
   const now = nowIso();
   const id = uuid();
@@ -145,8 +179,9 @@ export async function startPayment(env: Env, user: Profile, request: Request): P
     id,
     identifier: `pdr_${id.replace(/-/g, "")}`,
     user_id: user.id,
-    station_id: r.station_id,
-    reservation_id: r.id,
+    station_id: input.stationId,
+    reservation_id: input.reservationId,
+    charging_session_id: input.sessionId,
     amount_xof: price,
     network,
     phone,
@@ -160,9 +195,9 @@ export async function startPayment(env: Env, user: Profile, request: Request): P
   try {
     await env.DB.batch([
       env.DB.prepare(
-        `insert into payments (id, identifier, user_id, station_id, reservation_id, amount_xof, network, phone, provider, status, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-      ).bind(row.id, row.identifier, row.user_id, row.station_id, row.reservation_id, row.amount_xof, network, phone, pay.name, now, now),
+        `insert into payments (id, identifier, user_id, station_id, reservation_id, charging_session_id, amount_xof, network, phone, provider, status, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      ).bind(row.id, row.identifier, row.user_id, row.station_id, row.reservation_id, row.charging_session_id, row.amount_xof, network, phone, pay.name, now, now),
       audit(env, user.id, "insert", row, { amount_xof: price, network, provider: pay.name, status: "pending" }),
     ]);
   } catch (err) {

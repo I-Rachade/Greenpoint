@@ -150,6 +150,18 @@ import {
   setVehicle,
   startRedemption,
 } from "./greenpoint";
+import {
+  adminCharging,
+  cancelCharge,
+  myCharges,
+  payCash,
+  payWithMobile,
+  payWithWallet,
+  saveChargeTariff,
+  startCharge,
+  stationCharging,
+  stopCharge,
+} from "./charging";
 
 // Rows as stored in D1 (snake_case, booleans as 0/1, JSON as text).
 
@@ -1482,6 +1494,28 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/stations\/([\w-]+)\/greenpoint\/redeem$/,
     async (c, [id]) => confirmRedemption(c.env, await c.requireUser(), (u, s) => c.isStaffOf(u, s), id, c.request),
   ],
+  // Charging at a socket (worker/charging.ts)
+  ["GET", /^\/api\/stations\/([\w-]+)\/charging$/, async (c, [id]) => stationCharging(c.env, await c.requireUser(), (u, s) => c.isStaffOf(u, s), id)],
+  ["POST", /^\/api\/stations\/([\w-]+)\/charging$/, async (c, [id]) => startCharge(c.env, await c.requireUser(), (u, s) => c.isStaffOf(u, s), id, c.request)],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/charging\/([\w-]+)\/(stop|cancel|pay)$/,
+    async (c, [station, id, action]) => {
+      const user = await c.requireUser();
+      const isStaffOf = (u: Profile, s: string) => c.isStaffOf(u, s);
+      if (action === "stop") return stopCharge(c.env, user, isStaffOf, station, id);
+      if (action === "cancel") return cancelCharge(c.env, user, isStaffOf, station, id);
+      return payCash(c.env, user, isStaffOf, station, id);
+    },
+  ],
+  ["GET", /^\/api\/charging\/mine$/, async (c) => myCharges(c.env, await c.requireUser())],
+  ["POST", /^\/api\/charging\/([\w-]+)\/pay\/wallet$/, async (c, [id]) => payWithWallet(c.env, await c.requireUser(), id, c.request)],
+  ["POST", /^\/api\/charging\/([\w-]+)\/pay\/mobile$/, async (c, [id]) => payWithMobile(c.env, await c.requireUser(), id, c.request)],
+  ["GET", /^\/api\/admin\/charging$/, async (c) => {
+    await c.requireAdmin();
+    return adminCharging(c.env);
+  }],
+  ["POST", /^\/api\/admin\/charging\/tariff$/, async (c) => saveChargeTariff(c.env, await c.requireAdmin(), c.request)],
   ["GET", /^\/api\/admin\/greenpoint$/, async (c) => {
     await c.requireAdmin();
     return adminGreenpoint(c.env);

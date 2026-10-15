@@ -1,5 +1,6 @@
 "use client";
 
+import { MyCode } from "./charging/charging";
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import type { CodeChannel } from "@/lib/backend/backend";
@@ -84,6 +85,8 @@ export function AccountPanel() {
               <ContactRow kind="email" value={profile.email} />
             </div>
           </section>
+
+          {(profile.phone || profile.email) && <MyCode contact={(profile.phone ?? profile.email)!} />}
 
           <MenuGroup title={a.menu} top={<GreenpointHighlight />}>
             <MenuLink href="/favoris" icon={HeartIcon} label={t.ui.tabs.favorites} />

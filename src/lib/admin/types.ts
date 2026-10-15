@@ -65,6 +65,7 @@ export type AuditTable =
   | "fleet_manager_drivers"
   | "battery_types"
   | "ev_chargers"
+  | "charging_sessions"
   | "settings";
 
 export const AUDIT_TABLES: AuditTable[] = [
@@ -75,6 +76,7 @@ export const AUDIT_TABLES: AuditTable[] = [
   "operator_owners",
   "profiles",
   "charging_points",
+  "charging_sessions",
   "operators",
   "promotions",
   "payments",
