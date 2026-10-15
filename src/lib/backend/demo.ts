@@ -3449,6 +3449,8 @@ export class DemoBackend implements Backend {
     if (earnedToday >= MAX_EARNINGS_PER_DAY) return state;
     // Drivers on one of our vehicles earn per km instead.
     if ((state.drivers ?? []).some((d) => d.userId === input.userId && d.status === "active" && d.vehicleId)) return state;
+    // Station staff have no greenpoints.
+    if (this.isStationStaff(state, input.userId)) return state;
     if (input.reservationId && g.ledger.some((l) => l.reservationId === input.reservationId)) return state;
     const vehicle = input.vehicle ?? g.vehicles[input.userId] ?? "scooter";
     const grams = g.factors.batteryGrams[vehicle];
@@ -3467,6 +3469,11 @@ export class DemoBackend implements Backend {
     return { ...state, greenpoint: { ...g, ledger: [entry, ...g.ledger].slice(0, 500) } };
   }
 
+  private isStationStaff(state: DemoState, userId: string): boolean {
+    const user = state.profile?.id === userId ? state.profile : (state.users ?? []).find((u) => u.id === userId);
+    return user?.role === "operator";
+  }
+
   private gpTotals(g: DemoGreenpoint, userId: string) {
     const mine = g.ledger.filter((l) => l.userId === userId);
     return { grams: mine.reduce((n, l) => n + l.co2Grams, 0), points: mine.reduce((n, l) => n + l.points, 0) };
@@ -3480,6 +3487,7 @@ export class DemoBackend implements Backend {
   async myGreenpoint(): Promise<GreenpointView> {
     const state = this.load();
     const profile = this.requireProfile(state);
+    if (profile.role === "operator") throw new BackendError("forbidden");
     const g = this.gp(state);
     const { grams, points } = this.gpTotals(g, profile.id);
     const open = this.openCode(g, profile.id);
@@ -3499,6 +3507,7 @@ export class DemoBackend implements Backend {
   async setGreenpointVehicle(vehicle: VehicleType) {
     const state = this.load();
     const profile = this.requireProfile(state);
+    if (profile.role === "operator") throw new BackendError("forbidden");
     const g = this.gp(state);
     this.save({ ...state, greenpoint: { ...g, vehicles: { ...g.vehicles, [profile.id]: vehicle } } });
   }
@@ -3506,6 +3515,7 @@ export class DemoBackend implements Backend {
   async startRedemption(rewardId: string): Promise<GreenpointRedemption> {
     const state = this.load();
     const profile = this.requireProfile(state);
+    if (profile.role === "operator") throw new BackendError("forbidden");
     const g = this.gp(state);
     const reward = g.rewards.find((r) => r.id === rewardId);
     if (!reward || !rewardAvailable(reward)) throw new BackendError("reward_unavailable");
@@ -3551,6 +3561,7 @@ export class DemoBackend implements Backend {
     if (!station.isSolar) throw new BackendError("greenpoint_not_solar");
     const rider = this.findWalletUser(state, input.contact);
     if (rider.id === profile.id) throw new BackendError("own_reservation");
+    if (this.isStationStaff(state, rider.id)) throw new BackendError("greenpoint_station_staff");
     const next = this.earn(state, {
       userId: rider.id,
       type: input.service === "swap" ? "battery" : "slot",

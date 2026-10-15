@@ -9,7 +9,7 @@ import { useApp } from "./app-provider";
 import { BellIcon, GearIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
-import { runsOperator, worksAtStations } from "@/lib/operators";
+import { isStationStaff, runsOperator, worksAtStations } from "@/lib/operators";
 
 export function Header() {
   const { t, locale, setLocale } = useI18n();
@@ -26,7 +26,7 @@ export function Header() {
     { href: "/colis", label: t.nav.parcels, show: !!profile && features.parcels },
     { href: "/courses", label: t.ui.tabs.trips, show: !!profile && features.parcels },
     { href: "/portefeuille", label: t.nav.wallet, show: !!profile && walletShown && features.wallet },
-    { href: "/greenpoint", label: t.nav.greenpoint, show: !!profile },
+    { href: "/greenpoint", label: t.nav.greenpoint, show: !!profile && !isStationStaff(profile) },
     { href: "/chauffeur", label: t.nav.driver, show: !!profile?.driverStatus && features.parcels },
     { href: "/compte", label: t.nav.account, show: !!profile },
     { href: "/flotte", label: t.nav.fleet, show: profile?.role === "fleet_manager" && features.parcels },

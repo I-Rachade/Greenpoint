@@ -7,6 +7,7 @@ import { useApp } from "./app-provider";
 import { BoxIcon, ListIcon, MapIcon, ScooterIcon, StoreIcon, UserIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
+import { isStationStaff } from "@/lib/operators";
 
 /** Screens without the tab bar: sign-in, and the staff and admin tools. */
 const HIDDEN_PREFIXES = ["/login", "/admin", "/operator"];
@@ -20,7 +21,7 @@ export function BottomNav() {
   const pathname = usePathname();
   const { unread } = useAlerts();
   // Station staff only get the map, their station and their account.
-  const staff = profile?.role === "operator";
+  const staff = isStationStaff(profile);
   const hidden = (staff ? STAFF_HIDDEN_PREFIXES : HIDDEN_PREFIXES).some((p) => pathname.startsWith(p));
 
   useEffect(() => {

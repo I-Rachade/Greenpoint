@@ -1398,6 +1398,7 @@ export const fr = {
     redemption_open: "Vous avez déjà un code en cours. Utilisez-le ou annulez-le.",
     not_enough_points: "Pas assez de greenpoints.",
     greenpoint_fleet_driver: "Ce compte conduit un véhicule de la flotte : ses points viennent des kilomètres de livraison.",
+    greenpoint_station_staff: "Ce compte est du personnel de station : il ne reçoit pas de greenpoints.",
     invalid_review: "Choisissez de 1 à 5 étoiles ; le commentaire fait au plus 500 caractères.",
     greenpoint_daily_limit: "Limite atteinte : 3 recharges ou échanges comptent par jour.",
     greenpoint_not_solar: "Cette station n'utilise pas l'énergie solaire : elle ne rapporte pas de greenpoints.",

@@ -52,6 +52,11 @@ export function worksAtStations(profile: { role: string } | null | undefined): b
   return profile?.role === "operator" || profile?.role === "admin";
 }
 
+/** Station staff accounts: their menu is the map, their station and their account, and they have no greenpoints. */
+export function isStationStaff(profile: { role: string } | null | undefined): boolean {
+  return profile?.role === "operator";
+}
+
 /** Whether this profile runs at least one operator ("Mes stations"). */
 export function runsOperator(profile: { role: string; ownerOf?: string[] } | null | undefined): boolean {
   return worksAtStations(profile) && !!profile?.ownerOf?.length;

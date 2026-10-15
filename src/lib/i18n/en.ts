@@ -1398,6 +1398,7 @@ export const en: Dictionary = {
     redemption_open: "You already have a code open. Use it or cancel it.",
     not_enough_points: "Not enough greenpoints.",
     greenpoint_fleet_driver: "This account drives a fleet vehicle: its points come from delivery kilometres.",
+    greenpoint_station_staff: "This account is station staff: it does not get greenpoints.",
     invalid_review: "Pick 1 to 5 stars; the comment can be at most 500 characters.",
     greenpoint_daily_limit: "Limit reached: 3 charges or swaps count per day.",
     greenpoint_not_solar: "This station does not use solar power: it does not earn greenpoints.",

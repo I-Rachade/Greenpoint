@@ -3,7 +3,7 @@ import { RequireLogin } from "@/components/require-login";
 
 export default function GreenpointPage() {
   return (
-    <RequireLogin>
+    <RequireLogin roles={["customer", "fleet_manager", "admin"]}>
       <GreenpointPanel />
     </RequireLogin>
   );

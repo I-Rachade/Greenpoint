@@ -17,7 +17,7 @@ import { BellIcon, ChevronIcon, GearIcon, HeartIcon, HelpIcon, LeafIcon, LogoutI
 import { useI18n } from "./i18n-provider";
 import { MenuButton, MenuGroup, MenuLink } from "./menu";
 import { PageTitle } from "./page-title";
-import { runsOperator, worksAtStations } from "@/lib/operators";
+import { isStationStaff, runsOperator, worksAtStations } from "@/lib/operators";
 import { managesFleet } from "@/lib/fleet";
 
 const CODE_LENGTH = 6;
@@ -88,7 +88,7 @@ export function AccountPanel() {
 
           {(profile.phone || profile.email) && <MyCode contact={(profile.phone ?? profile.email)!} />}
 
-          <MenuGroup title={a.menu} top={<GreenpointHighlight />}>
+          <MenuGroup title={a.menu} top={isStationStaff(profile) ? undefined : <GreenpointHighlight />}>
             <MenuLink href="/favoris" icon={HeartIcon} label={t.ui.tabs.favorites} />
             <MenuLink href="/notifications" icon={BellIcon} label={t.ui.tabs.alerts} value={unread > 0 ? unread : undefined} />
             <MenuLink href="/reservations" icon={TicketIcon} label={t.nav.reservations} />
