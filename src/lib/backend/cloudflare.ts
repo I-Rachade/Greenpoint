@@ -50,7 +50,8 @@ import type {
 import type { StationService, StationServiceInfo } from "../station-services";
 import { getActiveStation } from "../active-station";
 import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEntry, type SwapFilter, type SwapInput } from "../station-work";
-import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StatusPatch } from "./backend";
+import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
+import { kindFrom, type ReservationKind } from "../reservations";
 
 const TOKEN_KEY = "poinderecharge-session";
 /** How often open pages reload station data (other customers' holds, staff updates). */
@@ -148,6 +149,12 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "not_a_customer",
   "request_conflict",
   "reason_required",
+  "battery_type_unavailable",
+  "battery_type_mismatch",
+  "battery_reserved",
+  "outlet_busy",
+  "outlet_required",
+  "swap_required",
 ];
 
 /**
@@ -308,8 +315,8 @@ export class CloudflareBackend implements Backend {
     return this.call<Reservation[]>("GET", "/api/reservations/mine");
   }
 
-  async reserve(stationId: string, type: ReservationType) {
-    const r = await this.call<Reservation>("POST", "/api/reservations", { stationId, type });
+  async reserve(stationId: string, kind: ReservationKind | ReservationType, target?: string | null) {
+    const r = await this.call<Reservation>("POST", "/api/reservations", { stationId, kind: kindFrom(kind), target: target ?? null });
     this.changed();
     return r;
   }
@@ -334,8 +341,8 @@ export class CloudflareBackend implements Backend {
     return this.call<Reservation[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/reservations`);
   }
 
-  async completeReservation(id: string, pickupCode: string, batteryTypeId?: string | null) {
-    await this.call("POST", `/api/reservations/${encodeURIComponent(id)}/complete`, { pickupCode, batteryTypeId: batteryTypeId ?? null });
+  async completeReservation(id: string, pickupCode: string) {
+    await this.call("POST", `/api/reservations/${encodeURIComponent(id)}/complete`, { pickupCode });
     this.changed();
   }
 
@@ -948,7 +955,7 @@ export class CloudflareBackend implements Backend {
     return s;
   }
 
-  startCharge(stationId: string, input: { pointId: string; contact?: string }) {
+  startCharge(stationId: string, input: StartChargeInput) {
     return this.chargeAction(stationId, "", input);
   }
 

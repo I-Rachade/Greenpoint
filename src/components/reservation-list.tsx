@@ -10,7 +10,8 @@ import { MAX_UNUSED_RESERVATIONS_PER_DAY, STATION_COOLDOWN_MINUTES, type Reserva
 import { useState } from "react";
 import { useApp } from "./app-provider";
 import { ConfirmSheet } from "./confirm-sheet";
-import { BatteryIcon, BoltIcon, ListIcon, NavigateIcon } from "./icons";
+import { BatteryIcon, BoltIcon, CarIcon, ListIcon, NavigateIcon } from "./icons";
+import { reservationKind } from "@/lib/reservations";
 import { useI18n } from "./i18n-provider";
 import { LoadFailed, OfflineNotice } from "./load-state";
 import { PageTitle } from "./page-title";
@@ -20,6 +21,15 @@ import { Button, Card, EmptyState, ProgressRing, SkeletonCard, formatRemaining, 
 /** An active reservation past its expiry is shown as expired. */
 export function effectiveStatus(r: Reservation, now: Date): ReservationStatus {
   return r.status === "active" && !isHolding(r, now) ? "expired" : r.status;
+}
+
+/** What the reservation holds, e.g. "Batterie · Spiro 72 V" or "Borne VE · Borne 1". */
+export function useReservationWhat() {
+  const { t } = useI18n();
+  return (r: Reservation) => {
+    const kind = r.targetKind ?? (reservationKind(r) === "swap" ? "battery_type" : "place");
+    return [t.reserveFlow.targetKinds[kind], r.targetLabel].filter(Boolean).join(" · ");
+  };
 }
 
 export function minutesLeft(r: Reservation, now: Date): number {
@@ -54,6 +64,7 @@ export function ReservationList() {
   const { backend } = useApp();
   const now = useNow(15_000);
   const errorMessage = useErrorMessage();
+  const what = useReservationWhat();
   const [error, setError] = useState<string | null>(null);
   /** Reservation the person asked to cancel; the sheet explains the consequence first. */
   const [cancelling, setCancelling] = useState<string | null>(null);
@@ -115,7 +126,7 @@ export function ReservationList() {
         {reservations.map((r) => {
           const status = effectiveStatus(r, now);
           const station = byId.get(r.stationId);
-          const TypeIcon = r.type === "battery" ? BatteryIcon : BoltIcon;
+          const TypeIcon = reservationKind(r) === "swap" ? BatteryIcon : r.targetKind === "ev" ? CarIcon : BoltIcon;
           return (
             <li key={r.id}>
               <Card className="flex flex-wrap items-center gap-3 p-4">
@@ -135,7 +146,7 @@ export function ReservationList() {
                     <div className="font-semibold">–</div>
                   )}
                   <div className="text-sm text-gp-muted">
-                    {r.type === "battery" ? t.reservations.battery : t.reservations.slot} · {new Date(r.createdAt).toLocaleString()}
+                    {what(r)} · {new Date(r.createdAt).toLocaleString()}
                   </div>
                   <div className={`text-sm ${status === "active" ? "font-semibold text-gp-green-dark dark:text-gp-green" : "text-gp-muted"}`}>
                     {t.reservations.status[status]}

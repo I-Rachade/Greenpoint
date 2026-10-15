@@ -42,6 +42,7 @@ import { ApiError, nowIso, uuid } from "./http";
 import { DB_CUSTOMER } from "./roles";
 import { requireService } from "./services";
 import { walletAccess } from "./wallet";
+import { checkPickupCode, heldBatteriesSql, stillActive, type ReservationRow } from "./reservations";
 
 export interface WorkCtx {
   env: Env;
@@ -170,6 +171,8 @@ interface EventSpec {
   now: string;
   /** Extra SQL condition (with its own bound value ?12) for the event to happen, e.g. its swap row exists. */
   onlyIf?: { sql: string; value: string };
+  /** Issue: leave the full batteries active reservations hold (a swap without reservation). */
+  keepHeld?: boolean;
 }
 
 /**
@@ -182,7 +185,9 @@ function eventStatements(db: D1Database, e: EventSpec): D1PreparedStatement[] {
   const emptyAfter = e.type === "full" ? "max(bc.empty - 1, 0)" : e.type === "empty_in" ? "bc.empty + 1" : "bc.empty";
   const guard =
     e.type === "issue"
-      ? "bc.full > 0"
+      ? e.keepHeld
+        ? `bc.full - ${heldBatteriesSql("?3", "?4", "?13")} > 0`
+        : "bc.full > 0"
       : e.type === "correction"
         ? "bc.full + ?6 >= 0"
         : e.type === "full"
@@ -445,23 +450,18 @@ async function findFleetDriver(db: D1Database, raw: unknown): Promise<{ driverId
   return { driverId: row.user_id, managerId: row.manager_id };
 }
 
-interface ReservationRow {
-  id: string;
-  user_id: string;
-  station_id: string;
-  type: string;
-  status: string;
-  expires_at: string;
-  pickup_code: string;
-}
-
 /**
  * Records a swap (W7, R6): the full battery out (counter −1) and the customer's empty
  * battery in (empty stock +1), one log row with station, person and role, the payment
  * and, when given, the reservation it completes, in one batch. A repeated request id
  * returns the swap it already recorded.
+ *
+ * From a reservation (the staff open it from the reservation list): the customer and the
+ * battery type come from the reservation, the pickup code is checked (locked after 5
+ * wrong ones), and the swap completes it, paid like any app customer's swap. Without a
+ * reservation, a swap cannot take a full battery an active reservation holds.
  */
-export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput, opts: { reservationOnly?: boolean } = {}): Promise<SwapEntry> {
+export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput): Promise<SwapEntry> {
   const actor = await stationActor(c, stationId);
   await requireService(c.db, stationId, "swap");
   if (!input || !validRequestId(input.requestId) || !isSwapCustomerType(input.customerType)) throw new ApiError("bad_request");
@@ -486,10 +486,16 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
   if (input.reservationId) {
     if (type !== "app") throw new ApiError("bad_request");
     reservation = await db.prepare("select * from reservations where id = ?").bind(String(input.reservationId)).first<ReservationRow>();
-    if (!reservation || reservation.station_id !== stationId || reservation.type !== "battery") throw new ApiError("forbidden", 403);
+    if (!reservation || reservation.station_id !== stationId || reservation.kind !== "swap") throw new ApiError("forbidden", 403);
     if (reservation.user_id === actor.user.id) throw new ApiError("own_reservation");
-    if (reservation.status !== "active" || reservation.expires_at <= nowIso()) throw new ApiError("reservation_not_active");
-    if (reservation.pickup_code !== String(input.pickupCode ?? "").trim()) throw new ApiError("wrong_pickup_code");
+    if (!stillActive(reservation)) throw new ApiError("reservation_not_active");
+    await checkPickupCode(db, reservation, input.pickupCode);
+    // The battery type the reservation holds; another type is refused.
+    if (reservation.target) {
+      const given = input.batteryTypeId === undefined || input.batteryTypeId === null || input.batteryTypeId === "" ? null : String(input.batteryTypeId);
+      if (given !== null && given !== reservation.target) throw new ApiError("battery_type_mismatch");
+      input = { ...input, batteryTypeId: reservation.target };
+    }
     customer = await db.prepare("select id, role, phone, email, full_name from users where id = ?").bind(reservation.user_id).first<Customer>();
     if (!customer) throw new ApiError("recipient_not_found", 404);
   } else if (type === "app") {
@@ -507,10 +513,7 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
   // How it is paid (Lite: cash only).
   let payment: SwapPayment;
   let amount: number;
-  if (opts.reservationOnly) {
-    payment = "none";
-    amount = 0;
-  } else if (type === "fleet") {
+  if (type === "fleet") {
     payment = "fleet";
     amount = station.price_battery_xof ?? 0;
   } else if (type === "app" && input.payment !== "cash") {
@@ -531,8 +534,34 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
   const swapId = uuid();
   const outRequest = `${input.requestId}:out`;
   const inRequest = `${input.requestId}:in`;
+  if (!reservation) {
+    // Full batteries held by active reservations are not for a swap without one.
+    const left = await db
+      .prepare(
+        `select coalesce((select full from battery_counter where station_id = ?1 and battery_type_id = ?2),
+                         case when ?2 = '' then (select full_batteries from station_status where station_id = ?1)
+                              else (select full_batteries from station_battery_types where station_id = ?1 and battery_type_id = ?2) end, 0) as full,
+                ${heldBatteriesSql("?1", "?2", "?3")} as held`,
+      )
+      .bind(stationId, key, now)
+      .first<{ full: number; held: number }>();
+    if (left && left.full > 0 && left.full - left.held <= 0) throw new ApiError("battery_reserved", 409);
+  }
   const statements: D1PreparedStatement[] = [
-    ...eventStatements(db, { stationId, key, type: "issue", delta: -1, reason: null, requestId: outRequest, swapId, actor, now }),
+    ...eventStatements(db, {
+      stationId,
+      key,
+      type: "issue",
+      delta: -1,
+      reason: null,
+      requestId: outRequest,
+      swapId,
+      actor,
+      now,
+      keepHeld: !reservation,
+      // From a reservation: only while it is still active, so it completes exactly once.
+      onlyIf: reservation ? { sql: "exists (select 1 from reservations where id = ?12 and status = 'active')", value: reservation.id } : undefined,
+    }),
     db
       .prepare(
         `insert into swap_log (id, request_id, station_id, battery_type_id, has_battery_in, battery_in_label, battery_out_label, customer_type,
@@ -606,7 +635,13 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     if (!isUnique(err)) throw err;
   }
   const row = await swapByRequest(db, input.requestId);
-  if (!row) throw new ApiError("no_full_battery", 409);
+  if (!row) {
+    if (reservation) {
+      const current = await db.prepare("select status from reservations where id = ?").bind(reservation.id).first<{ status: string }>();
+      if (current?.status !== "active") throw new ApiError("reservation_not_active");
+    }
+    throw new ApiError("no_full_battery", 409);
+  }
   if (row.id === swapId && customer && (type === "app" || type === "first_purchase")) {
     // greenpoints for an app customer at a solar station (as a completed reservation or a visit before).
     const earned = await earnStatement(db, { userId: customer.id, type: "battery", stationId, reservationId: reservation?.id ?? null, createdBy: actor.user.id });

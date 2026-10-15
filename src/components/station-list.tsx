@@ -5,7 +5,7 @@ import { DEFAULT_FILTER, rankStations, type StationFilter } from "@/lib/availabi
 import { allBrands } from "@/lib/battery-types";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { useFavorites } from "@/lib/prefs";
+import { useBrandPref, useFavorites } from "@/lib/prefs";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
 import { HeartIcon, SearchIcon } from "./icons";
@@ -30,6 +30,7 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
   const [query, setQuery] = useState("");
   const [chip, setChip] = useState<Chip>("all");
   const [brand, setBrand] = useState("all");
+  const [, setBrandPref] = useBrandPref();
   const brands = useMemo(() => allBrands(stations ?? []), [stations]);
 
   const filter: StationFilter = {
@@ -95,7 +96,10 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
       {!favoritesOnly && brands.length > 0 && (
         <select
           value={brand}
-          onChange={(e) => setBrand(e.target.value)}
+          onChange={(e) => {
+            setBrand(e.target.value);
+            setBrandPref(e.target.value);
+          }}
           aria-label={t.filter.brand}
           className="mt-2 rounded-full border border-gp-border bg-gp-surface px-4 py-1.5 text-sm dark:border-white/15"
         >

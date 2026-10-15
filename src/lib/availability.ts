@@ -91,8 +91,10 @@ export function countHolding(
   let batteries = 0;
   for (const r of reservations) {
     if (r.stationId !== stationId || !isHolding(r, now)) continue;
-    if (r.type === "slot") slots++;
-    else batteries++;
+    // A car charger's hold is not a motorbike place (src/lib/reservations.ts).
+    const kind = r.kind ?? (r.type === "battery" ? "swap" : "charging_point");
+    if (kind === "swap") batteries++;
+    else if (r.targetKind !== "ev") slots++;
   }
   return { slots, batteries };
 }

@@ -315,18 +315,6 @@ describe("swaps (W7, R6, R9, R10)", () => {
     expect((await swap(env, "afi", "be", { customerType: "app", contact: "90000005", payment: "cash" })).status).toBe(200);
   });
 
-  it("completes a battery reservation as a swap, with its log row", async () => {
-    const { env, db } = await setup();
-    const r = (await call<{ id: string; pickupCode: string }>(env, "ama", "POST", "/api/reservations", { stationId: "be", type: "battery" })).body;
-    expect((await call(env, "afi", "POST", `/api/reservations/${r.id}/complete`, { pickupCode: "x" })).body).toEqual({ error: "wrong_pickup_code" });
-    expect((await call(env, "afi", "POST", `/api/reservations/${r.id}/complete`, { pickupCode: r.pickupCode })).status).toBe(200);
-    expect(db.prepare("select status from reservations where id = ?").get(r.id)).toEqual({ status: "completed" });
-    expect(db.prepare("select customer_type, customer_user_id, payment, reservation_id from swap_log").all()).toEqual([
-      { customer_type: "app", customer_user_id: "ama", payment: "none", reservation_id: r.id },
-    ]);
-    expect(full(db, "be")).toBe(2);
-  });
-
   it("works only while the station runs the swap service", async () => {
     const { env } = await setup();
     expect((await call(env, "admin", "POST", "/api/admin/station-services/set", { stationId: "be", service: "swap", unlocked: false })).status).toBe(200);

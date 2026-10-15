@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { reservableOutlets } from "../reservations";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
 import { customerStation } from "../station-services";
 import type { StationView } from "../types";
@@ -83,7 +84,8 @@ describe("demo: service unlock per station", () => {
     expect((await station())?.kind).toBe("charging");
     await as(backend, "+22890333333", "customer");
     await expect(backend.reserve(OTHER_STATION, "battery")).rejects.toMatchObject({ code: "service_not_offered" });
-    expect((await backend.reserve(OTHER_STATION, "slot")).status).toBe("active");
+    const outlet = reservableOutlets((await station())!)[0]?.id ?? null;
+    expect((await backend.reserve(OTHER_STATION, "slot", outlet)).status).toBe("active");
   });
 
   it("R9: Lite switches parcels and drivers off everywhere", async () => {

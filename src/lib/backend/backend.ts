@@ -46,6 +46,7 @@ import type {
 } from "../drivers";
 import type { FleetStats, FleetView } from "../fleet";
 import type { StationService, StationServiceInfo } from "../station-services";
+import type { ReservationKind } from "../reservations";
 import type { BatteryEventInput, BatteryEventView, StationCounter, SwapEntry, SwapFilter, SwapInput } from "../station-work";
 import type { ReviewInput, StationReview } from "../station-extras";
 import type { LatLng } from "../geo";
@@ -56,6 +57,14 @@ export type CodeChannel = "sms" | "email";
 
 /** Open/close and free charging places. Full batteries change only through counter events (station-work.ts). */
 export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots">>;
+
+/** Start a charge for a cash or app customer, or for the customer of an outlet reservation (with its code). */
+export interface StartChargeInput {
+  pointId: string;
+  contact?: string;
+  reservationId?: string;
+  pickupCode?: string;
+}
 
 /** Error codes shared by both backends, translated in the UI (see i18n `errors`). */
 export type BackendErrorCode =
@@ -158,6 +167,12 @@ export type BackendErrorCode =
   | "not_a_customer"
   | "request_conflict"
   | "reason_required"
+  | "battery_type_unavailable"
+  | "battery_type_mismatch"
+  | "battery_reserved"
+  | "outlet_busy"
+  | "outlet_required"
+  | "swap_required"
   | "unknown";
 
 export class BackendError extends Error {
@@ -215,7 +230,12 @@ export interface Backend {
 
   // Customer
   myReservations(): Promise<Reservation[]>;
-  reserve(stationId: string, type: ReservationType): Promise<Reservation>;
+  /**
+   * Reserves at a station (riders only, src/lib/reservations.ts): `kind` "swap" with the
+   * battery type as `target`, or "charging_point" with an outlet or car charger (none at a
+   * station without connected outlets). The older "battery" / "slot" still work.
+   */
+  reserve(stationId: string, kind: ReservationKind | ReservationType, target?: string | null): Promise<Reservation>;
   cancelReservation(id: string): Promise<void>;
 
   // Station staff
@@ -223,11 +243,12 @@ export interface Backend {
   updateStatus(stationId: string, patch: StatusPatch): Promise<void>;
   stationReservations(stationId: string): Promise<Reservation[]>;
   /**
-   * Needs the customer's pickup code; also takes the battery or slot off the station's counter.
-   * A battery reservation is completed as a swap (with its log row); `batteryTypeId` names the
-   * type at a station with several.
+   * Completes a charging reservation (car charger, counted place, or an outlet that cannot be
+   * started) with the customer's pickup code; a counted place comes off the free places.
+   * A swap reservation is completed by its swap (recordSwap with `reservationId`), an outlet
+   * reservation by starting the charge (startCharge with `reservationId`). 5 wrong codes lock it.
    */
-  completeReservation(id: string, pickupCode: string, batteryTypeId?: string | null): Promise<void>;
+  completeReservation(id: string, pickupCode: string): Promise<void>;
 
   // Station work (src/lib/station-work.ts): every action is sent with the active station.
   /** Counters, today's changes and whether the viewer may correct. Needs the swap service. */
@@ -460,7 +481,7 @@ export interface Backend {
   /** Station staff: the charges running or waiting for payment, today's charges and takings. */
   stationCharging(stationId: string): Promise<StationCharging>;
   /** Staff switch an outlet on for a cash customer, or an app customer by phone, e-mail or scanned QR code. */
-  startCharge(stationId: string, input: { pointId: string; contact?: string }): Promise<ChargeSession>;
+  startCharge(stationId: string, input: StartChargeInput): Promise<ChargeSession>;
   /** Staff switch the outlet off; the price is then final. */
   stopCharge(stationId: string, id: string): Promise<ChargeSession>;
   /** Closes a stopped charge that took no energy. */

@@ -25,7 +25,10 @@ export interface EvCharger {
 }
 
 /** A charger as the app shows it at its station. */
-export type StationEvCharger = Pick<EvCharger, "id" | "name" | "connector" | "powerKw">;
+export type StationEvCharger = Pick<EvCharger, "id" | "name" | "connector" | "powerKw"> & {
+  /** Station list only: an active reservation holds this charger (src/lib/reservations.ts). */
+  reserved?: boolean;
+};
 
 export interface EvChargerInput {
   name: string;

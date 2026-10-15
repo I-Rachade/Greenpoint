@@ -8,6 +8,7 @@ import { formatDistance } from "@/lib/geo";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { allBrands } from "@/lib/battery-types";
+import { useBrandPref } from "@/lib/prefs";
 import { hasRestArea } from "@/lib/station-extras";
 import { VEHICLE_TYPES, type StationView, type VehicleType } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
@@ -53,6 +54,7 @@ export function StationFinder() {
   const active = useActiveReservation();
   const { data: stations, error, reload } = useLiveQuery(() => backend.listStations());
   const [filter, setFilter] = useState<StationFilter>(DEFAULT_FILTER);
+  const [, setBrandPref] = useBrandPref();
   const [query, setQuery] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -144,7 +146,10 @@ export function StationFinder() {
               <select
                 className={selectClass}
                 value={filter.brand ?? "all"}
-                onChange={(e) => setFilter({ ...filter, brand: e.target.value })}
+                onChange={(e) => {
+                  setFilter({ ...filter, brand: e.target.value });
+                  setBrandPref(e.target.value);
+                }}
                 aria-label={t.filter.brand}
               >
                 <option value="all">{t.filter.allBrands}</option>

@@ -6,6 +6,7 @@ import { handleApi } from "./api";
 import { createDevice, deleteDevice } from "./devices";
 import type { Env } from "./env";
 import { sha256 } from "./http";
+import { DB_CUSTOMER } from "./roles";
 
 // Station points: swap, charging (connected sockets), parcel counter, parcel lockers.
 // Runs the API on a minimal D1 on top of SQLite, with the real migrations (as in features.test.ts).
@@ -171,9 +172,12 @@ describe("station points", () => {
   });
 
   it("offers no reservation at a parcel point", async () => {
-    const { env } = await setup();
+    const { env, db } = await setup();
     await save(env, station("Colis", { kind: "parcel", parcelDepot: { isActive: true, counter: true, lockers: 0, note: "" } }));
     const s = await byName(env, "Colis");
+    // Admins do not reserve (role matrix): as a rider.
+    expect((await call(env, "POST", "/api/reservations", { stationId: s.id, type: "battery" })).body).toEqual({ error: "forbidden" });
+    db.exec(`update users set role = '${DB_CUSTOMER}' where id = 'admin'`);
     for (const type of ["slot", "battery"]) {
       expect((await call(env, "POST", "/api/reservations", { stationId: s.id, type })).body).toEqual({ error: "service_not_offered" });
     }

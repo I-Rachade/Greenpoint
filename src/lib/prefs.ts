@@ -4,7 +4,8 @@ import { useCallback, useSyncExternalStore } from "react";
 
 /**
  * Small per-device preferences kept in localStorage: favourite stations, theme,
- * whether the introduction was seen, and which notifications were read.
+ * whether the introduction was seen, which notifications were read, and the battery
+ * brand last chosen in the station filter (the station page then offers that brand first).
  * Every read and write is wrapped: storage can be missing (private mode, blocked
  * site data) and the app must still work, just without remembering.
  */
@@ -14,6 +15,7 @@ const KEYS = {
   theme: "poinderecharge-theme",
   onboarded: "poinderecharge-onboarded",
   alertsRead: "poinderecharge-alerts-read",
+  brand: "poinderecharge-brand",
 } as const;
 
 export type Theme = "system" | "light" | "dark";
@@ -104,4 +106,11 @@ export function useReadAlerts(): [string[], (ids: string[]) => void] {
     write(KEYS.alertsRead, JSON.stringify([...current].slice(-300)));
   }, []);
   return [ids, markRead];
+}
+
+/** The battery brand last chosen in the station filter; null = all brands. */
+export function useBrandPref(): [string | null, (brand: string | null) => void] {
+  const raw = useStored(KEYS.brand);
+  const set = useCallback((brand: string | null) => write(KEYS.brand, brand && brand !== "all" ? brand : null), []);
+  return [raw, set];
 }
