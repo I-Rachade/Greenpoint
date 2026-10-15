@@ -170,8 +170,10 @@ const stub = (env: Env, externalId: string) => env.OCPP!.get(env.OCPP!.idFromNam
 /**
  * GET /api/devices/ocpp/<chargePointId> with "Upgrade: websocket": checks the
  * charge point and its key, then hands the connection to its Durable Object.
+ * The key comes as the HTTP Basic password, or in the URL
+ * (/api/devices/ocpp/k/<key>/<chargePointId>) for firmware that cannot send one.
  */
-export async function handleOcppUpgrade(request: Request, env: Env, rawId: string): Promise<Response> {
+export async function handleOcppUpgrade(request: Request, env: Env, rawId: string, urlKey?: string): Promise<Response> {
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return new Response("Expected a WebSocket", { status: 426 });
   if (!env.OCPP) return new Response("OCPP is not set up", { status: 503 });
   const offered = (request.headers.get("Sec-WebSocket-Protocol") ?? "").split(",").map((p) => p.trim()).filter(Boolean);
@@ -189,8 +191,9 @@ export async function handleOcppUpgrade(request: Request, env: Env, rawId: strin
     .bind(externalId)
     .first<{ ocpp_key_hash: string | null }>();
   if (!device) return new Response("Unknown charge point", { status: 404 });
-  const auth = basicAuth(request.headers.get("Authorization"));
-  if (!auth || !device.ocpp_key_hash || (await sha256(auth.password)) !== device.ocpp_key_hash) {
+  // No stored key: the socket was added "without password" and connects with its id alone.
+  const key = urlKey ?? basicAuth(request.headers.get("Authorization"))?.password;
+  if (device.ocpp_key_hash && (!key || (await sha256(key)) !== device.ocpp_key_hash)) {
     return new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="OCPP"' } });
   }
   return stub(env, externalId).fetch(new Request(`https://ocpp/connect?id=${encodeURIComponent(externalId)}`, request));

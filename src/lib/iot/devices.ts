@@ -20,6 +20,8 @@ export interface DeviceInput {
   outlets?: number;
   /** "ocpp1.6": the charge point connects straight to us (link "own_server"), see worker/ocpp.ts. */
   protocol?: DeviceProtocol | null;
+  /** OCPP only: the charge point connects without a password (firmware that cannot send one). */
+  ocppNoPassword?: boolean;
 }
 
 export interface Device {
@@ -30,6 +32,8 @@ export interface Device {
   link: DeviceLink;
   outlets: number;
   protocol: DeviceProtocol | null;
+  /** OCPP charge point that connects without a password. */
+  ocppOpen: boolean;
   lastSeenAt: string | null;
   createdAt: string;
   /** One charging point per outlet, by outlet number. */

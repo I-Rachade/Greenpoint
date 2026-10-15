@@ -75,6 +75,24 @@ describe("OCPP charge points", () => {
     expect(requests[0].url).toBe(`https://ocpp/connect?id=${ID}`);
   });
 
+  it("connect with the key in the URL when the firmware cannot send a password", async () => {
+    const { env, key, requests } = await setup();
+    expect((await handleOcppUpgrade(upgrade(), env, CP, "wrong")).status).toBe(401);
+    expect((await handleOcppUpgrade(upgrade(), env, "OTHER-1", key)).status).toBe(404);
+    expect(requests).toHaveLength(0);
+    expect(await (await handleOcppUpgrade(upgrade(), env, CP, key)).text()).toBe("connected");
+  });
+
+  it("connect without a password when added without one", async () => {
+    const { d1, env, requests } = await setup();
+    const input = { externalId: "OPEN-1", stationId: "st", outlets: 1, link: "own_server", protocol: "ocpp1.6", ocppNoPassword: true } as const;
+    expect(await createDevice(d1, input, "admin")).toEqual({ externalId: "OPEN-1", outlets: 1 });
+    expect(await (await handleOcppUpgrade(upgrade(undefined, "ocpp1.6", "OPEN-1"), env, "OPEN-1")).text()).toBe("connected");
+    expect(requests[0].url).toBe("https://ocpp/connect?id=OPEN-1");
+    // Sockets added with a password still need it.
+    expect((await handleOcppUpgrade(upgrade(), env, CP)).status).toBe(401);
+  });
+
   it("boot, report status and are switched on and off", async () => {
     const { db, d1, env, requests } = await setup();
     const boot = await handleOcppCall(d1, ID, "BootNotification", { chargePointVendor: "Xingke", chargePointModel: "XK-16" });
