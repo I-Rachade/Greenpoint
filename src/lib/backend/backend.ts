@@ -138,6 +138,8 @@ export type BackendErrorCode =
   | "greenpoint_daily_limit"
   | "greenpoint_fleet_driver"
   | "greenpoint_not_solar"
+  | "charge_busy"
+  | "charge_wrong_status"
   | "invalid_review"
   | "unknown";
 

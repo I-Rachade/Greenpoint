@@ -27,6 +27,7 @@ import { dispatchXingkeCommand } from "./xingke";
 import { ocppIdTag, ocppKey, remoteStartRequest, remoteStopRequest } from "../src/lib/iot/ocpp";
 import { sendOcppCommand } from "./ocpp";
 import { earnStatement } from "./greenpoint";
+import { chargeReadingStatement, hasOpenCharge } from "./charging";
 
 // Connected sockets (e.g. LoRa). See docs/steckdosen-lora.md.
 
@@ -119,8 +120,11 @@ export function ingest(db: D1Database): Ingest {
           )
           .bind(status, o.power_watts ?? null, o.energy_wh ?? null, point.id),
       );
+      // The charge staff started on this outlet adds up the energy and ends with it (worker/charging.ts).
+      statements.push(chargeReadingStatement(db, point.id, o.status, o.energy_wh, now));
       updated++;
-      if (o.status === "charging" && point.status !== "charging") plugIns++;
+      // A charge staff started is not a reservation's plug-in.
+      if (o.status === "charging" && point.status !== "charging" && !(await hasOpenCharge(db, point.id))) plugIns++;
     }
 
     // A customer plugged in: their slot reservation is used up, otherwise it would keep

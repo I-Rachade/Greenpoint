@@ -197,6 +197,33 @@ export async function earnStatement(
   return { statement, co2Grams: grams, points: pointsFor(grams) };
 }
 
+/**
+ * The ledger row for a charge paid at the counter or in the app (worker/charging.ts):
+ * CO2 from the kWh charged, only for an app customer at a solar station, within
+ * MAX_EARNINGS_PER_DAY. The insert only happens while the charge is paid with
+ * `paidRef`, so callers put it into the batch that books the payment, after it;
+ * a charge earns once (unique index). Null when nothing is earned.
+ */
+export async function chargeEarnStatement(
+  db: D1Database,
+  input: { userId: string; stationId: string; sessionId: string; energyWh: number; paidRef: string; createdBy: string | null },
+): Promise<{ statement: D1PreparedStatement; co2Grams: number; points: number } | null> {
+  if (!(await isSolarStation(db, input.stationId))) return null;
+  if ((await earnedToday(db, input.userId)) >= MAX_EARNINGS_PER_DAY) return null;
+  if (await drivesFleetVehicle(db, input.userId)) return null;
+  const grams = Math.round((input.energyWh / 1000) * (await getFactors(db)).kwhGrams);
+  const points = pointsFor(grams);
+  if (points <= 0) return null;
+  const vehicle = await vehicleOf(db, input.userId);
+  const statement = db
+    .prepare(
+      `insert or ignore into greenpoint_ledger (id, user_id, kind, co2_grams, points, vehicle, station_id, charging_session_id, created_by, created_at)
+       select ?, ?, 'charge', ?, ?, ?, ?, id, ?, ? from charging_sessions where id = ? and status = 'paid' and payment_ref = ?`,
+    )
+    .bind(uuid(), input.userId, grams, points, vehicle, input.stationId, input.createdBy, nowIso(), input.sessionId, input.paidRef);
+  return { statement, co2Grams: grams, points };
+}
+
 async function rewards(db: D1Database, all: boolean): Promise<GreenpointReward[]> {
   const { results } = await db
     .prepare(`select * from greenpoint_rewards ${all ? "" : "where is_active = 1"} order by cost_points, title`)
