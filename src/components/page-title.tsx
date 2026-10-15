@@ -38,11 +38,5 @@ export function PageTitle({
   );
 }
 
-/** White rounded card used across the redesigned screens. */
-export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return (
-    <div className={`rounded-2xl border border-gp-border bg-gp-surface shadow-sm dark:border-white/10 ${className}`}>
-      {children}
-    </div>
-  );
-}
+/** Card moved to ./ui; re-exported so existing imports keep working. */
+export { Card } from "./ui";

@@ -1446,6 +1446,8 @@ export const en: Dictionary = {
     cancel: "Cancel",
     confirm: "Confirm",
     retry: "Try again",
+    undo: "Undo",
+    dismiss: "Dismiss",
     offline: "No connection. What you see may be out of date.",
     loadFailed: "Could not load. Check your connection.",
     tabs: {

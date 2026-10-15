@@ -28,7 +28,7 @@ function markerElement(station: StationView, selected: boolean): HTMLElement {
     height: `${size}px`,
     borderRadius: "9999px",
     // Stations with an electric car charger get a blue ring.
-    border: `3px solid ${(station.evChargers ?? []).length > 0 ? "#2F80ED" : "white"}`,
+    border: `3px solid ${(station.evChargers ?? []).length > 0 ? "var(--gp-info)" : "white"}`,
     boxShadow: "0 1px 4px rgba(0,0,0,.4)",
     background: AVAILABILITY_COLORS[stationAvailability(station)],
     color: "white",
@@ -50,8 +50,8 @@ function markerElement(station: StationView, selected: boolean): HTMLElement {
       width: "16px",
       height: "16px",
       borderRadius: "9999px",
-      background: "#fbbf24",
-      color: "#78350f",
+      background: "var(--gp-yellow)",
+      color: "var(--gp-forest)",
       fontSize: "11px",
       lineHeight: "16px",
       textAlign: "center",
@@ -117,7 +117,7 @@ export function StationMap({ stations, position, selectedId, onSelect }: Props) 
       width: "16px",
       height: "16px",
       borderRadius: "9999px",
-      background: "#2F80ED",
+      background: "var(--gp-info)",
       border: "3px solid white",
       boxShadow: "0 0 0 6px rgba(47,128,237,.25)",
     });

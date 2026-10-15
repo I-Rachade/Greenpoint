@@ -29,8 +29,8 @@ export function Splash() {
   if (!shown) return null;
   return (
     <div
-      className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-6 bg-gp-forest"
-      style={{ animation: "gp-fade-out 0.35s ease-in 1.25s forwards" }}
+      // Fades out after 1.25s; with reduced motion it simply disappears then (globals.css).
+      className="gp-splash fixed inset-0 z-[60] flex flex-col items-center justify-center gap-6 bg-gp-forest"
       aria-hidden
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}

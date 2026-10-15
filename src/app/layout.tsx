@@ -9,6 +9,7 @@ import { Onboarding } from "@/components/onboarding";
 import { PromoPopup } from "@/components/promo-popup";
 import { Splash } from "@/components/splash";
 import { THEME_BOOT_SCRIPT, ThemeController } from "@/components/theme-controller";
+import { ToastProvider } from "@/components/ui";
 import "./globals.css";
 
 // Fonts are bundled with the app so the build never has to reach Google Fonts.
@@ -43,7 +44,11 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#1DB954",
+  // Browser bar: brand green in light mode, forest in dark mode.
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#1DB954" },
+    { media: "(prefers-color-scheme: dark)", color: "#0B3B2E" },
+  ],
   width: "device-width",
   initialScale: 1,
   // Edge to edge in the iOS/Android app; globals.css keeps content clear of the notch and home bar.
@@ -59,14 +64,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex h-full flex-col">
         <I18nProvider>
           <AppProvider>
-            <ThemeController />
-            <NativeShell />
-            <Header />
-            <main className="flex min-h-0 flex-1 flex-col">{children}</main>
-            <BottomNav />
-            <PromoPopup />
-            <Onboarding />
-            <Splash />
+            <ToastProvider>
+              <ThemeController />
+              <NativeShell />
+              <Header />
+              <main className="flex min-h-0 flex-1 flex-col">{children}</main>
+              <BottomNav />
+              <PromoPopup />
+              <Onboarding />
+              <Splash />
+            </ToastProvider>
           </AppProvider>
         </I18nProvider>
       </body>

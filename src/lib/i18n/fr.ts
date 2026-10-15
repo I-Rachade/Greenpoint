@@ -1446,6 +1446,8 @@ export const fr = {
     cancel: "Annuler",
     confirm: "Confirmer",
     retry: "Réessayer",
+    undo: "Annuler",
+    dismiss: "Fermer",
     offline: "Pas de connexion. Les données affichées peuvent être anciennes.",
     loadFailed: "Chargement impossible. Vérifiez votre connexion.",
     tabs: {
