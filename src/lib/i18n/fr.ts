@@ -1414,6 +1414,7 @@ export const fr = {
       account: "Compte",
       parcels: "Colis",
       trips: "Courses",
+      myStation: "Ma station",
     },
     trips: {
       title: "Mes courses",

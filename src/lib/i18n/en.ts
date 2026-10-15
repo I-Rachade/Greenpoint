@@ -1414,6 +1414,7 @@ export const en: Dictionary = {
       account: "Account",
       parcels: "Parcels",
       trips: "Trips",
+      myStation: "My station",
     },
     trips: {
       title: "My deliveries",
