@@ -18,6 +18,7 @@ import type {
 } from "../greenpoint";
 import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
 import type {
+  AbandonReason,
   AdminDrivers,
   DeliveryJob,
   DriverApplication,
@@ -541,6 +542,10 @@ export class CloudflareBackend implements Backend {
 
   declineJob(id: string) {
     return this.job(id, "decline");
+  }
+
+  abandonJob(id: string, reason: AbandonReason) {
+    return this.job(id, "abandon", { reason });
   }
 
   async collectPickup(id: string, measures: ParcelMeasures) {

@@ -108,3 +108,28 @@ button {
     border: 0;
   }
 }
+
+/* Bottom sheet for confirmations (src/components/confirm-sheet.tsx). */
+@keyframes gp-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes gp-scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+.gp-sheet[open] {
+  animation: gp-sheet-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.gp-sheet[open]::backdrop {
+  background: rgb(4 20 15 / 0.55);
+  animation: gp-scrim-in 0.16s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gp-sheet[open],
+  .gp-sheet[open]::backdrop {
+    animation: none;
+  }
+}

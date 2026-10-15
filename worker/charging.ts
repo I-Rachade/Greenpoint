@@ -105,6 +105,19 @@ function audit(db: D1Database, actor: string | null, action: "insert" | "update"
     .bind(nowIso(), actor, action, s.id, s.station_id, s.user_id, JSON.stringify(changes));
 }
 
+/**
+ * The audit row of a guarded UPDATE: written only if the statement right before it in the
+ * batch changed a row (SQLite changes()), so a double tap that lost the race logs nothing.
+ */
+function auditIfChanged(db: D1Database, actor: string | null, s: { id: string; station_id: string; user_id: string | null }, changes: object) {
+  return db
+    .prepare(
+      `insert into audit_log (at, actor, table_name, action, row_id, station_id, user_id, changes)
+       select ?, ?, 'charging_sessions', 'update', ?, ?, ?, ? where changes() > 0`,
+    )
+    .bind(nowIso(), actor, s.id, s.station_id, s.user_id, JSON.stringify(changes));
+}
+
 // Tariff ------------------------------------------------------------------------
 
 export async function defaultTariff(db: D1Database): Promise<ChargeTariff> {
@@ -256,7 +269,7 @@ export async function stopCharge(env: Env, user: Profile, isStaffOf: StaffCheck,
     env.DB
       .prepare("update charging_sessions set status = 'stopped', stopped_at = ?, stopped_by = ? where id = ? and status = 'charging'")
       .bind(now, user.id, id),
-    audit(env.DB, user.id, "update", s, { status: ["charging", "stopped"] }),
+    auditIfChanged(env.DB, user.id, s, { status: ["charging", "stopped"] }),
   ]);
   return toSession(await loadSession(env.DB, id));
 }
@@ -267,14 +280,14 @@ export async function cancelCharge(env: Env, user: Profile, isStaffOf: StaffChec
   if (s.status !== "stopped" || s.energy_wh > 0) throw new ApiError("charge_wrong_status", 409);
   await env.DB.batch([
     env.DB.prepare("update charging_sessions set status = 'cancelled' where id = ? and status = 'stopped' and energy_wh = 0").bind(id),
-    audit(env.DB, user.id, "update", s, { status: ["stopped", "cancelled"] }),
+    auditIfChanged(env.DB, user.id, s, { status: ["stopped", "cancelled"] }),
   ]);
   return toSession(await loadSession(env.DB, id));
 }
 
 /**
  * Books a payment: the charge becomes paid with this amount and reference, and in the
- * same batch the greenpoints follow (only if this booking was the one that paid it).
+ * same batch the greenpoints and the audit row follow (only if this booking was the one that paid it).
  * `extra` runs between the two, e.g. the wallet debit, which also only applies after
  * this update. Returns false when the charge was no longer waiting for payment.
  */
@@ -303,9 +316,10 @@ async function bookPayment(
          where id = ? and status = 'stopped'`,
       )
       .bind(pay.amountXof, pay.method, pay.ref, pay.by, now, s.id),
+    // Right after the update: changes() refers to it.
+    auditIfChanged(db, pay.by, s, { status: ["stopped", "paid"], amount_xof: pay.amountXof, payment_method: pay.method }),
     ...extra,
     ...(earned ? [earned.statement] : []),
-    audit(db, pay.by, "update", s, { status: ["stopped", "paid"], amount_xof: pay.amountXof, payment_method: pay.method }),
   ]);
   return paid.meta.changes > 0;
 }

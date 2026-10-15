@@ -7,7 +7,7 @@ import { ParcelStatusPill } from "@/components/parcels/status";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { OPEN_PARCEL_STATUSES, type ParcelDepot, type ParcelSizeTier, type ParcelStatus } from "@/lib/parcels";
 import type { StationView } from "@/lib/types";
-import { card, field, Loading, Pill, Table, td, th, useDateTime } from "./shared";
+import { card, field, Loading, Pill, StaleNotice, Table, td, th, useDateTime } from "./shared";
 
 const STATUSES: ParcelStatus[] = ["deposited", "in_transit", "arrived", "picked_up", "stored", "released", "auctioned", "cancelled"];
 
@@ -162,7 +162,7 @@ export function ParcelsManager() {
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
   const [status, setStatus] = useState<ParcelStatus | "">("");
 
-  if (!data) return <Loading error={error} />;
+  if (!data) return <Loading error={error} onRetry={reload} />;
   const [{ parcels, depots, sizes }, snap] = data;
   const name = (id: string) => snap.stations.find((s) => s.id === id)?.name ?? id;
   const monthAgo = new Date(now.getTime() - 30 * 86_400_000).toISOString();
@@ -193,6 +193,7 @@ export function ParcelsManager() {
 
   return (
     <div className="space-y-6">
+      <StaleNotice error={error} onRetry={reload} />
       <div>
         <h1 className="text-2xl font-semibold">{t.parcels.admin.title}</h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.parcels.admin.intro}</p>

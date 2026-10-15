@@ -7,7 +7,7 @@ import { displayStatus } from "@/lib/iot/charging-points";
 import { canSwitch, DEVICE_LINKS, MAX_OUTLETS, type DeviceInput } from "@/lib/iot/devices";
 import { useErrorMessage, useLiveQuery, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { card, field, indexSnapshot, Loading, Pill, useAdminSnapshot } from "./shared";
+import { card, field, indexSnapshot, Loading, Pill, StaleNotice, useAdminSnapshot } from "./shared";
 
 const EMPTY: DeviceInput = { externalId: "", stationId: "", outlets: 2, link: "lorawan", vendor: "", model: "", protocol: null };
 
@@ -21,10 +21,14 @@ export function DevicesManager() {
   const relativeTime = useRelativeTime();
   const now = useNow(30_000);
   const { data: devices, error, reload } = useLiveQuery(() => backend.listDevices());
-  const { data: snap } = useAdminSnapshot();
+  const { data: snap, error: snapError, reload: reloadSnap } = useAdminSnapshot();
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  if (!devices || !snap) return <Loading error={error} />;
+  const retry = () => {
+    reload();
+    reloadSnap();
+  };
+  if (!devices || !snap) return <Loading error={error ?? snapError} onRetry={retry} />;
 
   const b = t.backoffice.devices;
   const idx = indexSnapshot(snap);
@@ -43,6 +47,7 @@ export function DevicesManager() {
 
   return (
     <div className="space-y-4">
+      <StaleNotice error={error ?? snapError} onRetry={retry} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-semibold">{b.title}</h1>
         {!adding && (

@@ -5,7 +5,7 @@ import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { AUDIT_TABLES, type AuditEntry, type AuditFilter, type AuditTable } from "@/lib/admin/types";
 import { useLiveQuery } from "@/lib/hooks";
-import { field, indexSnapshot, Loading, Pill, Table, td, th, useAdminSnapshot, userLabel, useDateTime } from "./shared";
+import { field, indexSnapshot, Loading, Pill, StaleNotice, Table, td, th, useAdminSnapshot, useDateTime, userLabel } from "./shared";
 
 const PAGE = 100;
 const TONE = { insert: "green", update: "blue", delete: "red" } as const;
@@ -34,7 +34,7 @@ export function ActivityLog() {
   const { t } = useI18n();
   const formatDateTime = useDateTime();
   const { backend } = useApp();
-  const { data: snap, error: snapError } = useAdminSnapshot();
+  const { data: snap, error: snapError, reload: reloadSnap } = useAdminSnapshot();
   const [table, setTable] = useState<AuditTable | "">("");
   const [stationId, setStationId] = useState("");
   const [actorId, setActorId] = useState("");
@@ -46,8 +46,12 @@ export function ActivityLog() {
     actorId: actorId || undefined,
     limit,
   };
-  const { data: entries, error } = useLiveQuery(() => backend.auditLog(filter), JSON.stringify(filter));
-  if (!snap || !entries) return <Loading error={snapError ?? error} />;
+  const { data: entries, error, reload } = useLiveQuery(() => backend.auditLog(filter), JSON.stringify(filter));
+  const retry = () => {
+    reloadSnap();
+    reload();
+  };
+  if (!snap || !entries) return <Loading error={snapError ?? error} onRetry={retry} />;
 
   const b = t.backoffice.activity;
   const idx = indexSnapshot(snap);
@@ -65,6 +69,7 @@ export function ActivityLog() {
 
   return (
     <div className="space-y-4">
+      <StaleNotice error={snapError ?? error} onRetry={retry} />
       <div>
         <h1 className="text-2xl font-semibold">{b.title}</h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">{b.intro}</p>

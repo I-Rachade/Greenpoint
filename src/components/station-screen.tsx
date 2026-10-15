@@ -6,6 +6,7 @@ import { useLiveQuery } from "@/lib/hooks";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
+import { LoadFailed, OfflineNotice } from "./load-state";
 import { PageTitle } from "./page-title";
 import { StationDetail } from "./station-detail";
 
@@ -15,7 +16,7 @@ export function StationScreen() {
   const { backend } = useApp();
   const id = useSearchParams().get("id") ?? "";
   const { position } = usePosition();
-  const { data: stations, reload } = useLiveQuery(() => backend.listStations());
+  const { data: stations, error, reload } = useLiveQuery(() => backend.listStations());
   const station = stations?.find((s) => s.id === id) ?? null;
 
   return (
@@ -24,10 +25,17 @@ export function StationScreen() {
         {!station ? (
           <div className="px-4 pt-4">
             <PageTitle title={t.ui.detail.title} back={true} />
-            <p className="text-sm text-gp-muted">{stations === null ? t.loading : t.ui.detail.notFound}</p>
+            {stations === null && error ? (
+              <LoadFailed error={error} onRetry={reload} />
+            ) : (
+              <p className="text-sm text-gp-muted">{stations === null ? t.loading : t.ui.detail.notFound}</p>
+            )}
           </div>
         ) : (
-          <StationDetail station={station} distance={position ? distanceMeters(position, station) : null} onChanged={reload} />
+          <>
+            {!!error && <OfflineNotice className="mx-4 mt-3" />}
+            <StationDetail station={station} distance={position ? distanceMeters(position, station) : null} onChanged={reload} />
+          </>
         )}
       </div>
     </div>

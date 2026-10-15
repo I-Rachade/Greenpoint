@@ -7,7 +7,7 @@ import { formatKg, type GreenpointFactors, type GreenpointReward, type Greenpoin
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { FLEET_VEHICLE_TYPES } from "@/lib/drivers";
 import { VEHICLE_TYPES } from "@/lib/types";
-import { card, field, Loading, Pill, Table, td, th, useDateTime } from "./shared";
+import { card, field, Loading, Pill, StaleNotice, Table, td, th, useDateTime } from "./shared";
 
 type Message = { ok: boolean; text: string } | null;
 
@@ -31,7 +31,7 @@ export function GreenpointManager() {
   const { data, error, reload } = useLiveQuery(() => backend.adminGreenpoint());
   const [message, setMessage] = useState<Message>(null);
   const [editing, setEditing] = useState<{ id: string | null; input: GreenpointRewardInput } | null>(null);
-  if (!data) return <Loading error={error} />;
+  if (!data) return <Loading error={error} onRetry={reload} />;
 
   const g = t.greenpoint.admin;
   const n = (x: number) => x.toLocaleString(locale === "fr" ? "fr-FR" : "en-GB");
@@ -50,6 +50,7 @@ export function GreenpointManager() {
 
   return (
     <div className="space-y-4">
+      <StaleNotice error={error} onRetry={reload} />
       <h1 className="text-xl font-semibold">{g.title}</h1>
       {message && <p className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>{message.text}</p>}
 

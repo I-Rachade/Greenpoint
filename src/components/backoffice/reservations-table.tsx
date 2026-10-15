@@ -9,7 +9,7 @@ import { isHolding } from "@/lib/availability";
 import { useErrorMessage, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { ReservationStatus } from "@/lib/types";
-import { field, indexSnapshot, Loading, Pill, Table, td, th, useAdminSnapshot, userLabel, useDateTime } from "./shared";
+import { field, indexSnapshot, Loading, Pill, StaleNotice, Table, td, th, useAdminSnapshot, useDateTime, userLabel } from "./shared";
 
 const STATUSES: ReservationStatus[] = ["active", "completed", "cancelled", "expired"];
 const TONE = { active: "blue", completed: "green", cancelled: "gray", expired: "red" } as const;
@@ -25,7 +25,7 @@ export function ReservationsTable() {
   const [stationId, setStationId] = useState("");
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState<string | null>(null);
-  if (!snap) return <Loading error={error} />;
+  if (!snap) return <Loading error={error} onRetry={reload} />;
 
   const b = t.backoffice.reservations;
   const idx = indexSnapshot(snap);
@@ -50,6 +50,7 @@ export function ReservationsTable() {
 
   return (
     <div className="space-y-4">
+      <StaleNotice error={error} onRetry={reload} />
       <h1 className="text-2xl font-semibold">{format(b.title, { days: ADMIN_HISTORY_DAYS })}</h1>
       <div className="flex flex-wrap items-center gap-2">
         <select className={field} value={status} onChange={(e) => setStatus(e.target.value as ReservationStatus | "")} aria-label={b.status}>

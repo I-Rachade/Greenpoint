@@ -5,6 +5,7 @@ import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { HOSTED_DEMO } from "@/lib/backend";
 import { useErrorMessage } from "@/lib/hooks";
 import { LEGAL_PATHS } from "@/lib/legal/content";
+import { safeNextPath } from "@/lib/next-path";
 import { normalizeEmail, type Contact } from "@/lib/contact";
 import { DEFAULT_PHONE_COUNTRY, PHONE_COUNTRIES, phoneWithCountry } from "@/lib/countries";
 import { format } from "@/lib/i18n/format";
@@ -92,8 +93,11 @@ export function LoginForm() {
     setPhoneInput("");
     setEmailInput("");
     switchMode("pin");
+    // Customers go back to the page that sent them here (/login?next=/station?id=…), read
+    // from the address bar because the page is static.
+    const next = safeNextPath(new URLSearchParams(window.location.search).get("next"));
     router.push(
-      profile.role === "admin" ? "/admin" : runsOperator(profile) ? "/exploitant" : profile.role === "operator" ? "/operator" : "/",
+      profile.role === "admin" ? "/admin" : runsOperator(profile) ? "/exploitant" : profile.role === "operator" ? "/operator" : (next ?? "/"),
     );
   }
 

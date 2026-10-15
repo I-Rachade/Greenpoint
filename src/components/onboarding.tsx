@@ -5,8 +5,13 @@ import { useRef, useState } from "react";
 import { useOnboarding } from "@/lib/prefs";
 import { useI18n } from "./i18n-provider";
 
-/** Pages that open without the introduction (legal pages, links from the stores, staff). */
-const SKIP_PREFIXES = ["/admin", "/operator", "/cgu", "/confidentialite", "/mentions-legales", "/developpeurs", "/compte"];
+/**
+ * Pages that open without the introduction (legal pages, links from the stores, staff,
+ * and shared station and login links). Each entry also covers the pages below it,
+ * but "/station" does not cover "/stations".
+ */
+const SKIP_PREFIXES = ["/admin", "/operator", "/cgu", "/confidentialite", "/mentions-legales", "/developpeurs", "/compte", "/station", "/login"];
+const skipsIntro = (path: string) => SKIP_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
 
 /**
  * Three-slide introduction on first launch (web and app). Swipe or tap "Next";
@@ -20,7 +25,7 @@ export function Onboarding() {
   const track = useRef<HTMLDivElement>(null);
   const slides = t.ui.onboarding.slides;
 
-  if (!show || SKIP_PREFIXES.some((p) => pathname.startsWith(p))) return null;
+  if (!show || skipsIntro(pathname)) return null;
 
   const last = index === slides.length - 1;
   const goTo = (i: number) => {

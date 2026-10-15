@@ -8,7 +8,7 @@ import { computeKpis, findAnomalies, reservationsPerDay, STALE_STATUS_HOURS, typ
 import type { AdminSnapshot } from "@/lib/admin/types";
 import { useErrorMessage, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { card, indexSnapshot, Loading, Pill, useAdminSnapshot, userLabel } from "./shared";
+import { card, indexSnapshot, Loading, Pill, StaleNotice, useAdminSnapshot, userLabel } from "./shared";
 
 function Kpi({ label, value, detail, tone }: { label: string; value: string | number; detail?: string; tone?: "warn" }) {
   return (
@@ -118,8 +118,8 @@ function FindingRow({ finding, snap }: { finding: Finding; snap: AdminSnapshot }
 export function AdminOverview() {
   const { t } = useI18n();
   const now = useNow(30_000);
-  const { data: snap, error } = useAdminSnapshot();
-  if (!snap) return <Loading error={error} />;
+  const { data: snap, error, reload } = useAdminSnapshot();
+  if (!snap) return <Loading error={error} onRetry={reload} />;
 
   const k = computeKpis(snap, now);
   const findings = findAnomalies(snap, now);
@@ -127,6 +127,7 @@ export function AdminOverview() {
 
   return (
     <div className="space-y-4">
+      <StaleNotice error={error} onRetry={reload} />
       <h1 className="text-2xl font-semibold">{b.title}</h1>
       <LiteSwitch />
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

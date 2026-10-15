@@ -8,7 +8,7 @@ import type { AdminUser } from "@/lib/admin/types";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { UserRole } from "@/lib/types";
-import { field, indexSnapshot, Loading, Table, td, th, useAdminSnapshot, userContact, userLabel, useDateTime } from "./shared";
+import { field, indexSnapshot, Loading, StaleNotice, Table, td, th, useAdminSnapshot, useDateTime, userContact, userLabel } from "./shared";
 
 const ROLES: UserRole[] = ["customer", "operator", "fleet_manager", "admin"];
 
@@ -24,7 +24,7 @@ export function UsersTable() {
   const [role, setRole] = useState<UserRole | "">("");
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState<string | null>(null);
-  if (!snap) return <Loading error={error} />;
+  if (!snap) return <Loading error={error} onRetry={reload} />;
 
   const b = t.backoffice.users;
   const idx = indexSnapshot(snap);
@@ -51,6 +51,7 @@ export function UsersTable() {
 
   return (
     <div className="space-y-4">
+      <StaleNotice error={error} onRetry={reload} />
       <h1 className="text-2xl font-semibold">{b.title}</h1>
       <div className="flex flex-wrap items-center gap-2">
         <select className={field} value={role} onChange={(e) => setRole(e.target.value as UserRole | "")} aria-label={b.role}>

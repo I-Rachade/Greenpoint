@@ -8,6 +8,8 @@ import type { OperatorStaff } from "@/lib/operators";
 import type { StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
+import { LoadFailed } from "./load-state";
+import { StaleNotice } from "./stale-notice";
 
 const card = "space-y-3 rounded-xl border border-black/10 p-4 dark:border-white/10";
 const field = "rounded-lg border border-black/15 bg-white px-3 py-1.5 text-sm dark:border-white/20 dark:bg-zinc-900";
@@ -137,15 +139,15 @@ export function OwnerPanel() {
   const { t } = useI18n();
   const { backend } = useApp();
   const { data, error, reload } = useLiveQuery(() => backend.ownerView());
-  const errorMessage = useErrorMessage();
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
 
-  if (error) return <p className="p-6 text-sm text-red-600">{errorMessage(error)}</p>;
-  if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
+  // A failed refresh keeps the last data on screen; only nothing at all is an error page.
+  if (!data) return error ? <LoadFailed error={error} onRetry={reload} /> : <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
       <h1 className="text-2xl font-semibold">{t.owner.title}</h1>
+      <StaleNotice error={error} onRetry={reload} />
       <p className="text-sm text-zinc-600 dark:text-zinc-400">
         {format(t.owner.intro, { operators: data.operators.map((o) => o.name).join(", ") })}
       </p>

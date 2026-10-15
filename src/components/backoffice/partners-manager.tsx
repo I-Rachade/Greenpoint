@@ -8,7 +8,7 @@ import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { Partner, PartnerEventLog, PartnerInput } from "@/lib/partners";
 import { ParcelsModuleSwitch } from "./parcels-manager";
-import { card, field, Loading, Pill, Table, td, th, useDateTime } from "./shared";
+import { card, field, Loading, Pill, StaleNotice, Table, td, th, useDateTime } from "./shared";
 
 const button = "rounded-full bg-gp-green-dark px-3 py-1 text-xs text-white disabled:opacity-30";
 const outline = "rounded-full border border-black/15 px-3 py-1 text-xs dark:border-white/20";
@@ -237,12 +237,13 @@ export function PartnersManager() {
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
 
-  if (!data) return <Loading error={error} />;
+  if (!data) return <Loading error={error} onRetry={reload} />;
   const name = (id: string) => data.partners.find((p) => p.id === id)?.name ?? id;
   const onMessage = (text: string, ok: boolean) => setMessage({ text, ok });
 
   return (
     <div className="space-y-6">
+      <StaleNotice error={error} onRetry={reload} />
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold">{t.partners.title}</h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.partners.intro}</p>

@@ -6,7 +6,7 @@ import { useI18n } from "@/components/i18n-provider";
 import { formatKwh, type AdminCharging, type ChargeTariffInput } from "@/lib/charging";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
-import { card, field, Loading, Pill, Table, td, th, useDateTime } from "./shared";
+import { card, field, Loading, Pill, StaleNotice, Table, td, th, useDateTime } from "./shared";
 
 type Message = { ok: boolean; text: string } | null;
 
@@ -20,7 +20,7 @@ export function ChargingManager() {
   const when = useDateTime();
   const { data, error, reload } = useLiveQuery(() => backend.adminCharging());
   const [message, setMessage] = useState<Message>(null);
-  if (!data) return <Loading error={error} />;
+  if (!data) return <Loading error={error} onRetry={reload} />;
   const ch = t.charging;
   const a = ch.admin;
   const xof = (n: number) => formatXof(n, locale);
@@ -37,6 +37,7 @@ export function ChargingManager() {
 
   return (
     <div className="space-y-4">
+      <StaleNotice error={error} onRetry={reload} />
       <h1 className="text-xl font-semibold">{a.title}</h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{a.intro}</p>
       {message && <p className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>{message.text}</p>}

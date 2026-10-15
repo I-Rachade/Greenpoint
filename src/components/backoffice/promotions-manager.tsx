@@ -7,7 +7,7 @@ import { PromoCard } from "@/components/promo-popup";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { isRunning, safeImage, safeLink, type Promotion, type PromotionInput } from "@/lib/promo";
-import { card, field, Loading, Pill, useDateTime } from "./shared";
+import { card, field, Loading, Pill, StaleNotice, useDateTime } from "./shared";
 
 const EMPTY: PromotionInput = {
   title: "",
@@ -50,7 +50,7 @@ export function PromotionsManager() {
   const { data: list, error, reload } = useLiveQuery(() => backend.listPromotions());
   const [editing, setEditing] = useState<{ id: string | null; input: PromotionInput } | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  if (!list) return <Loading error={error} />;
+  if (!list) return <Loading error={error} onRetry={reload} />;
 
   const b = t.backoffice.promotions;
   const now = new Date();
@@ -79,6 +79,7 @@ export function PromotionsManager() {
 
   return (
     <div className="space-y-4">
+      <StaleNotice error={error} onRetry={reload} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-semibold">{b.title}</h1>
         {!editing && (

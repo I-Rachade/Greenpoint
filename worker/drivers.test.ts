@@ -3,6 +3,7 @@ import { DEFAULT_DRIVER_SETTINGS, driverBadgePayload, driverEarning, fareFor, ty
 import { distanceMeters } from "../src/lib/geo";
 import type { Profile } from "../src/lib/types";
 import {
+  abandonJob,
   acceptJob,
   adminDrivers,
   applyDriver,
@@ -27,6 +28,7 @@ import {
   myJobs,
   receiveFromDriver,
   reviewDriver,
+  runDispatch,
   saveDriverSettings,
   saveFleetVehicle,
   settleDriver,
@@ -538,5 +540,113 @@ describe("driver module switched off", () => {
     expect((await driverHome(driver.me)).job?.status).toBe("accepted");
     t.db.exec(`update delivery_jobs set status = 'cancelled' where id = '${job.id}'`);
     await expect(joinQueue(driver.me, A.id, A)).rejects.toMatchObject(soon);
+  });
+});
+
+const expire = (t: ReturnType<typeof setup>, jobId: string) =>
+  t.db.exec(`update delivery_jobs set assigned_at = '${new Date(Date.now() - 10 * 60_000).toISOString()}' where id = '${jobId}'`);
+
+describe("offers that run out", () => {
+  it("put the driver back at the end of the line at the same station and tell them once", async () => {
+    const t = setup();
+    const first = await approvedDriver(t, "d1");
+    await joinQueue(first.me, A.id, A);
+    await createParcel(t.admin, A.id, parcelInput(true));
+    const job = (await driverHome(first.me)).job!;
+    expect((await driverHome(first.me)).lastExpiredAt).toBeNull();
+    expire(t, job.id);
+    // The minute cron, with nobody using the app.
+    await runDispatch(t.env);
+    expect(t.db.prepare("select status, driver_id from delivery_jobs where id = ?").get(job.id)).toMatchObject({ status: "open", driver_id: null });
+    const home = await driverHome(first.me);
+    expect(home.job).toBeNull();
+    expect(home.driver?.queue).toMatchObject({ stationId: A.id, position: 1 });
+    expect(home.lastExpiredAt).not.toBeNull();
+  });
+
+  it("leave a driver over the cash limit out of the line", async () => {
+    const t = setup();
+    const first = await approvedDriver(t, "d1");
+    await joinQueue(first.me, A.id, A);
+    await createParcel(t.admin, A.id, parcelInput(true));
+    const job = (await driverHome(first.me)).job!;
+    t.db.exec(`insert into driver_ledger (id, driver_id, at, kind, amount_fcfa) values ('l1', 'd1', '${new Date().toISOString()}', 'collected', 20000)`);
+    expire(t, job.id);
+    await runDispatch(t.env);
+    expect((await driverHome(first.me)).driver?.queue).toBeNull();
+  });
+
+  it("are not sent or expired by the cron while the driver module is off", async () => {
+    const t = setup();
+    const first = await approvedDriver(t, "d1");
+    await joinQueue(first.me, A.id, A);
+    await createParcel(t.admin, A.id, parcelInput(true));
+    const job = (await driverHome(first.me)).job!;
+    expire(t, job.id);
+    t.db.exec("update app_settings set value = '0' where key = 'drivers_enabled'");
+    await runDispatch(t.env);
+    expect(t.db.prepare("select status from delivery_jobs where id = ?").get(job.id)).toMatchObject({ status: "assigned" });
+  });
+});
+
+describe("giving back an accepted trip", () => {
+  it("sends the trip to the next driver and the driver to the end of the line, with the reason", async () => {
+    const t = setup();
+    const first = await approvedDriver(t, "d1");
+    const second = await approvedDriver(t, "d2");
+    await joinQueue(first.me, A.id, A);
+    await joinQueue(second.me, A.id, A);
+    await createParcel(t.admin, A.id, parcelInput(true));
+    const job = (await driverHome(first.me)).job!;
+    // Only once accepted, and with a known reason.
+    await expect(abandonJob(first.me, job.id, "too_big")).rejects.toMatchObject({ code: "job_wrong_status" });
+    await acceptJob(first.me, job.id);
+    await expect(abandonJob(first.me, job.id, "bored")).rejects.toMatchObject({ code: "bad_request" });
+    await expect(abandonJob(second.me, job.id, "too_big")).rejects.toMatchObject({ code: "job_not_found" });
+    await abandonJob(first.me, job.id, "too_big");
+
+    expect((await driverHome(second.me)).job).toMatchObject({ id: job.id, status: "assigned" });
+    const home = await driverHome(first.me);
+    expect(home.job).toBeNull();
+    expect(home.driver?.queue).toMatchObject({ stationId: A.id, position: 1 });
+    const audit = t.db
+      .prepare("select changes from audit_log where table_name = 'delivery_jobs' and row_id = ? and actor = 'd1' order by id desc")
+      .get(job.id) as { changes: string };
+    expect(JSON.parse(audit.changes)).toMatchObject({ status: ["accepted", "open"], abandon_reason: "too_big" });
+    // Nor can it be given back once the parcel is handed over.
+    await acceptJob(second.me, job.id);
+    await handToDriver(t.admin, A.id, (await driverHome(second.me)).driver!.code!, job.id);
+    await expect(abandonJob(second.me, job.id, "other")).rejects.toMatchObject({ code: "job_wrong_status" });
+  });
+});
+
+describe("pickup called off while the driver collects", () => {
+  it("creates no parcel", async () => {
+    const t = setup();
+    const booking = await bookPickup(t.sender, { home: HOME, toStationId: A.id, recipientPhone: "92 00 00 00", content: "Vêtements", size: "M" });
+    const driver = await approvedDriver(t, "d1");
+    await joinQueue(driver.me, B.id, B);
+    await acceptJob(driver.me, booking.id);
+    // The customer cancels right before the driver's trip moves on (after the driver's page loaded it).
+    const db = t.env.DB;
+    const racing = {
+      ...driver.me,
+      db: new Proxy(db, {
+        get(target, key) {
+          if (key !== "prepare") return Reflect.get(target, key);
+          return (sql: string) => {
+            if (sql.startsWith("update delivery_jobs set status = 'picked_up'")) {
+              t.db.exec(`update delivery_jobs set status = 'cancelled' where id = '${booking.id}'`);
+            }
+            return target.prepare(sql);
+          };
+        },
+      }),
+    };
+    await expect(collectPickup(racing, booking.id, { lengthCm: 50, widthCm: 40, heightCm: 30, weightKg: 8 })).rejects.toMatchObject({
+      code: "job_wrong_status",
+    });
+    expect(t.db.prepare("select count(*) as n from parcels").get()).toMatchObject({ n: 0 });
+    expect(t.db.prepare("select status, parcel_id from delivery_jobs where id = ?").get(booking.id)).toMatchObject({ status: "cancelled", parcel_id: null });
   });
 });

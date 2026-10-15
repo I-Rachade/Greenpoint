@@ -414,6 +414,11 @@ export interface DriverHome {
   history: DeliveryJob[];
   ledger: LedgerEntry[];
   settings: DriverSettings;
+  /**
+   * When the driver's last offer ran out unconfirmed (they went back to the end
+   * of the line); the app tells them once. Null when it never happened.
+   */
+  lastExpiredAt: string | null;
 }
 
 /** A driver who showed their QR code at a station, and what staff can do for them. */
@@ -452,6 +457,10 @@ export type DriverDecision =
   | { action: "vehicle"; vehicleId: string | null };
 
 /** Jobs that still tie up a driver. */
+/** Why a driver gives back a trip they accepted, before they have the parcel or the customer. */
+export type AbandonReason = "customer_absent" | "too_big" | "other";
+export const ABANDON_REASONS: AbandonReason[] = ["customer_absent", "too_big", "other"];
+
 export const BUSY_JOB_STATUSES: JobStatus[] = ["assigned", "accepted", "picked_up", "at_door", "returning"];
 /** Jobs not finished yet. */
 export const OPEN_JOB_STATUSES: JobStatus[] = ["open", ...BUSY_JOB_STATUSES];
