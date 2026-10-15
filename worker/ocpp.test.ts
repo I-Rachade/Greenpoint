@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDevice, startOutlet, stopOutlet } from "./devices";
 import type { Env } from "./env";
-import { applyOcppResult, handleOcppCall, handleOcppUpgrade, OcppConnection } from "./ocpp";
+import { applyOcppResult, handleOcppCall, handleOcppUpgrade, logOcppAttempt, OcppConnection, offeredProtocol } from "./ocpp";
 import { fakeD1 } from "./test-d1";
 
 const CP = "CP-Agoe-01"; // as the charge point spells its id in the URL
@@ -91,6 +91,32 @@ describe("OCPP charge points", () => {
     expect(requests[0].url).toBe("https://ocpp/connect?id=OPEN-1");
     // Sockets added with a password still need it.
     expect((await handleOcppUpgrade(upgrade(), env, CP)).status).toBe(401);
+  });
+
+  it("answer only with a subprotocol the charge point offered", async () => {
+    const offered = (protocol?: string) =>
+      offeredProtocol(new Request("https://x/", { headers: protocol ? { "Sec-WebSocket-Protocol": protocol } : {} }));
+    expect(offered()).toBeNull();
+    expect(offered("OCPP1.6")).toBe("OCPP1.6");
+    expect(offered("ocpp2.0.1, ocpp1.6j")).toBe("ocpp1.6j");
+    expect(offered("ocpp2.0.1")).toBe(false);
+    const { env } = await setup();
+    const open = { externalId: "OPEN-1", stationId: "st", outlets: 1, link: "own_server", protocol: "ocpp1.6", ocppNoPassword: true } as const;
+    await createDevice(env.DB, open, "admin");
+    const bare = new Request("https://x/api/devices/ocpp/OPEN-1", { headers: { Upgrade: "websocket" } });
+    expect(await (await handleOcppUpgrade(bare, env, "OPEN-1")).text()).toBe("connected");
+  });
+
+  it("keep connection attempts, the key masked, at most one a minute", async () => {
+    const { db, d1, key } = await setup();
+    const request = new Request(`https://x/api/devices/ocpp/k/${key}/${CP}`, { headers: { Upgrade: "websocket", "User-Agent": "XK" } });
+    await logOcppAttempt(d1, request, CP, 401);
+    await logOcppAttempt(d1, request, CP, 401);
+    const rows = db.prepare("select external_id, payload from device_messages").all() as { external_id: string; payload: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].external_id).toBe(ID);
+    expect(rows[0].payload).not.toContain(key);
+    expect(JSON.parse(rows[0].payload)).toMatchObject({ action: "OcppConnect", status: 401, path: `/api/devices/ocpp/k/***/${CP}`, userAgent: "XK" });
   });
 
   it("boot, report status and are switched on and off", async () => {

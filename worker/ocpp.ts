@@ -176,8 +176,7 @@ const stub = (env: Env, externalId: string) => env.OCPP!.get(env.OCPP!.idFromNam
 export async function handleOcppUpgrade(request: Request, env: Env, rawId: string, urlKey?: string): Promise<Response> {
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return new Response("Expected a WebSocket", { status: 426 });
   if (!env.OCPP) return new Response("OCPP is not set up", { status: 503 });
-  const offered = (request.headers.get("Sec-WebSocket-Protocol") ?? "").split(",").map((p) => p.trim()).filter(Boolean);
-  if (offered.length && !offered.includes(OCPP_SUBPROTOCOL)) return new Response("Only ocpp1.6 is supported", { status: 400 });
+  if (offeredProtocol(request) === false) return new Response("Only ocpp1.6 is supported", { status: 400 });
 
   let id: string;
   try {
@@ -197,6 +196,50 @@ export async function handleOcppUpgrade(request: Request, env: Env, rawId: strin
     return new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="OCPP"' } });
   }
   return stub(env, externalId).fetch(new Request(`https://ocpp/connect?id=${encodeURIComponent(externalId)}`, request));
+}
+
+/**
+ * The OCPP 1.6 subprotocol token the charge point offered, as it spelled it
+ * ("ocpp1.6", any case, or "ocpp1.6j"); null when it offered none, false when
+ * it offered only others. A server may only answer with a token the client
+ * offered: a strict client drops the connection otherwise.
+ */
+export function offeredProtocol(request: Request): string | null | false {
+  const offered = (request.headers.get("Sec-WebSocket-Protocol") ?? "").split(",").map((p) => p.trim()).filter(Boolean);
+  if (!offered.length) return null;
+  return offered.find((p) => [OCPP_SUBPROTOCOL, `${OCPP_SUBPROTOCOL}j`].includes(p.toLowerCase())) ?? false;
+}
+
+/**
+ * Keeps one connection attempt in device_messages (key in the URL masked), so
+ * a charger that cannot connect shows why. At most one per charge point and
+ * minute, as a failing charger retries in a loop.
+ */
+export async function logOcppAttempt(db: D1Database, request: Request, rawId: string | undefined, status: number) {
+  const url = new URL(request.url);
+  let externalId = "OCPP";
+  try {
+    if (rawId) externalId = normalizeDeviceId(decodeURIComponent(rawId)).slice(0, 64);
+  } catch {
+    // keep the placeholder
+  }
+  const since = new Date(Date.now() - 60_000).toISOString();
+  const recent = await db
+    .prepare("select 1 from device_messages where external_id = ? and received_at > ? and payload like '{\"action\":\"OcppConnect\"%' limit 1")
+    .bind(externalId, since)
+    .first();
+  if (recent) return;
+  const payload = {
+    action: "OcppConnect",
+    status,
+    path: url.pathname.replace(/\/k\/[^/]+\//, "/k/***/").slice(0, 200),
+    scheme: url.protocol,
+    upgrade: request.headers.get("Upgrade"),
+    protocols: request.headers.get("Sec-WebSocket-Protocol"),
+    auth: request.headers.get("Authorization")?.split(" ")[0] ?? null,
+    userAgent: request.headers.get("User-Agent")?.slice(0, 120) ?? null,
+  };
+  await db.prepare("insert into device_messages (external_id, received_at, payload) values (?, ?, ?)").bind(externalId, nowIso(), JSON.stringify(payload)).run();
 }
 
 /** Sends a stored command (device_commands row `commandId`) to a connected charge point. */
@@ -242,7 +285,8 @@ export class OcppConnection implements DurableObject {
       const { 0: client, 1: server } = new WebSocketPair();
       this.ctx.acceptWebSocket(server);
       server.serializeAttachment({ externalId });
-      return new Response(null, { status: 101, webSocket: client, headers: { "Sec-WebSocket-Protocol": OCPP_SUBPROTOCOL } });
+      const protocol = offeredProtocol(request);
+      return new Response(null, { status: 101, webSocket: client, headers: protocol ? { "Sec-WebSocket-Protocol": protocol } : {} });
     }
     if (url.pathname === "/call" && request.method === "POST") {
       const { commandId, messageId, action, payload } = (await request.json()) as Pending & { messageId: string; payload: object };
