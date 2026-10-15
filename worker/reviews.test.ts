@@ -50,7 +50,7 @@ const input = (patch: Partial<StationInput> = {}): StationInput => ({
   vehicleTypes: ["scooter"],
   chargingSlots: 0,
   batteryCapacity: 10,
-  openingHours: "",
+  openingHours: "00:00-24:00",
   phone: null,
   ...patch,
 });

@@ -188,6 +188,8 @@ export interface SwapEntry {
 
 export interface SwapFilter {
   customerType?: SwapCustomerType | null;
+  /** Days back from today (owner backoffice: 1, 7, 30 or 365); staff always see today. */
+  days?: number | null;
 }
 
 export function isSwapCustomerType(value: unknown): value is SwapCustomerType {
@@ -241,3 +243,6 @@ export function newRequestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
 }
+
+/** The reason of the correction that brings a counter down to a lower capacity. */
+export const CAPACITY_REASON = "Capacité réduite";

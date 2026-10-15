@@ -95,7 +95,7 @@ function station(operatorId: string, name: string): StationInput {
     vehicleTypes: ["scooter"],
     chargingSlots: 0,
     batteryCapacity: 10,
-    openingHours: "7h-19h",
+    openingHours: "07:00-19:00",
     phone: null,
   };
 }
@@ -159,13 +159,14 @@ describe("operator accounts", () => {
     expect(view.staff).toEqual([{ stationId: lome, userId: "afi", label: "+228 90 •• •• 03" }]);
     expect((await call(env, "yao", "POST", "/api/owner/staff", { stationId: be, contact: "90000003" })).status).toBe(403);
 
-    expect((await call(env, "yao", "POST", `/api/owner/stations/${lome}`, { openingHours: "6h-22h", phone: "90 11 22 33" })).status).toBe(200);
-    expect((await call(env, "yao", "POST", `/api/owner/stations/${be}`, { openingHours: "6h-22h", phone: null })).status).toBe(403);
+    expect((await call(env, "yao", "POST", `/api/owner/stations/${lome}`, { openingHours: "06:00-22:00", phone: "90 11 22 33" })).status).toBe(200);
+    expect((await call(env, "yao", "POST", `/api/owner/stations/${be}`, { openingHours: "06:00-22:00", phone: null })).status).toBe(403);
     view = (await call(env, "yao", "GET", "/api/owner")).body as OwnerView;
-    expect(view.stations.find((s) => s.id === lome)).toMatchObject({ openingHours: "6h-22h", phone: "90 11 22 33" });
+    expect(view.stations.find((s) => s.id === lome)).toMatchObject({ openingHours: "06:00-22:00", phone: "90 11 22 33" });
 
     expect((await call(env, "yao", "DELETE", "/api/owner/staff", { stationId: lome, userId: "afi" })).status).toBe(200);
-    expect((await call(env, "afi", "GET", "/api/staff/stations")).body).toEqual([]);
+    // Back to a customer: no station work at all (R2).
+    expect((await call(env, "afi", "GET", "/api/staff/stations")).status).toBe(403);
   });
 
   it("makes a linked account an operator and a customer again once it has nothing left", async () => {
@@ -186,10 +187,15 @@ describe("operator accounts", () => {
 
     // Back to customer: no station pages, no rights, no assignments or operator account left.
     expect((await call(env, "admin", "POST", "/api/admin/users/yao/role", { role: "customer" })).status).toBe(200);
+    // R15: staff become a customer only once removed from their station.
+    expect((await call(env, "admin", "POST", "/api/admin/users/afi/role", { role: "customer" })).body).toEqual({ error: "role_change_blocked" });
+    expect((await call(env, "yao", "DELETE", "/api/owner/staff", { stationId: lome, userId: "afi" })).status).toBe(403); // yao is a customer now
+    expect((await call(env, "admin", "DELETE", "/api/admin/staff", { stationId: lome, userId: "afi" })).status).toBe(200);
     expect((await call(env, "admin", "POST", "/api/admin/users/afi/role", { role: "customer" })).status).toBe(200);
     expect(((await call(env, "yao", "GET", "/api/me")).body as { role: string; ownerOf: string[] })).toMatchObject({ role: "customer", ownerOf: [] });
     expect((await call(env, "yao", "GET", "/api/owner")).status).toBe(403);
-    expect((await call(env, "afi", "GET", "/api/staff/stations")).body).toEqual([]);
+    // Back to a customer: no station work at all (R2).
+    expect((await call(env, "afi", "GET", "/api/staff/stations")).status).toBe(403);
     expect((await call(env, "afi", "PATCH", `/api/stations/${lome}/status`, { isOpen: false })).status).toBe(403);
     expect(db.prepare("select count(*) as n from station_staff where user_id = 'afi'").get()).toEqual({ n: 0 });
 

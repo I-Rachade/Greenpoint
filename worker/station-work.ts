@@ -17,6 +17,7 @@ import {
   dayStartLome,
   isSwapCustomerType,
   takesBatteryIn,
+  CAPACITY_REASON,
   validAmount,
   validCorrection,
   validRequestId,
@@ -34,6 +35,7 @@ import {
   type SwapPayment,
 } from "../src/lib/station-work";
 import type { Profile } from "../src/lib/types";
+import { periodStart, reportPeriod } from "../src/lib/owner-backoffice";
 import { newTrxId, personLabel } from "../src/lib/wallet";
 import { verifyPin } from "./auth";
 import type { Env } from "./env";
@@ -50,6 +52,8 @@ export interface WorkCtx {
   db: D1Database;
   request: Request;
   requireUser(): Promise<Profile>;
+  /** Told who acts where once the active-station check passed; the API logs it with the action (station_actions). */
+  onStationActor?(stationId: string, actor: StationActor): void;
 }
 
 export interface StationActor {
@@ -81,8 +85,8 @@ export async function roleAtStation(db: D1Database, user: Profile, stationId: st
 /**
  * Who acts at the station, and as what. 403 without rights there (staff of another
  * station, riders, drivers, fleet managers). 409 when the active station sent with the
- * request is missing or another one: owners and admins must always send it; staff only
- * when they are assigned to several stations (one station is their active station).
+ * request is missing or another one: owners and admins must always send it; staff work
+ * at exactly one station (W2, unique index of 0033), which is their active station.
  */
 export async function stationActor(c: WorkCtx, stationId: string): Promise<StationActor> {
   const user = await c.requireUser();
@@ -91,12 +95,10 @@ export async function stationActor(c: WorkCtx, stationId: string): Promise<Stati
   const station = await c.db.prepare("select is_active from stations where id = ?").bind(stationId).first<{ is_active: number }>();
   if (!station?.is_active) throw new ApiError("station_not_found", 404);
   const active = activeStationOf(c);
-  if (active === stationId) return { user, role };
-  if (role === "staff" && active === null) {
-    const n = await c.db.prepare("select count(*) as n from station_staff where user_id = ?").bind(user.id).first<{ n: number }>();
-    if ((n?.n ?? 0) <= 1) return { user, role };
-  }
-  throw new ApiError("active_station_required", 409);
+  if (active !== stationId && !(role === "staff" && active === null)) throw new ApiError("active_station_required", 409);
+  const actor = { user, role };
+  c.onStationActor?.(stationId, actor);
+  return actor;
 }
 
 /** Read access (counter page, swap log): anyone with rights at the station, no active station needed. */
@@ -310,6 +312,20 @@ export async function stationCounter(c: WorkCtx, stationId: string): Promise<Sta
   };
 }
 
+/**
+ * GET /api/stations/:id/battery-events?days=: the counter's history (owner backoffice): every
+ * event of the period, corrections included. Owners of the station and admins only.
+ */
+export async function stationBatteryEvents(c: WorkCtx, stationId: string, days: unknown): Promise<BatteryEventView[]> {
+  const actor = await stationReader(c, stationId);
+  if (actor.role === "staff") throw new ApiError("forbidden", 403);
+  const { results } = await c.db
+    .prepare(`${EVENT_SELECT} where e.station_id = ?1 and e.created_at >= ?2 order by e.created_at desc limit 500`)
+    .bind(stationId, periodStart(reportPeriod(days)))
+    .all<EventRow>();
+  return results.map(toEvent);
+}
+
 /** POST /api/stations/:id/battery-events: "marked full" (+1), "issue" (−1) or a correction (owner, admin). */
 export async function postBatteryEvent(c: WorkCtx, stationId: string, input: BatteryEventInput): Promise<BatteryEventView> {
   const actor = await stationActor(c, stationId);
@@ -344,6 +360,49 @@ function repeated(row: EventRow, stationId: string): BatteryEventView {
   if (row.station_id !== stationId) throw new ApiError("request_conflict", 409);
   return toEvent(row);
 }
+
+/**
+ * A station's battery capacity went down below its full batteries (backoffice, Atlas finding):
+ * the counters come down to it through correction events (principle 4), the largest counter
+ * first, logged as the admin's with the reason. Statements for the same batch as the change.
+ */
+export async function capacityTrimStatements(db: D1Database, stationId: string, capacity: number, actor: StationActor): Promise<D1PreparedStatement[]> {
+  if (capacity < 0) return [];
+  const [types, counters, status] = await Promise.all([
+    stationTypes(db, stationId),
+    db.prepare("select battery_type_id, full from battery_counter where station_id = ?").bind(stationId).all<{ battery_type_id: string; full: number }>(),
+    db.prepare("select full_batteries from station_status where station_id = ?").bind(stationId).first<{ full_batteries: number }>(),
+  ]);
+  const byKey = new Map(counters.results.map((r) => [r.battery_type_id, r.full]));
+  const rows = types.length
+    ? types.map((t) => ({ key: t.id, full: byKey.get(t.id) ?? t.full }))
+    : [{ key: "", full: byKey.get("") ?? status?.full_batteries ?? 0 }];
+  let excess = rows.reduce((a, r) => a + r.full, 0) - capacity;
+  if (excess <= 0) return [];
+  const trim = new Map<string, number>();
+  while (excess > 0) {
+    const top = rows.reduce((a, r) => (r.full > a.full ? r : a));
+    if (top.full <= 0) break;
+    top.full--;
+    trim.set(top.key, (trim.get(top.key) ?? 0) + 1);
+    excess--;
+  }
+  const now = nowIso();
+  return [...trim].flatMap(([key, n]) =>
+    eventStatements(db, {
+      stationId,
+      key,
+      type: "correction",
+      delta: -n,
+      reason: CAPACITY_REASON,
+      requestId: `capacity-${uuid()}`,
+      swapId: null,
+      actor,
+      now,
+    }),
+  );
+}
+
 
 // Swaps --------------------------------------------------------------------------------
 
@@ -660,12 +719,14 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
 export async function stationSwaps(c: WorkCtx, stationId: string, filter: SwapFilter): Promise<SwapEntry[]> {
   const actor = await stationReader(c, stationId);
   const type = filter.customerType && isSwapCustomerType(filter.customerType) ? filter.customerType : null;
+  // Staff see today's own swaps; owners and admins may look back (backoffice, plan phase 8).
+  const since = actor.role === "staff" ? dayStartLome() : periodStart(reportPeriod(filter.days ?? 1));
   const { results } = await c.db
     .prepare(
       `${SWAP_SELECT} where l.station_id = ?1 and l.created_at >= ?2 and (?3 is null or l.customer_type = ?3)
-         and (?4 is null or l.staff_id = ?4) order by l.created_at desc limit 200`,
+         and (?4 is null or l.staff_id = ?4) order by l.created_at desc limit 500`,
     )
-    .bind(stationId, dayStartLome(), type, actor.role === "staff" ? actor.user.id : null)
+    .bind(stationId, since, type, actor.role === "staff" ? actor.user.id : null)
     .all<SwapRow>();
   return results.map(toSwap);
 }

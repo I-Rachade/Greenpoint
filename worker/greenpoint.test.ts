@@ -138,7 +138,7 @@ describe("greenpoint", () => {
     expect((await mine(env)).points).toBe(0);
     expect((await visit(env, { contact: "+22896123456", service: "swap" })).body).toEqual({ error: "greenpoint_not_solar" });
 
-    const input = { operatorId: OPERATOR, name: "Bè", address: "", lat: 6.13, lng: 1.22, kind: "both", vehicleTypes: ["scooter"], chargingSlots: 0, batteryCapacity: 10, openingHours: "", phone: null };
+    const input = { operatorId: OPERATOR, name: "Bè", address: "", lat: 6.13, lng: 1.22, kind: "both", vehicleTypes: ["scooter"], chargingSlots: 0, batteryCapacity: 10, openingHours: "00:00-24:00", phone: null };
     expect((await call(env, "admin", "POST", "/api/admin/stations", { id: "st", input: { ...input, isSolar: true } })).status).toBe(200);
     const st = (await call<{ id: string; isSolar: boolean }[]>(env, "kofi", "GET", "/api/stations")).body.find((s) => s.id === "st");
     expect(st?.isSolar).toBe(true);

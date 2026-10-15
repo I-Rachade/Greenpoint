@@ -130,7 +130,7 @@ const parcelInput = (express: boolean) => ({
 });
 
 async function arrivedParcelAtB(t: ReturnType<typeof setup>) {
-  const parcel = await createParcel(t.admin, A.id, parcelInput(false));
+  const parcel = await createParcel(t.at(A.id), A.id, parcelInput(false));
   t.db.exec(`update parcels set status = 'arrived', pickup_code = '654321', arrived_at = '${new Date().toISOString()}' where id = '${parcel.id}'`);
   return parcel;
 }
@@ -179,7 +179,7 @@ describe("queue", () => {
     t.db.exec(`update station_services set unlocked = 0 where station_id = '${A.id}' and service = 'drivers'`);
     await expect(joinQueue(second.me, A.id, A)).rejects.toMatchObject({ code: "service_not_offered" });
     // The driver already in line there gets no new trip.
-    await createParcel(t.admin, A.id, parcelInput(true));
+    await createParcel(t.at(A.id), A.id, parcelInput(true));
     expect((await driverHome(first.me)).job).toBeNull();
   });
 
@@ -198,7 +198,7 @@ describe("express trip", () => {
     const second = await approvedDriver(t, "d2");
     await joinQueue(first.me, A.id, A);
     await joinQueue(second.me, A.id, A);
-    const parcel = await createParcel(t.admin, A.id, parcelInput(true));
+    const parcel = await createParcel(t.at(A.id), A.id, parcelInput(true));
     expect(parcel.express).toBe(true);
     // Not on the collection run.
     await expect(startRun(t.at(A.id), A.id, second.badge, [parcel.id])).rejects.toMatchObject({ code: "parcel_wrong_status" });
@@ -214,7 +214,7 @@ describe("express trip", () => {
     const scan = await driverAtStation(t.admin, A.id, first.badge);
     expect(scan.handOver?.id).toBe(offered.id);
     // The parcel is scanned into the driver's hands: another parcel is refused.
-    const other = await createParcel(t.admin, A.id, parcelInput(false));
+    const other = await createParcel(t.at(A.id), A.id, parcelInput(false));
     await expect(handToDriver(t.at(A.id), A.id, first.code, offered.id, other.trackingNo)).rejects.toMatchObject({ code: "parcel_not_in_run" });
     await expect(handToDriver(t.admin, A.id, first.code, offered.id, parcel.trackingNo)).rejects.toMatchObject({ code: "active_station_required" });
     await handToDriver(t.at(A.id), A.id, first.code, offered.id, parcel.trackingNo);
@@ -232,8 +232,8 @@ describe("express trip", () => {
     expect(home.job).toBeNull();
     expect(home.driver?.balanceFcfa).toBe(-driverEarning(offered.fareFcfa, DEFAULT_DRIVER_SETTINGS));
     // Daily settlement: the station pays the earning out.
-    await expect(settleDriver(t.admin, B.id, first.badge, 0)).rejects.toMatchObject({ code: "balance_changed" });
-    await settleDriver(t.admin, B.id, first.badge, home.driver!.balanceFcfa);
+    await expect(settleDriver(t.at(B.id), B.id, first.badge, 0)).rejects.toMatchObject({ code: "balance_changed" });
+    await settleDriver(t.at(B.id), B.id, first.badge, home.driver!.balanceFcfa);
     expect((await driverHome(first.me)).driver?.balanceFcfa).toBe(0);
   });
 
@@ -243,7 +243,7 @@ describe("express trip", () => {
     const second = await approvedDriver(t, "d2");
     await joinQueue(first.me, A.id, A);
     await joinQueue(second.me, A.id, A);
-    await createParcel(t.admin, A.id, parcelInput(true));
+    await createParcel(t.at(A.id), A.id, parcelInput(true));
     const job = (await driverHome(first.me)).job!;
     await declineJob(first.me, job.id);
     expect((await driverHome(second.me)).job?.id).toBe(job.id);
@@ -261,7 +261,7 @@ describe("express trip", () => {
     const t = setup();
     const moto = await approvedDriver(t, "d1", "moto");
     await joinQueue(moto.me, A.id, A);
-    await createParcel(t.admin, A.id, { ...parcelInput(true), measures: { lengthCm: 90, widthCm: 50, heightCm: 50, weightKg: 30 } });
+    await createParcel(t.at(A.id), A.id, { ...parcelInput(true), measures: { lengthCm: 90, widthCm: 50, heightCm: 50, weightKg: 30 } });
     expect((await driverHome(moto.me)).job).toBeNull();
   });
 });
@@ -288,7 +288,7 @@ describe("home delivery", () => {
     await expect(cancelJob(t.sender, job.id)).rejects.toMatchObject({ code: "forbidden" });
     await handToDriver(t.at(B.id), B.id, driver.badge, job.id, parcel.trackingNo);
     // While out with the driver it cannot be picked up at the counter.
-    await expect(pickUpParcel(t.admin, B.id, "654321")).rejects.toMatchObject({ code: "parcel_with_driver" });
+    await expect(pickUpParcel(t.at(B.id), B.id, "654321")).rejects.toMatchObject({ code: "parcel_with_driver" });
     await expect(cancelJob(recipient, job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
 
     await arriveAtDoor(driver.me, job.id);
@@ -325,7 +325,7 @@ describe("home delivery", () => {
       delivery_status: "failed",
     });
     // The code works at the counter again, and nothing was earned.
-    await pickUpParcel(t.admin, B.id, "654321");
+    await pickUpParcel(t.at(B.id), B.id, "654321");
     expect((await driverHome(driver.me)).driver?.balanceFcfa).toBe(0);
   });
 
@@ -334,7 +334,7 @@ describe("home delivery", () => {
     const parcel = await arrivedParcelAtB(t);
     const recipientId = (t.db.prepare("select id from users where phone = ?").get(RECIPIENT_PHONE) as { id: string }).id;
     const job = await bookDelivery(t.ctx(profile(recipientId, RECIPIENT_PHONE)), parcel.id, HOME);
-    await pickUpParcel(t.admin, B.id, "654321");
+    await pickUpParcel(t.at(B.id), B.id, "654321");
     expect(t.db.prepare("select status from delivery_jobs where id = ?").get(job.id)).toMatchObject({ status: "cancelled" });
   });
 });
@@ -342,10 +342,10 @@ describe("home delivery", () => {
 describe("handover at the counter", () => {
   it("finds an arrived parcel by its number alone", async () => {
     const t = setup();
-    const parcel = await createParcel(t.admin, A.id, parcelInput(false));
-    await expect(pickUpParcel(t.admin, B.id, parcel.trackingNo)).rejects.toMatchObject({ code: "parcel_not_arrived" });
+    const parcel = await createParcel(t.at(A.id), A.id, parcelInput(false));
+    await expect(pickUpParcel(t.at(B.id), B.id, parcel.trackingNo)).rejects.toMatchObject({ code: "parcel_not_arrived" });
     t.db.exec(`update parcels set status = 'arrived', pickup_code = '654321', arrived_at = '${new Date().toISOString()}' where id = '${parcel.id}'`);
-    const done = await pickUpParcel(t.admin, B.id, parcel.trackingNo);
+    const done = await pickUpParcel(t.at(B.id), B.id, parcel.trackingNo);
     expect(done.status).toBe("picked_up");
     expect(t.db.prepare("select status from parcels where id = ?").get(parcel.id)).toMatchObject({ status: "picked_up" });
   });
@@ -560,15 +560,15 @@ describe("driver module switched off", () => {
       bookCourier(t.sender, { pickup: HOME, dropoff: DROPOFF, recipientPhone: "92 00 00 00", content: "Clés", size: "S" }),
     ).rejects.toMatchObject(soon);
     await expect(bookDelivery(recipient, parcel.id, HOME)).rejects.toMatchObject(soon);
-    await expect(createParcel(t.admin, A.id, parcelInput(true))).rejects.toMatchObject(soon);
-    expect((await createParcel(t.admin, A.id, parcelInput(false))).express).toBe(false);
+    await expect(createParcel(t.at(A.id), A.id, parcelInput(true))).rejects.toMatchObject(soon);
+    expect((await createParcel(t.at(A.id), A.id, parcelInput(false))).express).toBe(false);
   });
 
   it("closes applications and the queue, but a driver finishes the trip under way", async () => {
     const t = setup();
     const driver = await approvedDriver(t, "d1");
     await joinQueue(driver.me, A.id, A);
-    await createParcel(t.admin, A.id, parcelInput(true));
+    await createParcel(t.at(A.id), A.id, parcelInput(true));
     const job = (await driverHome(driver.me)).job!;
     t.db.exec("update app_settings set value = '0' where key = 'drivers_enabled'");
     const soon = { code: "drivers_soon" };
@@ -591,7 +591,7 @@ describe("offers that run out", () => {
     const t = setup();
     const first = await approvedDriver(t, "d1");
     await joinQueue(first.me, A.id, A);
-    await createParcel(t.admin, A.id, parcelInput(true));
+    await createParcel(t.at(A.id), A.id, parcelInput(true));
     const job = (await driverHome(first.me)).job!;
     expect((await driverHome(first.me)).lastExpiredAt).toBeNull();
     expire(t, job.id);
@@ -608,7 +608,7 @@ describe("offers that run out", () => {
     const t = setup();
     const first = await approvedDriver(t, "d1");
     await joinQueue(first.me, A.id, A);
-    await createParcel(t.admin, A.id, parcelInput(true));
+    await createParcel(t.at(A.id), A.id, parcelInput(true));
     const job = (await driverHome(first.me)).job!;
     t.db.exec(`insert into driver_ledger (id, driver_id, at, kind, amount_fcfa) values ('l1', 'd1', '${new Date().toISOString()}', 'collected', 20000)`);
     expire(t, job.id);
@@ -620,7 +620,7 @@ describe("offers that run out", () => {
     const t = setup();
     const first = await approvedDriver(t, "d1");
     await joinQueue(first.me, A.id, A);
-    await createParcel(t.admin, A.id, parcelInput(true));
+    await createParcel(t.at(A.id), A.id, parcelInput(true));
     const job = (await driverHome(first.me)).job!;
     expire(t, job.id);
     t.db.exec("update app_settings set value = '0' where key = 'drivers_enabled'");
@@ -636,7 +636,7 @@ describe("giving back an accepted trip", () => {
     const second = await approvedDriver(t, "d2");
     await joinQueue(first.me, A.id, A);
     await joinQueue(second.me, A.id, A);
-    await createParcel(t.admin, A.id, parcelInput(true));
+    await createParcel(t.at(A.id), A.id, parcelInput(true));
     const job = (await driverHome(first.me)).job!;
     // Only once accepted, and with a known reason.
     await expect(abandonJob(first.me, job.id, "too_big")).rejects.toMatchObject({ code: "job_wrong_status" });
@@ -698,7 +698,7 @@ describe("trips nobody takes", () => {
     (t.env as { EMAIL?: unknown }).EMAIL = { send: async (m: { to: string; subject: string }) => void sent.push(m) };
     t.db.exec("update users set email = 'ama@example.tg' where id = 'sender'");
     const booking = await bookPickup(t.sender, { home: HOME, toStationId: A.id, recipientPhone: "92 00 00 00", content: "Vêtements", size: "M" });
-    const express = await createParcel(t.admin, A.id, parcelInput(true));
+    const express = await createParcel(t.at(A.id), A.id, parcelInput(true));
     const old = new Date(Date.now() - (OPEN_JOB_EXPIRY_MINUTES + 1) * 60_000).toISOString();
     // Not yet: a fresh trip keeps waiting.
     await dispatch({ db: t.env.DB, audit: t.admin.audit, env: t.env });

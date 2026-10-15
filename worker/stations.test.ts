@@ -78,7 +78,7 @@ function station(name: string, patch: Partial<StationInput> = {}): StationInput 
     vehicleTypes: ["scooter"],
     chargingSlots: 0,
     batteryCapacity: 0,
-    openingHours: "",
+    openingHours: "00:00-24:00",
     phone: null,
     ...patch,
   };
@@ -175,6 +175,8 @@ describe("station points", () => {
     const { env, db } = await setup();
     await save(env, station("Colis", { kind: "parcel", parcelDepot: { isActive: true, counter: true, lockers: 0, note: "" } }));
     const s = await byName(env, "Colis");
+    // A new station starts closed; staff open it.
+    db.exec(`update station_status set is_open = 1 where station_id = '${s.id}'`);
     // Admins do not reserve (role matrix): as a rider.
     expect((await call(env, "POST", "/api/reservations", { stationId: s.id, type: "battery" })).body).toEqual({ error: "forbidden" });
     db.exec(`update users set role = '${DB_CUSTOMER}' where id = 'admin'`);

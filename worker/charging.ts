@@ -538,7 +538,10 @@ function tariffValue(v: unknown): number | null {
   return n;
 }
 
-/** POST /api/admin/charging/tariff { stationId?, kwhXof, minXof }: the network default, or a station's own price (null = default). */
+/**
+ * POST /api/admin/charging/tariff { stationId?, kwhXof, minXof }: the network default, or a
+ * station's own price (null = default). Validated first; the log keeps old and new values.
+ */
 export async function saveChargeTariff(env: Env, admin: Profile, request: Request) {
   const body = await readJson<{ stationId?: unknown; kwhXof?: unknown; minXof?: unknown }>(request);
   const kwh = tariffValue(body.kwhXof);
@@ -548,6 +551,8 @@ export async function saveChargeTariff(env: Env, admin: Profile, request: Reques
   if (body.stationId === undefined || body.stationId === null) {
     const t = { kwhXof: kwh ?? -1, minXof: min ?? -1 };
     if (!validTariff(t)) throw new ApiError("bad_request");
+    const before = await defaultTariff(db);
+    if (before.kwhXof === t.kwhXof && before.minXof === t.minXof) return { ok: true };
     await db.batch([
       db
         .prepare(
@@ -557,20 +562,29 @@ export async function saveChargeTariff(env: Env, admin: Profile, request: Reques
         .bind(JSON.stringify(t), admin.id, now),
       db
         .prepare("insert into audit_log (at, actor, table_name, action, row_id, changes) values (?, ?, 'charging_sessions', 'update', 'charge_tariff', ?)")
-        .bind(now, admin.id, JSON.stringify({ tariff: t })),
+        .bind(now, admin.id, JSON.stringify({ tariff: [before, t] })),
     ]);
     return { ok: true };
   }
+  // A station price of 0 per kWh would give charges away (stations.charge_kwh_xof > 0).
   if (kwh === 0) throw new ApiError("bad_request");
   const stationId = String(body.stationId);
-  const res = await db.batch([
+  const before = await db
+    .prepare("select charge_kwh_xof, charge_min_xof from stations where id = ?")
+    .bind(stationId)
+    .first<{ charge_kwh_xof: number | null; charge_min_xof: number | null }>();
+  if (!before) throw new ApiError("station_not_found", 404);
+  const changes: Record<string, [number | null, number | null]> = {};
+  if (before.charge_kwh_xof !== kwh) changes.charge_kwh_xof = [before.charge_kwh_xof, kwh];
+  if (before.charge_min_xof !== min) changes.charge_min_xof = [before.charge_min_xof, min];
+  if (!Object.keys(changes).length) return { ok: true };
+  await db.batch([
     db.prepare("update stations set charge_kwh_xof = ?, charge_min_xof = ? where id = ?").bind(kwh, min, stationId),
     db
       .prepare(
         "insert into audit_log (at, actor, table_name, action, row_id, station_id, changes) values (?, ?, 'stations', 'update', ?, ?, ?)",
       )
-      .bind(now, admin.id, stationId, stationId, JSON.stringify({ charge_kwh_xof: kwh, charge_min_xof: min })),
+      .bind(now, admin.id, stationId, stationId, JSON.stringify(changes)),
   ]);
-  if (!res[0].meta.changes) throw new ApiError("station_not_found", 404);
   return { ok: true };
 }

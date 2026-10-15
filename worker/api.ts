@@ -6,7 +6,8 @@ import type { BatteryTypeInput } from "../src/lib/battery-types";
 import type { EvChargerInput } from "../src/lib/ev-chargers";
 import { deleteEvCharger, evChargersByStation, listEvChargers, saveEvCharger } from "./ev-chargers";
 import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements } from "./battery-types";
-import { postBatteryEvent, recordSwap, stationActor, stationCounter, stationSwaps } from "./station-work";
+import { capacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
+import type { StationRole } from "../src/lib/station-work";
 import {
   checkPickupCode,
   evTargetSql,
@@ -21,6 +22,9 @@ import { kindFrom, typeOfKind } from "../src/lib/reservations";
 import type { BatteryEventInput, SwapFilter, SwapInput } from "../src/lib/station-work";
 import {
   ADMIN_HISTORY_DAYS,
+  ADMIN_PAGE_SIZE,
+  SNAPSHOT_RESERVATION_DAYS,
+  type AdminReservationPage,
   type AdminSnapshot,
   type AuditEntry,
   type AuditTable,
@@ -35,7 +39,11 @@ import {
   type OperatorPerson,
   type OwnerStationInput,
   type OwnerView,
+  validPrice,
 } from "../src/lib/operators";
+import { cleanOpeningHours } from "../src/lib/opening-hours";
+import { reportPeriod } from "../src/lib/owner-backoffice";
+import { ownerLive, ownerReport } from "./owner";
 import { normalizeTogoPhone } from "../src/lib/phone";
 import { personLabel } from "../src/lib/wallet";
 import { MAX_PROMO_IMAGE_BYTES, pickPromotion, safeImage, safeLink, type Promotion, type PromotionInput } from "../src/lib/promo";
@@ -106,6 +114,7 @@ import {
   bookCourier,
   cancelJob,
   collectPickup,
+  customerThingsOpen,
   declineJob,
   deliverJob,
   driverAtStation,
@@ -161,11 +170,12 @@ import {
   stationBookings,
 } from "./partners";
 import type { Env } from "./env";
+import { notifyUser } from "./notify";
 import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setDriversEnabled, setLiteEnabled, setParcelsEnabled } from "./features";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 import { activeServices, decideService, listStationServices, requestService, requireService, setService } from "./services";
 import { customerStation } from "../src/lib/station-services";
-import { DB_CUSTOMER, roleFromDb, roleToDb } from "./roles";
+import { DB_CUSTOMER, refuseNonCustomer, roleFromDb, roleToDb } from "./roles";
 import { claimFormerAccount, sendFormerAccountCode } from "./former-accounts";
 import { refreshTopup, startTopup } from "./wallet-topups";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
@@ -330,6 +340,8 @@ const STATION_SELECT = `
 /** Everything a request handler needs. */
 class Ctx {
   private userPromise: Promise<Profile | null> | null = null;
+  /** Who acted at which station in this request (set by stationActor), logged once the action succeeded. */
+  stationAction: { stationId: string; personId: string; role: StationRole } | null = null;
   constructor(
     readonly env: Env,
     readonly request: Request,
@@ -356,6 +368,19 @@ class Ctx {
     if (user.role !== "admin") throw new ApiError("forbidden", 403);
     return user;
   }
+
+  onStationActor(stationId: string, actor: StationActor) {
+    this.stationAction = { stationId, personId: actor.user.id, role: actor.role };
+  }
+
+  /**
+   * A station action (counter, charging, greenpoint visit, …) as a yes/no staff check for the
+   * modules that take one: the active-station rule of stationActor (R7, 403 or 409), logged.
+   */
+  actAt = async (_user: Profile, stationId: string): Promise<boolean> => {
+    await stationActor(this, stationId);
+    return true;
+  };
 
   /** Station staff, someone who runs the station's operator, or an admin. */
   async isStaffOf(user: Profile, stationId: string): Promise<boolean> {
@@ -596,9 +621,17 @@ async function cancelReservation(c: Ctx, id: string) {
 // Station staff -------------------------------------------------------------
 
 /** The stations the person works at, each with its active services and the person's role there (station home tiles). */
+/** The signed-in customer (or an admin, to test): payments, charges and greenpoint redemptions (R2, R11). */
+async function customerUser(c: Ctx): Promise<Profile> {
+  const user = await c.requireUser();
+  refuseNonCustomer(user);
+  return user;
+}
+
 async function staffStations(c: Ctx) {
   const user = await c.requireUser();
-  if (user.role !== "admin" && user.role !== "operator") return [];
+  // Station work is for staff, owners and admins (R2): everyone else 403.
+  if (user.role !== "admin" && user.role !== "operator") throw new ApiError("forbidden", 403);
   const [stations, active, owned] = await Promise.all([
     user.role === "admin"
       ? c.stations("where s.is_active = 1")
@@ -621,8 +654,15 @@ async function staffStations(c: Ctx) {
 /**
  * PATCH /api/stations/:id/status: open/close and free charging places, at the active station (R7).
  * Full batteries change only through counter events (worker/station-work.ts), never as a number.
+ * R17: closing cancels the reservations still holding (the number the closing warning shows:
+ * active and not past their expiry), tells each customer, and answers how many were cancelled.
+ * Reservations already past their expiry become expired, as they would anyway.
  */
-async function updateStatus(c: Ctx, stationId: string, patch: { isOpen?: boolean; freeSlots?: number; fullBatteries?: unknown; typeBatteries?: unknown }) {
+async function updateStatus(
+  c: Ctx,
+  stationId: string,
+  patch: { isOpen?: boolean; freeSlots?: number; fullBatteries?: unknown; typeBatteries?: unknown },
+): Promise<{ cancelled: number }> {
   const { user } = await stationActor(c, stationId);
   if (patch.fullBatteries !== undefined || patch.typeBatteries !== undefined) throw new ApiError("bad_request");
   const before = await c.db
@@ -634,22 +674,27 @@ async function updateStatus(c: Ctx, stationId: string, patch: { isOpen?: boolean
     is_open: patch.isOpen === undefined ? before.is_open : patch.isOpen ? 1 : 0,
     free_slots: patch.freeSlots === undefined ? before.free_slots : int(patch.freeSlots),
   };
+  const now = nowIso();
   const statements = [
     c.db
       .prepare("update station_status set is_open = ?, free_slots = ?, updated_at = ?, updated_by = ? where station_id = ?")
-      .bind(after.is_open, after.free_slots, nowIso(), user.id, stationId),
+      .bind(after.is_open, after.free_slots, now, user.id, stationId),
   ];
   const changes: Record<string, unknown> = diff(before, after);
   if (Object.keys(changes).length) {
     statements.push(c.audit(user.id, "station_status", "update", stationId, changes, { stationId }));
   }
   // Closing a station cancels its active reservations, so customers do not ride there for nothing.
+  let cancelled: { id: string; user_id: string }[] = [];
   if (before.is_open && !after.is_open) {
-    const { results } = await c.db
-      .prepare("select id, user_id from reservations where station_id = ? and status = 'active'")
-      .bind(stationId)
-      .all<{ id: string; user_id: string }>();
-    for (const r of results) {
+    cancelled = (
+      await c.db
+        .prepare("select id, user_id from reservations where station_id = ? and status = 'active' and expires_at > ?")
+        .bind(stationId, now)
+        .all<{ id: string; user_id: string }>()
+    ).results;
+    statements.push(c.db.prepare("update reservations set status = 'expired' where station_id = ? and status = 'active' and expires_at <= ?").bind(stationId, now));
+    for (const r of cancelled) {
       statements.push(
         c.db
           .prepare("update reservations set status = 'cancelled', cancel_reason = 'station_closed' where id = ? and status = 'active'")
@@ -662,6 +707,18 @@ async function updateStatus(c: Ctx, stationId: string, patch: { isOpen?: boolean
     }
   }
   await c.db.batch(statements);
+  if (cancelled.length) {
+    const station = await c.db.prepare("select name from stations where id = ?").bind(stationId).first<{ name: string }>();
+    await Promise.all(
+      cancelled.map((r) =>
+        notifyUser(c.env, r.user_id, {
+          subject: "Réservation annulée : station fermée",
+          text: `poinderecharge : la station ${station?.name ?? ""} vient de fermer. Votre réservation est annulée et ne compte pas dans vos limites.`,
+        }),
+      ),
+    );
+  }
+  return { cancelled: cancelled.length };
 }
 
 async function stationReservations(c: Ctx, stationId: string) {
@@ -743,7 +800,10 @@ function stationRow(input: StationInput) {
     has_battery: input.kind === "parcel" ? 0 : 1,
     vehicle_types: JSON.stringify((input.vehicleTypes ?? []).filter((v) => VEHICLE_TYPES.includes(v))),
     battery_capacity: int(input.batteryCapacity),
-    opening_hours: String(input.openingHours ?? ""),
+    // Days and times, never empty (src/lib/opening-hours.ts).
+    opening_hours: cleanOpeningHours(input.openingHours) ?? (() => {
+      throw new ApiError("opening_hours_invalid");
+    })(),
     phone: input.phone ? String(input.phone) : null,
   };
 }
@@ -792,6 +852,11 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
       .bind(id)
       .first<Record<string, unknown>>();
     if (!before) throw new ApiError("station_not_found", 404);
+    // A lower capacity brings the full batteries down to it, as counter corrections (principle 4).
+    const trims =
+      row.battery_capacity < Number(before.battery_capacity)
+        ? await capacityTrimStatements(c.db, id, row.battery_capacity, { user: admin, role: "admin" })
+        : [];
     await c.db.batch([
       c.db
         .prepare(
@@ -803,6 +868,7 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
       ...(depotInput ? await depotStatements(c, admin.id, id, depotInput) : []),
       ...(types?.statements ?? []),
       ...extraStatements,
+      ...trims,
     ]);
     return;
   }
@@ -814,10 +880,8 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
          battery_capacity, opening_hours, phone, charging_slots, is_active, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?)`,
       )
       .bind(newId, ...Object.values(row), now),
-    // No connected socket yet, so no free charging place.
-    c.db
-      .prepare("insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values (?, 1, 0, ?, ?)")
-      .bind(newId, row.battery_capacity, now),
+    // A new station starts closed and empty: staff open it and mark batteries full as they come.
+    c.db.prepare("insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values (?, 0, 0, 0, ?)").bind(newId, now),
     c.audit(admin.id, "stations", "insert", newId, { ...row, ...extras, ...(types ? { battery_types: types.labels } : {}) }, { stationId: newId }),
     ...(depotInput ? await depotStatements(c, admin.id, newId, depotInput) : []),
     ...(types?.statements ?? []),
@@ -840,7 +904,8 @@ async function publicStations(c: Ctx) {
 
 async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
   await c.requireAdmin();
-  const since = new Date(Date.now() - ADMIN_HISTORY_DAYS * 86_400_000).toISOString();
+  // The dashboard's figures look back two weeks at most; the reservations table pages on its own.
+  const since = new Date(Date.now() - SNAPSHOT_RESERVATION_DAYS * 86_400_000).toISOString();
   const [stations, users, staff, reservations, points] = await Promise.all([
     c.stations(""),
     c.db
@@ -856,7 +921,7 @@ async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
       }>(),
     c.db.prepare("select station_id, user_id from station_staff").all<{ station_id: string; user_id: string }>(),
     c.db
-      .prepare("select * from reservations where created_at >= ? order by created_at desc limit 5000")
+      .prepare("select * from reservations where created_at >= ? order by created_at desc limit 2000")
       .bind(since)
       .all<ReservationRow>(),
     c.db
@@ -885,6 +950,45 @@ async function adminSnapshot(c: Ctx): Promise<AdminSnapshot> {
       lastSeenAt: p.last_seen_at,
     })),
   };
+}
+
+/**
+ * GET /api/admin/reservations?status=&stationId=&search=&offset=&limit=: one page of the
+ * reservations of the last ADMIN_HISTORY_DAYS days, newest first, with the total.
+ */
+async function adminReservations(c: Ctx): Promise<AdminReservationPage> {
+  await c.requireAdmin();
+  const q = c.url.searchParams;
+  const now = nowIso();
+  const since = new Date(Date.now() - ADMIN_HISTORY_DAYS * 86_400_000).toISOString();
+  const where = ["r.created_at >= ?1"];
+  const params: unknown[] = [since];
+  const add = (clause: string, ...values: unknown[]) => {
+    where.push(clause.replace(/\?(\d)/g, (_, n) => `?${params.length + Number(n)}`));
+    params.push(...values);
+  };
+  const status = q.get("status");
+  if (status === "active") add("r.status = 'active' and r.expires_at > ?1", now);
+  else if (status === "expired") add("(r.status = 'expired' or (r.status = 'active' and r.expires_at <= ?1))", now);
+  else if (status === "completed" || status === "cancelled") add("r.status = ?1", status);
+  const stationId = q.get("stationId");
+  if (stationId) add("r.station_id = ?1", stationId);
+  const search = (q.get("search") ?? "").trim().toLowerCase().slice(0, 80);
+  if (search) add("(lower(coalesce(u.full_name, '')) like ?1 or coalesce(u.phone, '') like ?1 or lower(coalesce(u.email, '')) like ?1)", `%${search}%`);
+  const limit = Math.min(Math.max(Number(q.get("limit")) || ADMIN_PAGE_SIZE, 1), 200);
+  const offset = Math.max(Number(q.get("offset")) || 0, 0);
+  const clause = where.join(" and ");
+  const [rows, total] = await Promise.all([
+    c.db
+      .prepare(`${RESERVATION_SELECT} where ${clause} order by r.created_at desc limit ${limit} offset ${offset}`)
+      .bind(...params)
+      .all<ReservationRow>(),
+    c.db
+      .prepare(`select count(*) as n from reservations r left join users u on u.id = r.user_id where ${clause}`)
+      .bind(...params)
+      .first<{ n: number }>(),
+  ]);
+  return { rows: rows.results.map((r) => toReservation(r, { withCustomer: true })), total: total?.n ?? 0 };
 }
 
 async function auditLog(c: Ctx): Promise<AuditEntry[]> {
@@ -932,6 +1036,10 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
   if (before === role) return;
   // Driver accounts come and go through the driver backoffice only (approve, release; R15).
   if (before === "driver") throw new ApiError("has_other_role");
+  // R15: staff become something else only once removed from their station (no silent removal).
+  if (role !== "operator" && (await c.db.prepare("select 1 from station_staff where user_id = ?").bind(userId).first())) {
+    throw new ApiError("role_change_blocked", 409);
+  }
   // Menu and rights follow the role: leaving "operator" ends every station assignment and operator account.
   const [staff, owned] =
     role === "operator"
@@ -991,18 +1099,90 @@ async function unassignStaff(c: Ctx, stationId: string, userId: string) {
   await removeStaff(c, admin.id, stationId, userId);
 }
 
+/**
+ * Makes the account staff of one station (W2: exactly one; a second station is refused with
+ * 409, the person is moved instead). Owners run their stations through operator_owners and
+ * are never staff. A customer becomes staff only with nothing open (R15).
+ */
 async function addStaff(c: Ctx, actorId: string, stationId: string, userId: string) {
   await refuseOtherRole(c, userId);
-  const inserted = await c.db
-    .prepare("insert or ignore into station_staff (station_id, user_id) values (?, ?)")
-    .bind(stationId, userId)
-    .run();
-  if (!inserted.meta.changes) return;
-  // The role follows the assignment.
+  const row = await c.db
+    .prepare(
+      `select u.role, u.phone, (select station_id from station_staff where user_id = u.id) as station_id,
+              exists (select 1 from operator_owners where user_id = u.id) as owner
+       from users u where u.id = ?`,
+    )
+    .bind(userId)
+    .first<{ role: string; phone: string | null; station_id: string | null; owner: number }>();
+  if (!row) throw new ApiError("account_not_found", 404);
+  if (row.station_id === stationId) return;
+  if (row.station_id) throw new ApiError("staff_other_station", 409);
+  if (row.owner) throw new ApiError("has_other_role", 409);
+  if (row.role === DB_CUSTOMER && (await customerThingsOpen(c.db, userId, row.phone))) throw new ApiError("role_change_blocked", 409);
+  try {
+    await c.db.prepare("insert into station_staff (station_id, user_id) values (?, ?)").bind(stationId, userId).run();
+  } catch (err) {
+    // Assigned elsewhere in the meantime (unique index station_staff_one_station).
+    if (/UNIQUE/i.test(String(err))) throw new ApiError("staff_other_station", 409);
+    throw err;
+  }
+  // The role follows the assignment; the owner's list to re-staff loses this station for the person.
   await c.db.batch([
     c.audit(actorId, "station_staff", "insert", `${stationId}:${userId}`, {}, { stationId, userId }),
     promoteToOperator(c, userId),
+    resolveReassignments(c, actorId, userId, stationId),
   ]);
+}
+
+/** Open entries of the re-staff list for this person at this station are done. */
+const resolveReassignments = (c: Ctx, actorId: string, userId: string, stationId: string) =>
+  c.db
+    .prepare("update staff_reassignments set resolved_at = ?, resolved_by = ? where user_id = ? and station_id = ? and resolved_at is null")
+    .bind(nowIso(), actorId, userId, stationId);
+
+/** An owner of some operator, or an admin: checked before anything is looked up (R2). Staff 403. */
+async function requireAnyOwner(c: Ctx): Promise<Profile> {
+  const user = await c.requireUser();
+  if (user.role === "admin") return user;
+  const owner = user.role === "operator" && (await c.db.prepare("select 1 from operator_owners where user_id = ?").bind(user.id).first());
+  if (!owner) throw new ApiError("forbidden", 403);
+  return user;
+}
+
+/**
+ * POST /api/owner/staff/move { userId, stationId }: the explicit "move" of a staff member to
+ * another station. The owner must run both stations (an admin any).
+ */
+async function moveStaff(c: Ctx, userId: string, toStationId: string) {
+  await requireAnyOwner(c);
+  const current = await c.db.prepare("select station_id from station_staff where user_id = ?").bind(userId).first<{ station_id: string }>();
+  if (!current) throw new ApiError("not_found", 404);
+  const actor = await requireOwnerOf(c, current.station_id);
+  await requireOwnerOf(c, toStationId);
+  if (!(await c.db.prepare("select 1 from stations where id = ? and is_active = 1").bind(toStationId).first())) throw new ApiError("station_not_found", 404);
+  if (current.station_id === toStationId) return;
+  const moved = await c.db
+    .prepare("update station_staff set station_id = ? where user_id = ? and station_id = ?")
+    .bind(toStationId, userId, current.station_id)
+    .run();
+  if (!moved.meta.changes) throw new ApiError("staff_other_station", 409);
+  await c.db.batch([
+    c.audit(actor.id, "station_staff", "update", `${toStationId}:${userId}`, { station_id: [current.station_id, toStationId] }, { stationId: toStationId, userId }),
+    resolveReassignments(c, actor.id, userId, toStationId),
+  ]);
+}
+
+/** POST /api/owner/reassignments/:id/resolve: the owner dealt with an entry of the re-staff list. */
+async function resolveReassignment(c: Ctx, id: string) {
+  const user = await requireAnyOwner(c);
+  const row = await c.db.prepare("select operator_id, resolved_at from staff_reassignments where id = ?").bind(id).first<{ operator_id: string; resolved_at: string | null }>();
+  if (!row) throw new ApiError("not_found", 404);
+  if (user.role !== "admin") {
+    const owner = await c.db.prepare("select 1 from operator_owners where operator_id = ? and user_id = ?").bind(row.operator_id, user.id).first();
+    if (user.role !== "operator" || !owner) throw new ApiError("forbidden", 403);
+  }
+  if (row.resolved_at) return;
+  await c.db.prepare("update staff_reassignments set resolved_at = ?, resolved_by = ? where id = ? and resolved_at is null").bind(nowIso(), user.id, id).run();
 }
 
 async function removeStaff(c: Ctx, actorId: string, stationId: string, userId: string) {
@@ -1057,14 +1237,19 @@ async function requireOwnerOf(c: Ctx, stationId: string): Promise<Profile> {
   return user;
 }
 
+/**
+ * GET /api/owner: the operators the account runs, their active stations, staff, the list to
+ * re-staff (0033) and prices. An admin sees every operator (backoffice: admin all).
+ */
 async function ownerView(c: Ctx): Promise<OwnerView> {
   const user = await c.requireUser();
   if (user.role !== "operator" && user.role !== "admin") throw new ApiError("forbidden", 403);
-  const mine = "(select operator_id from operator_owners where user_id = ?1)";
-  const [operators, staff] = await Promise.all([
+  const admin = user.role === "admin";
+  const mine = admin ? "(select id from operators)" : "(select operator_id from operator_owners where user_id = ?1)";
+  const [operators, staff, reassignments, prices] = await Promise.all([
     c.db
       .prepare(`select id, name, is_own from operators where id in ${mine} order by name`)
-      .bind(user.id)
+      .bind(...(admin ? [] : [user.id]))
       .all<{ id: string; name: string; is_own: number }>(),
     c.db
       .prepare(
@@ -1072,17 +1257,35 @@ async function ownerView(c: Ctx): Promise<OwnerView> {
          join users u on u.id = ss.user_id join stations s on s.id = ss.station_id
          where s.operator_id in ${mine} order by u.full_name, u.phone, u.email`,
       )
-      .bind(user.id)
+      .bind(...(admin ? [] : [user.id]))
       .all<PersonRow & { station_id: string }>(),
+    c.db
+      .prepare(
+        `select r.id as r_id, r.station_id, r.created_at, u.id, u.phone, u.email, u.full_name,
+                (select station_id from station_staff where user_id = u.id) as current_station_id
+         from staff_reassignments r join users u on u.id = r.user_id
+         where r.resolved_at is null and r.operator_id in ${mine} order by r.created_at`,
+      )
+      .bind(...(admin ? [] : [user.id]))
+      .all<PersonRow & { r_id: string; station_id: string; created_at: string; current_station_id: string | null }>(),
+    c.db
+      .prepare(`select id, price_battery_xof, charge_kwh_xof, charge_min_xof from stations where is_active = 1 and operator_id in ${mine}`)
+      .bind(...(admin ? [] : [user.id]))
+      .all<{ id: string; price_battery_xof: number | null; charge_kwh_xof: number | null; charge_min_xof: number | null }>(),
   ]);
-  if (!operators.results.length) throw new ApiError("forbidden", 403);
+  if (!operators.results.length && !admin) throw new ApiError("forbidden", 403);
   return {
     operators: operators.results.map((o) => ({ id: o.id, name: o.name, isOwn: !!o.is_own })),
-    stations: await c.stations(
-      "where s.is_active = 1 and s.operator_id in (select operator_id from operator_owners where user_id = ?2)",
-      user.id,
-    ),
+    stations: await c.stations(`where s.is_active = 1 and s.operator_id in ${mine.replace("?1", "?2")}`, ...(admin ? [] : [user.id])),
     staff: staff.results.map((r) => ({ stationId: r.station_id, ...person(r) })),
+    reassignments: reassignments.results.map((r) => ({
+      id: r.r_id,
+      stationId: r.station_id,
+      currentStationId: r.current_station_id,
+      createdAt: r.created_at,
+      ...person(r),
+    })),
+    prices: prices.results.map((p) => ({ stationId: p.id, swapXof: p.price_battery_xof, chargeKwhXof: p.charge_kwh_xof, chargeMinXof: p.charge_min_xof })),
   };
 }
 
@@ -1097,22 +1300,39 @@ async function ownerRemoveStaff(c: Ctx, stationId: string, userId: string) {
   await removeStaff(c, owner.id, stationId, userId);
 }
 
-/** Opening hours and phone, the details that change in daily business. */
+/**
+ * Opening hours (days and times, never empty), phone and prices: what changes in daily
+ * business. Prices left out of the input stay; a charging price of null is the network default.
+ */
 async function ownerSaveStation(c: Ctx, stationId: string, input: OwnerStationInput) {
   const owner = await requireOwnerOf(c, stationId);
   const before = await c.db
-    .prepare("select opening_hours, phone from stations where id = ?")
+    .prepare("select opening_hours, phone, price_battery_xof, charge_kwh_xof, charge_min_xof from stations where id = ?")
     .bind(stationId)
-    .first<{ opening_hours: string; phone: string | null }>();
+    .first<{ opening_hours: string; phone: string | null; price_battery_xof: number | null; charge_kwh_xof: number | null; charge_min_xof: number | null }>();
   if (!before) throw new ApiError("station_not_found", 404);
-  const after = {
-    opening_hours: String(input?.openingHours ?? "").trim().slice(0, 200),
-    phone: String(input?.phone ?? "").trim().slice(0, 40) || null,
+  const hours = cleanOpeningHours(input?.openingHours);
+  if (!hours) throw new ApiError("opening_hours_invalid");
+  const price = (key: "swapXof" | "chargeKwhXof" | "chargeMinXof", old: number | null) => {
+    if (input?.[key] === undefined) return old;
+    if (!validPrice(input[key])) throw new ApiError("bad_request");
+    return input[key] ?? null;
   };
+  const after = {
+    opening_hours: hours,
+    phone: String(input?.phone ?? "").trim().slice(0, 40) || null,
+    price_battery_xof: price("swapXof", before.price_battery_xof),
+    charge_kwh_xof: price("chargeKwhXof", before.charge_kwh_xof),
+    charge_min_xof: price("chargeMinXof", before.charge_min_xof),
+  };
+  // A price per kWh of 0 would give charges away (stations.charge_kwh_xof > 0).
+  if (after.charge_kwh_xof === 0 || after.price_battery_xof === 0) throw new ApiError("bad_request");
   const changes = diff(before, after);
   if (!Object.keys(changes).length) return;
   await c.db.batch([
-    c.db.prepare("update stations set opening_hours = ?, phone = ? where id = ?").bind(after.opening_hours, after.phone, stationId),
+    c.db
+      .prepare("update stations set opening_hours = ?, phone = ?, price_battery_xof = ?, charge_kwh_xof = ?, charge_min_xof = ? where id = ?")
+      .bind(after.opening_hours, after.phone, after.price_battery_xof, after.charge_kwh_xof, after.charge_min_xof, stationId),
     c.audit(owner.id, "stations", "update", stationId, changes, { stationId }),
   ]);
 }
@@ -1573,8 +1793,26 @@ const ROUTES: [string, RegExp, Handler][] = [
   [
     "GET",
     /^\/api\/stations\/([\w-]+)\/swaps$/,
-    (c, [id]) => stationSwaps(c, id, { customerType: (c.url.searchParams.get("customerType") as SwapFilter["customerType"]) ?? null }),
+    (c, [id]) =>
+      stationSwaps(c, id, {
+        customerType: (c.url.searchParams.get("customerType") as SwapFilter["customerType"]) ?? null,
+        days: Number(c.url.searchParams.get("days")) || null,
+      }),
   ],
+  ["GET", /^\/api\/stations\/([\w-]+)\/battery-events$/, (c, [id]) => stationBatteryEvents(c, id, c.url.searchParams.get("days"))],
+  // Owner backoffice (worker/owner.ts): live queue and handovers, settlement and statistics.
+  ["GET", /^\/api\/owner\/live$/, (c) => ownerLive(c, c.url.searchParams.get("stationId") || null)],
+  ["GET", /^\/api\/owner\/report$/, (c) => ownerReport(c, c.url.searchParams.get("stationId") || null, reportPeriod(c.url.searchParams.get("days")))],
+  [
+    "POST",
+    /^\/api\/owner\/staff\/move$/,
+    async (c) => {
+      const { userId, stationId } = await readJson<{ userId: string; stationId: string }>(c.request);
+      return moveStaff(c, String(userId), String(stationId));
+    },
+  ],
+  ["POST", /^\/api\/owner\/reassignments\/([\w-]+)\/resolve$/, (c, [id]) => resolveReassignment(c, id)],
+  ["GET", /^\/api\/admin\/reservations$/, (c) => adminReservations(c)],
   ["GET", /^\/api\/promotions\/current$/, (c) => currentPromotion(c)],
   // Modules the backoffice switches off (worker/features.ts)
   ["GET", /^\/api\/features$/, (c) => getFeatures(c.env)],
@@ -1598,7 +1836,7 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/wallet\/recipient$/, async (c) => findRecipient(c.env, await c.requireUser(), c.url.searchParams.get("contact"))],
   ["POST", /^\/api\/wallet\/send$/, async (c) => sendMoney(c.env, await c.requireUser(), c.request)],
   ["POST", /^\/api\/wallet\/topups$/, async (c) => startTopup(c.env, await c.requireUser(), c.request)],
-  ["POST", /^\/api\/wallet\/topups\/([\w-]+)\/refresh$/, async (c, [id]) => refreshTopup(c.env, await c.requireUser(), id)],
+  ["POST", /^\/api\/wallet\/topups\/([\w-]+)\/refresh$/, async (c, [id]) => refreshTopup(c.env, await customerUser(c), id)],
   ["GET", /^\/api\/admin\/wallet$/, async (c) => {
     await c.requireAdmin();
     return adminWallet(c.env, c.url);
@@ -1615,42 +1853,41 @@ const ROUTES: [string, RegExp, Handler][] = [
     const { contact, frozen } = await readJson<{ contact?: string; frozen?: boolean }>(c.request);
     return setWalletFrozen(c.env, admin, contact, !!frozen);
   }],
-  ["GET", /^\/api\/payments\/mine$/, async (c) => myPayments(c.env, await c.requireUser())],
-  ["POST", /^\/api\/payments$/, async (c) => startPayment(c.env, await c.requireUser(), c.request)],
-  ["POST", /^\/api\/payments\/([\w-]+)\/refresh$/, async (c, [id]) => refreshPayment(c.env, await c.requireUser(), id)],
+  ["GET", /^\/api\/payments\/mine$/, async (c) => myPayments(c.env, await customerUser(c))],
+  ["POST", /^\/api\/payments$/, async (c) => startPayment(c.env, await customerUser(c), c.request)],
+  ["POST", /^\/api\/payments\/([\w-]+)\/refresh$/, async (c, [id]) => refreshPayment(c.env, await customerUser(c), id)],
   // greenpoint (worker/greenpoint.ts)
   ["GET", /^\/api\/greenpoint$/, async (c) => myGreenpoint(c.env, await c.requireUser())],
   ["GET", /^\/api\/greenpoint\/total$/, (c) => networkTotal(c.env)],
   ["POST", /^\/api\/greenpoint\/vehicle$/, async (c) => setVehicle(c.env, await c.requireUser(), c.request)],
   ["POST", /^\/api\/greenpoint\/redemptions$/, async (c) => startRedemption(c.env, await c.requireUser(), c.request)],
-  ["POST", /^\/api\/greenpoint\/redemptions\/([\w-]+)\/cancel$/, async (c, [id]) => cancelRedemption(c.env, await c.requireUser(), id)],
+  ["POST", /^\/api\/greenpoint\/redemptions\/([\w-]+)\/cancel$/, async (c, [id]) => cancelRedemption(c.env, await customerUser(c), id)],
   [
     "POST",
     /^\/api\/stations\/([\w-]+)\/greenpoint\/visits$/,
-    async (c, [id]) => recordVisit(c.env, await c.requireUser(), (u, s) => c.isStaffOf(u, s), id, c.request),
+    async (c, [id]) => recordVisit(c.env, await c.requireUser(), c.actAt, id, c.request),
   ],
   [
     "POST",
     /^\/api\/stations\/([\w-]+)\/greenpoint\/redeem$/,
-    async (c, [id]) => confirmRedemption(c.env, await c.requireUser(), (u, s) => c.isStaffOf(u, s), id, c.request),
+    async (c, [id]) => confirmRedemption(c.env, await c.requireUser(), c.actAt, id, c.request),
   ],
   // Charging at a socket (worker/charging.ts)
   ["GET", /^\/api\/stations\/([\w-]+)\/charging$/, async (c, [id]) => stationCharging(c.env, await c.requireUser(), (u, s) => c.isStaffOf(u, s), id)],
-  ["POST", /^\/api\/stations\/([\w-]+)\/charging$/, async (c, [id]) => startCharge(c.env, await c.requireUser(), (u, s) => c.isStaffOf(u, s), id, c.request)],
+  ["POST", /^\/api\/stations\/([\w-]+)\/charging$/, async (c, [id]) => startCharge(c.env, await c.requireUser(), c.actAt, id, c.request)],
   [
     "POST",
     /^\/api\/stations\/([\w-]+)\/charging\/([\w-]+)\/(stop|cancel|pay)$/,
     async (c, [station, id, action]) => {
       const user = await c.requireUser();
-      const isStaffOf = (u: Profile, s: string) => c.isStaffOf(u, s);
-      if (action === "stop") return stopCharge(c.env, user, isStaffOf, station, id);
-      if (action === "cancel") return cancelCharge(c.env, user, isStaffOf, station, id);
-      return payCash(c.env, user, isStaffOf, station, id);
+      if (action === "stop") return stopCharge(c.env, user, c.actAt, station, id);
+      if (action === "cancel") return cancelCharge(c.env, user, c.actAt, station, id);
+      return payCash(c.env, user, c.actAt, station, id);
     },
   ],
-  ["GET", /^\/api\/charging\/mine$/, async (c) => myCharges(c.env, await c.requireUser())],
-  ["POST", /^\/api\/charging\/([\w-]+)\/pay\/wallet$/, async (c, [id]) => payWithWallet(c.env, await c.requireUser(), id, c.request)],
-  ["POST", /^\/api\/charging\/([\w-]+)\/pay\/mobile$/, async (c, [id]) => payWithMobile(c.env, await c.requireUser(), id, c.request)],
+  ["GET", /^\/api\/charging\/mine$/, async (c) => myCharges(c.env, await customerUser(c))],
+  ["POST", /^\/api\/charging\/([\w-]+)\/pay\/wallet$/, async (c, [id]) => payWithWallet(c.env, await customerUser(c), id, c.request)],
+  ["POST", /^\/api\/charging\/([\w-]+)\/pay\/mobile$/, async (c, [id]) => payWithMobile(c.env, await customerUser(c), id, c.request)],
   ["GET", /^\/api\/admin\/charging$/, async (c) => {
     await c.requireAdmin();
     return adminCharging(c.env);
@@ -1758,7 +1995,16 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/admin\/fleets\/([\w-]+)\/review$/, async (c, [id]) => reviewFleet(c, id, (await readJson<{ action: FleetDecision }>(c.request)).action)],
   ["POST", /^\/api\/admin\/fleets\/([\w-]+)\/tier$/, async (c, [id]) => setFleetTier(c, id, (await readJson<{ tier: FleetTier }>(c.request)).tier)],
   ["POST", /^\/api\/admin\/drivers\/([\w-]+)\/manager$/, async (c, [id]) => setDriverManager(c, id, (await readJson<{ contact: string | null }>(c.request)).contact)],
-  ["GET", /^\/api\/driver$/, (c) => driverHome(c)],
+  [
+    "GET",
+    /^\/api\/driver$/,
+    async (c) => {
+      // Customers see how to apply, drivers their work; staff, owners and fleet managers have no driver page.
+      const user = await c.requireUser();
+      if (user.role === "operator" || user.role === "fleet_manager") throw new ApiError("forbidden", 403);
+      return driverHome(c);
+    },
+  ],
   ["GET", /^\/api\/driver\/pass$/, (c) => driverPass(c)],
   ["POST", /^\/api\/driver\/former-account\/code$/, async (c) => sendFormerAccountCode(c.env, await c.requireUser(), (await readJson<{ contact: string }>(c.request)).contact)],
   ["POST", /^\/api\/driver\/former-account\/claim$/, async (c) => claimFormerAccount(c.env, await c.requireUser(), await readJson<{ contact: string; code: string; pin: string }>(c.request))],
@@ -1775,7 +2021,7 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["DELETE", /^\/api\/driver\/queue$/, (c) => leaveQueue(c)],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/accept$/, (c, [id]) => acceptJob(c, id)],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/decline$/, (c, [id]) => declineJob(c, id)],
-  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/abandon$/, async (c, [id]) => abandonJob(c, id, (await readJson<{ reason: string }>(c.request)).reason)],
+  ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/abandon$/, async (c, [id]) => abandonJob(c, id, () => readJson<{ reason: string }>(c.request).then((b) => b.reason))],
   [
     "POST",
     /^\/api\/driver\/jobs\/([\w-]+)\/collect$/,
@@ -1924,6 +2170,59 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
 ];
 
+/**
+ * Principle 3: every station action is logged with station, person and role (staff, owner,
+ * admin), once it succeeded. The action is the route, the station's id replaced by ":station".
+ */
+async function logStationAction(c: Ctx, method: string, path: string) {
+  const a = c.stationAction!;
+  const action = `${method} ${path.split("/").map((part) => (part === a.stationId ? ":station" : part)).join("/")}`.slice(0, 200);
+  await c.db
+    .prepare("insert into station_actions (station_id, person_id, role, action, created_at) values (?, ?, ?, ?, ?)")
+    .bind(a.stationId, a.personId, a.role, action, nowIso())
+    .run();
+}
+
+/** Method and path pattern of every route, for the route × role test (R2, worker/role-matrix.test.ts). */
+export const API_ROUTES: readonly (readonly [string, RegExp])[] = ROUTES.map(([method, pattern]) => [method, pattern] as const);
+
+/**
+ * Routes anyone may call without signing in (R2). Every other route checks the session before
+ * its handler runs, so nothing of a request (its body, a looked-up row) is read for an
+ * anonymous caller: they get 401 first.
+ */
+export const OPEN_ROUTES: ReadonlySet<string> = new Set([
+  "GET /api/stations",
+  "GET /api/operators",
+  "GET /api/stations/:id/reviews",
+  "GET /api/me",
+  "POST /api/auth/send",
+  "POST /api/auth/register",
+  "POST /api/auth/register-fleet",
+  "POST /api/auth/login",
+  "POST /api/auth/logout",
+  "GET /api/reservations/mine",
+  "GET /api/promotions/current",
+  "GET /api/features",
+  "GET /api/greenpoint/total",
+  "GET /api/parcels/info",
+  "GET /api/parcels/mine",
+  "GET /api/fleet-invites",
+  "GET /api/jobs/mine",
+]);
+
+/** "GET /api/stations/:id/reviews" for the route's pattern: every capture group reads ":id". */
+export function routeName(method: string, pattern: RegExp): string {
+  const path = pattern.source
+    .replace(/^\^/, "")
+    .replace(/\$$/, "")
+    .replace(/\\\//g, "/")
+    .replace(/\([^()]*\)/g, ":id");
+  return `${method} ${path}`;
+}
+
+const OPEN = new Set(ROUTES.filter(([method, pattern]) => OPEN_ROUTES.has(routeName(method, pattern))));
+
 export async function handleApi(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const c = new Ctx(env, request, url);
@@ -1945,11 +2244,14 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     // A switched-off parcel module answers as if it did not exist; the backoffice keeps its pages.
     if ((partnerApi || PARCEL_ROUTE.test(url.pathname)) && !(await parcelsEnabled(env))) return json({ error: "not_found" }, 404);
     if (partnerApi) return await handlePartnerApi(request, env);
-    for (const [method, pattern, handler] of ROUTES) {
+    for (const route of ROUTES) {
+      const [method, pattern, handler] = route;
       const m = pattern.exec(url.pathname);
       if (!m) continue;
       if (request.method !== method) continue;
+      if (!OPEN.has(route)) await c.requireUser();
       const result = await handler(c, m.slice(1));
+      if (c.stationAction && request.method !== "GET") await logStationAction(c, request.method, url.pathname);
       return json(result ?? null);
     }
     return json({ error: "not_found" }, 404);

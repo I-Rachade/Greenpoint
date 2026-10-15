@@ -39,6 +39,28 @@ export interface AdminSnapshot {
 
 export const ADMIN_HISTORY_DAYS = 30;
 
+/** Days of reservations the snapshot carries (dashboard figures and chart); the table pages through ADMIN_HISTORY_DAYS. */
+export const SNAPSHOT_RESERVATION_DAYS = 14;
+
+/** GET /api/admin/reservations: one page of the reservations table, filtered on the server. */
+export interface AdminReservationQuery {
+  /** As effectiveReservationStatus: an active reservation past its expiry counts as expired. */
+  status?: Reservation["status"] | null;
+  stationId?: string | null;
+  /** Part of the customer's name, phone number or e-mail address. */
+  search?: string | null;
+  offset?: number;
+  limit?: number;
+}
+
+export interface AdminReservationPage {
+  rows: Reservation[];
+  /** All matching rows, for "x–y of total". */
+  total: number;
+}
+
+export const ADMIN_PAGE_SIZE = 50;
+
 export type AuditTable =
   | "profiles"
   | "operators"

@@ -11,7 +11,8 @@ import type {
   StationView,
   UserRole,
 } from "../types";
-import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { OwnerLive, OwnerReport, ReportPeriod } from "../owner-backoffice";
 import type { EvCharger, EvChargerInput } from "../ev-chargers";
 import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
@@ -204,6 +205,8 @@ export type BackendErrorCode =
   | "recipient_not_customer"
   | "sender_not_customer"
   | "no_origin_depot"
+  | "staff_other_station"
+  | "opening_hours_invalid"
   | "proof_required"
   | "unknown";
 
@@ -272,7 +275,8 @@ export interface Backend {
 
   // Station staff
   staffStations(): Promise<StationView[]>;
-  updateStatus(stationId: string, patch: StatusPatch): Promise<void>;
+  /** Closing cancels the reservations still holding (R17) and answers how many. */
+  updateStatus(stationId: string, patch: StatusPatch): Promise<{ cancelled: number }>;
   stationReservations(stationId: string): Promise<Reservation[]>;
   /**
    * Completes a charging reservation (car charger, counted place, or an outlet that cannot be
@@ -289,8 +293,10 @@ export interface Backend {
   batteryEvent(stationId: string, input: BatteryEventInput): Promise<BatteryEventView>;
   /** One swap: battery out (counter −1) and battery in (empty stock +1), logged with payment. */
   recordSwap(stationId: string, input: SwapInput): Promise<SwapEntry>;
-  /** Today's swaps at the station, newest first (staff: their own). */
+  /** Today's swaps at the station, newest first (staff: their own); owners and admins any report period (`days`). */
   stationSwaps(stationId: string, filter?: SwapFilter): Promise<SwapEntry[]>;
+  /** Counter history of a report period, newest first: owners and admins only (backoffice). */
+  stationBatteryEvents(stationId: string, days: ReportPeriod): Promise<BatteryEventView[]>;
 
   // Operator accounts (see src/lib/operators.ts)
   /** The operators the signed-in person runs, their stations and staff. */
@@ -299,6 +305,14 @@ export interface Backend {
   ownerAddStaff(stationId: string, contact: string): Promise<void>;
   ownerRemoveStaff(stationId: string, userId: string): Promise<void>;
   ownerSaveStation(stationId: string, input: OwnerStationInput): Promise<void>;
+  /** Moves a staff member to another station of the owner (staff work at one station only, W2). */
+  ownerMoveStaff(userId: string, stationId: string): Promise<void>;
+  /** An entry of the list to re-staff (migration 0033) is dealt with. */
+  resolveReassignment(id: string): Promise<void>;
+
+  // Owner backoffice (see src/lib/owner-backoffice.ts): one station or all (`null`)
+  ownerLive(stationId: string | null): Promise<OwnerLive>;
+  ownerReport(stationId: string | null, days: ReportPeriod): Promise<OwnerReport>;
 
   // Service unlock per station (see src/lib/station-services.ts)
   /** Every service of the owner's stations, or of all stations for an admin. */
@@ -324,6 +338,8 @@ export interface Backend {
 
   // Backoffice (admins only; see src/lib/admin)
   adminSnapshot(): Promise<AdminSnapshot>;
+  /** One page of the reservations table (last ADMIN_HISTORY_DAYS days) and how many match. */
+  adminReservations(query: AdminReservationQuery): Promise<AdminReservationPage>;
   auditLog(filter: AuditFilter): Promise<AuditEntry[]>;
   setUserRole(userId: string, role: UserRole): Promise<void>;
   assignStaff(stationId: string, userId: string): Promise<void>;

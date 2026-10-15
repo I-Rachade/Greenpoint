@@ -47,6 +47,8 @@ export interface ParcelCtx {
   requireUser(): Promise<Profile>;
   requireAdmin(): Promise<Profile>;
   isStaffOf(user: Profile, stationId: string): Promise<boolean>;
+  /** See WorkCtx.onStationActor (worker/station-work.ts). */
+  onStationActor?(stationId: string, actor: StationActor): void;
   audit(
     actor: string | null,
     table: AuditTable,
@@ -204,10 +206,16 @@ export async function requireDepot(db: D1Database, stationId: string) {
   if (!(await stationUnlocked(db, stationId, "parcels"))) throw new ApiError("depot_inactive");
 }
 
+/** Read access to a station's lists: anyone with rights there, no active station needed. */
 export async function requireStaff(c: ParcelCtx, stationId: string): Promise<Profile> {
   const user = await c.requireUser();
   if (!(await c.isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
   return user;
+}
+
+/** A station action (counter, handover, cancel, …): the active-station rule (R7), logged with station, person and role. */
+export async function requireStationActor(c: ParcelCtx, stationId: string): Promise<Profile> {
+  return (await parcelStationActor(c, stationId)).user;
 }
 
 /**
@@ -217,7 +225,13 @@ export async function requireStaff(c: ParcelCtx, stationId: string): Promise<Pro
  */
 export async function parcelStationActor(c: ParcelCtx, stationId: string): Promise<StationActor> {
   return stationActor(
-    { env: c.env, db: c.db, request: c.request ?? new Request("https://api.invalid/"), requireUser: () => c.requireUser() },
+    {
+      env: c.env,
+      db: c.db,
+      request: c.request ?? new Request("https://api.invalid/"),
+      requireUser: () => c.requireUser(),
+      onStationActor: (stationId, actor) => c.onStationActor?.(stationId, actor),
+    },
     stationId,
   );
 }
@@ -372,7 +386,7 @@ export async function insertParcel(c: ParcelCtx, p: ParcelInsert): Promise<{ id:
 // Staff at station A -----------------------------------------------------------
 
 export async function createParcel(c: ParcelCtx, fromStationId: string, input: ParcelInput): Promise<Parcel> {
-  const staff = await requireStaff(c, fromStationId);
+  const staff = await requireStationActor(c, fromStationId);
   if (!input || typeof input !== "object") throw new ApiError("bad_request");
   const senderPhone = normalizeTogoPhone(String(input.senderPhone ?? ""));
   const recipientPhone = normalizeTogoPhone(String(input.recipientPhone ?? ""));
@@ -549,9 +563,12 @@ export async function arriveParcel(c: ParcelCtx, r: ParcelRow, actor: string, st
 
 /** Sends the arrival message again (the recipient lost it or changed phone). */
 export async function resendPickupCode(c: ParcelCtx, parcelId: string) {
+  // Station work (R2): staff, owners and admins only, before anything is looked up.
+  const user = await c.requireUser();
+  if (user.role !== "operator" && user.role !== "admin") throw new ApiError("forbidden", 403);
   const row = await c.db.prepare("select * from parcels where id = ?").bind(parcelId).first<ParcelRow>();
   if (!row) throw new ApiError("parcel_not_found", 404);
-  await requireStaff(c, row.to_station_id);
+  await requireStationActor(c, row.to_station_id);
   if (row.status !== "arrived") throw new ApiError("parcel_wrong_status");
   await notifyPerson(
     c.env,
@@ -568,7 +585,7 @@ export async function resendPickupCode(c: ParcelCtx, parcelId: string) {
  * entry at the station.
  */
 export async function pickUpParcel(c: ParcelCtx, stationId: string, rawInput: unknown): Promise<Parcel> {
-  const staff = await requireStaff(c, stationId);
+  const staff = await requireStationActor(c, stationId);
   const input = parseHandoverInput(String(rawInput ?? ""));
   if (!input) throw new ApiError("wrong_pickup_code");
   const since = new Date(Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000).toISOString();
@@ -628,9 +645,12 @@ export async function pickUpParcel(c: ParcelCtx, stationId: string, rawInput: un
 
 /** Staff at station A (or an admin) cancel a parcel that has not left yet; the sender is refunded at the counter. */
 export async function cancelParcel(c: ParcelCtx, parcelId: string) {
+  // Station work (R2): staff, owners and admins only, before anything is looked up.
+  const user = await c.requireUser();
+  if (user.role !== "operator" && user.role !== "admin") throw new ApiError("forbidden", 403);
   const row = await c.db.prepare("select * from parcels where id = ?").bind(parcelId).first<ParcelRow>();
   if (!row) throw new ApiError("parcel_not_found", 404);
-  const staff = await requireStaff(c, row.from_station_id);
+  const staff = await requireStationActor(c, row.from_station_id);
   if (row.status !== "deposited") throw new ApiError("parcel_wrong_status");
   await c.db.batch([
     c.db.prepare("update parcels set status = 'cancelled', closed_at = ? where id = ? and status = 'deposited'").bind(nowIso(), row.id),

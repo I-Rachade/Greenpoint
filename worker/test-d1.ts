@@ -57,7 +57,12 @@ export function fakeD1(options: { before?: string } = {}) {
   const db = new DatabaseSync(":memory:");
   db.exec("pragma foreign_keys = on"); // as in D1
   for (const file of migrationFiles()) if (!options.before || file < options.before) db.exec(readFileSync(new URL(file, MIGRATIONS), "utf8"));
-  const d1 = {
+  return { db, d1: d1Of(db) };
+}
+
+/** A D1 binding on an open SQLite database (for example a copy of a prepared one). */
+export function d1Of(db: DatabaseSync) {
+  return {
     prepare: (sql: string) => new Statement(db, sql),
     async batch(statements: Statement[]) {
       db.exec("begin");
@@ -72,5 +77,4 @@ export function fakeD1(options: { before?: string } = {}) {
       }
     },
   };
-  return { db, d1 };
 }

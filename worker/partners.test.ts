@@ -81,6 +81,8 @@ function ctxFor(env: Env, user: Profile): ParcelCtx {
     requireUser: async () => user,
     requireAdmin: async () => user,
     isStaffOf: async () => true,
+    // The admin works at station A (R7); carry() sets B where it receives.
+    request: new Request("https://app.poinderecharge.com/api", { headers: { "X-Active-Station": "st-a" } }),
     audit: (actor, table, action, rowId, changes, ids = {}) =>
       env.DB.prepare(
         "insert into audit_log (at, actor, table_name, action, row_id, station_id, user_id, changes) values (?, ?, ?, ?, ?, ?, ?, ?)",

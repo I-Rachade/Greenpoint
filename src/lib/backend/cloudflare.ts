@@ -1,6 +1,7 @@
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
 import type { AdminCharging, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
-import type { AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
+import type { OwnerLive, OwnerReport, ReportPeriod } from "../owner-backoffice";
 import type { EvCharger, EvChargerInput } from "../ev-chargers";
 import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
@@ -186,6 +187,8 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "recipient_not_customer",
   "sender_not_customer",
   "no_origin_depot",
+  "staff_other_station",
+  "opening_hours_invalid",
   "proof_required",
 ];
 
@@ -365,8 +368,9 @@ export class CloudflareBackend implements Backend {
   }
 
   async updateStatus(stationId: string, patch: StatusPatch) {
-    await this.call("PATCH", `/api/stations/${encodeURIComponent(stationId)}/status`, patch);
+    const result = await this.call<{ cancelled: number } | null>("PATCH", `/api/stations/${encodeURIComponent(stationId)}/status`, patch);
     this.changed();
+    return { cancelled: result?.cancelled ?? 0 };
   }
 
   stationReservations(stationId: string) {
@@ -397,8 +401,15 @@ export class CloudflareBackend implements Backend {
   }
 
   stationSwaps(stationId: string, filter: SwapFilter = {}) {
-    const q = filter.customerType ? `?customerType=${encodeURIComponent(filter.customerType)}` : "";
-    return this.call<SwapEntry[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/swaps${q}`);
+    const q = new URLSearchParams();
+    if (filter.customerType) q.set("customerType", filter.customerType);
+    if (filter.days) q.set("days", String(filter.days));
+    const qs = q.toString();
+    return this.call<SwapEntry[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/swaps${qs ? `?${qs}` : ""}`);
+  }
+
+  stationBatteryEvents(stationId: string, days: ReportPeriod) {
+    return this.call<BatteryEventView[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/battery-events?days=${days}`);
   }
 
   // Operator accounts ---------------------------------------------------------------
@@ -418,6 +429,26 @@ export class CloudflareBackend implements Backend {
   async ownerSaveStation(stationId: string, input: OwnerStationInput) {
     await this.call("POST", `/api/owner/stations/${encodeURIComponent(stationId)}`, input);
     this.changed();
+  }
+
+  async ownerMoveStaff(userId: string, stationId: string) {
+    await this.call("POST", "/api/owner/staff/move", { userId, stationId });
+    this.changed();
+  }
+
+  async resolveReassignment(id: string) {
+    await this.call("POST", `/api/owner/reassignments/${encodeURIComponent(id)}/resolve`);
+    this.changed();
+  }
+
+  ownerLive(stationId: string | null) {
+    return this.call<OwnerLive>("GET", `/api/owner/live${stationId ? `?stationId=${encodeURIComponent(stationId)}` : ""}`);
+  }
+
+  ownerReport(stationId: string | null, days: ReportPeriod) {
+    const q = new URLSearchParams({ days: String(days) });
+    if (stationId) q.set("stationId", stationId);
+    return this.call<OwnerReport>("GET", `/api/owner/report?${q}`);
   }
 
   stationServices() {
@@ -475,6 +506,12 @@ export class CloudflareBackend implements Backend {
 
   adminSnapshot() {
     return this.call<AdminSnapshot>("GET", "/api/admin/snapshot");
+  }
+
+  adminReservations(query: AdminReservationQuery) {
+    const q = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== null && value !== "") q.set(key, String(value));
+    return this.call<AdminReservationPage>("GET", `/api/admin/reservations?${q}`);
   }
 
   auditLog(filter: AuditFilter) {

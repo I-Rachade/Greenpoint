@@ -97,6 +97,15 @@ describe("DemoBackend parcel depot", () => {
     await backend.register(phone, DEMO_CODE, "2580", role);
   }
 
+  /**
+   * Staff work at one station (W2): Kossi, the demo staff member, works at FROM. At TO an admin
+   * does the station work, with TO chosen as the active station (R7).
+   */
+  async function adminAt(stationId: string) {
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    setActiveStation(stationId);
+  }
+
   /** The demo driver's code (the demo driver login comes with an approved driver). */
   async function driverCode(): Promise<string> {
     await as("driver", "+22893000009");
@@ -112,7 +121,7 @@ describe("DemoBackend parcel depot", () => {
     const run = await backend.startRun(FROM, code, parcels.map((p) => p.id));
     for (const p of parcels) await backend.scanRunParcel(FROM, run.id, p.trackingNo);
     await backend.departRun(FROM, run.id);
-    setActiveStation(TO);
+    await adminAt(TO);
     for (const p of parcels) await backend.receiveParcel(TO, p.trackingNo);
     return run;
   }
@@ -134,8 +143,10 @@ describe("DemoBackend parcel depot", () => {
     expect(parcel.priceFcfa).toBe(500);
     expect(parcel.status).toBe("deposited");
 
-    setActiveStation(TO);
+    await adminAt(TO);
     await expect(backend.receiveParcel(TO, parcel.trackingNo)).rejects.toMatchObject({ code: "parcel_wrong_status" });
+    await as("operator");
+    setActiveStation(null);
     await carry(parcel);
 
     const staffView = (await backend.stationParcels(TO)).find((p) => p.id === parcel.id)!;
@@ -153,7 +164,7 @@ describe("DemoBackend parcel depot", () => {
     expect(sent.direction).toBe("sent");
     expect(sent.pickupCode).toBeUndefined();
 
-    await as("operator");
+    await adminAt(TO);
     await expect(backend.pickUpParcel(TO, mine.pickupCode === "000000" ? "111111" : "000000")).rejects.toMatchObject({
       code: "wrong_pickup_code",
     });
@@ -164,7 +175,11 @@ describe("DemoBackend parcel depot", () => {
   it("hands a parcel out with its number alone, and says when it is not waiting here", async () => {
     await as("operator");
     const parcel = await backend.createParcel(FROM, input);
+    // Staff of FROM have no rights at TO.
+    await expect(backend.pickUpParcel(TO, parcel.trackingNo)).rejects.toMatchObject({ code: "forbidden" });
+    await adminAt(TO);
     await expect(backend.pickUpParcel(TO, parcel.trackingNo)).rejects.toMatchObject({ code: "parcel_not_arrived" });
+    setActiveStation(null);
     await carry(parcel);
     const done = await backend.pickUpParcel(TO, parcel.trackingNo.toLowerCase());
     expect(done.status).toBe("picked_up");
@@ -180,7 +195,7 @@ describe("DemoBackend parcel depot", () => {
   });
 
   it("pauses code entry after too many wrong codes", async () => {
-    await as("operator");
+    await adminAt(TO);
     for (let i = 0; i < 5; i++) {
       await expect(backend.pickUpParcel(TO, "999999")).rejects.toMatchObject({ code: "wrong_pickup_code" });
     }
@@ -201,7 +216,8 @@ describe("DemoBackend parcel depot", () => {
     const p1 = await backend.createParcel(FROM, input);
     const p2 = await backend.createParcel(FROM, input);
     const code = await driverCode();
-    // An owner or admin, and staff of several stations, choose the active station first.
+    // Another chosen station than the one acted at is refused (R7).
+    setActiveStation(TO);
     await expect(backend.startRun(FROM, code, [p1.id])).rejects.toMatchObject({ code: "active_station_required" });
     setActiveStation(FROM);
     const run = await backend.startRun(FROM, code, [p1.id]);
@@ -213,7 +229,7 @@ describe("DemoBackend parcel depot", () => {
     expect(again.parcels).toMatchObject([{ id: p1.id, scanned: true, received: false }]);
     const gone = await backend.departRun(FROM, run.id);
     expect(gone.status).toBe("under_way");
-    setActiveStation(TO);
+    await adminAt(TO);
     await backend.receiveParcel(TO, p1.trackingNo);
     await backend.receiveParcel(TO, p1.trackingNo);
     setActiveStation(FROM);
@@ -229,7 +245,7 @@ describe("DemoBackend parcel depot", () => {
   });
 
   it("creates an account without PIN for unknown recipients", async () => {
-    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    await adminAt(FROM);
     await backend.createParcel(FROM, input);
     const snap = await backend.adminSnapshot();
     expect(snap.users.some((u) => u.phone === "+22891445566")).toBe(true);

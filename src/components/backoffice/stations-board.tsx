@@ -129,7 +129,7 @@ export function StationsBoard() {
                     {silent ? (
                       <Pill tone="red">{b.silent}</Pill>
                     ) : (
-                      <Pill tone={p.status === "fault" ? "red" : p.status === "free" ? "green" : "blue"}>{p.status}</Pill>
+                      <Pill tone={p.status === "fault" ? "red" : p.status === "free" ? "green" : "blue"}>{t.station.outletStatus[p.status]}</Pill>
                     )}
                   </li>
                 );

@@ -130,11 +130,10 @@ describe("active station (W3, W4, R7)", () => {
     ]);
   });
 
-  it("gives staff several stations (older data) the same rule as owners", async () => {
+  it("keeps staff at one station (W2): a second assignment breaks the unique index", async () => {
     const { env, db } = await setup();
-    db.exec("insert into station_staff (station_id, user_id) values ('lome', 'afi')");
-    expect((await event(env, "afi", "be", { type: "full" })).status).toBe(409);
-    expect((await event(env, "afi", "be", { type: "full" }, "be")).body).toMatchObject({ role: "staff" });
+    expect(() => db.exec("insert into station_staff (station_id, user_id) values ('lome', 'afi')")).toThrow(/UNIQUE/);
+    expect((await event(env, "afi", "be", { type: "full" })).body).toMatchObject({ role: "staff" });
   });
 
   it("lists the stations with their active services and the person's role there", async () => {

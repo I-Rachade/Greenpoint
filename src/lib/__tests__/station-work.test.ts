@@ -13,6 +13,12 @@ async function as(backend: DemoBackend, role: "customer" | "operator" | "admin",
   await backend.register(phone, DEMO_CODE, "2580", role);
 }
 
+/** Staff work at one station (W2): an admin moves the demo staff member (Kossi) to `stationId`. */
+async function staffAt(backend: DemoBackend, stationId: string) {
+  await as(backend, "admin", "+22890000001");
+  await backend.ownerMoveStaff("demo-operator", stationId);
+}
+
 const full = async (backend: DemoBackend) => (await backend.stationCounter(STATION)).rows[0].full;
 let n = 0;
 const rid = () => `demo-req-${String(++n).padStart(6, "0")}`;
@@ -57,18 +63,25 @@ describe("DemoBackend station work", () => {
   it("needs the active station for actions and refuses riders (R7)", async () => {
     await as(backend, "customer");
     await expect(backend.batteryEvent(STATION, { type: "full", requestId: rid() })).rejects.toMatchObject({ code: "forbidden" });
+    // Staff at another station: no rights here (403).
     await as(backend, "operator", "+22890000002");
-    await expect(backend.batteryEvent(STATION, { type: "full", requestId: rid() })).rejects.toMatchObject({ code: "active_station_required" });
+    await expect(backend.batteryEvent(STATION, { type: "full", requestId: rid() })).rejects.toMatchObject({ code: "forbidden" });
+    await staffAt(backend, STATION);
+    await as(backend, "operator", "+22890000002");
+    // Staff have one station: without a chosen station they act at it; another chosen station is refused.
     setActiveStation("st-grand-marche");
     await expect(backend.batteryEvent(STATION, { type: "full", requestId: rid() })).rejects.toMatchObject({ code: "active_station_required" });
-    setActiveStation(STATION);
+    setActiveStation(null);
     const before = await full(backend);
     await expect(backend.batteryEvent(STATION, { type: "issue", requestId: rid() })).resolves.toMatchObject({ type: "issue", fullAfter: before - 1, role: "staff" });
+    setActiveStation(STATION);
+    await expect(backend.batteryEvent(STATION, { type: "issue", requestId: rid() })).resolves.toMatchObject({ fullAfter: before - 2 });
     const stations = await backend.staffStations();
     expect(stations.find((s) => s.id === STATION)).toMatchObject({ myRole: "staff", activeServices: expect.arrayContaining(["swap"]) });
   });
 
   it("counts a request id once and never goes below 0 (R4, R5)", async () => {
+    await staffAt(backend, STATION);
     await as(backend, "operator", "+22890000002");
     setActiveStation(STATION);
     const start = await full(backend);
@@ -82,6 +95,7 @@ describe("DemoBackend station work", () => {
   });
 
   it("lets only owners and admins correct, with a reason", async () => {
+    await staffAt(backend, STATION);
     await as(backend, "operator", "+22890000002");
     setActiveStation(STATION);
     await expect(backend.batteryEvent(STATION, { type: "correction", delta: 1, reason: "inventaire", requestId: rid() })).rejects.toMatchObject({ code: "forbidden" });
@@ -108,6 +122,7 @@ describe("DemoBackend station work", () => {
 
   it("takes an app customer's swap from the wallet", async () => {
     await as(backend, "customer", "+22890123456");
+    await staffAt(backend, STATION);
     await as(backend, "operator", "+22890000002");
     setActiveStation(STATION);
     const swap = await backend.recordSwap(STATION, { requestId: rid(), customerType: "app", contact: "90123456", pin: "2580" });

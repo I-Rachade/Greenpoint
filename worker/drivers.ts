@@ -66,7 +66,7 @@ import { driversEnabled, requireDrivers } from "./features";
 import { requireService, unlockedStations, unlockedSql } from "./services";
 import { tripStatement } from "./greenpoint";
 import { formerAccountOf } from "./former-accounts";
-import { DB_CUSTOMER, DB_DRIVER, refuseDriver } from "./roles";
+import { DB_CUSTOMER, DB_DRIVER, refuseNonCustomer } from "./roles";
 import { ApiError, nowIso, randomDigits, uuid } from "./http";
 import { EMAIL_FROM, notifyPerson, type Message } from "./notify";
 import {
@@ -82,6 +82,7 @@ import {
   requireCustomerNumber,
   requireDepot,
   requireStaff,
+  requireStationActor,
   sizes,
   station,
   type ParcelCtx,
@@ -698,7 +699,8 @@ export async function uploadDriverDocument(c: ParcelCtx, kind: string, request: 
   const column = DOC_COLUMN[kind as DriverDocument];
   if (!column) throw new ApiError("bad_request");
   const row = await driverRow(c.db, user.id);
-  if (!row || (row.status !== "pending" && row.status !== "rejected")) throw new ApiError("forbidden", 403);
+  // No open application to complete: nothing to find (the role itself was checked above, R2).
+  if (!row || (row.status !== "pending" && row.status !== "rejected")) throw new ApiError("driver_not_found", 404);
   const image = await readImage(c, request);
   const key = `drivers/${user.id}/${kind}-${uuid()}.${image.ext}`;
   await c.env.MEDIA.put(key, image.body, { httpMetadata: { contentType: image.type } });
@@ -735,7 +737,7 @@ export async function joinQueue(c: ParcelCtx, stationId: string, position: unkno
 }
 
 export async function leaveQueue(c: ParcelCtx) {
-  const user = await c.requireUser();
+  const { user } = await requireDriver(c);
   await c.db.prepare("delete from driver_queue where driver_id = ?").bind(user.id).run();
 }
 
@@ -775,9 +777,11 @@ export async function declineJob(c: ParcelCtx, jobId: string) {
  * customer (the customer was not there, the parcel does not fit, something else):
  * the trip goes to the next in line and the driver to the end of the line.
  */
-export async function abandonJob(c: ParcelCtx, jobId: string, reason: unknown) {
-  if (!ABANDON_REASONS.includes(reason as AbandonReason)) throw new ApiError("bad_request");
+export async function abandonJob(c: ParcelCtx, jobId: string, reasonOrRead: unknown) {
+  // The driver first (R2): the body of someone else's request is never read.
   const { user, job } = await myJob(c, jobId);
+  const reason = typeof reasonOrRead === "function" ? await (reasonOrRead as () => Promise<unknown>)() : reasonOrRead;
+  if (!ABANDON_REASONS.includes(reason as AbandonReason)) throw new ApiError("bad_request");
   if (
     !(await moveJob(
       c.db,
@@ -1228,7 +1232,7 @@ export async function receiveFromDriver(c: ParcelCtx, stationId: string, badge: 
  * between is not settled by mistake.
  */
 export async function settleDriver(c: ParcelCtx, stationId: string, badge: unknown, amount: unknown) {
-  const staff = await requireStaff(c, stationId);
+  const staff = await requireStationActor(c, stationId);
   const row = await driverByBadge(c, badge);
   const current = (await balance(c.db, row.user_id)).balance;
   if (Number(amount) !== current) throw new ApiError("balance_changed");
@@ -1253,7 +1257,7 @@ function cleanHome(input: unknown): HomePoint {
 /** A customer asks a driver to fetch a parcel at home and bring it to station B. */
 export async function bookPickup(c: ParcelCtx, input: PickupBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
-  refuseDriver(user);
+  refuseNonCustomer(user);
   await requireDrivers(c.db);
   const home = cleanHome(input?.home);
   const toStationId = String(input?.toStationId ?? "");
@@ -1319,7 +1323,7 @@ function cleanDropoff(input: unknown): { lat: number; lng: number; note: string 
 /** A customer books a driver to take them (and others, as seats allow) from A to B. Not offered in the app at the moment. */
 export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
-  refuseDriver(user);
+  refuseNonCustomer(user);
   await requireDrivers(c.db);
   const pickup = cleanHome(input?.pickup);
   const d = cleanDropoff(input?.dropoff);
@@ -1370,7 +1374,7 @@ export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<Delive
  */
 export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
-  refuseDriver(user);
+  refuseNonCustomer(user);
   await requireDrivers(c.db);
   const pickup = cleanHome(input?.pickup);
   const d = cleanDropoff(input?.dropoff);
@@ -1430,7 +1434,7 @@ export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<
 /** The recipient of a parcel waiting at a station has it brought home; this hands the pickup right to the driver. */
 export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unknown): Promise<DeliveryJob> {
   const user = await c.requireUser();
-  refuseDriver(user);
+  refuseNonCustomer(user);
   await requireDrivers(c.db);
   const home = cleanHome(rawHome);
   const parcel = await c.db.prepare("select * from parcels where id = ?").bind(parcelId).first<ParcelRow>();
@@ -1544,6 +1548,7 @@ async function cancelJobRow(c: ParcelCtx, job: JobRow, actor: string) {
 /** The customer (before the driver has the parcel) or an admin calls a trip off; the driver it was offered to is told. */
 export async function cancelJob(c: ParcelCtx, jobId: string) {
   const user = await c.requireUser();
+  refuseNonCustomer(user);
   const job = await loadJob(c.db, jobId);
   if (user.role !== "admin" && job.customer_user_id !== user.id) throw new ApiError("forbidden", 403);
   await cancelJobRow(c, job, user.id);
