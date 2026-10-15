@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_DRIVER_SETTINGS, driverBadgePayload, driverEarning, fareFor, type FleetVehicleType } from "../src/lib/drivers";
+import { DEFAULT_DRIVER_SETTINGS, driverBadgePayload, driverEarning, fareFor, OPEN_JOB_EXPIRY_MINUTES, type FleetVehicleType } from "../src/lib/drivers";
 import { distanceMeters } from "../src/lib/geo";
 import type { Profile } from "../src/lib/types";
 import {
@@ -111,8 +111,10 @@ async function approvedDriver(t: ReturnType<typeof setup>, id: string, type: Fle
   await saveFleetVehicle(t.admin, null, { type, plate: `TG-${id}`, isActive: true });
   const vehicle = (await adminDrivers(t.admin)).vehicles.find((v) => v.plate === `TG-${id}`.toUpperCase())!;
   await reviewDriver(t.admin, id, { action: "approve", vehicleId: vehicle.id });
-  const home = await driverHome(me);
-  return { me, code: home.driver!.code!, badge: driverBadgePayload(home.driver!.code!) };
+  // The approval made the account a driver account (0030, R1); the session reads the new role.
+  const driver = t.ctx({ ...profile(id, `+2289300000${id.slice(-1)}`), role: "driver" });
+  const home = await driverHome(driver);
+  return { me: driver, code: home.driver!.code!, badge: driverBadgePayload(home.driver!.code!) };
 }
 
 const parcelInput = (express: boolean) => ({
@@ -660,5 +662,45 @@ describe("pickup called off while the driver collects", () => {
     });
     expect(t.db.prepare("select count(*) as n from parcels").get()).toMatchObject({ n: 0 });
     expect(t.db.prepare("select status, parcel_id from delivery_jobs where id = ?").get(booking.id)).toMatchObject({ status: "cancelled", parcel_id: null });
+  });
+});
+
+describe("trips nobody takes", () => {
+  it("are called off after OPEN_JOB_EXPIRY_MINUTES and the customer is told; express trips stay", async () => {
+    const t = setup();
+    const sent: { to: string; subject: string }[] = [];
+    (t.env as { EMAIL?: unknown }).EMAIL = { send: async (m: { to: string; subject: string }) => void sent.push(m) };
+    t.db.exec("update users set email = 'ama@example.tg' where id = 'sender'");
+    const booking = await bookPickup(t.sender, { home: HOME, toStationId: A.id, recipientPhone: "92 00 00 00", content: "Vêtements", size: "M" });
+    const express = await createParcel(t.admin, A.id, parcelInput(true));
+    const old = new Date(Date.now() - (OPEN_JOB_EXPIRY_MINUTES + 1) * 60_000).toISOString();
+    // Not yet: a fresh trip keeps waiting.
+    await dispatch({ db: t.env.DB, audit: t.admin.audit, env: t.env });
+    expect((await myJobs(t.sender))[0]).toMatchObject({ status: "open" });
+    t.db.exec(`update delivery_jobs set created_at = '${old}'`);
+    await dispatch({ db: t.env.DB, audit: t.admin.audit, env: t.env });
+    expect((await myJobs(t.sender))[0]).toMatchObject({ id: booking.id, status: "cancelled", noDriver: true });
+    expect(t.db.prepare("select status from delivery_jobs where parcel_id = ?").get(express.id)).toEqual({ status: "open" });
+    expect(sent.filter((m) => m.subject === "Aucun chauffeur disponible")).toEqual([expect.objectContaining({ to: "ama@example.tg" })]);
+    // Logged without an actor, with the reason.
+    const audit = t.db.prepare("select actor, changes from audit_log where table_name = 'delivery_jobs' and row_id = ?").all(booking.id) as { actor: string | null; changes: string }[];
+    expect(audit.some((a) => a.actor === null && JSON.parse(a.changes).reason === "no_driver")).toBe(true);
+  });
+});
+
+describe("a trip the customer calls off", () => {
+  it("tells the driver it was offered to, who goes back into line", async () => {
+    const t = setup();
+    const sent: { to: string; subject: string }[] = [];
+    (t.env as { EMAIL?: unknown }).EMAIL = { send: async (m: { to: string; subject: string }) => void sent.push(m) };
+    const driver = await approvedDriver(t, "d1");
+    t.db.exec("update users set email = 'kodjo@example.tg' where id = 'd1'");
+    await joinQueue(driver.me, B.id, B);
+    const booking = await bookPickup(t.sender, { home: HOME, toStationId: A.id, recipientPhone: "92 00 00 00", content: "Vêtements", size: "M" });
+    await acceptJob(driver.me, booking.id);
+    sent.length = 0;
+    await cancelJob(t.sender, booking.id);
+    expect(sent).toEqual([expect.objectContaining({ to: "kodjo@example.tg", subject: "Course annulée" })]);
+    expect((await driverHome(driver.me)).driver?.queue).toMatchObject({ stationId: B.id });
   });
 });

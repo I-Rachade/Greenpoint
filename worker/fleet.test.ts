@@ -9,7 +9,7 @@ import { fakeD1 } from "./test-d1";
 const OWN_OPERATOR = "00000000-0000-4000-8000-000000000001";
 const ADMIN: Profile = { id: "admin", phone: "+22890000001", email: null, fullName: "Admin", role: "admin" };
 const manager = (id: string): Profile => ({ id, phone: null, email: null, fullName: null, role: "fleet_manager" });
-const driver = (id: string): Profile => ({ id, phone: null, email: null, fullName: null, role: "customer" });
+const driver = (id: string): Profile => ({ id, phone: null, email: null, fullName: null, role: "driver" });
 
 function setup() {
   const { db, d1 } = fakeD1();
@@ -20,9 +20,9 @@ function setup() {
       ('mgr', '+22891000001', null, 'Flotte Est', 'rider', '${now}'),
       ('mgr2', null, 'flotte@example.tg', 'Flotte Ouest', 'rider', '${now}'),
       ('staffer', '+22891000003', null, 'Comptoir', 'operator', '${now}'),
-      ('d1', '+22893000001', null, null, 'rider', '${now}'),
-      ('d2', '+22893000002', null, null, 'rider', '${now}'),
-      ('d3', '+22893000003', null, null, 'rider', '${now}');
+      ('d1', '+22893000001', null, null, 'driver', '${now}'),
+      ('d2', '+22893000002', null, null, 'driver', '${now}'),
+      ('d3', '+22893000003', null, null, 'driver', '${now}');
     insert into stations (id, operator_id, name, lat, lng, kind, created_at) values
       ('st-a', '${OWN_OPERATOR}', 'Station A', 6.1319, 1.2228, 'both', '${now}'),
       ('st-b', '${OWN_OPERATOR}', 'Station B', 6.17, 1.21, 'both', '${now}');

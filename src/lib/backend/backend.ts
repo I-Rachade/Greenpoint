@@ -36,6 +36,8 @@ import type {
   DriverDecision,
   DriverDocument,
   DriverHome,
+  DriverPass,
+  FormerAccount,
   DriverSettings,
   FleetVehicleInput,
   HomePoint,
@@ -173,6 +175,9 @@ export type BackendErrorCode =
   | "outlet_busy"
   | "outlet_required"
   | "swap_required"
+  | "driver_pass_invalid"
+  | "driver_pass_expired"
+  | "role_change_blocked"
   | "unknown";
 
 export class BackendError extends Error {
@@ -354,6 +359,12 @@ export interface Backend {
   // Drivers (see src/lib/drivers.ts)
   /** The signed-in user's driver page: application, current trip, history and cash. */
   driverHome(): Promise<DriverHome>;
+  /** The signed QR code a driver shows at a station; valid DRIVER_PASS_MINUTES (R10). */
+  driverPass(): Promise<DriverPass>;
+  /** Converted drivers (0031): sends a code to the number or address for their waiting customer account. */
+  sendFormerAccountCode(contact: string): Promise<void>;
+  /** With that code and a new PIN, the waiting customer account becomes the person's. */
+  claimFormerAccount(contact: string, code: string, pin: string): Promise<FormerAccount>;
   /** Applies to drive one of our vehicles (again, after a refusal). */
   applyDriver(input: DriverApplication): Promise<void>;
   /** A photo of the ID card, the licence or the applicant (shrunk in the app first). */

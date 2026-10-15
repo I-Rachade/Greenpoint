@@ -19,7 +19,7 @@ import { OtpInput } from "./otp-input";
 import { runsOperator } from "@/lib/operators";
 
 // On the public site the demo only offers the customer view (anyone could otherwise "log in" as admin).
-const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["customer"] : ["customer", "operator", "fleet_manager", "admin"];
+const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["customer"] : ["customer", "operator", "fleet_manager", "driver", "admin"];
 
 /**
  * "pin": everyday login with phone number or e-mail address, and PIN.
@@ -97,7 +97,15 @@ export function LoginForm() {
     // from the address bar because the page is static.
     const next = safeNextPath(new URLSearchParams(window.location.search).get("next"));
     router.push(
-      profile.role === "admin" ? "/admin" : runsOperator(profile) ? "/exploitant" : profile.role === "operator" ? "/operator" : (next ?? "/"),
+      profile.role === "admin"
+        ? "/admin"
+        : runsOperator(profile)
+          ? "/exploitant"
+          : profile.role === "operator"
+            ? "/operator"
+            : profile.role === "driver"
+              ? "/chauffeur"
+              : (next ?? "/"),
     );
   }
 

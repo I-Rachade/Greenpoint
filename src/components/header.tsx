@@ -10,6 +10,7 @@ import { BellIcon, GearIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
 import { isStationStaff, runsOperator, worksAtStations } from "@/lib/operators";
+import { isDriverAccount } from "@/lib/drivers";
 
 export function Header() {
   const { t, locale, setLocale } = useI18n();
@@ -19,16 +20,18 @@ export function Header() {
   const { unread } = useAlerts();
   // The map has its own green header on phones; only the demo notice stays above it.
   const onMap = pathname === "/";
+  // Drivers are never customers (plan phase 5): their home is the driver page.
+  const customer = !!profile && !isDriverAccount(profile);
 
   const links: { href: string; label: string; show: boolean }[] = [
     { href: "/", label: t.nav.map, show: true },
     { href: "/stations", label: t.ui.tabs.stations, show: true },
     { href: "/favoris", label: t.ui.tabs.favorites, show: true },
-    { href: "/reservations", label: t.nav.reservations, show: !!profile },
-    { href: "/colis", label: t.nav.parcels, show: !!profile && features.parcels },
-    { href: "/courses", label: t.ui.tabs.trips, show: !!profile && features.parcels },
-    { href: "/portefeuille", label: t.nav.wallet, show: !!profile && walletShown && features.wallet },
-    { href: "/greenpoint", label: t.nav.greenpoint, show: !!profile && !isStationStaff(profile) },
+    { href: "/reservations", label: t.nav.reservations, show: customer },
+    { href: "/colis", label: t.nav.parcels, show: customer && features.parcels },
+    { href: "/courses", label: t.ui.tabs.trips, show: customer && features.parcels },
+    { href: "/portefeuille", label: t.nav.wallet, show: customer && walletShown && features.wallet },
+    { href: "/greenpoint", label: t.nav.greenpoint, show: customer && !isStationStaff(profile) },
     { href: "/chauffeur", label: t.nav.driver, show: !!profile?.driverStatus && features.parcels },
     { href: "/compte", label: t.nav.account, show: !!profile },
     { href: "/flotte", label: t.nav.fleet, show: profile?.role === "fleet_manager" && features.parcels },

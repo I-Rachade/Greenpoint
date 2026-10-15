@@ -12,7 +12,9 @@ import {
   type DeliveryJob,
   type Driver,
   type DriverHome,
+  type DriverPass,
   type FleetVehicleType,
+  type FormerAccount,
 } from "@/lib/drivers";
 import { directionsUrl, distanceMeters, formatDistance, type LatLng } from "@/lib/geo";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
@@ -25,6 +27,8 @@ import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
 import { QrImage } from "../parcels/qr-image";
+import { Button, Countdown, Input } from "../ui";
+import { PIN_LENGTH } from "@/lib/pin";
 import { input, JobStatusPill, Notice, PhotoButton, primary, secondary, shrinkImage, useFcfa, useJobRoute } from "./shared";
 
 function Card({ title, children, className = "" }: { title?: string; children: ReactNode; className?: string }) {
@@ -136,15 +140,62 @@ function Documents({ driver }: { driver: Driver }) {
   );
 }
 
+/** Ask for a new pass this long before the current one runs out. */
+const PASS_RENEW_MS = 60_000;
+
+/**
+ * The signed, expiring driver pass (R10), renewed before it runs out. Offline, the plain
+ * code still works for parcels and cash, but not for the fleet's battery swaps.
+ */
+function useDriverPass(): { pass: DriverPass | null; failed: boolean } {
+  const { backend } = useApp();
+  const [pass, setPass] = useState<DriverPass | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [round, setRound] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    let timer: number | undefined;
+    backend.driverPass().then(
+      (p) => {
+        if (!alive) return;
+        setPass(p);
+        setFailed(false);
+        const wait = Math.max(5_000, new Date(p.expiresAt).getTime() - Date.now() - PASS_RENEW_MS);
+        timer = window.setTimeout(() => setRound((r) => r + 1), wait);
+      },
+      () => {
+        if (!alive) return;
+        setFailed(true);
+        timer = window.setTimeout(() => setRound((r) => r + 1), 30_000);
+      },
+    );
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [backend, round]);
+  // A pass that ran out (phone asleep) is not shown as valid.
+  const now = useNow(5_000);
+  const valid = pass && new Date(pass.expiresAt) > now ? pass : null;
+  return { pass: valid, failed: failed || (!!pass && !valid) };
+}
+
 function Badge({ driver }: { driver: Driver }) {
   const { t } = useI18n();
+  const { pass, failed } = useDriverPass();
   if (!driver.code) return null;
   return (
     <Card title={t.drivers.page.badgeTitle}>
       <div className="flex flex-wrap items-center gap-4">
-        <QrImage text={driverBadgePayload(driver.code)} label={t.drivers.page.badgeTitle} size={160} />
+        <QrImage text={pass?.payload ?? driverBadgePayload(driver.code)} label={t.drivers.page.badgeTitle} size={160} />
         <div className="space-y-1">
           <div className="font-mono text-2xl font-bold tracking-widest">{driver.code}</div>
+          {pass && (
+            <p className="text-sm">
+              {t.drivers.page.passUntil} <Countdown expiresAt={pass.expiresAt} />
+            </p>
+          )}
+          {!pass && failed && <p className="text-xs text-amber-700 dark:text-amber-300">{t.drivers.page.passOffline}</p>}
           {driver.vehicle && (
             <div className="text-sm">
               {t.drivers.vehicle[driver.vehicle.type]} · <span className="font-mono">{driver.vehicle.plate}</span>
@@ -153,6 +204,82 @@ function Badge({ driver }: { driver: Driver }) {
           <p className="text-xs text-zinc-500">{t.drivers.page.badgeHint}</p>
         </div>
       </div>
+    </Card>
+  );
+}
+
+/** What a converted driver left as a customer (migration 0031), and how to claim it. */
+function FormerAccountCard({ former }: { former: FormerAccount }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { run, busy, status } = useAction();
+  const [contact, setContact] = useState("");
+  const [sentTo, setSentTo] = useState("");
+  const [code, setCode] = useState("");
+  const [pin, setPin] = useState("");
+  const label = "space-y-1 text-sm";
+
+  async function send(e: FormEvent) {
+    e.preventDefault();
+    const to = contact.trim();
+    if (await run(() => backend.sendFormerAccountCode(to), format(t.drivers.page.formerSent, { contact: to }))) setSentTo(to);
+  }
+
+  function claim(e: FormEvent) {
+    e.preventDefault();
+    void run(() => backend.claimFormerAccount(sentTo, code.trim(), pin), t.drivers.page.formerClaimed);
+  }
+
+  return (
+    <Card title={t.drivers.page.formerTitle}>
+      {former.claimable && (
+        <p className="text-sm">{format(t.drivers.page.formerIntro, { balance: former.balanceXof.toLocaleString("fr-FR"), points: former.points })}</p>
+      )}
+      {former.cancelledReservations > 0 && <p className="text-sm">{format(t.drivers.page.formerReservations, { n: former.cancelledReservations })}</p>}
+      {former.claimed && <p className="rounded-lg bg-gp-green/10 p-3 text-sm">{t.drivers.page.formerClaimed}</p>}
+      {former.claimable && !former.claimed && (
+        <>
+          <p className="text-xs text-zinc-500">{t.drivers.page.formerHow}</p>
+          <form onSubmit={send} className="grid gap-3">
+            <label className={label}>
+              <span>{t.drivers.page.formerContact}</span>
+              <Input required autoComplete="off" value={contact} onChange={(e) => setContact(e.target.value)} />
+            </label>
+            <div>
+              <Button type="submit" variant={sentTo ? "secondary" : "primary"} busy={busy && !sentTo}>
+                {t.drivers.page.formerSend}
+              </Button>
+            </div>
+          </form>
+          {sentTo && (
+            <form onSubmit={claim} className="grid gap-3">
+              <label className={label}>
+                <span>{t.login.code}</span>
+                <Input required inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} />
+              </label>
+              <label className={label}>
+                <span>{t.login.newPin}</span>
+                <Input
+                  required
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="new-password"
+                  maxLength={PIN_LENGTH}
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+                />
+              </label>
+              <p className="text-xs text-zinc-500">{t.login.pinHint}</p>
+              <div>
+                <Button type="submit" busy={busy} disabled={pin.length !== PIN_LENGTH}>
+                  {t.drivers.page.formerClaim}
+                </Button>
+              </div>
+            </form>
+          )}
+        </>
+      )}
+      {status}
     </Card>
   );
 }
@@ -608,7 +735,7 @@ function History({ jobs, stations }: { jobs: DeliveryJob[]; stations: StationVie
 /** The driver page (/chauffeur): apply, then queue at a station and carry out trips. */
 export function DriverPanel() {
   const { t } = useI18n();
-  const { backend, features } = useApp();
+  const { backend, features, profile } = useApp();
   const { data, error } = useLiveQuery(() => Promise.all([backend.driverHome(), backend.listStations(), backend.parcelInfo()]));
 
   if (error) return <p className="p-6 text-sm text-red-600">{t.errors.unknown}</p>;
@@ -631,6 +758,9 @@ export function DriverPanel() {
         )}
       </>
     );
+  } else if (profile && profile.role !== "customer" && (!driver || driver.status === "rejected" || driver.status === "pending")) {
+    // Only a customer account applies (one role per account, R15).
+    body = <p className="rounded-xl border border-black/10 p-4 text-sm dark:border-white/10">{t.drivers.page.onlyCustomers}</p>;
   } else if (!driver || driver.status === "rejected") {
     body = (
       <>
@@ -675,6 +805,7 @@ export function DriverPanel() {
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
       <h1 className="text-2xl font-semibold">{t.drivers.page.title}</h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{format(t.drivers.page.intro, { pct: home.settings.driverSharePct })}</p>
+      {home.formerAccount && <FormerAccountCard former={home.formerAccount} />}
       {body}
     </div>
   );

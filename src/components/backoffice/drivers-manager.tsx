@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useApp } from "@/components/app-provider";
+import { ConfirmSheet } from "@/components/confirm-sheet";
 import { JobStatusPill, useJobRoute } from "@/components/drivers/shared";
 import { useI18n } from "@/components/i18n-provider";
 import {
@@ -120,6 +121,15 @@ function DriverRow({ driver, vehicles, drivers, onReport }: { driver: Driver; ve
   const taken = new Set(drivers.filter((d) => d.userId !== driver.userId && d.vehicle).map((d) => d.vehicle!.id));
   const free = vehicles.filter((v) => v.isActive && !taken.has(v.id));
   const review = (decision: DriverDecision) => run(() => backend.reviewDriver(driver.userId, decision));
+  const [releasing, setReleasing] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function release() {
+    setBusy(true);
+    await review({ action: "release" });
+    setBusy(false);
+    setReleasing(false);
+  }
 
   return (
     <tr>
@@ -191,7 +201,25 @@ function DriverRow({ driver, vehicles, drivers, onReport }: { driver: Driver; ve
               {t.drivers.admin.reactivate}
             </button>
           )}
+          {/* R15: the account goes back to customer; the server checks trip, cash and fleet. */}
+          {(driver.status === "active" || driver.status === "suspended") && (
+            <button type="button" className={smallBtn} onClick={() => setReleasing(true)}>
+              {t.drivers.admin.release}
+            </button>
+          )}
         </div>
+        <ConfirmSheet
+          open={releasing}
+          title={t.drivers.admin.releaseTitle}
+          confirmLabel={t.drivers.admin.release}
+          danger
+          busy={busy}
+          onCancel={() => setReleasing(false)}
+          onConfirm={() => void release()}
+        >
+          <p>{driver.fullName}</p>
+          <p>{t.drivers.admin.releaseHint}</p>
+        </ConfirmSheet>
       </td>
     </tr>
   );
@@ -317,7 +345,7 @@ function JobRow({ job, drivers, stationName, onReport }: { job: DeliveryJob; dri
         {job.collectFcfa > 0 && <div className="text-xs text-zinc-500">{job.collectFcfa}</div>}
       </td>
       <td className={td}>
-        <JobStatusPill status={job.status} kind={job.kind} />
+        <JobStatusPill status={job.status} kind={job.kind} noDriver={job.noDriver} />
         {job.driver && <div className="mt-1 text-xs">{job.driver.name}</div>}
         {job.proofKey && <DocLink fileKey={job.proofKey} label="📷" />}
       </td>

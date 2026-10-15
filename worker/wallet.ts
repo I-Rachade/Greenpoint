@@ -26,6 +26,7 @@ import { verifyPin } from "./auth";
 import { cardProviderFromEnv, providerFromEnv } from "./payment-providers";
 import type { Env } from "./env";
 import { liteEnabled } from "./features";
+import { DB_DRIVER, refuseDriver } from "./roles";
 import { ApiError, nowIso, readJson, uuid } from "./http";
 
 // Wallet (Cashplus phase 1). Every booking is one D1 batch, which D1 runs as a
@@ -66,6 +67,7 @@ interface UserRow {
   phone: string | null;
   email: string | null;
   full_name: string | null;
+  role?: string;
 }
 
 const HISTORY_LIMIT = 50;
@@ -108,6 +110,8 @@ async function walletEnabled(env: Env): Promise<boolean> {
 
 /** While the module is off only admins may use it, to test. The Lite version hides it from everyone. */
 export async function walletAccess(env: Env, user: Profile): Promise<{ enabled: boolean; testMode: boolean }> {
+  // Drivers are never customers (R11); their former balance waits in a customer account (0031).
+  refuseDriver(user);
   if (await liteEnabled(env.DB)) throw new ApiError("wallet_disabled", 403);
   const enabled = await walletEnabled(env);
   if (enabled) return { enabled, testMode: false };
@@ -179,7 +183,7 @@ async function findUser(env: Env, rawContact: unknown): Promise<UserRow> {
   const contact = parseContact(text);
   if (!contact) throw new ApiError(text.includes("@") ? "invalid_contact" : "phone_not_allowed");
   const column = contact.kind === "phone" ? "phone" : "email";
-  const row = await env.DB.prepare(`select id, phone, email, full_name from users where ${column} = ?`)
+  const row = await env.DB.prepare(`select id, phone, email, full_name, role from users where ${column} = ?`)
     .bind(contact.value)
     .first<UserRow>();
   if (!row) throw new ApiError("recipient_not_found", 404);
@@ -222,6 +226,7 @@ export async function findRecipient(env: Env, user: Profile, contact: string | n
   await walletAccess(env, user);
   const recipient = await findUser(env, contact);
   if (recipient.id === user.id) throw new ApiError("self_transfer");
+  if (recipient.role === DB_DRIVER) throw new ApiError("not_a_customer", 409);
   return { label: label(recipient) };
 }
 
@@ -242,6 +247,8 @@ export async function sendMoney(env: Env, user: Profile, request: Request): Prom
 
   const recipient = await findUser(env, input.contact);
   if (recipient.id === user.id) throw new ApiError("self_transfer");
+  // Drivers have no wallet (R11).
+  if (recipient.role === DB_DRIVER) throw new ApiError("not_a_customer", 409);
   await verifyPin(env, user.id, input.pin);
 
   const setting = await feeSetting(env, "transfer");

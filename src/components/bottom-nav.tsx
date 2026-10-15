@@ -8,6 +8,7 @@ import { BoxIcon, ListIcon, MapIcon, ScooterIcon, StoreIcon, UserIcon } from "./
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
 import { isStationStaff } from "@/lib/operators";
+import { isDriverAccount } from "@/lib/drivers";
 
 /** Screens without the tab bar: sign-in, and the staff and admin tools. */
 const HIDDEN_PREFIXES = ["/login", "/admin", "/operator"];
@@ -22,6 +23,8 @@ export function BottomNav() {
   const { unread } = useAlerts();
   // Station staff only get the map, their station and their account.
   const staff = isStationStaff(profile);
+  // Drivers get the map, their driver page and their account (plan phase 5).
+  const driver = isDriverAccount(profile);
   const hidden = (staff ? STAFF_HIDDEN_PREFIXES : HIDDEN_PREFIXES).some((p) => pathname.startsWith(p));
 
   useEffect(() => {
@@ -36,8 +39,9 @@ export function BottomNav() {
     { href: "/", label: t.ui.tabs.map, icon: MapIcon, active: pathname === "/", show: true },
     { href: "/stations", label: t.ui.tabs.stations, icon: ListIcon, active: pathname.startsWith("/stations") || pathname.startsWith("/station"), show: !staff },
     { href: "/operator", label: t.ui.tabs.myStation, icon: StoreIcon, active: pathname.startsWith("/operator"), show: staff },
-    { href: "/colis", label: t.ui.tabs.parcels, icon: BoxIcon, active: pathname.startsWith("/colis"), show: features.parcels && !staff },
-    { href: "/courses", label: t.ui.tabs.trips, icon: ScooterIcon, active: pathname.startsWith("/courses"), show: features.parcels && !staff },
+    { href: "/chauffeur", label: t.nav.driver, icon: ScooterIcon, active: pathname.startsWith("/chauffeur"), show: driver },
+    { href: "/colis", label: t.ui.tabs.parcels, icon: BoxIcon, active: pathname.startsWith("/colis"), show: features.parcels && !staff && !driver },
+    { href: "/courses", label: t.ui.tabs.trips, icon: ScooterIcon, active: pathname.startsWith("/courses"), show: features.parcels && !staff && !driver },
     {
       href: profile ? "/compte" : "/login",
       label: t.ui.tabs.account,

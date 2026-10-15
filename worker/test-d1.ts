@@ -33,11 +33,30 @@ export class Statement {
   }
 }
 
-export function fakeD1() {
+const MIGRATIONS = new URL("./migrations/", import.meta.url);
+
+/** The migration files in the order D1 applies them. */
+export function migrationFiles(): string[] {
+  return readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort();
+}
+
+/** Applies one migration file in a transaction, as D1 does (a failing file changes nothing). */
+export function applyMigration(db: DatabaseSync, file: string) {
+  db.exec("begin");
+  try {
+    db.exec(readFileSync(new URL(file, MIGRATIONS), "utf8"));
+    db.exec("commit");
+  } catch (err) {
+    db.exec("rollback");
+    throw err;
+  }
+}
+
+/** `before`: only the migrations whose file name sorts before it (to test a migration on data). */
+export function fakeD1(options: { before?: string } = {}) {
   const db = new DatabaseSync(":memory:");
   db.exec("pragma foreign_keys = on"); // as in D1
-  const dir = new URL("./migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) db.exec(readFileSync(new URL(file, dir), "utf8"));
+  for (const file of migrationFiles()) if (!options.before || file < options.before) db.exec(readFileSync(new URL(file, MIGRATIONS), "utf8"));
   const d1 = {
     prepare: (sql: string) => new Statement(db, sql),
     async batch(statements: Statement[]) {

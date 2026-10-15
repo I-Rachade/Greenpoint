@@ -1,10 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
+import { DRIVER_PASS_MINUTES, signDriverPass, type DriverPass } from "../src/lib/drivers";
 import { applyBatteryEvent, type BatteryEventView, type StationCounter, type SwapEntry } from "../src/lib/station-work";
 import type { StationView } from "../src/lib/types";
 import { handleApi } from "./api";
 import { hashPin } from "./auth";
 import type { Env } from "./env";
+import { passSecret } from "./drivers";
 import { setLiteEnabled } from "./features";
 import { sha256 } from "./http";
 import { roleToDb } from "./roles";
@@ -23,8 +25,8 @@ const USERS = [
   { id: "afi", phone: "+22890000004", name: "Afi", role: "operator" as const }, // staff at be
   { id: "ama", phone: "+22890000005", name: "Ama", role: "customer" as const }, // rider with a wallet
   { id: "edem", phone: "+22890000006", name: "Edem", role: "fleet_manager" as const },
-  { id: "kofi", phone: "+22890000007", name: "Kofi", role: "customer" as const }, // driver in Edem's fleet
-  { id: "yawa", phone: "+22890000008", name: "Yawa", role: "customer" as const }, // driver without fleet
+  { id: "kofi", phone: "+22890000007", name: "Kofi", role: "driver" as const }, // driver in Edem's fleet
+  { id: "yawa", phone: "+22890000008", name: "Yawa", role: "driver" as const }, // driver without fleet
 ];
 const KOFI_CODE = "ABCDEFGH";
 const YAWA_CODE = "HGFEDCBA";
@@ -64,6 +66,11 @@ async function setup() {
     insert into fleet_manager_drivers (driver_id, manager_id, created_at) values ('kofi', 'edem', '${now}');
   `);
   return { db, env };
+}
+
+/** The signed QR the driver's app shows (GET /api/driver/pass). */
+async function pass(env: Env, driver: string): Promise<string> {
+  return (await call<DriverPass>(env, driver, "GET", "/api/driver/pass")).body.payload;
 }
 
 let seq = 0;
@@ -297,13 +304,49 @@ describe("swaps (W7, R6, R9, R10)", () => {
 
   it("bills a fleet swap to the fleet of a valid driver QR only (R10)", async () => {
     const { env, db } = await setup();
-    const ok = await swap(env, "afi", "be", { customerType: "fleet", driverCode: `POINDERECHARGE-CHAUFFEUR:${KOFI_CODE}` });
+    const kofi = await pass(env, "kofi");
+    const ok = await swap(env, "afi", "be", { customerType: "fleet", driverCode: kofi });
     expect(ok.body).toMatchObject({ customerType: "fleet", payment: "fleet", amountXof: 500, driver: "Kofi" });
     expect(db.prepare("select fleet_manager_id from swap_log").get()).toEqual({ fleet_manager_id: "edem" });
-    expect((await swap(env, "afi", "be", { customerType: "fleet", driverCode: YAWA_CODE })).body).toEqual({ error: "wrong_fleet" });
-    expect((await swap(env, "afi", "be", { customerType: "fleet", driverCode: "ZZZZZZZZ" })).status).toBe(404);
+    const refused = async (driverCode: string) => (await swap(env, "afi", "be", { customerType: "fleet", driverCode })).body;
+    // The typed code or the old static QR are not enough: the swap is billed to the fleet.
+    expect(await refused(KOFI_CODE)).toEqual({ error: "driver_pass_invalid" });
+    expect(await refused(`POINDERECHARGE-CHAUFFEUR:${KOFI_CODE}`)).toEqual({ error: "driver_pass_invalid" });
+    // Tampered: another driver's code under Kofi's signature, or a later expiry.
+    expect(await refused(kofi.replace(KOFI_CODE, YAWA_CODE))).toEqual({ error: "driver_pass_invalid" });
+    const parts = kofi.split(":");
+    expect(await refused([...parts.slice(0, 3), (parseInt(parts[3], 36) + 3600).toString(36).toUpperCase(), parts[4]].join(":"))).toEqual({
+      error: "driver_pass_invalid",
+    });
+    // Expired.
+    const old = await signDriverPass(await passSecret(env.DB), KOFI_CODE, "edem", Date.now() - (DRIVER_PASS_MINUTES + 1) * 60_000);
+    expect(await refused(old.payload)).toEqual({ error: "driver_pass_expired" });
+    // A driver without a fleet.
+    expect(await refused(await pass(env, "yawa"))).toEqual({ error: "wrong_fleet" });
+    // Moved to another fleet since the pass was made, then removed from it.
+    db.exec("update fleet_manager_drivers set manager_id = 'yao' where driver_id = 'kofi'");
+    expect(await refused(kofi)).toEqual({ error: "wrong_fleet" });
+    db.exec("delete from fleet_manager_drivers where driver_id = 'kofi'");
+    expect(await refused(kofi)).toEqual({ error: "wrong_fleet" });
+    db.exec("insert into fleet_manager_drivers (driver_id, manager_id, created_at) values ('kofi', 'edem', 'x')");
+    expect((await swap(env, "afi", "be", { customerType: "fleet", driverCode: kofi })).status).toBe(200);
+    // Suspended, or not a driver account any more.
     db.exec("update drivers set status = 'suspended' where user_id = 'kofi'");
-    expect((await swap(env, "afi", "be", { customerType: "fleet", driverCode: KOFI_CODE })).body).toEqual({ error: "driver_not_found" });
+    expect(await refused(kofi)).toEqual({ error: "driver_not_found" });
+    db.exec("update drivers set status = 'active' where user_id = 'kofi'; update users set role = 'rider' where id = 'kofi'");
+    expect(await refused(kofi)).toEqual({ error: "driver_not_found" });
+    expect(count(db, "select count(*) as n from swap_log")).toBe(2);
+  });
+
+  it("gives the driver pass to active drivers only", async () => {
+    const { env, db } = await setup();
+    const res = await call<DriverPass>(env, "kofi", "GET", "/api/driver/pass");
+    expect(res.status).toBe(200);
+    expect(res.body.payload).toMatch(new RegExp(`^POINDERECHARGE-CHAUFFEUR:${KOFI_CODE}:`));
+    expect(new Date(res.body.expiresAt).getTime() - Date.now()).toBeGreaterThan((DRIVER_PASS_MINUTES - 1) * 60_000);
+    for (const as of ["ama", "afi", "edem", "admin"]) expect((await call(env, as, "GET", "/api/driver/pass")).status).toBe(403);
+    db.exec("update drivers set status = 'suspended' where user_id = 'kofi'");
+    expect((await call(env, "kofi", "GET", "/api/driver/pass")).status).toBe(403);
   });
 
   it("takes only cash in the Lite version (W8, R9)", async () => {
@@ -327,7 +370,7 @@ describe("swaps (W7, R6, R9, R10)", () => {
   it("lists today's swaps of the station with a filter; staff only see their own", async () => {
     const { env } = await setup();
     await swap(env, "afi", "be", { customerType: "cash" });
-    await swap(env, "yao", "be", { customerType: "fleet", driverCode: KOFI_CODE }, "be");
+    await swap(env, "yao", "be", { customerType: "fleet", driverCode: await pass(env, "kofi") }, "be");
     const all = (await call<SwapEntry[]>(env, "yao", "GET", "/api/stations/be/swaps")).body;
     expect(all.map((s) => s.customerType).sort()).toEqual(["cash", "fleet"]);
     expect((await call<SwapEntry[]>(env, "yao", "GET", "/api/stations/be/swaps?customerType=fleet")).body.map((s) => s.customerType)).toEqual(["fleet"]);

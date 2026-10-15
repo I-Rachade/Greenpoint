@@ -19,6 +19,7 @@ import { MenuButton, MenuGroup, MenuLink } from "./menu";
 import { PageTitle } from "./page-title";
 import { isStationStaff, runsOperator, worksAtStations } from "@/lib/operators";
 import { managesFleet } from "@/lib/fleet";
+import { isDriverAccount } from "@/lib/drivers";
 
 const CODE_LENGTH = 6;
 const digits = (value: string) => value.replace(/\D/g, "").slice(0, CODE_LENGTH);
@@ -38,6 +39,7 @@ export function AccountPanel() {
   const { t } = useI18n();
   const { backend, profile, ready, features } = useApp();
   const walletShown = useWalletShown();
+  const driver = isDriverAccount(profile);
   const { unread } = useAlerts();
   const [deleted, setDeleted] = useState(false);
   const a = t.ui.account;
@@ -86,15 +88,18 @@ export function AccountPanel() {
             </div>
           </section>
 
-          {(profile.phone || profile.email) && <MyCode contact={(profile.phone ?? profile.email)!} />}
+          {/* The customer's own code (swaps, wallet); drivers show their driver QR on /chauffeur instead. */}
+          {(profile.phone || profile.email) && !driver && <MyCode contact={(profile.phone ?? profile.email)!} />}
 
-          <MenuGroup title={a.menu} top={isStationStaff(profile) ? undefined : <GreenpointHighlight />}>
+          <MenuGroup title={a.menu} top={isStationStaff(profile) || driver ? undefined : <GreenpointHighlight />}>
+            {driver && <MenuLink href="/chauffeur" icon={ScooterIcon} label={t.nav.driver} />}
             <MenuLink href="/favoris" icon={HeartIcon} label={t.ui.tabs.favorites} />
             <MenuLink href="/notifications" icon={BellIcon} label={t.ui.tabs.alerts} value={unread > 0 ? unread : undefined} />
-            <MenuLink href="/reservations" icon={TicketIcon} label={t.nav.reservations} />
+            {/* Drivers are never customers (plan phase 5): no reservations, wallet or greenpoints. */}
+            {!driver && <MenuLink href="/reservations" icon={TicketIcon} label={t.nav.reservations} />}
             {walletShown && features.wallet && <MenuLink href="/portefeuille" icon={WalletIcon} label={t.nav.wallet} />}
-            {/* Existing drivers keep their page (balance, a trip under way); new ones apply once the driver module is on. */}
-            {features.parcels && (features.drivers || !!profile.driverStatus) && (
+            {/* Customers apply once the driver module is on, and keep their application page. */}
+            {profile.role === "customer" && features.parcels && (features.drivers || !!profile.driverStatus) && (
               <MenuLink href="/chauffeur" icon={ScooterIcon} label={profile.driverStatus ? t.nav.driver : t.account.becomeDriver} />
             )}
             {features.parcels && managesFleet(profile) && <MenuLink href="/flotte" icon={ScooterIcon} label={t.nav.fleet} />}

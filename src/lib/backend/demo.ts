@@ -129,6 +129,12 @@ import {
   nearestStation,
   newDriverCode,
   parseDriverBadge,
+  checkDriverPass,
+  fleetTag,
+  signDriverPass,
+  OPEN_JOB_EXPIRY_MINUTES,
+  type DriverPass,
+  type FormerAccount,
   pickDriver,
   validPoint,
   validSettings,
@@ -308,7 +314,7 @@ interface DemoState {
   /** Swap price per station in FCFA (stations.price_battery_xof); missing = DEMO_SWAP_PRICE at own stations. */
   swapPrices?: Record<string, number | null>;
   /** Swap log, newest first (as table swap_log). */
-  swaps?: (SwapEntry & { requestId: string; staffId: string; customerId: string | null })[];
+  swaps?: (SwapEntry & { requestId: string; staffId: string; customerId: string | null; driverId?: string | null })[];
 }
 
 interface DemoServiceRow {
@@ -340,6 +346,9 @@ interface DemoWallet {
 
 /** Starting balance of every demo wallet, so sending money can be tried right away. */
 export const DEMO_WALLET_START = 25_000;
+
+/** Signs the demo's driver passes (app_settings.driver_pass_secret on Cloudflare). */
+const DEMO_PASS_SECRET = "demo-driver-pass";
 
 function demoTopupView(t: WalletTopup): WalletTopup {
   return { id: t.id, amountXof: t.amountXof, network: t.network, status: t.status, failureReason: t.failureReason, createdAt: t.createdAt, paidAt: t.paidAt };
@@ -825,8 +834,9 @@ export class DemoBackend implements Backend {
       id: `demo-${demoRole}`,
       phone: isEmail ? null : contact,
       email: isEmail ? contact : null,
-      fullName: known?.fullName ?? null,
-      role: demoRole,
+      fullName: known?.fullName ?? (demoRole === "driver" ? "Kodjo (chauffeur)" : null),
+      // A demo customer approved as a driver stays a driver account (as on Cloudflare).
+      role: known?.role === "driver" ? "driver" : demoRole,
       ownerOf: ownedOperators(state, `demo-${demoRole}`),
     };
     const signedIn: AdminUser = {
@@ -834,8 +844,77 @@ export class DemoBackend implements Backend {
       createdAt: known?.createdAt ?? new Date().toISOString(),
       lastSignInAt: new Date().toISOString(),
     };
-    this.save({ ...state, profile, users: [signedIn, ...users.filter((u) => u.id !== profile.id)] });
+    this.save({ ...state, profile, users: [signedIn, ...users.filter((u) => u.id !== profile.id)], ...this.demoDriverSeed(state, profile) });
     return profile;
+  }
+
+  /** The demo driver login comes with an approved driver on the moto, in the demo fleet. */
+  private demoDriverSeed(state: DemoState, profile: Profile): Partial<DemoState> {
+    if (profile.id !== "demo-driver" || (state.drivers ?? []).some((d) => d.userId === profile.id)) return {};
+    const fleet = state.fleet ?? seedFleet();
+    const taken = new Set((state.drivers ?? []).map((d) => d.vehicleId));
+    const vehicle = fleet.find((v) => v.isActive && !taken.has(v.id));
+    const driver: DemoDriver = {
+      userId: profile.id,
+      status: "active",
+      fullName: profile.fullName ?? "Kodjo",
+      phone: profile.phone,
+      idNumber: "TG-DEMO-01",
+      licenseNumber: "PC-DEMO-01",
+      wantedType: vehicle?.type ?? "moto",
+      documents: {},
+      vehicleId: vehicle?.id ?? null,
+      code: newDriverCode(),
+      createdAt: new Date().toISOString(),
+      reviewedAt: new Date().toISOString(),
+    };
+    return {
+      drivers: [driver, ...(state.drivers ?? [])],
+      fleetLinks: [...(state.fleetLinks ?? []), { driverId: profile.id, managerId: "demo-fleet_manager" }],
+    };
+  }
+
+  /** The role of an account (users.role on Cloudflare). */
+  private roleOf(state: DemoState, userId: string): UserRole | null {
+    if (state.profile?.id === userId) return state.profile.role;
+    return (state.users ?? demoUsers(new Date())).find((u) => u.id === userId)?.role ?? null;
+  }
+
+  /** As drives() in worker/drivers.ts: an approved, active driver on a driver account. */
+  private drives(state: DemoState, d: DemoDriver | undefined | null): d is DemoDriver {
+    return !!d && d.status === "active" && this.roleOf(state, d.userId) === "driver";
+  }
+
+  /** Changes the role of an account in the user list and, when signed in, in the profile. */
+  private withRole(state: DemoState, userId: string, role: UserRole): DemoState {
+    return {
+      ...state,
+      users: (state.users ?? demoUsers(new Date())).map((u) => (u.id === userId ? { ...u, role } : u)),
+      profile: state.profile?.id === userId ? { ...state.profile, role } : state.profile,
+    };
+  }
+
+  /** R11: a driver account is never a customer (refuseDriver in worker/roles.ts). */
+  private refuseDriver(profile: Profile) {
+    if (profile.role === "driver") throw new BackendError("forbidden");
+  }
+
+  /** R15 (customerThingsOpen in worker/drivers.ts): money, an active reservation, an open parcel or a booked trip. */
+  private customerThingsOpen(state: DemoState, userId: string, phone: string | null): boolean {
+    const now = new Date().toISOString();
+    if (this.wallet(state).balances[userId] && this.balance(this.wallet(state), userId) > 0) return true;
+    if (state.reservations.some((r) => r.userId === userId && r.status === "active" && r.expiresAt > now)) return true;
+    const open = ["deposited", "in_transit", "arrived", "stored"];
+    if (
+      (state.parcels ?? []).some(
+        (p) =>
+          open.includes(p.status) &&
+          (p.sender.userId === userId || p.recipient.userId === userId || (!!phone && (p.sender.phone === phone || p.recipient.phone === phone))),
+      )
+    ) {
+      return true;
+    }
+    return (state.jobs ?? []).some((j) => j.customerUserId === userId && !["done", "failed", "cancelled"].includes(j.status));
   }
 
   async signOut() {
@@ -1307,11 +1386,13 @@ export class DemoBackend implements Backend {
       customer = findCustomer(input.contact);
     } else if (type === "fleet") {
       if (features.lite) throw new BackendError("cash_only");
-      const code = parseDriverBadge(String(input.driverCode ?? ""));
-      const d = code ? (state.drivers ?? []).find((x) => x.code === code) : undefined;
-      if (!d || d.status !== "active") throw new BackendError("driver_not_found");
+      // R10: the signed pass from the driver page, not the bare code (findFleetDriver in worker/station-work.ts).
+      const pass = await checkDriverPass(DEMO_PASS_SECRET, String(input.driverCode ?? ""));
+      if (!pass.ok) throw new BackendError(pass.error);
+      const d = (state.drivers ?? []).find((x) => x.code === pass.code);
+      if (!this.drives(state, d)) throw new BackendError("driver_not_found");
       const link = (state.fleetLinks ?? []).find((l) => l.driverId === d.userId);
-      if (!link) throw new BackendError("wrong_fleet");
+      if (!link || fleetTag(link.managerId) !== pass.fleet) throw new BackendError("wrong_fleet");
       if (d.userId === actor.profile.id) throw new BackendError("own_reservation");
       driver = { driverId: d.userId, managerId: link.managerId, label: personLabel({ fullName: d.fullName, phone: d.phone, email: null }) };
     }
@@ -1395,7 +1476,7 @@ export class DemoBackend implements Backend {
       role: actor.role,
       createdAt: new Date().toISOString(),
     };
-    next = { ...next, swaps: [{ ...entry, requestId: input.requestId, staffId: actor.profile.id, customerId: customer?.id ?? null }, ...(next.swaps ?? [])].slice(0, 1000) };
+    next = { ...next, swaps: [{ ...entry, requestId: input.requestId, staffId: actor.profile.id, customerId: customer?.id ?? null, driverId: driver?.driverId ?? null }, ...(next.swaps ?? [])].slice(0, 1000) };
     if (reservation) {
       const done = reservation.id;
       next = { ...next, reservations: next.reservations.map((x) => (x.id === done ? { ...x, status: "completed" as const } : x)) };
@@ -1629,7 +1710,10 @@ export class DemoBackend implements Backend {
     const users = state.users ?? demoUsers(new Date());
     const before = users.find((u) => u.id === userId);
     if (!before) throw new BackendError("unknown", "user not found");
+    // R15: driver accounts change only through the driver review (approve / release).
+    if (role === "driver") throw new BackendError("unknown", "bad_request");
     if (before.role === role) return;
+    if (before.role === "driver") throw new BackendError("has_other_role");
     let next = withAudit(
       { ...state, users: users.map((u) => (u.id === userId ? { ...u, role } : u)) },
       { table: "profiles", action: "update", rowId: userId, userId, changes: { role: [before.role, role] } },
@@ -2520,8 +2604,18 @@ export class DemoBackend implements Backend {
     const stale = new Date(Date.now() - s.acceptMinutes * 60_000).toISOString();
     const now = new Date().toISOString();
     const expired = (state.jobs ?? []).filter((j) => j.status === "assigned" && j.assignedAt && j.assignedAt < stale);
+    // Trips nobody took in time are called off (expireOpenJobs in worker/drivers.ts); express parcels wait for the run.
+    const tooOld = new Date(Date.now() - OPEN_JOB_EXPIRY_MINUTES * 60_000).toISOString();
+    const lapsed = (state.jobs ?? []).filter((j) => j.status === "open" && j.kind !== "express" && j.createdAt < tooOld);
     let jobs = (state.jobs ?? []).map((j) =>
-      expired.includes(j) ? { ...j, status: "open" as const, driverId: null, assignedAt: null, declined: [...j.declined, j.driverId ?? ""] } : j,
+      expired.includes(j)
+        ? { ...j, status: "open" as const, driverId: null, assignedAt: null, declined: [...j.declined, j.driverId ?? ""] }
+        : lapsed.includes(j)
+          ? { ...j, status: "cancelled" as const, doneAt: now, noDriver: true }
+          : j,
+    );
+    const parcels = (state.parcels ?? []).map((p) =>
+      lapsed.some((j) => j.parcelId === p.id && j.kind === "delivery") && p.deliveryStatus === "booked" ? { ...p, deliveryStatus: null } : p,
     );
     let queue = [...(state.driverQueue ?? [])];
     const fleet = state.fleet ?? seedFleet();
@@ -2530,7 +2624,7 @@ export class DemoBackend implements Backend {
       if (!j.driverId || !j.driverStationId || queue.some((q) => q.driverId === j.driverId)) continue;
       const d = (state.drivers ?? []).find((x) => x.userId === j.driverId);
       const v = fleet.find((x) => x.id === d?.vehicleId);
-      if (d?.status === "active" && v?.isActive && this.balanceOfDriver(state, d.userId) < s.cashLimitFcfa) {
+      if (this.drives(state, d) && v?.isActive && this.balanceOfDriver(state, d.userId) < s.cashLimitFcfa) {
         queue.push({ driverId: d.userId, stationId: j.driverStationId, since: now });
       }
     }
@@ -2546,7 +2640,7 @@ export class DemoBackend implements Backend {
         .map((q) => {
           const d = drivers.find((x) => x.userId === q.driverId);
           const v = fleet.find((x) => x.id === d?.vehicleId);
-          return d?.status === "active" && v?.isActive ? { ...q, vehicleType: v.type } : null;
+          return this.drives(state, d) && v?.isActive ? { ...q, vehicleType: v.type } : null;
         })
         .filter((q) => q !== null);
       const weight = job.weightKg ?? tiers.find((t) => t.size === job.size)?.maxWeightKg ?? 50;
@@ -2558,7 +2652,12 @@ export class DemoBackend implements Backend {
       );
     }
     if (expired.length || JSON.stringify(jobs) !== JSON.stringify(state.jobs ?? []) || queue.length !== (state.driverQueue ?? []).length) {
-      this.save({ ...state, jobs, driverQueue: queue, drivers });
+      const next = { ...state, jobs, driverQueue: queue, drivers, parcels: state.parcels ? parcels : state.parcels };
+      this.save(
+        lapsed.length
+          ? withAudit(next, { table: "delivery_jobs", action: "update", rowId: lapsed.map((j) => j.id).join(","), changes: { status: ["open", "cancelled"], reason: "no_driver" } })
+          : next,
+      );
     }
   }
 
@@ -2598,7 +2697,7 @@ export class DemoBackend implements Backend {
   private demoDriver(state: DemoState): { profile: Profile; driver: DemoDriver } {
     const profile = this.requireProfile(state);
     const driver = (state.drivers ?? []).find((d) => d.userId === profile.id);
-    if (!driver || driver.status !== "active") throw new BackendError("not_a_driver");
+    if (profile.role !== "driver" || !this.drives(state, driver)) throw new BackendError("not_a_driver");
     return { profile, driver };
   }
 
@@ -2619,7 +2718,8 @@ export class DemoBackend implements Backend {
     const profile = this.requireProfile(state);
     const settings = this.settingsOf(state);
     const d = (state.drivers ?? []).find((x) => x.userId === profile.id);
-    if (!d) return { driver: null, job: null, history: [], ledger: [], settings, lastExpiredAt: null };
+    // Converted accounts only exist on Cloudflare (migration 0031): nothing waits in the demo.
+    if (!d) return { driver: null, job: null, history: [], ledger: [], settings, lastExpiredAt: null, formerAccount: null };
     const mine = (state.jobs ?? []).filter((j) => j.driverId === profile.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const busy = mine.find((j) => BUSY_JOB_STATUSES.includes(j.status));
     return {
@@ -2629,13 +2729,37 @@ export class DemoBackend implements Backend {
       ledger: (state.ledger ?? []).filter((e) => e.driverId === profile.id).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 100),
       settings,
       lastExpiredAt: d.lastExpiredAt ?? null,
+      formerAccount: null,
     };
+  }
+
+  async driverPass(): Promise<DriverPass> {
+    const state = this.load();
+    const { driver } = this.demoDriver(state);
+    const link = (state.fleetLinks ?? []).find((l) => l.driverId === driver.userId);
+    return signDriverPass(DEMO_PASS_SECRET, driver.code, link?.managerId ?? null);
+  }
+
+  async sendFormerAccountCode(contact: string) {
+    void contact;
+    this.demoDriver(this.load());
+    throw new BackendError("account_not_found");
+  }
+
+  async claimFormerAccount(contact: string, code: string, pin: string): Promise<FormerAccount> {
+    void contact;
+    void code;
+    void pin;
+    this.demoDriver(this.load());
+    throw new BackendError("account_not_found");
   }
 
   async applyDriver(input: DriverApplication) {
     const state = this.load();
     const profile = this.requireProfile(state);
     this.requireDrivers(state);
+    // Customers apply; a driver account already drives, staff and managers keep their role.
+    if (profile.role !== "customer") throw new BackendError("forbidden");
     if (!profile.phone) throw new BackendError("phone_required");
     const text = (v: string, min: number) => {
       const t = (v ?? "").trim();
@@ -2660,6 +2784,7 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const profile = this.requireProfile(state);
     this.requireDrivers(state);
+    if (profile.role !== "customer") throw new BackendError("forbidden");
     const driver = (state.drivers ?? []).find((d) => d.userId === profile.id);
     if (!driver || (driver.status !== "pending" && driver.status !== "rejected")) throw new BackendError("forbidden");
     if (image.size > MAX_PROMO_IMAGE_BYTES / 4) throw new BackendError("image_too_large");
@@ -2910,6 +3035,7 @@ export class DemoBackend implements Backend {
   async bookPickup(input: PickupBooking): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
+    this.refuseDriver(profile);
     this.requireDrivers(state);
     const home = this.cleanHome(input.home);
     if (!this.depotOpen(state, input.toStationId)) throw new BackendError("depot_inactive");
@@ -2953,6 +3079,7 @@ export class DemoBackend implements Backend {
   async bookRide(input: RideBooking): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
+    this.refuseDriver(profile);
     this.requireDrivers(state);
     const pickup = this.cleanHome(input.pickup);
     const d = this.cleanDropoff(input.dropoff);
@@ -2994,6 +3121,7 @@ export class DemoBackend implements Backend {
   async bookCourier(input: CourierBooking): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
+    this.refuseDriver(profile);
     this.requireDrivers(state);
     const pickup = this.cleanHome(input.pickup);
     const dropoff = this.cleanDropoff(input.dropoff);
@@ -3042,6 +3170,7 @@ export class DemoBackend implements Backend {
   async bookDelivery(parcelId: string, input: HomePoint): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
+    this.refuseDriver(profile);
     this.requireDrivers(state);
     const home = this.cleanHome(input);
     const parcel = this.parcelsOf(state).find((p) => p.id === parcelId);
@@ -3119,8 +3248,8 @@ export class DemoBackend implements Backend {
 
   private byBadge(state: DemoState, badge: string): DemoDriver {
     const code = parseDriverBadge(badge);
-    const driver = (state.drivers ?? []).find((d) => d.code === code && d.status === "active");
-    if (!code || !driver) throw new BackendError("driver_not_found");
+    const driver = (state.drivers ?? []).find((d) => d.code === code);
+    if (!code || !this.drives(state, driver)) throw new BackendError("driver_not_found");
     return driver;
   }
 
@@ -3330,13 +3459,46 @@ export class DemoBackend implements Backend {
     let next: DemoDriver = d;
     let queue = state.driverQueue ?? [];
     let jobs = state.jobs ?? [];
+    let base: DemoState = state;
+    const role = this.roleOf(state, userId);
     switch (decision.action) {
-      case "approve":
+      case "approve": {
         if (d.status !== "pending" && d.status !== "rejected") throw new BackendError("forbidden");
         if (!d.documents.id || !d.documents.license || !d.documents.portrait) throw new BackendError("documents_missing");
+        // The customer account becomes a driver account (one role per account).
+        if (role !== "customer" && role !== "driver") throw new BackendError("has_other_role");
+        if (role === "customer" && this.customerThingsOpen(state, userId, d.phone)) throw new BackendError("role_change_blocked");
         vehicleFree(decision.vehicleId);
         next = { ...d, status: "active", vehicleId: decision.vehicleId, reviewedAt: now };
+        if (role === "customer") {
+          base = withAudit(this.withRole(state, userId, "driver"), {
+            table: "profiles",
+            action: "update",
+            rowId: userId,
+            userId,
+            changes: { role: ["customer", "driver"] },
+          });
+        }
         break;
+      }
+      case "release": {
+        // R15: back to customer only with no trip under way, no cash open and out of any fleet.
+        if (role !== "driver") throw new BackendError("forbidden");
+        if (busy) throw new BackendError("driver_busy");
+        if ((state.fleetLinks ?? []).some((l) => l.driverId === userId) || this.balanceOfDriver(state, userId) !== 0) {
+          throw new BackendError("role_change_blocked");
+        }
+        const released = withAudit(
+          {
+            ...this.withRole(state, userId, "customer"),
+            drivers: (state.drivers ?? []).filter((x) => x.userId !== userId),
+            driverQueue: queue.filter((q) => q.driverId !== userId),
+          },
+          { table: "drivers", action: "update", rowId: userId, userId, changes: { status: [d.status, null], released: true } },
+        );
+        this.save(withAudit(released, { table: "profiles", action: "update", rowId: userId, userId, changes: { role: ["driver", "customer"] } }));
+        return;
+      }
       case "reject":
         if (d.status !== "pending") throw new BackendError("forbidden");
         next = { ...d, status: "rejected", reviewedAt: now };
@@ -3361,7 +3523,7 @@ export class DemoBackend implements Backend {
     }
     this.save(
       withAudit(
-        { ...state, drivers: (state.drivers ?? []).map((x) => (x.userId === userId ? next : x)), driverQueue: queue, jobs, fleet },
+        { ...base, drivers: (state.drivers ?? []).map((x) => (x.userId === userId ? next : x)), driverQueue: queue, jobs, fleet },
         { table: "drivers", action: "update", rowId: userId, userId, changes: diff(d, next) },
       ),
     );
@@ -3416,7 +3578,7 @@ export class DemoBackend implements Backend {
   private handJob(state: DemoState, job: DemoJob, driverId: string, by: "admin" | "fleet") {
     const d = (state.drivers ?? []).find((x) => x.userId === driverId);
     const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === d?.vehicleId);
-    if (!d || d.status !== "active" || !vehicle?.isActive) throw new BackendError("driver_not_found");
+    if (!this.drives(state, d) || !vehicle?.isActive) throw new BackendError("driver_not_found");
     if (this.busyJob(state, driverId)) throw new BackendError("driver_busy");
     const weight = job.weightKg ?? (state.parcelSizes ?? DEFAULT_PARCEL_SIZES).find((t) => t.size === job.size)?.maxWeightKg ?? 50;
     if (!jobFits({ ...job, vehicleType: job.vehicleType ?? null, passengers: job.passengers ?? null }, vehicle.type, weight, this.settingsOf(state))) {
@@ -3527,7 +3689,10 @@ export class DemoBackend implements Backend {
           earningFcfa: sum("earning"),
           collectedFcfa: sum("collected"),
           settledFcfa: sum("settlement"),
-          batterySwaps: visits.filter((r) => r.type === "battery").length,
+          // Plus the swaps at the counter with the driver's pass, billed to the fleet.
+          batterySwaps:
+            visits.filter((r) => r.type === "battery").length +
+            (state.swaps ?? []).filter((x) => x.customerType === "fleet" && x.driverId === d.userId && inRange(x.createdAt)).length,
           chargingSlots: visits.filter((r) => r.type === "slot").length,
           // The demo has no app payments.
           chargingPaidFcfa: 0,
@@ -3737,6 +3902,7 @@ export class DemoBackend implements Backend {
 
   private walletAccess(state: DemoState): Profile {
     const profile = this.requireProfile(state);
+    this.refuseDriver(profile);
     if (!demoFeatures(state).wallet || (!this.wallet(state).enabled && profile.role !== "admin")) throw new BackendError("wallet_disabled");
     return profile;
   }
@@ -3746,6 +3912,13 @@ export class DemoBackend implements Backend {
     if (!parsed) throw new BackendError(contact.includes("@") ? "invalid_contact" : "phone_not_allowed");
     const user = (state.users ?? demoUsers(new Date())).find((u) => (parsed.kind === "phone" ? u.phone : u.email) === parsed.value);
     if (!user) throw new BackendError("recipient_not_found");
+    return user;
+  }
+
+  /** A wallet transfer goes to a customer only: a driver account has no wallet (R11). */
+  private findWalletRecipientUser(state: DemoState, contact: string): AdminUser {
+    const user = this.findWalletUser(state, contact);
+    if (user.role === "driver") throw new BackendError("not_a_customer");
     return user;
   }
 
@@ -3778,7 +3951,7 @@ export class DemoBackend implements Backend {
   async findWalletRecipient(contact: string): Promise<WalletRecipient> {
     const state = this.load();
     const profile = this.walletAccess(state);
-    const user = this.findWalletUser(state, contact);
+    const user = this.findWalletRecipientUser(state, contact);
     if (user.id === profile.id) throw new BackendError("self_transfer");
     return { label: personLabel(user) };
   }
@@ -3791,7 +3964,7 @@ export class DemoBackend implements Backend {
     if (done) return done;
     const amount = parseAmount(input.amountXof);
     if (amount === null) throw new BackendError("invalid_amount");
-    const recipient = this.findWalletUser(state, input.contact);
+    const recipient = this.findWalletRecipientUser(state, input.contact);
     if (recipient.id === profile.id) throw new BackendError("self_transfer");
     const pinOf = state.pins?.[profile.phone ?? profile.email ?? ""];
     if (!validPinFormat(input.pin) || (pinOf !== undefined && pinOf !== input.pin)) throw new BackendError("invalid_pin");
@@ -4063,7 +4236,8 @@ export class DemoBackend implements Backend {
       jobId: job.id,
       kind: "delivery" as const,
       co2Grams: grams,
-      points: pointsFor(grams),
+      // W10: a driver earns no greenpoints; the CO2 counts for the fleet.
+      points: 0,
       vehicle: null,
       stationName: state.stations.find((s) => s.id === stationId)?.name ?? null,
       rewardTitle: null,
@@ -4082,8 +4256,8 @@ export class DemoBackend implements Backend {
     const today = dayStart();
     const earnedToday = g.ledger.filter((l) => l.userId === input.userId && l.points > 0 && l.kind !== "admin_adjust" && l.createdAt >= today).length;
     if (earnedToday >= MAX_EARNINGS_PER_DAY) return state;
-    // Drivers on one of our vehicles earn per km instead.
-    if ((state.drivers ?? []).some((d) => d.userId === input.userId && d.status === "active" && d.vehicleId)) return state;
+    // W10: driver accounts earn no greenpoints.
+    if (this.roleOf(state, input.userId) === "driver") return state;
     // Station staff have no greenpoints.
     if (this.isStationStaff(state, input.userId)) return state;
     if (input.reservationId && g.ledger.some((l) => l.reservationId === input.reservationId)) return state;
@@ -4122,7 +4296,7 @@ export class DemoBackend implements Backend {
   async myGreenpoint(): Promise<GreenpointView> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    if (profile.role === "operator") throw new BackendError("forbidden");
+    if (profile.role === "operator" || profile.role === "driver") throw new BackendError("forbidden");
     const g = this.gp(state);
     const { grams, points } = this.gpTotals(g, profile.id);
     const open = this.openCode(g, profile.id);
@@ -4142,7 +4316,7 @@ export class DemoBackend implements Backend {
   async setGreenpointVehicle(vehicle: VehicleType) {
     const state = this.load();
     const profile = this.requireProfile(state);
-    if (profile.role === "operator") throw new BackendError("forbidden");
+    if (profile.role === "operator" || profile.role === "driver") throw new BackendError("forbidden");
     const g = this.gp(state);
     this.save({ ...state, greenpoint: { ...g, vehicles: { ...g.vehicles, [profile.id]: vehicle } } });
   }
@@ -4150,7 +4324,7 @@ export class DemoBackend implements Backend {
   async startRedemption(rewardId: string): Promise<GreenpointRedemption> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    if (profile.role === "operator") throw new BackendError("forbidden");
+    if (profile.role === "operator" || profile.role === "driver") throw new BackendError("forbidden");
     const g = this.gp(state);
     const reward = g.rewards.find((r) => r.id === rewardId);
     if (!reward || !rewardAvailable(reward)) throw new BackendError("reward_unavailable");
@@ -4196,6 +4370,7 @@ export class DemoBackend implements Backend {
     if (!station.isSolar) throw new BackendError("greenpoint_not_solar");
     const rider = this.findWalletUser(state, input.contact);
     if (rider.id === profile.id) throw new BackendError("own_reservation");
+    if (rider.role === "driver") throw new BackendError("greenpoint_fleet_driver");
     if (this.isStationStaff(state, rider.id)) throw new BackendError("greenpoint_station_staff");
     const next = this.earn(state, {
       userId: rider.id,

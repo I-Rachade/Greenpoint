@@ -135,7 +135,7 @@ async function sendEmailCode(env: Env, email: string, code: string) {
  * (Cloudflare Email Service), to register, to set a new PIN, to add a contact
  * or to confirm account deletion.
  */
-async function deliverCode(env: Env, contact: Contact) {
+export async function deliverCode(env: Env, contact: Contact) {
   const target = contact.value;
   const fixed = testCode(env, target);
   if (fixed) {
@@ -189,7 +189,7 @@ async function deliverCode(env: Env, contact: Contact) {
     .run();
 }
 
-function contactOrThrow(raw: unknown): Contact {
+export function contactOrThrow(raw: unknown): Contact {
   const text = String(raw ?? "");
   const contact = parseContact(text);
   // A number that is not Togolese gets its own message.
@@ -203,7 +203,7 @@ export async function sendCode(env: Env, rawContact: string) {
 }
 
 /** Consumes a valid code for this number or address, or throws invalid_code. */
-async function checkCode(env: Env, target: string, code: string) {
+export async function checkCode(env: Env, target: string, code: string) {
   if (!/^\d{6}$/.test(code)) throw new ApiError("invalid_code");
   const row = await env.DB.prepare(
     "select id, code_hash, attempts from otp_codes where phone = ? and used = 0 and expires_at > ? order by id desc limit 1",
@@ -253,14 +253,14 @@ async function pinMatches(pin: string, stored: string): Promise<boolean> {
   return (await pbkdf2(pin, saltBytes, Number(iterations))) === hash;
 }
 
-function checkPinFormat(pin: string) {
+export function checkPinFormat(pin: string) {
   if (!validPinFormat(pin)) throw new ApiError("bad_pin");
   if (weakPin(pin)) throw new ApiError("weak_pin");
 }
 
 const USER_COLUMNS = `id, phone, email, full_name, role, ${ownerOf("users")}, (select status from drivers where drivers.user_id = users.id) as driver_status`;
 /** Column of users that holds this kind of contact. Fixed names only, never user input. */
-const contactColumn = (contact: Contact) => (contact.kind === "phone" ? "phone" : "email");
+export const contactColumn = (contact: Contact) => (contact.kind === "phone" ? "phone" : "email");
 
 /** Numbers in ADMIN_PHONES and addresses in ADMIN_EMAILS become admin when they register. */
 function isAdminContact(env: Env, contact: Contact): boolean {
@@ -420,7 +420,7 @@ export async function sendContactCode(env: Env, request: Request, rawContact: st
   await deliverCode(env, contact);
 }
 
-async function assertContactFree(env: Env, contact: Contact, userId: string) {
+export async function assertContactFree(env: Env, contact: Contact, userId: string) {
   const other = await env.DB.prepare(`select id from users where ${contactColumn(contact)} = ? and id <> ?`)
     .bind(contact.value, userId)
     .first<{ id: string }>();
@@ -492,6 +492,11 @@ export async function deleteAccount(
     .bind(profile.id)
     .first<{ balance_xof: number }>();
   if (wallet && wallet.balance_xof > 0) throw new ApiError("wallet_not_empty");
+  // A converted driver's money waits in their former customer account until they claim it (0031).
+  const unclaimed = await env.DB.prepare("select 1 from former_rider_accounts where driver_id = ? and rider_id is not null and claimed_at is null")
+    .bind(profile.id)
+    .first();
+  if (unclaimed) throw new ApiError("wallet_not_empty");
   await env.DB.batch([
     env.DB.prepare(
       "update audit_log set changes = json_remove(changes, '$.phone', '$.email') where user_id = ? or row_id = ?",
