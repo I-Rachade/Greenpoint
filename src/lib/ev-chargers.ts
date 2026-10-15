@@ -3,11 +3,11 @@ import type { StationView } from "./types";
 // Charging stations for electric cars ("bornes VE"). The admin adds them in the
 // backoffice, then assigns each to a station; a station with at least one active
 // charger assigned can charge electric cars and the app says so.
-// Migration 0020_ev_chargers.sql.
+// Migrations 0020_ev_chargers.sql, 0024_ev_schuko.sql.
 
 /** Plug types common on electric cars in West Africa. */
-export type EvConnector = "type2" | "ccs2" | "chademo" | "gbt_ac" | "gbt_dc";
-export const EV_CONNECTORS: EvConnector[] = ["type2", "ccs2", "chademo", "gbt_ac", "gbt_dc"];
+export type EvConnector = "type2" | "ccs2" | "chademo" | "gbt_ac" | "gbt_dc" | "schuko";
+export const EV_CONNECTORS: EvConnector[] = ["type2", "ccs2", "chademo", "gbt_ac", "gbt_dc", "schuko"];
 
 /** Highest charging power accepted, in kW. */
 export const MAX_EV_POWER_KW = 400;

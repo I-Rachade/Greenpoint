@@ -292,8 +292,15 @@ describe("electric car chargers", () => {
   it("refuses unknown stations and invalid chargers", async () => {
     const { env } = await setup();
     expect((await call(env, "POST", "/api/admin/ev-chargers", { id: null, input: charger("nope") })).body).toEqual({ error: "station_not_found" });
-    expect((await call(env, "POST", "/api/admin/ev-chargers", { id: null, input: charger(null, { connector: "schuko" }) })).status).toBe(400);
+    expect((await call(env, "POST", "/api/admin/ev-chargers", { id: null, input: charger(null, { connector: "tesla" }) })).status).toBe(400);
     expect((await call(env, "POST", "/api/admin/ev-chargers", { id: null, input: charger(null, { powerKw: 0 }) })).status).toBe(400);
     expect((await call(env, "POST", "/api/admin/ev-chargers", { id: null, input: charger(null, { name: " " }) })).status).toBe(400);
+  });
+
+  it("accepts a household Schuko socket", async () => {
+    const { env } = await setup();
+    const res = await call(env, "POST", "/api/admin/ev-chargers", { id: null, input: charger(null, { connector: "schuko", powerKw: 2.3 }) });
+    expect(res.status).toBe(200);
+    expect((await call(env, "GET", "/api/admin/ev-chargers")).body).toEqual([expect.objectContaining({ connector: "schuko", powerKw: 2.3 })]);
   });
 });

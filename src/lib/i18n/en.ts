@@ -565,7 +565,7 @@ export const en: Dictionary = {
         save: "Save",
         cancel: "Cancel",
       },
-      connectors: { type2: "Type 2", ccs2: "CCS Combo 2", chademo: "CHAdeMO", gbt_ac: "GB/T AC", gbt_dc: "GB/T DC" },
+      connectors: { type2: "Type 2", ccs2: "CCS Combo 2", chademo: "CHAdeMO", gbt_ac: "GB/T AC", gbt_dc: "GB/T DC", schuko: "Schuko" },
     },
     promotions: {
       title: "Ad on app opening",
