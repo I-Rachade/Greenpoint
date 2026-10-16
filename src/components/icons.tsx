@@ -419,3 +419,59 @@ export const BoxFastIcon = (p: IconProps) => (
     <path d="m7 7.5 7 3.5 7-3.5M14 11v9M2 10h3M1.5 13.5H5M2.5 17H5" />
   </Svg>
 );
+
+export const GridIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+    <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+    <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+    <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
+  </Svg>
+);
+
+export const UsersIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="9" cy="8" r="3.5" />
+    <path d="M2.5 20c1-3.3 3.5-5 6.5-5s5.5 1.7 6.5 5M15.5 4.6a3.5 3.5 0 0 1 0 6.8M18 15.4c1.6.7 2.8 2.2 3.5 4.6" />
+  </Svg>
+);
+
+export const PlugIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M9 3v4.5M15 3v4.5M6.5 7.5h11V11a5.5 5.5 0 0 1-11 0V7.5ZM12 16.5V21" />
+  </Svg>
+);
+
+export const CalendarIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="5" width="17" height="15.5" rx="2" />
+    <path d="M3.5 10h17M8 3v4M16 3v4" />
+  </Svg>
+);
+
+export const CalendarCheckIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="5" width="17" height="15.5" rx="2" />
+    <path d="M3.5 10h17M8 3v4M16 3v4M9 15l2 2 4-4" />
+  </Svg>
+);
+
+export const CheckCircleIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="m8.5 12 2.5 2.5 4.5-5" />
+  </Svg>
+);
+
+export const XCircleIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="m9 9 6 6M15 9l-6 6" />
+  </Svg>
+);
+
+export const PulseIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 12h4l2.5-6 5 12 2.5-6h4" />
+  </Svg>
+);
