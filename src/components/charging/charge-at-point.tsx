@@ -32,9 +32,12 @@ export function ChargeAtPoint() {
   const { t } = useI18n();
   const q = t.charging.qr;
   const router = useRouter();
-  const pointId = useSearchParams().get("p") ?? "";
+  const params = useSearchParams();
+  const pointId = params.get("p") ?? "";
   const { profile, ready } = useApp();
-  const [scanning, setScanning] = useState(false);
+  // The scan button on the map (?scan=1) opens the camera straight away. useSearchParams
+  // renders this page in the browser only, so canScanQr() can be asked here.
+  const [scanning, setScanning] = useState(() => params.get("scan") === "1" && canScanQr());
   const [scanError, setScanError] = useState<string | null>(null);
 
   return (

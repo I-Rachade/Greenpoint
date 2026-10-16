@@ -31,6 +31,8 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>La caméra sert à scanner le QR-Code d'une prise pour démarrer une recharge, ou celui d'un client ou d'un colis.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Votre position sert à afficher les stations de recharge et d'échange de batterie les plus proches de vous.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

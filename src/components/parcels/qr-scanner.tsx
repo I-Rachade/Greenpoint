@@ -14,8 +14,28 @@ declare global {
   }
 }
 
+/** Any browser with a camera: the browser's own detector where it has one, else jsQR (Safari, iPhone app). */
 export function canScanQr(): boolean {
-  return typeof window !== "undefined" && !!window.BarcodeDetector && !!navigator.mediaDevices?.getUserMedia;
+  return typeof window !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
+}
+
+/** jsQR on one video frame, for browsers without BarcodeDetector. Loaded only when needed. */
+async function jsQrDetector(): Promise<Detector> {
+  const { default: jsQR } = await import("jsqr");
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  return {
+    async detect(source) {
+      const w = source.videoWidth;
+      const h = source.videoHeight;
+      if (!ctx || !w || !h) return [];
+      canvas.width = w;
+      canvas.height = h;
+      ctx.drawImage(source, 0, 0, w, h);
+      const code = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: "dontInvert" });
+      return code?.data ? [{ rawValue: code.data }] : [];
+    },
+  };
 }
 
 /** How long the green check stays before the result is used (shorter with reduced motion). */
@@ -46,16 +66,15 @@ export function QrScanner({ onResult, onClose }: { onResult: (text: string) => v
     let timer: number | undefined;
     let stopped = false;
     const stop = () => stream?.getTracks().forEach((track) => track.stop());
-    const detector = window.BarcodeDetector ? new window.BarcodeDetector({ formats: ["qr_code"] }) : null;
-    if (!detector) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setFailed(true);
-      return;
-    }
+    const detecting: Promise<Detector> = window.BarcodeDetector
+      ? Promise.resolve(new window.BarcodeDetector({ formats: ["qr_code"] }))
+      : jsQrDetector();
+    detecting.catch(() => undefined); // handled where it is awaited
     navigator.mediaDevices
       .getUserMedia({ video: { facingMode: "environment" } })
       .then(async (s) => {
         stream = s;
+        const detector = await detecting;
         if (stopped || !video.current) return;
         video.current.srcObject = s;
         await video.current.play();
@@ -75,7 +94,10 @@ export function QrScanner({ onResult, onClose }: { onResult: (text: string) => v
         };
         void tick();
       })
-      .catch(() => setFailed(true));
+      .catch(() => {
+        stop();
+        setFailed(true);
+      });
     return () => {
       stopped = true;
       window.clearTimeout(timer);
