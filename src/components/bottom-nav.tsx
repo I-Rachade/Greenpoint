@@ -60,53 +60,57 @@ export function BottomNav() {
     },
   ].filter((tab) => tab.show);
 
-  // Charging by QR code (src/components/charging/charge-at-point.tsx): a raised button in the middle of the bar,
-  // on every page. Only customers can start a charge themselves, so staff, drivers, fleets and merchants don't get it.
-  const scanAt = customer ? Math.ceil(tabs.length / 2) : -1;
+  // Charging by QR code (src/components/charging/charge-at-point.tsx): a raised round button in the exact middle of
+  // the bar, on every page; the tabs split left and right of it. Only customers can start a charge themselves, so
+  // staff, drivers, fleets and merchants don't get it.
+  const scan = customer;
+  const split = scan ? Math.ceil(tabs.length / 2) : tabs.length;
+
+  const renderTabs = (list: typeof tabs) =>
+    list.map(({ href, label, icon: Icon, active, badge }) => (
+      <li key={href} className="flex-1">
+        <Link
+          href={href}
+          aria-current={active ? "page" : undefined}
+          className={`flex h-full flex-col items-center justify-center gap-0.5 text-[11px] font-medium ${
+            active ? "text-gp-green-dark dark:text-gp-green" : "text-gp-muted dark:text-zinc-400"
+          }`}
+        >
+          <span className={`relative flex h-8 w-14 items-center justify-center rounded-full ${active ? "bg-gp-green/15" : ""}`}>
+            <Icon size={22} />
+            {!!badge && (
+              <span className="absolute -top-0.5 right-2 min-w-4 rounded-full bg-gp-closed px-1 text-center text-[10px] leading-4 text-white">
+                {badge > 9 ? "9+" : badge}
+              </span>
+            )}
+          </span>
+          {label}
+        </Link>
+      </li>
+    ));
 
   return (
     <nav
       className="fixed inset-x-0 bottom-0 z-30 border-t border-gp-border bg-gp-surface/95 backdrop-blur md:hidden dark:border-white/10"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <ul className="mx-auto flex h-16 max-w-lg items-stretch">
-        {tabs.flatMap(({ href, label, icon: Icon, active, badge }, i) => [
-          i === scanAt && (
-            <li key="scan" className="flex-1">
-              <Link
-                href="/recharge?scan=1"
-                aria-label={t.charging.qr.scan}
-                aria-current={pathname.startsWith("/recharge") ? "page" : undefined}
-                className="flex h-full flex-col items-center justify-end gap-0.5 pb-1.5 text-[11px] font-medium text-gp-muted dark:text-zinc-400"
-              >
-                <span className="-mt-7 flex h-14 w-14 items-center justify-center rounded-full bg-gp-yellow text-gp-forest shadow-lg ring-4 ring-gp-surface">
-                  <QrIcon size={26} strokeWidth={2.2} />
-                </span>
-                {t.ui.tabs.scan}
-              </Link>
-            </li>
-          ),
-          <li key={href} className="flex-1">
+      <div className="mx-auto flex h-16 max-w-lg items-stretch">
+        <ul className="flex flex-1 items-stretch">{renderTabs(tabs.slice(0, split))}</ul>
+        {scan && (
+          <div className="flex w-20 shrink-0 justify-center">
             <Link
-              href={href}
-              aria-current={active ? "page" : undefined}
-              className={`flex h-full flex-col items-center justify-center gap-0.5 text-[11px] font-medium ${
-                active ? "text-gp-green-dark dark:text-gp-green" : "text-gp-muted dark:text-zinc-400"
-              }`}
+              href="/recharge?scan=1"
+              aria-label={t.charging.qr.scan}
+              title={t.charging.qr.scan}
+              aria-current={pathname.startsWith("/recharge") ? "page" : undefined}
+              className="-mt-7 flex h-16 w-16 items-center justify-center rounded-full bg-gp-yellow text-gp-forest shadow-lg ring-4 ring-gp-surface"
             >
-              <span className={`relative flex h-8 w-14 items-center justify-center rounded-full ${active ? "bg-gp-green/15" : ""}`}>
-                <Icon size={22} />
-                {!!badge && (
-                  <span className="absolute -top-0.5 right-2 min-w-4 rounded-full bg-gp-closed px-1 text-center text-[10px] leading-4 text-white">
-                    {badge > 9 ? "9+" : badge}
-                  </span>
-                )}
-              </span>
-              {label}
+              <QrIcon size={28} strokeWidth={2.2} />
             </Link>
-          </li>,
-        ])}
-      </ul>
+          </div>
+        )}
+        {split < tabs.length && <ul className="flex flex-1 items-stretch">{renderTabs(tabs.slice(split))}</ul>}
+      </div>
     </nav>
   );
 }
