@@ -188,14 +188,14 @@ describe("OCPP charge points", () => {
 });
 
 describe("OCPP connection", () => {
-  function connection(env: Env) {
+  function connection(env: Env, attachment: object = { externalId: ID }) {
     const storage = new Map<string, unknown>();
     const sent: string[] = [];
     const ws = {
       readyState: WebSocket.OPEN,
       send: (text: string) => sent.push(text),
       close: () => {},
-      deserializeAttachment: () => ({ externalId: ID }),
+      deserializeAttachment: () => attachment,
     };
     const ctx = {
       getWebSockets: () => [ws],
@@ -228,5 +228,32 @@ describe("OCPP connection", () => {
     await conn.webSocketMessage(ws, '[4,"m-5","GenericError","connector busy",{}]');
     expect(db.prepare("select status, result from device_commands where id = 5").get()).toEqual({ status: "failed", result: "GenericError: connector busy" });
     expect(storage.has("pending:m-5")).toBe(false);
+  });
+
+  it("keeps the first frames, errors and how the connection ended", async () => {
+    const { db, env } = await setup();
+    const traces = () =>
+      (db.prepare("select payload from device_messages where payload like '%OcppTrace%' order by id").all() as { payload: string }[]).map((r) =>
+        JSON.parse(r.payload),
+      );
+    // Long connected: only the refused call and the close are kept.
+    const old = connection(env, { externalId: ID, connectedAt: Date.now() - 3_600_000 });
+    await old.conn.webSocketMessage(old.ws, '[2,"hb-1","Heartbeat",{}]');
+    await old.conn.webSocketMessage(old.ws, '[2,"x-1","ReserveNow",{}]');
+    await old.conn.webSocketClose(old.ws, 1006, "", false);
+    expect(traces()).toEqual([
+      { action: "OcppTrace", dir: "out", frame: '[4,"x-1","NotImplemented","ReserveNow is not supported",{}]' },
+      { action: "OcppTrace", dir: "close", code: 1006, reason: "", wasClean: false, seconds: 3600 },
+    ]);
+    // Freshly connected: every frame in and out.
+    db.exec("delete from device_messages");
+    const fresh = connection(env, { externalId: ID, connectedAt: Date.now() });
+    await fresh.conn.webSocketMessage(fresh.ws, '[2,"hb-2","Heartbeat",{}]');
+    await fresh.conn.webSocketMessage(fresh.ws, "garbage");
+    expect(traces().map((t) => [t.dir, t.frame])).toEqual([
+      ["in", '[2,"hb-2","Heartbeat",{}]'],
+      ["out", fresh.sent[0]],
+      ["in", "garbage"],
+    ]);
   });
 });

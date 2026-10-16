@@ -260,6 +260,33 @@ export async function sendOcppCommand(env: Env, externalId: string, commandId: n
   await env.DB.prepare("update device_commands set status = 'sent', sent_at = ? where id = ? and status = 'pending'").bind(now, commandId).run();
 }
 
+/** What each charge point's socket carries through hibernation. */
+interface Attachment {
+  externalId: string;
+  connectedAt?: number;
+}
+
+/** Frames are kept for the first minutes of each connection, enough to see a charger boot. */
+const TRACE_MS = 15 * 60_000;
+
+const tracing = (a: Attachment) => a.connectedAt !== undefined && Date.now() - a.connectedAt < TRACE_MS;
+const secondsSince = (t?: number) => (t === undefined ? null : Math.round((Date.now() - t) / 1000));
+
+/**
+ * Keeps one step of a charge point's connection in device_messages: frames in
+ * and out at first, errors and how the connection ended always. Never fails the
+ * connection itself.
+ */
+export async function traceOcpp(db: D1Database, externalId: string, entry: Record<string, unknown>) {
+  const payload: Record<string, unknown> = { action: "OcppTrace", ...entry };
+  if (typeof payload.frame === "string") payload.frame = payload.frame.slice(0, 500);
+  try {
+    await db.prepare("insert into device_messages (external_id, received_at, payload) values (?, ?, ?)").bind(externalId, nowIso(), JSON.stringify(payload)).run();
+  } catch (err) {
+    console.error("ocpp trace", externalId, err);
+  }
+}
+
 interface Pending {
   commandId: number;
   action: string;
@@ -284,7 +311,7 @@ export class OcppConnection implements DurableObject {
       for (const old of this.ctx.getWebSockets()) old.close(1000, "Replaced by a new connection");
       const { 0: client, 1: server } = new WebSocketPair();
       this.ctx.acceptWebSocket(server);
-      server.serializeAttachment({ externalId });
+      server.serializeAttachment({ externalId, connectedAt: Date.now() } satisfies Attachment);
       const protocol = offeredProtocol(request);
       return new Response(null, { status: 101, webSocket: client, headers: protocol ? { "Sec-WebSocket-Protocol": protocol } : {} });
     }
@@ -300,17 +327,26 @@ export class OcppConnection implements DurableObject {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
-    const { externalId } = ws.deserializeAttachment() as { externalId: string };
+    const attachment = ws.deserializeAttachment() as Attachment;
+    const { externalId } = attachment;
     const text = typeof message === "string" ? message : new TextDecoder().decode(message);
+    const trace = tracing(attachment);
+    if (trace) await traceOcpp(this.env.DB, externalId, { dir: "in", frame: text });
     let frame;
     try {
       frame = parseFrame(text);
     } catch (err) {
-      if (err instanceof OcppFrameError) return; // without a message id there is nothing to answer
+      if (err instanceof OcppFrameError) {
+        // without a message id there is nothing to answer
+        if (!trace) await traceOcpp(this.env.DB, externalId, { dir: "in", frame: text, error: err.message });
+        return;
+      }
       throw err;
     }
     if (frame.type === 2) {
-      ws.send(await answerCall(this.env.DB, externalId, frame));
+      const reply = await answerCall(this.env.DB, externalId, frame);
+      ws.send(reply);
+      if (trace || reply.startsWith("[4,")) await traceOcpp(this.env.DB, externalId, { dir: "out", frame: reply });
       return;
     }
     const key = `pending:${frame.id}`;
@@ -320,8 +356,9 @@ export class OcppConnection implements DurableObject {
     await applyOcppResult(this.env.DB, pending.commandId, frame);
   }
 
-  async webSocketClose(ws: WebSocket, code: number, reason: string) {
-    const { externalId } = ws.deserializeAttachment() as { externalId: string };
+  async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {
+    const { externalId, connectedAt } = ws.deserializeAttachment() as Attachment;
+    await traceOcpp(this.env.DB, externalId, { dir: "close", code, reason, wasClean, seconds: secondsSince(connectedAt) });
     try {
       // 1005 and 1006 only describe a close without a status; they cannot be sent back.
       ws.close(code === 1005 || code === 1006 ? 1000 : code, reason);
@@ -331,8 +368,9 @@ export class OcppConnection implements DurableObject {
     if (!this.open(ws).length) await markOcppOffline(this.env.DB, externalId);
   }
 
-  async webSocketError(ws: WebSocket) {
-    const { externalId } = ws.deserializeAttachment() as { externalId: string };
+  async webSocketError(ws: WebSocket, error: unknown) {
+    const { externalId, connectedAt } = ws.deserializeAttachment() as Attachment;
+    await traceOcpp(this.env.DB, externalId, { dir: "error", error: String(error).slice(0, 200), seconds: secondsSince(connectedAt) });
     if (!this.open(ws).length) await markOcppOffline(this.env.DB, externalId);
   }
 }
