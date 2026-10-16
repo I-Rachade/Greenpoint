@@ -116,8 +116,9 @@ export function pickupQrPayload(trackingNo: string, code: string): string {
 }
 
 /**
- * What staff scan when a parcel changes hands (plan phase 7): the QR code of the drop-off
- * slip, the recipient's pickup QR code, or the parcel number typed in. Never a bare
+ * What staff scan when a parcel changes hands (plan phase 7): the QR code of the shipping
+ * label (the parcel number alone), the QR code of the drop-off slip (parcels labelled before
+ * the shipping label existed), the recipient's pickup QR code, or the parcel number typed in. Never a bare
  * 6-digit pickup code: a scan names the parcel, not the recipient.
  */
 export function parseParcelScan(input: string): string | null {
@@ -211,6 +212,13 @@ export interface Parcel {
   jobId: string | null;
   /** The collection run the parcel is on or went on (plan phase 7). */
   runId?: string | null;
+  /**
+   * When staff first confirmed the shipping label was printed and stuck on the parcel
+   * (migration 0040). null: not yet, so the parcel cannot go on a collection run.
+   */
+  labelPrintedAt?: string | null;
+  /** For staff: the sender has signed in to the app, so the drop-off slip reaches them there. */
+  senderHasApp?: boolean;
   /** For the customer: what happened to the parcel, oldest first (status changes and scans). */
   history?: ParcelHistoryEntry[];
   /** Only for the recipient, and only once the parcel has arrived. */
@@ -304,6 +312,34 @@ export interface ParcelRun {
 
 /** The statuses in which a parcel is still on its way to the recipient. */
 export const OPEN_PARCEL_STATUSES: ParcelStatus[] = ["deposited", "in_transit", "arrived"];
+
+/** A parcel without a shipping label stuck on it cannot go on a collection run. */
+export function needsLabel(p: Pick<Parcel, "labelPrintedAt">): boolean {
+  return p.labelPrintedAt === null;
+}
+
+/**
+ * What the shipping label's QR code holds: the parcel number alone, short so it scans
+ * even on a creased label (parseParcelScan reads it). Never the pickup code.
+ */
+export function labelQrPayload(trackingNo: string): string {
+  return trackingNo;
+}
+
+/** "+228 90 •• •• 12": enough for the driver and staff to match, not a number to call. */
+export function maskPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length < 6) return "••";
+  const local = digits.startsWith("228") ? digits.slice(3) : digits;
+  const prefix = digits.startsWith("228") ? "+228 " : "";
+  return `${prefix}${local.slice(0, 2)} •• •• ${local.slice(-2)}`;
+}
+
+/** The first word of a name, for the label; null when there is none. */
+export function firstName(name: string | null): string | null {
+  const first = name?.trim().split(/\s+/)[0];
+  return first ? first : null;
+}
 
 /** Text on the drop-off slip's QR code: everything printed on the slip, never the pickup code. */
 export function slipQrText(p: Parcel, stationName: (id: string) => string): string {

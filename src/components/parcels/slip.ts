@@ -1,6 +1,6 @@
 import QRCode from "qrcode";
 import type { Dictionary } from "@/lib/i18n/fr";
-import { liabilityLimit, slipQrText, type Parcel } from "@/lib/parcels";
+import { firstName, labelQrPayload, liabilityLimit, maskPhone, slipQrText, type Parcel } from "@/lib/parcels";
 import type { StationView } from "@/lib/types";
 
 /** 80 mm receipt printers print 576 dots per line. */
@@ -97,4 +97,77 @@ export async function drawSlip(parcel: Parcel, stations: StationView[], t: Dicti
 
 export function slipFileName(parcel: Parcel): string {
   return `colis-${parcel.trackingNo}.png`;
+}
+
+/**
+ * Draws the shipping label staff stick on the parcel: the destination station first and
+ * big (drivers sort by it), the parcel number and a QR code of the number alone (what
+ * staff scan at each handover). Only what the people carrying it need: never the pickup
+ * code, the content, the price or the declared value; the recipient's phone is masked.
+ */
+export async function drawLabel(parcel: Parcel, stations: StationView[], t: Dictionary): Promise<HTMLCanvasElement> {
+  const name = (id: string) => stations.find((s) => s.id === id)?.name ?? id;
+  const qr = document.createElement("canvas");
+  await QRCode.toCanvas(qr, labelQrPayload(parcel.trackingNo), { width: 320, margin: 1, errorCorrectionLevel: "H" });
+
+  const scratch = document.createElement("canvas").getContext("2d")!;
+  scratch.font = "bold 46px sans-serif";
+  const toLines = wrap(scratch, name(parcel.toStationId), WIDTH - 2 * PAD);
+  const recipient = [firstName(parcel.recipient.name), maskPhone(parcel.recipient.phone)].filter(Boolean).join(" · ");
+  const m = parcel.measures;
+  scratch.font = "24px sans-serif";
+  const rows = [
+    `${t.parcels.from} : ${name(parcel.fromStationId)}`,
+    `${t.parcels.recipient} : ${recipient}`,
+    `${t.parcels.size} ${parcel.size} · ${m.weightKg} kg`,
+    `${t.parcels.labelText.deposited} ${new Date(parcel.createdAt).toLocaleDateString("fr-FR")}`,
+  ].flatMap((row) => wrap(scratch, row, WIDTH - 2 * PAD));
+  const head = PAD + 34 + 12 + toLines.length * 56 + 16;
+  const height = head + 4 + 16 + 52 + 12 + qr.height + 20 + rows.length * 32 + 12 + 30 + PAD;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = WIDTH;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, WIDTH, height);
+  ctx.fillStyle = "#000";
+  ctx.textBaseline = "top";
+  ctx.textAlign = "left";
+  ctx.font = "bold 26px sans-serif";
+  ctx.fillText(`${t.parcels.labelText.to.toUpperCase()}`, PAD, PAD);
+  ctx.textAlign = "right";
+  ctx.font = "22px sans-serif";
+  ctx.fillText("poinderecharge", WIDTH - PAD, PAD + 2);
+  ctx.textAlign = "left";
+  let y = PAD + 34 + 12;
+  ctx.font = "bold 46px sans-serif";
+  for (const line of toLines) {
+    ctx.fillText(line, PAD, y);
+    y += 56;
+  }
+  y += 16;
+  ctx.fillRect(PAD, y, WIDTH - 2 * PAD, 4);
+  y += 4 + 16;
+  ctx.textAlign = "center";
+  ctx.font = "bold 48px monospace";
+  ctx.fillText(parcel.trackingNo, WIDTH / 2, y);
+  y += 52 + 12;
+  ctx.drawImage(qr, (WIDTH - qr.width) / 2, y);
+  y += qr.height + 20;
+  ctx.textAlign = "left";
+  ctx.font = "24px sans-serif";
+  for (const row of rows) {
+    ctx.fillText(row, PAD, y);
+    y += 32;
+  }
+  y += 12;
+  ctx.textAlign = "center";
+  ctx.font = "bold 20px sans-serif";
+  ctx.fillText(t.parcels.labelText.footer, WIDTH / 2, y);
+  return canvas;
+}
+
+export function labelFileName(parcel: Parcel): string {
+  return `etiquette-${parcel.trackingNo}.png`;
 }

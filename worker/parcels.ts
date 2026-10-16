@@ -4,6 +4,7 @@ import type { AuditEntry, AuditTable } from "../src/lib/admin/types";
 import { normalizeTogoPhone } from "../src/lib/phone";
 import {
   newTrackingNo,
+  OPEN_PARCEL_STATUSES,
   PARCEL_CODE_LOCK_MINUTES,
   PARCEL_MAX_CODE_FAILURES,
   PARCEL_PICKUP_DAYS,
@@ -95,6 +96,9 @@ export interface ParcelRow {
   delivery_status: DeliveryStatus | null;
   job_id: string | null;
   run_id?: string | null;
+  label_printed_at?: string | null;
+  /** Only in STAFF_SELECT: 1 when the sender has signed in to the app. */
+  sender_has_app?: number;
 }
 
 interface SizeRow {
@@ -140,6 +144,8 @@ export function toParcel(r: ParcelRow, withCode: boolean): Parcel {
     deliveryStatus: r.delivery_status ?? null,
     jobId: r.job_id ?? null,
     runId: r.run_id ?? null,
+    labelPrintedAt: r.label_printed_at ?? null,
+    ...(r.sender_has_app === undefined ? {} : { senderHasApp: !!r.sender_has_app }),
     ...(withCode && r.status === "arrived" && r.pickup_code ? { pickupCode: r.pickup_code } : {}),
   };
 }
@@ -453,6 +459,13 @@ export interface NewParcel {
 }
 
 /**
+ * Parcels as staff see them: with whether the sender has signed in to the app, so the
+ * counter knows the drop-off slip reaches them there and is printed only on request.
+ */
+const STAFF_SELECT = `select p.*, exists (select 1 from users u where u.id = p.sender_user_id and u.last_sign_in_at is not null) as sender_has_app
+  from parcels p`;
+
+/**
  * Stores a parcel handed in at the counter (status deposited), creates accounts
  * for unknown phone numbers and tells sender and recipient. Inputs are checked.
  */
@@ -500,8 +513,26 @@ export async function storeParcel(c: ParcelCtx, actor: string, p: NewParcel): Pr
     }),
   ]);
 
-  const row = await c.db.prepare("select * from parcels where id = ?").bind(id).first<ParcelRow>();
+  const row = await c.db.prepare(`${STAFF_SELECT} where p.id = ?`).bind(id).first<ParcelRow>();
   return toParcel(row!, false);
+}
+
+/**
+ * Staff at the sending or receiving station confirm the shipping label is printed and
+ * stuck on the parcel; a reprint (label torn or lost) is confirmed the same way. The
+ * first confirmation lets the parcel go on a collection run; every one is in audit_log.
+ */
+export async function markLabelPrinted(c: ParcelCtx, stationId: string, parcelId: string): Promise<Parcel> {
+  const actor = await parcelStationActor(c, stationId);
+  const row = await c.db.prepare("select * from parcels where id = ?").bind(parcelId).first<ParcelRow>();
+  if (!row || (row.from_station_id !== stationId && row.to_station_id !== stationId)) throw new ApiError("parcel_not_found", 404);
+  if (!OPEN_PARCEL_STATUSES.includes(row.status)) throw new ApiError("parcel_wrong_status");
+  await c.db.batch([
+    c.db.prepare("update parcels set label_printed_at = coalesce(label_printed_at, ?) where id = ?").bind(nowIso(), parcelId),
+    c.audit(actor.user.id, "parcels", "update", parcelId, { label: row.label_printed_at ? "reprinted" : "printed", role: actor.role }, { stationId }),
+  ]);
+  const updated = await c.db.prepare(`${STAFF_SELECT} where p.id = ?`).bind(parcelId).first<ParcelRow>();
+  return toParcel(updated!, false);
 }
 
 /** Parcels handed in here or coming here, for the station's staff. Staff never see pickup codes. */
@@ -510,9 +541,9 @@ export async function stationParcels(c: ParcelCtx, stationId: string): Promise<P
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const { results } = await c.db
     .prepare(
-      `select * from parcels where (from_station_id = ?1 or to_station_id = ?1)
-       and (status in ('deposited', 'in_transit', 'arrived') or created_at > ?2)
-       order by created_at desc limit 300`,
+      `${STAFF_SELECT} where (p.from_station_id = ?1 or p.to_station_id = ?1)
+       and (p.status in ('deposited', 'in_transit', 'arrived') or p.created_at > ?2)
+       order by p.created_at desc limit 300`,
     )
     .bind(stationId, since)
     .all<ParcelRow>();

@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { Parcel, ParcelRun } from "@/lib/parcels";
+import { needsLabel, type Parcel, type ParcelRun } from "@/lib/parcels";
 import type { StationView } from "@/lib/types";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
@@ -200,6 +200,7 @@ export function OutgoingRuns({
   outgoing,
   run,
   onSlip,
+  onLabel,
   onCancelParcel,
 }: {
   station: StationView;
@@ -208,6 +209,8 @@ export function OutgoingRuns({
   outgoing: Parcel[];
   run: RunAction;
   onSlip: (p: Parcel) => void;
+  /** Print (or reprint) the shipping label; a parcel without one cannot be chosen. */
+  onLabel: (p: Parcel) => void;
   onCancelParcel: (p: Parcel) => void;
 }) {
   const { t } = useI18n();
@@ -228,7 +231,8 @@ export function OutgoingRuns({
 
   const open = (runs ?? []).filter((x) => x.status === "loading" || x.status === "under_way");
   const free = outgoing.filter((p) => !p.runId || !open.some((x) => x.id === p.runId));
-  const ids = free.map((p) => p.id).filter((id) => selected.has(id));
+  const ready = free.filter((p) => !needsLabel(p));
+  const ids = ready.map((p) => p.id).filter((id) => selected.has(id));
 
   async function start(code: string) {
     if (!code.trim() || ids.length === 0) return;
@@ -264,8 +268,9 @@ export function OutgoingRuns({
               <input
                 type="checkbox"
                 className="h-5 w-5"
-                checked={ids.length === free.length}
-                onChange={(e) => setSelected(new Set(e.target.checked ? free.map((p) => p.id) : []))}
+                checked={ready.length > 0 && ids.length === ready.length}
+                disabled={ready.length === 0}
+                onChange={(e) => setSelected(new Set(e.target.checked ? ready.map((p) => p.id) : []))}
               />
               {t.parcels.staff.selectAll}
             </label>
@@ -276,7 +281,8 @@ export function OutgoingRuns({
                     <input
                       type="checkbox"
                       className="h-5 w-5"
-                      checked={selected.has(p.id)}
+                      disabled={needsLabel(p)}
+                      checked={selected.has(p.id) && !needsLabel(p)}
                       onChange={(e) =>
                         setSelected((s) => {
                           const next = new Set(s);
@@ -290,7 +296,17 @@ export function OutgoingRuns({
                     <span>
                       {p.size} · {name(p.fromStationId)} → {name(p.toStationId)}
                     </span>
+                    {needsLabel(p) && <Badge tone="amber">{t.parcels.labelActions.missing}</Badge>}
                   </label>
+                  <Button
+                    variant={needsLabel(p) ? "primary" : "secondary"}
+                    size="sm"
+                    className="min-h-11"
+                    aria-label={`${needsLabel(p) ? t.parcels.labelActions.print : t.parcels.labelActions.reprint} ${p.trackingNo}`}
+                    onClick={() => onLabel(p)}
+                  >
+                    {needsLabel(p) ? t.parcels.labelActions.print : t.parcels.labelActions.reprint}
+                  </Button>
                   <Button variant="secondary" size="sm" className="min-h-11" onClick={() => onSlip(p)}>
                     {t.parcels.slip}
                   </Button>

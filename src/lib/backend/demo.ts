@@ -102,6 +102,8 @@ import {
   PARCEL_CODE_LOCK_MINUTES,
   PARCEL_MAX_CODE_FAILURES,
   PARCEL_PICKUP_DAYS,
+  needsLabel,
+  OPEN_PARCEL_STATUSES,
   parseHandoverInput,
   parsePickupInput,
   parseParcelScan,
@@ -3060,8 +3062,31 @@ export class DemoBackend implements Backend {
     this.stationReader(state, stationId);
     return this.parcelsOf(state)
       .filter((p) => p.fromStationId === stationId || p.toStationId === stationId)
-      .map((p) => ({ ...p, pickupCode: undefined }))
+      .map((p) => this.forStaff(state, p))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /** A parcel as staff see it (as STAFF_SELECT in worker/parcels.ts): no pickup code, and whether the sender uses the app. */
+  private forStaff(state: DemoState, p: Parcel): Parcel {
+    const account = (state.users ?? demoUsers(new Date())).find((u) => u.id === p.sender.userId);
+    const senderHasApp = !!p.sender.userId && (state.profile?.id === p.sender.userId || !!account?.lastSignInAt);
+    return { ...p, pickupCode: undefined, senderHasApp };
+  }
+
+  async markParcelLabel(stationId: string, parcelId: string): Promise<Parcel> {
+    const state = this.load();
+    const { profile, role } = this.stationActor(state, stationId);
+    const parcels = this.parcelsOf(state);
+    const parcel = parcels.find((p) => p.id === parcelId && (p.fromStationId === stationId || p.toStationId === stationId));
+    if (!parcel) throw new BackendError("parcel_not_found");
+    if (!OPEN_PARCEL_STATUSES.includes(parcel.status)) throw new BackendError("parcel_wrong_status");
+    const updated: Parcel = { ...parcel, labelPrintedAt: parcel.labelPrintedAt ?? new Date().toISOString() };
+    this.saveParcels(
+      state,
+      parcels.map((p) => (p.id === parcelId ? updated : p)),
+      { table: "parcels", action: "update", rowId: parcelId, stationId, changes: { label: parcel.labelPrintedAt ? "reprinted" : "printed", role, by: profile.id } },
+    );
+    return this.forStaff(this.load(), updated);
   }
 
   /** The demo account of this phone number; adds one (without PIN) when there is none. */
@@ -3126,6 +3151,7 @@ export class DemoBackend implements Backend {
       express: !!input.express,
       deliveryStatus: null,
       jobId: null,
+      labelPrintedAt: null,
     };
     if (input.express) {
       const job = this.newExpressJob(state, parcel);
@@ -3141,7 +3167,7 @@ export class DemoBackend implements Backend {
       changes: { tracking_no: parcel.trackingNo, to_station_id: parcel.toStationId, size: tier.size, price_fcfa: tier.priceFcfa, created_by: staff.id },
     });
     if (input.express) this.dispatch();
-    return parcel;
+    return this.forStaff(this.load(), parcel);
   }
 
   // Collection runs and scans (plan phase 7), as worker/parcel-runs.ts ----------------
@@ -3239,6 +3265,7 @@ export class DemoBackend implements Backend {
     const chosen = parcels.filter((p) => ids.includes(p.id));
     if (chosen.length !== ids.length) throw new BackendError("parcel_not_found");
     if (chosen.some((p) => p.fromStationId !== stationId || p.status !== "deposited" || p.express || p.runId)) throw new BackendError("parcel_wrong_status");
+    if (chosen.some(needsLabel)) throw new BackendError("parcel_label_missing");
     const run: DemoRun = {
       id: crypto.randomUUID(),
       stationId,
@@ -4733,13 +4760,14 @@ export class DemoBackend implements Backend {
       measures,
     });
     const after = this.load();
-    const taken: Parcel = { ...parcel, trackingNo: booking.trackingNo, paymentMethod: "partner", paidAt: null };
+    const { senderHasApp, ...stored } = parcel;
+    const taken: Parcel = { ...stored, trackingNo: booking.trackingNo, paymentMethod: "partner", paidAt: null };
     this.save({
       ...after,
       parcels: (after.parcels ?? []).map((p) => (p.id === parcel.id ? taken : p)),
       bookings: this.bookingsOf(after).filter((b) => b.id !== bookingId),
     });
-    return taken;
+    return { ...taken, senderHasApp };
   }
 
   async adminPartners(): Promise<AdminPartners> {

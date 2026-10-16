@@ -229,6 +229,7 @@ export type BackendErrorCode =
   | "already_in_fleet"
   | "account_exists"
   | "parcel_not_in_run"
+  | "parcel_label_missing"
   | "run_not_found"
   | "run_wrong_status"
   | "run_unscanned"
@@ -440,6 +441,8 @@ export interface Backend {
   stationParcels(stationId: string): Promise<Parcel[]>;
   /** Staff at the sending station register a parcel paid in cash; creates accounts for unknown phone numbers. */
   createParcel(stationId: string, input: ParcelInput): Promise<Parcel>;
+  /** Staff confirm the shipping label is printed and stuck on (first time or reprint); only then can the parcel go on a run. */
+  markParcelLabel(stationId: string, parcelId: string): Promise<Parcel>;
   /** Collection runs leaving this station: being loaded, under way, and those of the last days (its staff). */
   stationRuns(stationId: string): Promise<ParcelRun[]>;
   /** Staff choose the parcels a driver takes on a collection run and record the driver (QR or typed code). */

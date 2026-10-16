@@ -3,7 +3,10 @@ import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
 import {
   DEFAULT_PARCEL_SIZES,
+  firstName,
+  labelQrPayload,
   liabilityLimit,
+  maskPhone,
   measuresOf,
   newTrackingNo,
   normalizeTrackingNo,
@@ -72,6 +75,18 @@ describe("tracking numbers and pickup codes", () => {
     expect(parseParcelScan("hello")).toBeNull();
   });
 
+  it("reads the shipping label's QR code as the parcel", () => {
+    expect(parseParcelScan(labelQrPayload("GP-9NR78V"))).toBe("GP-9NR78V");
+  });
+
+  it("masks the recipient's phone and keeps only the first name on the label", () => {
+    expect(maskPhone("+22890123412")).toBe("+228 90 •• •• 12");
+    expect(maskPhone("123")).toBe("••");
+    expect(firstName("  Ama  Mensah ")).toBe("Ama");
+    expect(firstName(null)).toBeNull();
+    expect(firstName(" ")).toBeNull();
+  });
+
   it("takes the parcel number alone at the handover counter, but a bare 6-digit number stays a code", () => {
     expect(parseHandoverInput("gp-9nr78v")).toEqual({ trackingNo: "GP-9NR78V", code: null });
     expect(parseHandoverInput("9NR78V")).toEqual({ trackingNo: "GP-9NR78V", code: null });
@@ -118,6 +133,7 @@ describe("DemoBackend parcel depot", () => {
   async function carry(...parcels: { id: string; trackingNo: string }[]) {
     const code = await driverCode();
     setActiveStation(FROM);
+    for (const p of parcels) await backend.markParcelLabel(FROM, p.id);
     const run = await backend.startRun(FROM, code, parcels.map((p) => p.id));
     for (const p of parcels) await backend.scanRunParcel(FROM, run.id, p.trackingNo);
     await backend.departRun(FROM, run.id);
@@ -220,6 +236,10 @@ describe("DemoBackend parcel depot", () => {
     setActiveStation(TO);
     await expect(backend.startRun(FROM, code, [p1.id])).rejects.toMatchObject({ code: "active_station_required" });
     setActiveStation(FROM);
+    // No run before the shipping label is stuck on.
+    await expect(backend.startRun(FROM, code, [p1.id])).rejects.toMatchObject({ code: "parcel_label_missing" });
+    const labelled = await backend.markParcelLabel(FROM, p1.id);
+    expect(labelled.labelPrintedAt).toEqual(expect.any(String));
     const run = await backend.startRun(FROM, code, [p1.id]);
     expect(run.driver.userId).toBe("demo-driver");
     await expect(backend.departRun(FROM, run.id)).rejects.toMatchObject({ code: "run_unscanned" });
@@ -234,6 +254,24 @@ describe("DemoBackend parcel depot", () => {
     await backend.receiveParcel(TO, p1.trackingNo);
     setActiveStation(FROM);
     expect((await backend.stationRuns(FROM))[0]).toMatchObject({ status: "done", parcels: [{ scanned: true, received: true }] });
+  });
+
+  it("asks for the shipping label first, and tells staff whether the sender has the app", async () => {
+    await as("customer", "+22890112233");
+    await as("operator");
+    const known = await backend.createParcel(FROM, input);
+    expect(known.labelPrintedAt).toBeNull();
+    expect(known.senderHasApp).toBe(true);
+    const unknown = await backend.createParcel(FROM, { ...input, senderPhone: "90 77 66 55" });
+    expect(unknown.senderHasApp).toBe(false);
+    setActiveStation(FROM);
+    const first = await backend.markParcelLabel(FROM, known.id);
+    vi.setSystemTime(new Date(Date.now() + 60_000));
+    // A reprint keeps the first time.
+    const again = await backend.markParcelLabel(FROM, known.id);
+    expect(again.labelPrintedAt).toBe(first.labelPrintedAt);
+    // Staff of FROM have no rights at TO.
+    await expect(backend.markParcelLabel(TO, known.id)).rejects.toMatchObject({ code: "forbidden" });
   });
 
   it("refuses parcels to a staff, driver or fleet manager number (R14)", async () => {

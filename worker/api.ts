@@ -100,6 +100,7 @@ import {
   adminParcels,
   cancelParcel,
   createParcel,
+  markLabelPrinted,
   closeStoredParcel,
   myParcels,
   parcelInfo,
@@ -1976,6 +1977,7 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/parcels\/([\w-]+)\/resend$/, (c, [id]) => resendPickupCode(c, id)],
   ["GET", /^\/api\/stations\/([\w-]+)\/parcels$/, (c, [id]) => stationParcels(c, id)],
   ["POST", /^\/api\/stations\/([\w-]+)\/parcels$/, async (c, [id]) => createParcel(c, id, await readJson<ParcelInput>(c.request))],
+  ["POST", /^\/api\/stations\/([\w-]+)\/parcels\/([\w-]+)\/label$/, (c, [id, parcel]) => markLabelPrinted(c, id, parcel)],
   // Collection runs and scans (worker/parcel-runs.ts, plan phase 7)
   ["GET", /^\/api\/stations\/([\w-]+)\/runs$/, (c, [id]) => stationRuns(c, id)],
   [

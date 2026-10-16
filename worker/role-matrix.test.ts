@@ -139,6 +139,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/parcels/:id/resend": STATION,
   "GET /api/stations/:id/parcels": STATION,
   "POST /api/stations/:id/parcels": STATION,
+  "POST /api/stations/:id/parcels/:id/label": STATION,
   "GET /api/stations/:id/runs": STATION,
   "POST /api/stations/:id/runs": STATION,
   "POST /api/stations/:id/runs/:id/:id": STATION,

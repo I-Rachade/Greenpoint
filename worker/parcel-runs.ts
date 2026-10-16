@@ -130,6 +130,8 @@ export async function startRun(c: ParcelCtx, stationId: string, badge: unknown, 
   if (rows.length !== clean.length) throw new ApiError("parcel_not_found", 404);
   // Only parcels handed in here and waiting; express parcels go with their own driver trip.
   if (rows.some((r) => r.from_station_id !== stationId || r.status !== "deposited" || r.express || r.run_id)) throw new ApiError("parcel_wrong_status");
+  // The shipping label has to be on the parcel: it is what staff and the driver scan.
+  if (rows.some((r) => !r.label_printed_at)) throw new ApiError("parcel_label_missing");
   const id = uuid();
   const now = nowIso();
   await c.db.batch([
