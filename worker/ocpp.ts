@@ -19,6 +19,7 @@ import {
   type OcppErrorFrame,
   type OcppResult,
 } from "../src/lib/iot/ocpp";
+import { cancelRefusedStart } from "./charging";
 import { ingest, recountFreeSlots } from "./devices";
 import type { Env } from "./env";
 import { ApiError, nowIso, sha256 } from "./http";
@@ -41,8 +42,29 @@ function int(value: unknown, what: string): number {
   return value;
 }
 
-/** Only idTags we handed out for a remote start may charge; there are no customer cards yet. */
-const tagStatus = (idTag: string) => (idTag.startsWith(OCPP_TAG_PREFIX) ? "Accepted" : "Invalid");
+/**
+ * Only an idTag we sent this charge point for a remote start may charge, once, on the
+ * connector it was sent for, and only while nothing came after it: no newer command for
+ * that outlet, and the charge it was sent for (if any) still running. A charge point that
+ * remembers a start after the customer stopped, or any made-up "PDR…" tag, is refused.
+ * There are no customer cards yet.
+ */
+async function tagStatus(db: D1Database, externalId: string, idTag: string, connectorId?: number): Promise<"Accepted" | "Invalid"> {
+  if (!idTag.startsWith(OCPP_TAG_PREFIX)) return "Invalid";
+  const ours = await db
+    .prepare(
+      `select 1 from device_commands c
+       where c.external_id = ?1 and c.kind = 'start' and c.order_no = ?2 and c.message_id is not null
+         and c.status in ('pending', 'sent', 'done') and (?3 is null or c.outlet = ?3)
+         and not exists (select 1 from device_commands n where n.external_id = c.external_id and n.outlet = c.outlet and n.id > c.id)
+         and not exists (select 1 from charging_sessions s where s.device_id = c.external_id and s.outlet = c.outlet and s.order_no = c.order_no and s.status <> 'charging')
+         and not exists (select 1 from ocpp_transactions t where t.external_id = c.external_id and t.id_tag = c.order_no)
+       limit 1`,
+    )
+    .bind(externalId, idTag, connectorId ?? null)
+    .first();
+  return ours ? "Accepted" : "Invalid";
+}
 
 /** The charge's start reading, by transactionId or else the connector's open charge. */
 async function meterStart(db: D1Database, externalId: string, connectorId: number, transactionId: unknown) {
@@ -83,13 +105,13 @@ export async function handleOcppCall(db: D1Database, externalId: string, action:
       return {};
     }
     case "Authorize":
-      return { idTagInfo: { status: tagStatus(str(payload.idTag, "idTag")) } };
+      return { idTagInfo: { status: await tagStatus(db, externalId, str(payload.idTag, "idTag")) } };
     case "StartTransaction": {
       const connectorId = int(payload.connectorId, "connectorId");
       const idTag = str(payload.idTag, "idTag");
       const start = int(payload.meterStart, "meterStart");
       if (connectorId < 1) throw new OcppCallError("PropertyConstraintViolation", "connectorId");
-      const status = tagStatus(idTag);
+      const status = await tagStatus(db, externalId, idTag, connectorId);
       // Every start gets a transactionId, also a refused one; the charge point then stops it.
       const tx = await db
         .prepare("insert into ocpp_transactions (external_id, connector_id, id_tag, meter_start, started_at) values (?, ?, ?, ?, ?) returning id")
@@ -147,10 +169,12 @@ export async function answerCall(db: D1Database, externalId: string, call: OcppC
 export async function applyOcppResult(db: D1Database, commandId: number, frame: OcppResult | OcppErrorFrame) {
   const ok = frame.type === 3 && accepted(frame.payload);
   const result = frame.type === 3 ? String(frame.payload.status ?? "") : `${frame.code}: ${frame.description}`.slice(0, 300);
-  await db
-    .prepare("update device_commands set status = ?, result = ?, done_at = ? where id = ? and status in ('pending', 'sent')")
+  const command = await db
+    .prepare("update device_commands set status = ?, result = ?, done_at = ? where id = ? and status in ('pending', 'sent') returning external_id, outlet, kind, order_no")
     .bind(ok ? "done" : "failed", result, nowIso(), commandId)
-    .run();
+    .first<{ external_id: string; outlet: number; kind: "start" | "stop"; order_no: string }>();
+  // A refused start never charges: the charge waiting for it is closed again.
+  if (command && !ok && command.kind === "start") await cancelRefusedStart(db, command.external_id, command.outlet, command.order_no);
 }
 
 /** The charge point hung up: its outlets are no longer offered until it is back. */
