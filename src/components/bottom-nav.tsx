@@ -67,7 +67,7 @@ export function BottomNav() {
     },
   ].filter((tab) => tab.show);
 
-  // Charging by QR code (src/components/charging/charge-at-point.tsx): a raised round button in the exact middle of
+  // The scanner page (src/components/scan-hub.tsx: scan a socket or show my QR code): a raised round button in the exact middle of
   // the bar, on every page; the tabs split left and right of it. Only customers can start a charge themselves, so
   // staff, drivers, fleets and merchants don't get it.
   const scan = customer;
@@ -106,10 +106,10 @@ export function BottomNav() {
         {scan && (
           <div className="flex w-20 shrink-0 justify-center">
             <Link
-              href="/recharge?scan=1"
+              href="/scanner"
               aria-label={t.charging.qr.scan}
               title={t.charging.qr.scan}
-              aria-current={pathname.startsWith("/recharge") ? "page" : undefined}
+              aria-current={pathname.startsWith("/scanner") || pathname.startsWith("/recharge") ? "page" : undefined}
               className="-mt-7 flex h-16 w-16 items-center justify-center rounded-full bg-gp-yellow text-gp-forest shadow-lg ring-4 ring-gp-surface"
             >
               <QrIcon size={28} strokeWidth={2.2} />
