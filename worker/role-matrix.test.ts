@@ -253,6 +253,14 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/admin/devices": ADMIN,
   "DELETE /api/admin/devices/:id": ADMIN,
   "POST /api/admin/devices/:id/outlets/:id/:id": ADMIN,
+  "POST /api/admin/devices/:id/partner": ADMIN,
+  "GET /api/admin/point-partners": ADMIN,
+  "POST /api/admin/point-partners": ADMIN,
+  "POST /api/admin/point-partners/:id/status": ADMIN,
+  "POST /api/admin/point-partners/:id/accounts": ADMIN,
+  "DELETE /api/admin/point-partners/:id/accounts/:id": ADMIN,
+  // Only accounts an admin linked to a point partner; none of the roles here is one.
+  "GET /api/point-partner": [],
 };
 
 const OWN = "00000000-0000-4000-8000-000000000001";

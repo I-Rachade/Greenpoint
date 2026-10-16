@@ -158,9 +158,13 @@ export async function ownerReport(c: OwnerCtx, stationId: string | null, days: R
       .bind(list, from)
       .all<{ at: string; payment: "cash" | "wallet" | "fleet" | "none"; amount_xof: number }>(),
     c.db
-      .prepare(`select paid_at as at, payment_method, amount_xof from charging_sessions where station_id in ${IN(1)} and status = 'paid' and paid_at >= ?2`)
+      .prepare(
+        `select cs.paid_at as at, cs.payment_method, cs.amount_xof, coalesce(o.is_own, 0) as is_own from charging_sessions cs
+         join stations s on s.id = cs.station_id left join operators o on o.id = s.operator_id
+         where cs.station_id in ${IN(1)} and cs.status = 'paid' and cs.paid_at >= ?2`,
+      )
       .bind(list, from)
-      .all<{ at: string; payment_method: string; amount_xof: number }>(),
+      .all<{ at: string; payment_method: string; amount_xof: number; is_own: number }>(),
     c.db
       .prepare(
         `select created_at as at, payment_method, price_fcfa, paid_at, status from parcels
@@ -193,6 +197,7 @@ export async function ownerReport(c: OwnerCtx, stationId: string | null, days: R
   const dayOf = (iso: string) => perDay[index.get(iso.slice(0, 10)) ?? -1];
   const hours = Array.from({ length: 24 }, () => 0);
   const revenue = { swapCashXof: 0, swapAppXof: 0, swapFleetXof: 0, chargeCashXof: 0, chargeAppXof: 0, cashXof: 0, totalXof: 0 };
+  let chargesXof = 0;
   for (const s of swaps.results) {
     const d = dayOf(s.at);
     if (d) {
@@ -211,7 +216,11 @@ export async function ownerReport(c: OwnerCtx, stationId: string | null, days: R
       d.chargeXof += ch.amount_xof;
     }
     hours[new Date(ch.at).getUTCHours()]++;
-    if (ch.payment_method === "cash") revenue.chargeCashXof += ch.amount_xof;
+    // A partner's station only hosts the sockets (0039): the charges are not its revenue, and the
+    // cash it took is owed to poinderecharge (who settles with a point partner).
+    if (!ch.is_own) {
+      if (ch.payment_method === "cash") chargesXof += ch.amount_xof;
+    } else if (ch.payment_method === "cash") revenue.chargeCashXof += ch.amount_xof;
     else revenue.chargeAppXof += ch.amount_xof;
   }
   let parcelsXof = 0;
@@ -248,7 +257,7 @@ export async function ownerReport(c: OwnerCtx, stationId: string | null, days: R
     from,
     perDay,
     revenue,
-    poinderecharge: { parcelsXof, driversXof, totalXof: parcelsXof + driversXof, thirdParty },
+    poinderecharge: { parcelsXof, driversXof, chargesXof, totalXof: parcelsXof + driversXof + chargesXof, thirdParty },
     hours,
     staff: [...people.values()].map((p) => ({ ...p, person: p.person || "?" })).sort((a, b) => b.swaps + b.charges + b.actions - (a.swaps + a.charges + a.actions)),
   };

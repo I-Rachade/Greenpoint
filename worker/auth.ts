@@ -34,6 +34,14 @@ interface UserRow {
   driver_status?: Profile["driverStatus"];
   /** Merchant accounts: "id|status|is_owner|name" of the shop (merchantOf). */
   merchant?: string | null;
+  /** Point partner accounts: "id|status|name" (pointPartnerOf, migration 0039). */
+  point_partner?: string | null;
+}
+
+function toPointPartner(value: string | null | undefined): Profile["pointPartner"] {
+  if (!value) return null;
+  const [id, status, ...name] = value.split("|");
+  return { id, status: status as NonNullable<Profile["pointPartner"]>["status"], name: name.join("|") };
 }
 
 function toMerchant(value: string | null | undefined): Profile["merchant"] {
@@ -52,6 +60,7 @@ export function toProfile(u: UserRow): Profile {
     ownerOf: u.owner_of ? u.owner_of.split(",") : [],
     driverStatus: u.driver_status ?? null,
     ...(u.role === "merchant" ? { merchant: toMerchant(u.merchant) } : {}),
+    ...(u.point_partner ? { pointPartner: toPointPartner(u.point_partner) } : {}),
   };
 }
 
@@ -61,6 +70,10 @@ const ownerOf = (alias: string) =>
 const merchantOf = (alias: string) =>
   `(select m.id || '|' || m.status || '|' || mm.is_owner || '|' || m.name from merchant_members mm join merchants m on m.id = mm.merchant_id
     where mm.user_id = ${alias}.id) as merchant`;
+
+const pointPartnerOf = (alias: string) =>
+  `(select p.id || '|' || p.status || '|' || p.name from point_partner_accounts a join point_partners p on p.id = a.partner_id
+    where a.user_id = ${alias}.id) as point_partner`;
 
 function listSetting(value: string | undefined): string[] {
   return (value ?? "")
@@ -274,7 +287,7 @@ export function checkPinFormat(pin: string) {
   if (weakPin(pin)) throw new ApiError("weak_pin");
 }
 
-const USER_COLUMNS = `id, phone, email, full_name, role, ${ownerOf("users")}, ${merchantOf("users")}, (select status from drivers where drivers.user_id = users.id) as driver_status`;
+const USER_COLUMNS = `id, phone, email, full_name, role, ${ownerOf("users")}, ${merchantOf("users")}, ${pointPartnerOf("users")}, (select status from drivers where drivers.user_id = users.id) as driver_status`;
 /** Column of users that holds this kind of contact. Fixed names only, never user input. */
 export const contactColumn = (contact: Contact) => (contact.kind === "phone" ? "phone" : "email");
 
@@ -508,7 +521,7 @@ export async function currentUser(env: Env, request: Request): Promise<Profile |
   const token = bearer(request);
   if (!token) return null;
   const row = await env.DB.prepare(
-    `select u.id, u.phone, u.email, u.full_name, u.role, ${ownerOf("u")}, ${merchantOf("u")}, d.status as driver_status from sessions s
+    `select u.id, u.phone, u.email, u.full_name, u.role, ${ownerOf("u")}, ${merchantOf("u")}, ${pointPartnerOf("u")}, d.status as driver_status from sessions s
      join users u on u.id = s.user_id left join drivers d on d.user_id = u.id
      where s.token_hash = ? and s.expires_at > ?`,
   )

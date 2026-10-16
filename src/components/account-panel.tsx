@@ -13,11 +13,12 @@ import { LEGAL_PATHS } from "@/lib/legal/content";
 import { useApp } from "./app-provider";
 import { useWalletShown } from "./header";
 import { useAlerts } from "./use-alerts";
-import { BellIcon, ChevronIcon, GearIcon, HeartIcon, HelpIcon, LeafIcon, LogoutIcon, ScooterIcon, ShieldIcon, StoreIcon, TicketIcon, UserIcon, WalletIcon } from "./icons";
+import { BellIcon, ChevronIcon, GearIcon, HeartIcon, HelpIcon, LeafIcon, LogoutIcon, PlugIcon, ScooterIcon, ShieldIcon, StoreIcon, TicketIcon, UserIcon, WalletIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { MenuButton, MenuGroup, MenuLink } from "./menu";
 import { PageTitle } from "./page-title";
 import { isStationStaff, runsOperator, worksAtStations } from "@/lib/operators";
+import { ownsPoints } from "@/lib/point-partners";
 import { managesFleet } from "@/lib/fleet";
 import { isDriverAccount } from "@/lib/drivers";
 import { isMerchantAccount } from "@/lib/merchants";
@@ -114,6 +115,7 @@ export function AccountPanel() {
             )}
             {features.parcels && managesFleet(profile) && <MenuLink href="/flotte" icon={ScooterIcon} label={t.nav.fleet} />}
             {runsOperator(profile) && <MenuLink href="/exploitant" icon={StoreIcon} label={t.nav.owner} />}
+            {ownsPoints(profile) && <MenuLink href="/proprietaire" icon={PlugIcon} label={t.nav.points} />}
             {worksAtStations(profile) && <MenuLink href="/operator" icon={StoreIcon} label={t.nav.operator} />}
             {profile.role === "admin" && <MenuLink href="/admin" icon={ShieldIcon} label={t.nav.admin} />}
           </MenuGroup>

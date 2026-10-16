@@ -36,6 +36,8 @@ export interface Device {
   ocppOpen: boolean;
   lastSeenAt: string | null;
   createdAt: string;
+  /** The point partner who owns the socket; null: poinderecharge (src/lib/point-partners.ts). */
+  partnerId: string | null;
   /** One charging point per outlet, by outlet number. */
   points: ChargingPoint[];
 }

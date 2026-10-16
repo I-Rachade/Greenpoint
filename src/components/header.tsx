@@ -10,6 +10,7 @@ import { BellIcon, GearIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
 import { isStationStaff, runsOperator, worksAtStations } from "@/lib/operators";
+import { ownsPoints } from "@/lib/point-partners";
 import { isDriverAccount } from "@/lib/drivers";
 import { isMerchantAccount } from "@/lib/merchants";
 
@@ -42,6 +43,7 @@ export function Header() {
     { href: "/flotte", label: t.nav.fleet, show: fleet && features.parcels },
     { href: "/marchand", label: t.merchant.nav, show: merchant },
     { href: "/exploitant", label: t.nav.owner, show: runsOperator(profile) },
+    { href: "/proprietaire", label: t.nav.points, show: ownsPoints(profile) },
     { href: "/operator", label: t.nav.operator, show: worksAtStations(profile) },
     { href: "/admin", label: t.nav.admin, show: profile?.role === "admin" },
   ];

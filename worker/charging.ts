@@ -39,7 +39,8 @@ interface SessionRow {
   id: string;
   station_id: string;
   station_name: string;
-  is_own: number | null;
+  /** The socket's point partner when the charge started; null: the socket is ours (0039). */
+  partner_id: string | null;
   charging_point_id: string | null;
   device_id: string;
   outlet: number;
@@ -66,12 +67,11 @@ interface SessionRow {
 }
 
 const SESSION_SELECT = `
-  select cs.*, s.name as station_name, o.is_own, p.power_watts, p.status as point_status,
+  select cs.*, s.name as station_name, p.power_watts, p.status as point_status,
          u.full_name, u.phone, u.email,
          (select points from greenpoint_ledger g where g.charging_session_id = cs.id) as greenpoints
     from charging_sessions cs
     join stations s on s.id = cs.station_id
-    left join operators o on o.id = s.operator_id
     left join charging_points p on p.id = cs.charging_point_id
     left join users u on u.id = cs.user_id`;
 
@@ -445,9 +445,13 @@ function dayStartLome(now = new Date()): string {
 
 // Customer ---------------------------------------------------------------------------
 
-/** Collecting money for third-party operators may need a licence (payments.ts): app payments only at our own stations. */
+/**
+ * The money follows the socket's owner, not the station: our sockets are paid in the app at
+ * any station, even a partner's. Collecting for a point partner may need a licence
+ * (payments.ts), so their sockets are paid at the counter only.
+ */
 async function payOptions(env: Env, user: Profile, s: SessionRow): Promise<{ wallet: boolean; mobile: boolean }> {
-  if (s.status !== "stopped" || !s.is_own) return { wallet: false, mobile: false };
+  if (s.status !== "stopped" || s.partner_id) return { wallet: false, mobile: false };
   const wallet = await walletAccess(env, user).then(
     () => true,
     () => false,

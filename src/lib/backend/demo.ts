@@ -261,6 +261,14 @@ import {
   type GreenpointView,
 } from "../greenpoint";
 import { OPERATOR_NAME_MAX, validPrice, type AdminOperator, type OperatorInput, type OwnerStationInput, type OwnerView } from "../operators";
+import {
+  POINT_PARTNER_NAME_MAX,
+  type AdminPointPartner,
+  type PartnerPoint,
+  type PointPartnerDashboard,
+  type PointPartnerInput,
+  type PointPartnerStatus,
+} from "../point-partners";
 import { validEvCharger, type EvCharger, type EvChargerInput } from "../ev-chargers";
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 import { ocppKey } from "../iot/ocpp";
@@ -384,6 +392,10 @@ interface DemoState {
   fleetLinks?: { driverId: string; managerId: string }[];
   /** Operator accounts: who runs which operator (missing = nobody). */
   operatorOwners?: { operatorId: string; userId: string }[];
+  /** Point partners who own sockets (as point_partners, migration 0039); missing = the seed. */
+  pointPartners?: DemoPointPartner[];
+  /** Accounts of point partners (as point_partner_accounts); one partner per account. */
+  pointPartnerAccounts?: { userId: string; partnerId: string; createdAt: string }[];
   /** Contact phones of operators, set in the backoffice. */
   operatorPhones?: Record<string, string | null>;
   /** Parcel module switch of the backoffice (missing = on). */
@@ -559,7 +571,15 @@ interface DemoServiceRow {
   decidedAt: string | null;
 }
 
-type DemoCharge = ChargeSession & { userId: string | null; pointId: string; startedBy?: string };
+/** `partnerId`: the socket's point partner when the charge started (charging_sessions.partner_id). */
+type DemoCharge = ChargeSession & { userId: string | null; pointId: string; startedBy?: string; partnerId?: string | null };
+
+type DemoPointPartner = { id: string; name: string; contactPhone: string | null; status: PointPartnerStatus; createdAt: string };
+
+/** A point partner with no account yet, so the backoffice page is not empty. */
+const DEMO_POINT_PARTNERS: DemoPointPartner[] = [
+  { id: "demo-pp-solaire", name: "Solaire Togo SARL", contactPhone: "+22890112233", status: "active", createdAt: "2026-10-01T08:00:00.000Z" },
+];
 
 /** The demo socket draws this much while charging, so energy and price move on screen. */
 const DEMO_CHARGE_WATTS = 360;
@@ -648,6 +668,7 @@ function seedDevices(): Device[] {
       outlets: DEMO_CHARGING_POINTS.length,
       lastSeenAt: null,
       createdAt: "2026-10-01T08:00:00.000Z",
+      partnerId: null,
       points: DEMO_CHARGING_POINTS,
     },
     ...(
@@ -668,6 +689,7 @@ function seedDevices(): Device[] {
       outlets,
       lastSeenAt: null,
       createdAt: "2026-10-01T08:00:00.000Z",
+      partnerId: null,
       points: demoSocketPoints(stationId, externalId, outlets, free),
     })),
   ];
@@ -1081,9 +1103,12 @@ export class DemoBackend implements Backend {
     if (!state.profile) return null;
     const driver = (state.drivers ?? []).find((d) => d.userId === state.profile!.id);
     const member = state.profile.role === "merchant" ? this.membershipOf(state, state.profile.id) : null;
+    const link = (state.pointPartnerAccounts ?? []).find((a) => a.userId === state.profile!.id);
+    const partner = link && this.pointPartnersOf(state).find((p) => p.id === link.partnerId);
     return {
       ...state.profile,
       driverStatus: driver?.status ?? null,
+      ...(partner ? { pointPartner: { id: partner.id, name: partner.name, status: partner.status } } : {}),
       ...(state.profile.role === "merchant"
         ? { merchant: member ? { id: member.shop.id, name: member.shop.name, status: member.shop.status, isOwner: member.isOwner } : null }
         : {}),
@@ -2401,6 +2426,7 @@ export class DemoBackend implements Backend {
     const dayOf = (iso: string) => perDay[index.get(iso.slice(0, 10)) ?? -1];
     const hours = Array.from({ length: 24 }, () => 0);
     const revenue = { swapCashXof: 0, swapAppXof: 0, swapFleetXof: 0, chargeCashXof: 0, chargeAppXof: 0, cashXof: 0, totalXof: 0 };
+    let chargesXof = 0;
     const people = new Map<string, StaffStats>();
     const entry = (id: string, role: StaffStats["role"] | null) => {
       const e = people.get(id) ?? { personId: id, person: "", role: role ?? "staff", swaps: 0, charges: 0, actions: 0 };
@@ -2429,7 +2455,11 @@ export class DemoBackend implements Backend {
           d.chargeXof += ch.amountXof;
         }
         hours[new Date(ch.paidAt).getUTCHours()]++;
-        if (ch.paymentMethod === "cash") revenue.chargeCashXof += ch.amountXof;
+        // A partner's station only hosts the sockets: not its revenue, the cash is owed to poinderecharge.
+        const hosted = !state.stations.find((s) => s.id === ch.stationId)?.isOwn;
+        if (hosted) {
+          if (ch.paymentMethod === "cash") chargesXof += ch.amountXof;
+        } else if (ch.paymentMethod === "cash") revenue.chargeCashXof += ch.amountXof;
         else revenue.chargeAppXof += ch.amountXof;
       }
       if (ch.startedBy && ch.startedAt >= from) entry(ch.startedBy, null).charges++;
@@ -2451,7 +2481,7 @@ export class DemoBackend implements Backend {
       from,
       perDay,
       revenue,
-      poinderecharge: { parcelsXof, driversXof, totalXof: parcelsXof + driversXof, thirdParty },
+      poinderecharge: { parcelsXof, driversXof, chargesXof, totalXof: parcelsXof + driversXof + chargesXof, thirdParty },
       hours,
       staff: [...people.values()].sort((a, b) => b.swaps + b.charges + b.actions - (a.swaps + a.charges + a.actions)),
     };
@@ -2704,6 +2734,7 @@ export class DemoBackend implements Backend {
     const seen = new Date().toISOString();
     return (state.devices ?? seedDevices()).map((d) => ({
       ...d,
+      partnerId: d.partnerId ?? null,
       lastSeenAt: seen,
       points: d.points.map((p) => ({ ...p, lastSeenAt: seen })),
     }));
@@ -2729,6 +2760,7 @@ export class DemoBackend implements Backend {
       ocppOpen: input.protocol === "ocpp1.6" && !!input.ocppNoPassword,
       lastSeenAt: null,
       createdAt: new Date().toISOString(),
+      partnerId: null,
       points: Array.from({ length: outlets }, (_, i) => ({
         id: `cp-${externalId}-${i + 1}`,
         stationId: input.stationId,
@@ -2777,6 +2809,164 @@ export class DemoBackend implements Backend {
     if (!all.some((d) => d.points.some((p) => p.id === pointId))) throw new BackendError("unknown", "not_found");
     const devices = all.map((d) => ({ ...d, points: d.points.map((p) => (p.id === pointId ? { ...p, qrStart: enabled } : p)) }));
     this.save({ ...state, devices });
+  }
+
+  async setDevicePartner(externalId: string, partnerId: string | null) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const all = state.devices ?? seedDevices();
+    const device = all.find((d) => d.externalId === externalId);
+    if (!device) throw new BackendError("unknown", "not_found");
+    if (partnerId && !this.pointPartnersOf(state).some((p) => p.id === partnerId)) throw new BackendError("unknown", "not_found");
+    const before = device.partnerId ?? null;
+    if (before === partnerId) return;
+    this.save(
+      withAudit(
+        { ...state, devices: all.map((d) => (d === device ? { ...d, partnerId } : d)) },
+        { table: "charging_points", action: "update", rowId: externalId, stationId: device.stationId, changes: { device: externalId, partner_id: [before, partnerId] } },
+      ),
+    );
+  }
+
+  // Point partners (as worker/point-partners.ts) -------------------------------------
+
+  private pointPartnersOf(state: DemoState): DemoPointPartner[] {
+    return state.pointPartners ?? DEMO_POINT_PARTNERS;
+  }
+
+  /** The point partner who owns the socket of this charging point now; null: ours. */
+  private partnerOfPoint(state: DemoState, pointId: string): string | null {
+    return (state.devices ?? seedDevices()).find((d) => d.points.some((p) => p.id === pointId))?.partnerId ?? null;
+  }
+
+  async adminPointPartners(): Promise<AdminPointPartner[]> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const devices = state.devices ?? seedDevices();
+    return [...this.pointPartnersOf(state)]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((p) => ({
+        ...p,
+        accounts: (state.pointPartnerAccounts ?? []).filter((a) => a.partnerId === p.id).map((a) => this.label(state, a.userId)),
+        devices: devices.filter((d) => d.partnerId === p.id).map((d) => ({ externalId: d.externalId, stationId: d.stationId, outlets: d.outlets })),
+      }));
+  }
+
+  async savePointPartner(id: string | null, input: PointPartnerInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const name = input.name.trim().replace(/\s+/g, " ");
+    if (!name || name.length > POINT_PARTNER_NAME_MAX) throw new BackendError("unknown", "invalid name");
+    const contactPhone = input.contactPhone?.trim() ? normalizeTogoPhone(input.contactPhone) : null;
+    if (input.contactPhone?.trim() && !contactPhone) throw new BackendError("phone_not_allowed");
+    const partners = this.pointPartnersOf(state);
+    if (id && !partners.some((p) => p.id === id)) throw new BackendError("unknown", "not_found");
+    const partnerId = id ?? `demo-pp-${Date.now()}`;
+    const pointPartners = id
+      ? partners.map((p) => (p.id === id ? { ...p, name, contactPhone } : p))
+      : [...partners, { id: partnerId, name, contactPhone, status: "active" as const, createdAt: new Date().toISOString() }];
+    this.save(
+      withAudit(
+        { ...state, pointPartners },
+        { table: "point_partners", action: id ? "update" : "insert", rowId: partnerId, changes: { name, contact_phone: contactPhone } },
+      ),
+    );
+  }
+
+  async setPointPartnerActive(id: string, active: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const partners = this.pointPartnersOf(state);
+    const before = partners.find((p) => p.id === id);
+    if (!before) throw new BackendError("unknown", "not_found");
+    const status: PointPartnerStatus = active ? "active" : "suspended";
+    if (before.status === status) return;
+    this.save(
+      withAudit(
+        { ...state, pointPartners: partners.map((p) => (p.id === id ? { ...p, status } : p)) },
+        { table: "point_partners", action: "update", rowId: id, changes: { status: [before.status, status] } },
+      ),
+    );
+  }
+
+  async addPointPartnerAccount(partnerId: string, contact: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!this.pointPartnersOf(state).some((p) => p.id === partnerId)) throw new BackendError("unknown", "not_found");
+    const user = this.accountByContact(state, contact);
+    const accounts = state.pointPartnerAccounts ?? [];
+    const linked = accounts.find((a) => a.userId === user.id);
+    if (linked) {
+      if (linked.partnerId === partnerId) return;
+      throw new BackendError("already_point_partner");
+    }
+    this.save(
+      withAudit(
+        { ...state, pointPartnerAccounts: [...accounts, { userId: user.id, partnerId, createdAt: new Date().toISOString() }] },
+        { table: "point_partner_accounts", action: "insert", rowId: `${partnerId}:${user.id}`, userId: user.id, changes: { partner_id: partnerId } },
+      ),
+    );
+  }
+
+  async removePointPartnerAccount(partnerId: string, userId: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const accounts = state.pointPartnerAccounts ?? [];
+    if (!accounts.some((a) => a.userId === userId && a.partnerId === partnerId)) return;
+    this.save(
+      withAudit(
+        { ...state, pointPartnerAccounts: accounts.filter((a) => !(a.userId === userId && a.partnerId === partnerId)) },
+        { table: "point_partner_accounts", action: "delete", rowId: `${partnerId}:${userId}`, userId, changes: { partner_id: partnerId } },
+      ),
+    );
+  }
+
+  async pointPartnerDashboard(days: ReportPeriod): Promise<PointPartnerDashboard> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const link = (state.pointPartnerAccounts ?? []).find((a) => a.userId === profile.id);
+    const partner = link && this.pointPartnersOf(state).find((p) => p.id === link.partnerId);
+    if (!partner) throw new BackendError("forbidden");
+    if (partner.status !== "active") throw new BackendError("partner_suspended");
+    const from = periodStart(days);
+    const seen = new Date().toISOString();
+    const totals = { charges: 0, energyWh: 0, amountXof: 0, cashXof: 0, appXof: 0 };
+    const perPoint = new Map<string, { charges: number; energyWh: number; amountXof: number }>();
+    for (const c of state.charges ?? []) {
+      if (c.partnerId !== partner.id || c.status !== "paid" || !c.paidAt || c.paidAt < from) continue;
+      totals.charges++;
+      totals.energyWh += c.energyWh;
+      totals.amountXof += c.amountXof;
+      if (c.paymentMethod === "cash") totals.cashXof += c.amountXof;
+      else totals.appXof += c.amountXof;
+      const e = perPoint.get(c.pointId) ?? { charges: 0, energyWh: 0, amountXof: 0 };
+      perPoint.set(c.pointId, { charges: e.charges + 1, energyWh: e.energyWh + c.energyWh, amountXof: e.amountXof + c.amountXof });
+    }
+    const points: PartnerPoint[] = [];
+    for (const d of state.devices ?? seedDevices()) {
+      if (d.partnerId !== partner.id) continue;
+      const station = state.stations.find((s) => s.id === d.stationId);
+      if (!station) continue;
+      for (const p of d.points) {
+        points.push({
+          id: p.id,
+          label: p.label,
+          outlet: p.outlet,
+          deviceId: d.externalId,
+          stationId: station.id,
+          stationName: station.name,
+          stationAddress: station.address,
+          lat: station.lat,
+          lng: station.lng,
+          status: p.status,
+          powerWatts: p.powerWatts,
+          lastSeenAt: seen,
+          ...(perPoint.get(p.id) ?? { charges: 0, energyWh: 0, amountXof: 0 }),
+        });
+      }
+    }
+    points.sort((a, b) => a.stationName.localeCompare(b.stationName) || a.label.localeCompare(b.label));
+    return { partner: { id: partner.id, name: partner.name, status: partner.status, contactPhone: partner.contactPhone }, days, from, points, totals };
   }
 
   async switchOutlet(externalId: string, outlet: number, on: boolean) {
@@ -6935,7 +7125,7 @@ export class DemoBackend implements Backend {
 
   /** A running demo charge gains energy with time; the price follows. */
   private chargeView(c: DemoCharge, now = Date.now()): ChargeSession {
-    const { userId: _userId, pointId: _pointId, startedBy: _startedBy, ...rest } = c;
+    const { userId: _userId, pointId: _pointId, startedBy: _startedBy, partnerId: _partnerId, ...rest } = c;
     const view: ChargeSession = c.userId && c.startedBy === c.userId ? { ...rest, selfStarted: true } : rest;
     if (c.status !== "charging") return view;
     const energyWh = Math.round(((now - new Date(c.startedAt).getTime()) / 3_600_000) * DEMO_CHARGE_WATTS);
@@ -7010,6 +7200,7 @@ export class DemoBackend implements Backend {
       stationName: station.name,
       pointLabel: point.label,
       pointId: point.id,
+      partnerId: this.partnerOfPoint(state, point.id),
       startedBy: staff.id,
       status: "charging",
       userId: customer?.id ?? null,
@@ -7098,8 +7289,8 @@ export class DemoBackend implements Backend {
     return (state.charges ?? [])
       .filter((c) => c.userId === profile.id)
       .map((c) => {
-        const own = state.operators.find((o) => o.id === state.stations.find((s) => s.id === c.stationId)?.operatorId)?.isOwn ?? false;
-        const open = c.status === "stopped" && own;
+        // The money follows the socket's owner (worker/charging.ts payOptions): ours, at any station.
+        const open = c.status === "stopped" && !c.partnerId;
         return { ...this.chargeView(c), payOptions: { wallet: open && walletOn, mobile: open }, pendingPaymentId: null };
       });
   }
@@ -7142,6 +7333,7 @@ export class DemoBackend implements Backend {
       stationName: info.stationName,
       pointLabel: info.label,
       pointId,
+      partnerId: this.partnerOfPoint(state, pointId),
       startedBy: profile.id,
       status: "charging",
       userId: profile.id,

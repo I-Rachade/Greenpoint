@@ -14,6 +14,7 @@ import {
   HistoryIcon,
   LeafIcon,
   PhoneBoltIcon,
+  PlugIcon,
   ScooterIcon,
   ShieldIcon,
   StarIcon,
@@ -73,6 +74,7 @@ export const ADMIN_NAV: { group: GroupKey; links: { href: string; key: NavKey }[
       { href: "/admin/services", key: "services" },
       { href: "/admin/operators", key: "operators" },
       { href: "/admin/devices", key: "devices" },
+      { href: "/admin/proprietaires", key: "pointPartners" },
       { href: "/admin/ev-chargers", key: "evChargers" },
       { href: "/admin/partners", key: "partners" },
     ],
@@ -98,6 +100,7 @@ const NAV_ICON: Record<NavKey, ComponentType<SVGProps<SVGSVGElement> & { size?: 
   services: GearIcon,
   operators: ShieldIcon,
   devices: WifiIcon,
+  pointPartners: PlugIcon,
   evChargers: CarIcon,
   partners: GlobeIcon,
 };

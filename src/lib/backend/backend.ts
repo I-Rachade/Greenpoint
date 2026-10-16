@@ -19,6 +19,7 @@ import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
 import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
+import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "../point-partners";
 import type { Promotion, PromotionInput } from "../promo";
 import type {
   AdminGreenpoint,
@@ -159,6 +160,8 @@ export type BackendErrorCode =
   | "vehicle_unavailable"
   | "vehicle_too_small"
   | "has_other_role"
+  | "partner_suspended"
+  | "already_point_partner"
   | "no_vehicle"
   | "documents_missing"
   | "balance_changed"
@@ -402,6 +405,21 @@ export interface Backend {
   switchOutlet(externalId: string, outlet: number, on: boolean): Promise<void>;
   /** Allows or forbids customers to start a charge at this outlet by scanning its QR code. */
   setQrStart(pointId: string, enabled: boolean): Promise<void>;
+  /** Gives the socket to a point partner, or back to poinderecharge (`null`). */
+  setDevicePartner(externalId: string, partnerId: string | null): Promise<void>;
+
+  // Point partners, who own sockets (see src/lib/point-partners.ts)
+  /** Admins: every partner with its accounts and sockets. */
+  adminPointPartners(): Promise<AdminPointPartner[]>;
+  /** Creates a partner (`id` null, active at once) or edits one. */
+  savePointPartner(id: string | null, input: PointPartnerInput): Promise<void>;
+  /** Suspends a partner (its accounts lose the dashboard) or makes it active again. */
+  setPointPartnerActive(id: string, active: boolean): Promise<void>;
+  /** Links the account with this phone number or e-mail address to the partner. */
+  addPointPartnerAccount(partnerId: string, contact: string): Promise<void>;
+  removePointPartnerAccount(partnerId: string, userId: string): Promise<void>;
+  /** The signed-in partner account's sockets and earnings of the period. */
+  pointPartnerDashboard(days: ReportPeriod): Promise<PointPartnerDashboard>;
 
   // Modules (see src/lib/features.ts)
   /** Which modules are switched on. Public. */
