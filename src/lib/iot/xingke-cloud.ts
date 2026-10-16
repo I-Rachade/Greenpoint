@@ -133,6 +133,8 @@ function chargingReading(d: Record<string, unknown>): OutletReading | null {
   if (power !== undefined && power >= 0) reading.powerWatts = Math.round(power);
   // kWh in the API, Wh in our tables.
   if (energy !== undefined && energy >= 0) reading.energyWh = Math.round(energy * 1000);
+  const tx = str(d.transactionId);
+  if (tx && /^\d{20}$/.test(tx)) reading.transactionId = tx;
   return reading;
 }
 

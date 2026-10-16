@@ -124,3 +124,18 @@ export function openAt(h: OpeningHours, now: Date): boolean {
   // Past midnight: the evening belongs to today, the night after midnight to yesterday.
   return (h.days.includes(today) && t >= open) || (h.days.includes(yesterday) && t < close);
 }
+
+/** What a station's day looks like on `now`'s date: open all day, closing at a time, or closed; null for free text. */
+export type TodayHours = { kind: "allDay" } | { kind: "closes"; at: string } | { kind: "closed" };
+
+export function todayHours(text: string | null | undefined, now: Date = new Date()): TodayHours | null {
+  const schedule = parseOpeningSchedule(text);
+  if (!schedule) return null;
+  const today = schedule.filter((h) => h.days.includes(weekdayOf(now)));
+  if (!today.length) return { kind: "closed" };
+  if (today.some((h) => (h.open === "00:00" && h.close === "24:00") || h.open === h.close)) return { kind: "allDay" };
+  // The latest closing of the day; a part running past midnight closes after every other one.
+  const close = (h: OpeningHours) => (h.close <= h.open ? minutes(h.close) + 24 * 60 : minutes(h.close));
+  const last = today.reduce((a, b) => (close(b) > close(a) ? b : a));
+  return { kind: "closes", at: last.close === "24:00" ? "00:00" : last.close };
+}

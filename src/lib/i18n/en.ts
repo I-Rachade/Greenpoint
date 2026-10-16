@@ -2683,6 +2683,8 @@ export const en: Dictionary = {
     closed: "Closed",
     restArea: "Rest area",
     allDay: "24/7",
+    closesAt: "Closes at {time}",
+    closedToday: "Closed today",
     /** Monday first, as the ISO weekdays of src/lib/opening-hours.ts. */
     weekdays: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
     weekdaysLong: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],

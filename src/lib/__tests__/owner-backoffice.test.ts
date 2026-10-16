@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
-import { cleanOpeningHours, formatOpeningHours, openAt, parseOpeningHours } from "../opening-hours";
+import { cleanOpeningHours, formatOpeningHours, openAt, parseOpeningHours, todayHours } from "../opening-hours";
 import { byMonth, emptyDays, periodStart, reportPeriod } from "../owner-backoffice";
 
 // Plan phase 8 in the demo backend: the same rules as the Worker (worker/owner.test.ts,
@@ -167,5 +167,17 @@ describe("DemoBackend owner backoffice (phase 8, as the Worker)", () => {
     expect(report.hours[12]).toBe(1);
     const live = await backend.ownerLive("st-tokoin");
     expect(live.parcels).toEqual([{ stationId: "st-tokoin", toSend: 0, incoming: 0, toPickUp: 0 }]);
+  });
+});
+
+describe("today's hours", () => {
+  const week = "Mo-Fr 08:00-19:00; Sa 08:00-15:00";
+  it("gives today's closing time, all day, or closed", () => {
+    expect(todayHours(week, new Date("2026-10-16T10:00:00Z"))).toEqual({ kind: "closes", at: "19:00" }); // Friday
+    expect(todayHours(week, new Date("2026-10-17T10:00:00Z"))).toEqual({ kind: "closes", at: "15:00" }); // Saturday
+    expect(todayHours(week, new Date("2026-10-18T10:00:00Z"))).toEqual({ kind: "closed" }); // Sunday
+    expect(todayHours("24h/24", new Date("2026-10-18T10:00:00Z"))).toEqual({ kind: "allDay" });
+    expect(todayHours("Fr 20:00-02:00; Fr 08:00-12:00", new Date("2026-10-16T10:00:00Z"))).toEqual({ kind: "closes", at: "02:00" });
+    expect(todayHours("Lun-Sam 8h-18h")).toBeNull();
   });
 });

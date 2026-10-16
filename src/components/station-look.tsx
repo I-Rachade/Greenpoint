@@ -18,7 +18,7 @@ import {
   UmbrellaIcon,
   WifiIcon,
 } from "./icons";
-import { parseOpeningSchedule, type Weekday } from "@/lib/opening-hours";
+import { parseOpeningSchedule, todayHours, type Weekday } from "@/lib/opening-hours";
 import { useI18n } from "./i18n-provider";
 
 // Pieces shared by the station cards and the station screen: photos, stars, amenities.
@@ -56,6 +56,23 @@ export function useHoursLabel() {
         return `${days}${allDay ? t.stationLook.allDay : `${parsed.open} – ${parsed.close}`}`;
       })
       .join(" · ");
+  };
+}
+
+/**
+ * Today's hours in a few words, for tight spots (station cards): "24h/24", "Ferme à 19:00" or
+ * "Fermé aujourd'hui". Older free text is shown as it is.
+ */
+export function useTodayHoursLabel() {
+  const { t } = useI18n();
+  return (hours: string, now: Date = new Date()) => {
+    const h = (hours ?? "").trim();
+    if (!h) return "–";
+    const today = todayHours(h, now);
+    if (!today) return h;
+    if (today.kind === "allDay") return t.stationLook.allDay;
+    if (today.kind === "closed") return t.stationLook.closedToday;
+    return t.stationLook.closesAt.replace("{time}", today.at);
   };
 }
 
