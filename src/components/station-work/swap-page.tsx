@@ -166,7 +166,7 @@ function SwapForm({
   const [driverCode, setDriverCode] = useState("");
   const [payment, setPayment] = useState<"wallet" | "cash">(features.lite ? "cash" : "wallet");
   const [pin, setPin] = useState("");
-  const [amount, setAmount] = useState(counter.priceXof ? String(counter.priceXof) : "");
+  const [amount, setAmount] = useState("");
   const [batteryIn, setBatteryIn] = useState("");
   const [batteryOut, setBatteryOut] = useState("");
   // One id per swap being entered: confirming twice records it once.
@@ -182,6 +182,8 @@ function SwapForm({
   const typeLabel = row?.label ?? s.noType;
   const wallet = customerType === "app" && payment === "wallet" && !features.lite;
   const takesCash = customerType === "cash" || customerType === "first_purchase" || (customerType === "app" && !wallet);
+  // The swap price is set in the backoffice (station details); without it only a first purchase or a fleet swap goes through.
+  const priceMissing = !counter.priceXof && customerType !== "first_purchase" && customerType !== "fleet";
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -203,7 +205,7 @@ function SwapForm({
       driverCode: customerType === "fleet" ? driverCode : null,
       payment: customerType === "app" ? (wallet ? "wallet" : "cash") : undefined,
       pin: wallet ? pin : null,
-      amountXof: takesCash && amount !== "" ? Number(amount) : null,
+      amountXof: customerType === "first_purchase" && amount !== "" ? Number(amount) : null,
     };
     setBusy(true);
     try {
@@ -336,7 +338,7 @@ function SwapForm({
             />
           )}
           {features.lite && <p className="text-sm text-gp-muted">{s.liteCashOnly}</p>}
-          <p className="text-sm text-gp-muted">{counter.priceXof ? format(s.price, { price: formatXof(counter.priceXof, locale) }) : s.noPrice}</p>
+          <p className={priceMissing ? "text-sm font-medium text-red-600" : "text-sm text-gp-muted"}>{counter.priceXof ? format(s.price, { price: formatXof(counter.priceXof, locale) }) : s.noPrice}</p>
           {wallet && (
             <label className="block space-y-1">
               <span className="text-sm font-medium">{s.pin}</span>
@@ -344,10 +346,10 @@ function SwapForm({
               <span className="block text-xs text-gp-muted">{s.pinHint}</span>
             </label>
           )}
-          {takesCash && (
+          {takesCash && customerType === "first_purchase" && (
             <label className="block space-y-1">
-              <span className="text-sm font-medium">{s.amount}</span>
-              <Input inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} />
+              <span className="text-sm font-medium">{s.purchaseAmount}</span>
+              <Input inputMode="numeric" required value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} />
             </label>
           )}
         </fieldset>
@@ -358,7 +360,7 @@ function SwapForm({
           {error}
         </p>
       )}
-      <Button type="submit" size="lg" className="w-full" disabled={!row || row.full <= 0}>
+      <Button type="submit" size="lg" className="w-full" disabled={!row || row.full <= 0 || priceMissing}>
         {s.confirm}
       </Button>
 

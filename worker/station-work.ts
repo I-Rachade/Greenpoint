@@ -598,9 +598,16 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     amount = station.price_battery_xof;
   } else {
     payment = "cash";
-    const raw = input.amountXof ?? station.price_battery_xof ?? 0;
-    if (!validAmount(raw)) throw new ApiError("invalid_amount");
-    amount = raw;
+    if (type === "first_purchase") {
+      // Buying a first battery: its price is not the swap price, staff enter it.
+      const raw = input.amountXof ?? 0;
+      if (!validAmount(raw)) throw new ApiError("invalid_amount");
+      amount = raw;
+    } else {
+      // A swap costs the station's price, set in the backoffice; staff cannot change it.
+      if (!station.price_battery_xof) throw new ApiError("swap_price_missing", 409);
+      amount = station.price_battery_xof;
+    }
   }
 
   const now = nowIso();

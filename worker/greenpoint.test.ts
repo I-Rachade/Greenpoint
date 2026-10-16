@@ -74,7 +74,7 @@ async function setup() {
     );
   }
   db.exec(`
-    insert into stations (id, operator_id, name, lat, lng, kind, battery_capacity, is_solar, created_at) values ('st', '${OPERATOR}', 'Bè', 6.13, 1.22, 'both', 10, 1, '${now}');
+    insert into stations (id, operator_id, name, lat, lng, kind, battery_capacity, is_solar, price_battery_xof, created_at) values ('st', '${OPERATOR}', 'Bè', 6.13, 1.22, 'both', 10, 1, 500, '${now}');
     insert into station_status (station_id, free_slots, full_batteries, updated_at) values ('st', 0, 10, '${now}');
     insert into station_staff (station_id, user_id) values ('st', 'staff');
   `);

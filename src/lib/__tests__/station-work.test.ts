@@ -110,7 +110,8 @@ describe("DemoBackend station work", () => {
     setActiveStation(STATION);
     const start = await full(backend);
     const swap = await backend.recordSwap(STATION, { requestId: rid(), customerType: "cash", batteryIn: "sp-1", batteryOut: "sp-2", amountXof: 400 });
-    expect(swap).toMatchObject({ customerType: "cash", batteryIn: "SP-1", batteryOut: "SP-2", payment: "cash", amountXof: 400, role: "admin" });
+    // The station's price, not the amount typed.
+    expect(swap).toMatchObject({ customerType: "cash", batteryIn: "SP-1", batteryOut: "SP-2", payment: "cash", amountXof: 500, role: "admin" });
     expect((await backend.stationCounter(STATION)).rows[0]).toMatchObject({ batteryTypeId: TYPE, full: start - 1, empty: 1 });
     await backend.recordSwap(STATION, { requestId: rid(), customerType: "first_purchase", batteryOut: "SP-3" });
     expect((await backend.stationCounter(STATION)).rows[0]).toMatchObject({ full: start - 2, empty: 1 });

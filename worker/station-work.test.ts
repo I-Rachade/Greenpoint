@@ -262,9 +262,10 @@ describe("swaps (W7, R6, R9, R10)", () => {
   it("records one battery in and one out per swap, except a first purchase (R6)", async () => {
     const { env, db } = await setup();
     const s = await swap(env, "afi", "be", { customerType: "cash", batteryIn: "ov72-0193", batteryOut: "OV72-0071", amountXof: 450 });
-    expect(s.body).toMatchObject({ customerType: "cash", batteryIn: "OV72-0193", batteryOut: "OV72-0071", payment: "cash", amountXof: 450, person: "Afi", role: "staff" });
+    // The swap costs the station's price from the backoffice, whatever amount the form sends.
+    expect(s.body).toMatchObject({ customerType: "cash", batteryIn: "OV72-0193", batteryOut: "OV72-0071", payment: "cash", amountXof: 500, person: "Afi", role: "staff" });
     const first = await swap(env, "afi", "be", { customerType: "first_purchase", batteryIn: "X1", amountXof: 30000 });
-    expect(first.body).toMatchObject({ customerType: "first_purchase", batteryIn: null });
+    expect(first.body).toMatchObject({ customerType: "first_purchase", batteryIn: null, amountXof: 30000 });
     const events = (id: string) => (db.prepare("select type from battery_events where swap_id = ? order by type").all(id) as { type: string }[]).map((e) => e.type);
     expect(events(s.body.id)).toEqual(["empty_in", "issue"]);
     expect(events(first.body.id)).toEqual(["issue"]);
@@ -293,6 +294,13 @@ describe("swaps (W7, R6, R9, R10)", () => {
     expect((await swap(env, "afi", "be", { customerType: "app", contact: "90000004", pin: PIN })).body).toEqual({ error: "own_reservation" });
     // App payments only at our own stations, as for charges.
     expect((await swap(env, "kossi", "kara", { customerType: "app", contact: "90000005", pin: PIN }, "kara")).body).toEqual({ error: "payment_not_offered" });
+  });
+
+  it("refuses a cash swap at a station without a swap price, but not a first purchase", async () => {
+    const { env, db } = await setup();
+    db.prepare("update stations set price_battery_xof = null where id = 'be'").run();
+    expect((await swap(env, "afi", "be", { customerType: "cash", batteryIn: "A1", batteryOut: "A2", amountXof: 450 })).body).toEqual({ error: "swap_price_missing" });
+    expect((await swap(env, "afi", "be", { customerType: "first_purchase", batteryIn: "X1", amountXof: 30000 })).body).toMatchObject({ payment: "cash", amountXof: 30000 });
   });
 
   it("refuses a wallet swap the balance cannot pay, and takes nothing", async () => {
