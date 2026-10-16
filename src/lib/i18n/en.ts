@@ -1709,6 +1709,7 @@ export const en: Dictionary = {
     power: "Power",
     energy: "Energy charged",
     duration: "Duration",
+    kwhPrice: "Price per kWh",
     priceSoFar: "Price so far",
     priceFinal: "To pay",
     amountPaid: "Paid",
