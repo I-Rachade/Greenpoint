@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { startSelfCharge, stopSelfCharge } from "./charging";
 import { createDevice, startOutlet, stopOutlet } from "./devices";
 import type { Env } from "./env";
 import { applyOcppResult, handleOcppCall, handleOcppUpgrade, logOcppAttempt, OcppConnection, offeredProtocol } from "./ocpp";
@@ -174,6 +175,31 @@ describe("OCPP charge points", () => {
     expect(points(db)[0]).toMatchObject({ status: "free" });
   });
 
+  it("accept only a tag we sent this charge point, once, on its connector", async () => {
+    const { d1, env, requests } = await setup();
+    const { order: idTag } = await startOutlet(env, CP, 1, "admin");
+    const call = JSON.parse(requests[0].body);
+    await applyOcppResult(d1, call.commandId, { type: 3, id: call.messageId, payload: { status: "Accepted" } });
+    // Made up, or for another connector: refused.
+    expect(await handleOcppCall(d1, ID, "Authorize", { idTag: "PDR000ANYTHING" })).toEqual({ idTagInfo: { status: "Invalid" } });
+    const other = await handleOcppCall(d1, ID, "StartTransaction", { connectorId: 2, idTag, meterStart: 0, timestamp: "2026-10-15T06:00:00Z" });
+    expect(other).toMatchObject({ idTagInfo: { status: "Invalid" } });
+    // A refused start used the tag up: the charge point may not retry it either.
+    const again = await handleOcppCall(d1, ID, "StartTransaction", { connectorId: 1, idTag, meterStart: 0, timestamp: "2026-10-15T06:00:00Z" });
+    expect(again).toMatchObject({ idTagInfo: { status: "Invalid" } });
+  });
+
+  it("refuse a start the charge point remembers after the outlet was switched off", async () => {
+    const { d1, env, requests } = await setup();
+    const { order: idTag } = await startOutlet(env, CP, 1, "admin");
+    const call = JSON.parse(requests[0].body);
+    await applyOcppResult(d1, call.commandId, { type: 3, id: call.messageId, payload: { status: "Accepted" } });
+    // Switched off before the customer plugged in: no transaction to stop yet.
+    await expect(stopOutlet(env, CP, 1, "admin")).rejects.toMatchObject({ code: "device_not_charging" });
+    const late = await handleOcppCall(d1, ID, "StartTransaction", { connectorId: 1, idTag, meterStart: 0, timestamp: "2026-10-15T06:00:00Z" });
+    expect(late).toMatchObject({ idTagInfo: { status: "Invalid" } });
+  });
+
   it("report an offline charge point and record the failed command", async () => {
     const { db, env } = await setup(false);
     await expect(startOutlet(env, CP, 1, "admin")).rejects.toMatchObject({ code: "device_offline" });
@@ -255,5 +281,67 @@ describe("OCPP connection", () => {
       ["out", fresh.sent[0]],
       ["in", "garbage"],
     ]);
+  });
+});
+
+describe("OCPP charges by QR code", () => {
+  const KOFI = { id: "kofi", phone: "+22896123456", email: null, fullName: "Kofi", role: "customer" } as const;
+
+  async function charging() {
+    const s = await setup();
+    const now = new Date().toISOString();
+    s.db.exec(`
+      insert into users (id, phone, full_name, role, created_at) values ('kofi', '${KOFI.phone}', 'Kofi', 'rider', '${now}');
+      update charging_points set qr_start = 1;
+    `);
+    await handleOcppCall(s.d1, ID, "BootNotification", { chargePointVendor: "V", chargePointModel: "M" });
+    await handleOcppCall(s.d1, ID, "StatusNotification", { connectorId: 1, status: "Available", errorCode: "NoError" });
+    const point = (s.db.prepare("select id from charging_points where outlet = 1").get() as { id: string }).id;
+    return { ...s, point };
+  }
+  const sessions = (db: ReturnType<typeof fakeD1>["db"]) => db.prepare("select status, energy_wh from charging_sessions").all();
+
+  it("cancel the charge and give the reservation back when the charge point refuses to start", async () => {
+    const { db, d1, env, requests, point } = await charging();
+    const now = Date.now();
+    db.prepare(
+      `insert into reservations (id, user_id, station_id, type, status, created_at, expires_at, pickup_code, kind, target)
+       values ('r1', 'kofi', 'st', 'slot', 'active', ?, ?, '1234', 'charging_point', ?)`,
+    ).run(new Date(now - 60_000).toISOString(), new Date(now + 600_000).toISOString(), point);
+    await startSelfCharge(env, KOFI, point);
+    expect(db.prepare("select status from reservations").get()).toEqual({ status: "completed" });
+    const call = JSON.parse(requests[0].body);
+    await applyOcppResult(d1, call.commandId, { type: 3, id: call.messageId, payload: { status: "Rejected" } });
+    expect(sessions(db)).toEqual([{ status: "cancelled", energy_wh: 0 }]);
+    expect(db.prepare("select status, charging_point_id from reservations").get()).toEqual({ status: "active", charging_point_id: null });
+    // The outlet can be started again.
+    await startSelfCharge(env, KOFI, point);
+    expect(db.prepare("select count(*) n from charging_sessions where status = 'charging'").get()).toEqual({ n: 1 });
+  });
+
+  it("never charge after the customer stopped, even if the charge point starts later", async () => {
+    const { db, d1, env, requests, point } = await charging();
+    const s = await startSelfCharge(env, KOFI, point);
+    const call = JSON.parse(requests[0].body);
+    await applyOcppResult(d1, call.commandId, { type: 3, id: call.messageId, payload: { status: "Accepted" } });
+    await stopSelfCharge(env, KOFI, s.id);
+    const late = await handleOcppCall(d1, ID, "StartTransaction", { connectorId: 1, idTag: call.payload.idTag, meterStart: 1000, timestamp: new Date().toISOString() });
+    expect(late).toMatchObject({ idTagInfo: { status: "Invalid" } });
+    expect(sessions(db)).toEqual([{ status: "stopped", energy_wh: 0 }]);
+    expect(points(db)[0]).toMatchObject({ status: "free" });
+  });
+
+  it("charge normally with the tag of the running charge", async () => {
+    const { db, d1, env, requests, point } = await charging();
+    await startSelfCharge(env, KOFI, point);
+    const call = JSON.parse(requests[0].body);
+    await applyOcppResult(d1, call.commandId, { type: 3, id: call.messageId, payload: { status: "Accepted" } });
+    const start = (await handleOcppCall(d1, ID, "StartTransaction", { connectorId: 1, idTag: call.payload.idTag, meterStart: 1000, timestamp: new Date().toISOString() })) as {
+      transactionId: number;
+      idTagInfo: { status: string };
+    };
+    expect(start.idTagInfo.status).toBe("Accepted");
+    await handleOcppCall(d1, ID, "StopTransaction", { transactionId: start.transactionId, meterStop: 1400, timestamp: new Date().toISOString() });
+    expect(sessions(db)).toEqual([{ status: "stopped", energy_wh: 400 }]);
   });
 });

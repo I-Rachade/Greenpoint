@@ -435,7 +435,17 @@ export async function stopOutlet(env: Env, rawId: string, outlet: number, actor:
     )
       .bind(target.externalId, outlet)
       .first<{ id: number }>();
-    if (!tx) throw new ApiError("device_not_charging", 409);
+    if (!tx) {
+      // Not started yet: a start still waiting on the charge point may no longer charge (tagStatus in ocpp.ts).
+      await env.DB.prepare(
+        `update device_commands set status = 'expired', done_at = ? where external_id = ? and outlet = ? and kind = 'start'
+         and message_id is not null and status in ('pending', 'sent', 'done')
+         and not exists (select 1 from ocpp_transactions t where t.external_id = device_commands.external_id and t.id_tag = device_commands.order_no)`,
+      )
+        .bind(nowIso(), target.externalId, outlet)
+        .run();
+      throw new ApiError("device_not_charging", 409);
+    }
     await sendOcpp(env, target, outlet, "stop", String(tx.id), "RemoteStopTransaction", remoteStopRequest(tx.id), actor);
     return { order: String(tx.id) };
   }
