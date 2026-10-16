@@ -11,6 +11,7 @@ import { usePosition } from "@/lib/use-position";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
+import { PositionReporter } from "./position-reporter";
 import { Notice, primary, secondary, useFcfa } from "./shared";
 
 /** "HH:MM" in the app's language. */
@@ -239,6 +240,8 @@ export function DriverShopsSection({ queue, onTrip }: { queue: ReactNode; onTrip
     <>
       {checkin ? (
         <>
+          {/* On a trip the driver panel reports already. */}
+          {!onTrip && <PositionReporter />}
           <CheckedInBanner checkin={checkin} onTrip={onTrip} />
           {queue && <p className="rounded-lg bg-zinc-100 p-3 text-sm dark:bg-zinc-900">{d.queueBlocked}</p>}
         </>

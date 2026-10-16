@@ -457,6 +457,8 @@ export interface Backend {
   /** Joins the line at a station; the position proves the driver is there. */
   joinDriverQueue(stationId: string, position: LatLng | null): Promise<void>;
   leaveDriverQueue(): Promise<void>;
+  /** The driver app's position while on duty (driver phase 2); kept: false when off duty. */
+  reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }): Promise<{ kept: boolean }>;
   acceptJob(id: string): Promise<void>;
   /** The trip goes to the next in line; the driver goes to the back. */
   declineJob(id: string): Promise<void>;

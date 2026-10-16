@@ -1,4 +1,4 @@
-import type { DeliveryJob, DriverSettings, FleetVehicleType, JobStatus } from "./drivers";
+import type { DeliveryJob, DriverPosition, DriverSettings, FleetVehicleType, JobStatus } from "./drivers";
 import { distanceMeters, type LatLng } from "./geo";
 
 /**
@@ -151,6 +151,8 @@ export interface MerchantCheckin {
   amountFcfa: number | null;
   /** Hourly: when the driver confirmed they got the money. */
   receivedAt: string | null;
+  /** Open check-ins: where the driver is, when reported recently (driver phase 2). */
+  position?: DriverPosition | null;
 }
 
 /** Inputs of the shop's backoffice for a driver. */

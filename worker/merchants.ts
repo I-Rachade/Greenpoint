@@ -4,7 +4,7 @@
 // (view, bookings log, activity log, shop details), the team and its invites, favorite and
 // assigned drivers with their approval, check-in and check-out, and the admin's Merchants page.
 // Shared rules in src/lib/merchants.ts, tables in 0035_merchants.sql.
-import { BUSY_JOB_STATUSES, newDriverCode, parseDriverBadge, type FleetVehicleType, type JobStatus } from "../src/lib/drivers";
+import { BUSY_JOB_STATUSES, freshPosition, newDriverCode, parseDriverBadge, type FleetVehicleType, type JobStatus } from "../src/lib/drivers";
 import type { LatLng } from "../src/lib/geo";
 import {
   cleanRate,
@@ -134,10 +134,11 @@ const ASSIGNMENT_SELECT = `select md.*, d.full_name as driver_name, u.phone as d
   from merchant_drivers md join merchants m on m.id = md.merchant_id join users u on u.id = md.driver_id
   left join drivers d on d.user_id = md.driver_id left join fleet_vehicles v on v.id = d.vehicle_id`;
 
-const CHECKIN_SELECT = `select k.*, m.name as merchant_name, d.full_name as driver_name
-  from merchant_checkins k join merchants m on m.id = k.merchant_id left join drivers d on d.user_id = k.driver_id`;
+const CHECKIN_SELECT = `select k.*, m.name as merchant_name, d.full_name as driver_name, dp.lat as pos_lat, dp.lng as pos_lng, dp.at as pos_at
+  from merchant_checkins k join merchants m on m.id = k.merchant_id left join drivers d on d.user_id = k.driver_id
+  left join driver_positions dp on dp.driver_id = k.driver_id`;
 
-type CheckinView = CheckinRow & { merchant_name: string; driver_name: string | null };
+type CheckinView = CheckinRow & { merchant_name: string; driver_name: string | null; pos_lat?: number | null; pos_lng?: number | null; pos_at?: string | null };
 
 interface AddressRow {
   id: string;
@@ -215,6 +216,8 @@ function toCheckin(r: CheckinView): MerchantCheckin {
     outBy: r.out_by as MerchantCheckin["outBy"],
     amountFcfa: r.amount_fcfa,
     receivedAt: r.received_at,
+    // Where a driver checked in now is (driver phase 2); not for ended check-ins.
+    position: !r.out_at && r.pos_lat != null && r.pos_lng != null && r.pos_at ? freshPosition({ lat: r.pos_lat, lng: r.pos_lng, at: r.pos_at }) : null,
   };
 }
 

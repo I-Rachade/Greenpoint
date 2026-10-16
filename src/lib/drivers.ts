@@ -377,6 +377,32 @@ export interface JobDriver {
   phone: string | null;
   plate: string | null;
   vehicleType: FleetVehicleType | null;
+  /**
+   * Where the driver is (driver phase 2, planung/fahrer.md): only while on the way to the
+   * start or carrying the parcel or passenger, and only when reported in the last
+   * POSITION_FRESH_MINUTES.
+   */
+  position?: DriverPosition | null;
+}
+
+/** A driver's last reported position (driver phase 2). */
+export interface DriverPosition {
+  lat: number;
+  lng: number;
+  /** When the driver's phone reported it. */
+  at: string;
+}
+
+/** The driver app reports its position at most this often while on duty. */
+export const POSITION_REPORT_SECONDS = 20;
+/** Older positions are not shown: the driver closed the app or lost the network. */
+export const POSITION_FRESH_MINUTES = 10;
+/** Trip statuses in which the customer sees where the driver is. */
+export const TRACKED_JOB_STATUSES: JobStatus[] = ["accepted", "picked_up", "at_door", "returning"];
+
+/** The position if it is fresh enough to show, else null. */
+export function freshPosition(p: DriverPosition | null | undefined, now = Date.now()): DriverPosition | null {
+  return p && now - new Date(p.at).getTime() <= POSITION_FRESH_MINUTES * 60_000 ? p : null;
 }
 
 export interface DeliveryJob {

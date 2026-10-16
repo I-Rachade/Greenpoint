@@ -17,6 +17,9 @@ import {
   validPoint,
   validSettings,
   vehicleFits,
+  freshPosition,
+  TRACKED_JOB_STATUSES,
+  type DriverPosition,
   MAX_PASSENGERS,
   OPEN_JOB_EXPIRY_MINUTES,
   signDriverPass,
@@ -166,17 +169,28 @@ export interface JobRow {
   driver_phone: string | null;
   driver_plate: string | null;
   driver_vehicle: FleetVehicleType | null;
+  /** The driver's last reported position (driver_positions, 0037). */
+  driver_lat?: number | null;
+  driver_lng?: number | null;
+  driver_pos_at?: string | null;
 }
 
 export const JOB_SELECT = `select j.*, p.tracking_no, d.full_name as driver_name, u.phone as driver_phone,
-    v.plate as driver_plate, v.type as driver_vehicle
+    v.plate as driver_plate, v.type as driver_vehicle, dp.lat as driver_lat, dp.lng as driver_lng, dp.at as driver_pos_at
   from delivery_jobs j
   left join parcels p on p.id = j.parcel_id
   left join drivers d on d.user_id = j.driver_id
   left join users u on u.id = j.driver_id
-  left join fleet_vehicles v on v.id = d.vehicle_id`;
+  left join fleet_vehicles v on v.id = d.vehicle_id
+  left join driver_positions dp on dp.driver_id = j.driver_id`;
 
 export const BUSY_SQL = `(${BUSY_JOB_STATUSES.map((s) => `'${s}'`).join(", ")})`;
+
+/** Where the driver of a trip is, while the customer may see it (TRACKED_JOB_STATUSES) and it is fresh. */
+function jobPosition(r: JobRow): DriverPosition | null {
+  if (!TRACKED_JOB_STATUSES.includes(r.status) || r.driver_lat == null || r.driver_lng == null || !r.driver_pos_at) return null;
+  return freshPosition({ lat: r.driver_lat, lng: r.driver_lng, at: r.driver_pos_at });
+}
 
 export function toJob(r: JobRow): DeliveryJob {
   return {
@@ -203,7 +217,13 @@ export function toJob(r: JobRow): DeliveryJob {
     recipient: r.recipient_phone ? { phone: r.recipient_phone, name: r.recipient_name } : null,
     declaredValue: r.declared_value,
     driver: r.driver_id
-      ? { name: r.driver_name ?? "", phone: r.driver_phone ?? null, plate: r.driver_plate ?? null, vehicleType: r.driver_vehicle ?? null }
+      ? {
+          name: r.driver_name ?? "",
+          phone: r.driver_phone ?? null,
+          plate: r.driver_plate ?? null,
+          vehicleType: r.driver_vehicle ?? null,
+          position: jobPosition(r),
+        }
       : null,
     customerName: r.customer_name,
     createdAt: r.created_at,
@@ -786,6 +806,40 @@ export async function joinQueue(c: ParcelCtx, stationId: string, position: unkno
       .run();
   }
   await dispatch(c);
+}
+
+/**
+ * The driver app reports where the driver is (driver phase 2), every POSITION_REPORT_SECONDS
+ * while on duty: in a queue, checked in at a shop or on a trip. Off duty nothing is kept.
+ * Returns whether the position was kept.
+ */
+export async function reportPosition(c: ParcelCtx, input: unknown): Promise<{ kept: boolean }> {
+  const { user, row } = await requireDriver(c);
+  const p = input as { lat?: unknown; lng?: unknown; accuracyM?: unknown } | null;
+  const point = { lat: Number(p?.lat), lng: Number(p?.lng) };
+  if (!validPoint(point)) throw new ApiError("bad_request");
+  const accuracy = Number(p?.accuracyM);
+  if (row.status !== "active") return { kept: false };
+  const onDuty = await c.db
+    .prepare(
+      `select (exists (select 1 from driver_queue where driver_id = ?1)
+            or exists (select 1 from merchant_checkins where driver_id = ?1 and out_at is null)
+            or exists (select 1 from delivery_jobs where driver_id = ?1 and status in ${BUSY_SQL})) as on_duty`,
+    )
+    .bind(user.id)
+    .first<{ on_duty: number }>();
+  if (!onDuty?.on_duty) {
+    await c.db.prepare("delete from driver_positions where driver_id = ?").bind(user.id).run();
+    return { kept: false };
+  }
+  await c.db
+    .prepare(
+      `insert into driver_positions (driver_id, lat, lng, accuracy_m, at) values (?, ?, ?, ?, ?)
+       on conflict (driver_id) do update set lat = excluded.lat, lng = excluded.lng, accuracy_m = excluded.accuracy_m, at = excluded.at`,
+    )
+    .bind(user.id, point.lat, point.lng, Number.isFinite(accuracy) && accuracy >= 0 ? Math.min(accuracy, 100_000) : null, nowIso())
+    .run();
+  return { kept: true };
 }
 
 export async function leaveQueue(c: ParcelCtx) {

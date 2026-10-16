@@ -1,11 +1,12 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useState, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
 import { DEFAULT_PHONE_COUNTRY, PHONE_COUNTRIES, phoneWithCountry } from "@/lib/countries";
-import { BUSY_JOB_STATUSES, jobFits, type DeliveryJob, type DriverStatus } from "@/lib/drivers";
+import { BUSY_JOB_STATUSES, freshPosition, jobFits, type DeliveryJob, type DriverStatus } from "@/lib/drivers";
 import { statsUnlocked, type FleetDriver, type FleetDriverStats, type FleetInfo, type FleetInvite, type FleetInviteStatus, type FleetView } from "@/lib/fleet";
-import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
+import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { StationView } from "@/lib/types";
 import { useApp } from "../app-provider";
@@ -15,6 +16,9 @@ import { useI18n } from "../i18n-provider";
 import { Badge, Button, Input, useToast, type BadgeTone } from "../ui";
 import { AssignmentRequestList, useClock } from "./driver-shops";
 import { input, JobStatusPill, Notice, primary, secondary, useFcfa, useJobRoute } from "./shared";
+import type { TrackPoint } from "./track-map";
+
+const TrackMap = dynamic(() => import("./track-map").then((m) => m.TrackMap), { ssr: false });
 
 function Section({ title, hint, action, children }: { title: string; hint?: string; action?: ReactNode; children: ReactNode }) {
   return (
@@ -540,6 +544,23 @@ function ShopRequests() {
 }
 
 /** /flotte: a fleet manager's drivers, invites, manual dispatch, the swaps billed to the fleet and figures (src/lib/fleet.ts). */
+/** Driver phase 2: drivers on duty with a recent position, as blue dots. */
+function FleetMap({ drivers }: { drivers: FleetDriver[] }) {
+  const { t } = useI18n();
+  const m = t.drivers.tracking;
+  const now = useNow(30_000);
+  const points: TrackPoint[] = drivers.flatMap((d) => {
+    const p = freshPosition(d.position, now.getTime());
+    return p ? [{ id: d.userId, kind: "driver" as const, lat: p.lat, lng: p.lng, label: d.fullName }] : [];
+  });
+  return (
+    <Section title={m.fleetMap}>
+      <p className="text-xs text-zinc-500">{m.fleetMapHint}</p>
+      {points.length === 0 ? <p className="text-sm text-zinc-500">{m.noPositions}</p> : <TrackMap points={points} className="h-72" />}
+    </Section>
+  );
+}
+
 export function FleetPanel() {
   const { t } = useI18n();
   const f = t.fleet;
@@ -603,6 +624,7 @@ export function FleetPanel() {
           </ul>
         )}
       </Section>
+      <FleetMap drivers={view.drivers} />
       {manager && <InviteSheet open={inviting} onClose={() => setInviting(false)} />}
       {manager && <ShopRequests />}
       {fleet && (

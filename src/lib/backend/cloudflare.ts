@@ -741,6 +741,11 @@ export class CloudflareBackend implements Backend {
     return this.act("DELETE", "/api/driver/queue");
   }
 
+  // No change notice: other screens of the driver do not depend on it.
+  reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }) {
+    return this.call<{ kept: boolean }>("POST", "/api/driver/position", position);
+  }
+
   private job(id: string, action: string, body?: unknown) {
     return this.act("POST", `/api/driver/jobs/${encodeURIComponent(id)}/${action}`, body);
   }

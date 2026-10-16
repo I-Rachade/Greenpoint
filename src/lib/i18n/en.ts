@@ -1126,6 +1126,15 @@ export const en: Dictionary = {
       failed: "Not delivered, back at the station",
       cancelled: "Cancelled",
     },
+    tracking: {
+      away: "{name} is {distance} from the next stop (position at {time}).",
+      seen: "{name}'s position at {time}.",
+      fleetMap: "Where the drivers are",
+      fleetMapHint: "Drivers on duty (queue, trip or shop) whose app sent its position in the last 10 minutes.",
+      noPositions: "No recent position.",
+      shopMap: "On the map",
+      shopMapHint: "Your checked-in drivers and those of your running trips, from their last position.",
+    },
     /** A shop's courier whose recipient was absent (planung/marchand.md). */
     shopReturning: "Back to the shop",
     shopReturned: "Not delivered, back at the shop",

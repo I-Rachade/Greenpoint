@@ -150,6 +150,9 @@ import {
   type FormerAccount,
   pickDriver,
   validPoint,
+  freshPosition,
+  TRACKED_JOB_STATUSES,
+  type DriverPosition,
   validSettings,
   vehicleFits,
   jobFits,
@@ -419,6 +422,8 @@ interface DemoState {
   merchantCheckins?: DemoCheckin[];
   /** Saved pickup addresses of the shops (merchant_addresses, 0036). */
   merchantAddresses?: (MerchantAddress & { merchantId: string })[];
+  /** The last position each driver on duty reported (driver_positions, 0037). */
+  driverPositions?: Record<string, DriverPosition>;
 }
 
 interface DemoMerchant {
@@ -3321,7 +3326,15 @@ export class DemoBackend implements Backend {
       collectFcfa: j.collectFcfa,
       recipient: j.recipient,
       declaredValue: j.declaredValue,
-      driver: driver ? { name: driver.fullName, phone: driver.phone, plate: vehicle?.plate ?? null, vehicleType: vehicle?.type ?? null } : null,
+      driver: driver
+        ? {
+            name: driver.fullName,
+            phone: driver.phone,
+            plate: vehicle?.plate ?? null,
+            vehicleType: vehicle?.type ?? null,
+            position: TRACKED_JOB_STATUSES.includes(j.status) ? freshPosition(state.driverPositions?.[driver.userId]) : null,
+          }
+        : null,
       customerName: j.customerName,
       createdAt: j.createdAt,
       assignedAt: j.assignedAt,
@@ -3666,6 +3679,21 @@ export class DemoBackend implements Backend {
       this.save({ ...state, driverQueue: [...queue.filter((q) => q.driverId !== driver.userId), { driverId: driver.userId, stationId, since: new Date().toISOString() }] });
     }
     this.dispatch();
+  }
+
+  /** As reportPosition() in worker/drivers.ts: kept only while the driver is on duty. */
+  async reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }) {
+    const state = this.load();
+    const { driver } = this.demoDriver(state);
+    if (!validPoint(position)) throw new BackendError("unknown", "bad_request");
+    const onDuty =
+      driver.status === "active" &&
+      ((state.driverQueue ?? []).some((q) => q.driverId === driver.userId) || !!this.openCheckin(state, driver.userId) || !!this.busyJob(state, driver.userId));
+    const positions = { ...state.driverPositions };
+    if (onDuty) positions[driver.userId] = { lat: position.lat, lng: position.lng, at: new Date().toISOString() };
+    else delete positions[driver.userId];
+    this.save({ ...state, driverPositions: positions });
+    return { kept: onDuty };
   }
 
   async leaveDriverQueue() {
@@ -4643,6 +4671,7 @@ export class DemoBackend implements Backend {
           balanceFcfa: view.balanceFcfa,
           queue: view.queue,
           job: job ? jobForManager(this.viewJob(state, job)) : null,
+          position: freshPosition(state.driverPositions?.[d.userId]),
         };
       }),
       invites: fleet
@@ -5140,6 +5169,7 @@ export class DemoBackend implements Backend {
       outBy: k.outBy,
       amountFcfa: k.amountFcfa,
       receivedAt: k.receivedAt,
+      position: k.outAt ? null : freshPosition(state.driverPositions?.[k.driverId]),
     };
   }
 

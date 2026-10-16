@@ -109,6 +109,7 @@ import {
   arriveAtDoor,
   assignJob,
   boardRide,
+  reportPosition,
   bookDelivery,
   bookPickup,
   bookRide,
@@ -2118,6 +2119,7 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/photo$/, (c, [id]) => uploadProof(c, id, c.request)],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/deliver$/, async (c, [id]) => deliverJob(c, id, (await readJson<{ code: string }>(c.request)).code)],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/absent$/, (c, [id]) => failDelivery(c, id)],
+  ["POST", /^\/api\/driver\/position$/, async (c) => reportPosition(c, await readJson<unknown>(c.request))],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/board$/, (c, [id]) => boardRide(c, id)],
   [
     "POST",

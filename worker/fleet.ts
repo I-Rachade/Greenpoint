@@ -28,7 +28,7 @@ import {
   type FleetView,
   type MyFleetInvite,
 } from "../src/lib/fleet";
-import { newDriverCode, type LedgerEntry } from "../src/lib/drivers";
+import { freshPosition, newDriverCode, type DriverPosition, type LedgerEntry } from "../src/lib/drivers";
 import { normalizeTogoPhone } from "../src/lib/phone";
 import type { Profile } from "../src/lib/types";
 import {
@@ -157,7 +157,7 @@ export async function fleetView(c: ParcelCtx): Promise<FleetView> {
   const rows = await managedRows(c, user);
   const ids = rows.map((r) => r.user_id);
   const marks = ids.map(() => "?").join(", ");
-  const [jobs, open, invites, shops] = await Promise.all([
+  const [jobs, open, invites, shops, positions] = await Promise.all([
     ids.length
       ? c.db.prepare(`${JOB_SELECT} where j.driver_id in (${marks}) and j.status in ${BUSY_SQL}`).bind(...ids).all<JobRow>()
       : Promise.resolve({ results: [] as JobRow[] }),
@@ -171,6 +171,9 @@ export async function fleetView(c: ParcelCtx): Promise<FleetView> {
           .bind(...ids)
           .all<{ driver_id: string; in_at: string; name: string }>()
       : Promise.resolve({ results: [] as { driver_id: string; in_at: string; name: string }[] }),
+    ids.length
+      ? c.db.prepare(`select driver_id, lat, lng, at from driver_positions where driver_id in (${marks})`).bind(...ids).all<{ driver_id: string } & DriverPosition>()
+      : Promise.resolve({ results: [] as ({ driver_id: string } & DriverPosition)[] }),
   ]);
   const drivers: FleetDriver[] = await Promise.all(
     rows.map(async (r) => {
@@ -187,10 +190,16 @@ export async function fleetView(c: ParcelCtx): Promise<FleetView> {
         queue,
         job: job ? jobForManager(toJob(job)) : null,
         shop: shop ? { name: shop.name, since: shop.in_at } : null,
+        position: positionOf(positions.results.find((p) => p.driver_id === r.user_id)),
       };
     }),
   );
   return { fleet, drivers, invites: invites.results.map(toInvite), openJobs: open.results.map((j) => jobForManager(toJob(j))), settings };
+}
+
+/** A fresh reported position as the app sees it. */
+function positionOf(p: ({ driver_id: string } & DriverPosition) | undefined): DriverPosition | null {
+  return p ? freshPosition({ lat: p.lat, lng: p.lng, at: p.at }) : null;
 }
 
 /**

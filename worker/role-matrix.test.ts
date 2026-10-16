@@ -184,6 +184,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/driver/jobs/:id/deliver": DRIVER,
   "POST /api/driver/jobs/:id/absent": DRIVER,
   "POST /api/driver/jobs/:id/board": DRIVER,
+  "POST /api/driver/position": DRIVER,
   "POST /api/driver/jobs/:id/finish": DRIVER,
   "GET /api/jobs/mine": ALL, // empty when signed out
   "POST /api/jobs/pickup": BOOKING,

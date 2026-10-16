@@ -1,7 +1,8 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useState, type ComponentType, type SVGProps } from "react";
-import type { DeliveryJob, JobStatus } from "@/lib/drivers";
+import { freshPosition, type DeliveryJob, type DriverPosition, type JobStatus } from "@/lib/drivers";
 import { useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { downloadText, toCsv } from "@/lib/csv";
@@ -31,6 +32,10 @@ import { useDateTime } from "../backoffice/shared";
 import { BookedByLine, ShopReturn } from "./merchant-book";
 import { Block, field, JOB_STATUSES, useAction, useClock, useDuration, useLongDate } from "./shared";
 import { JobDetails } from "../drivers/customer-jobs";
+import type { TrackPoint } from "../drivers/track-map";
+import type { StationView } from "@/lib/types";
+
+const TrackMap = dynamic(() => import("../drivers/track-map").then((m) => m.TrackMap), { ssr: false });
 
 type Icon = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
 
@@ -83,12 +88,43 @@ export function MerchantOverview({ view }: { view: MerchantView }) {
   );
 }
 
-/** Live: trips running now and drivers checked in at the shop, with check-out. */
-export function MerchantLive({ view }: { view: MerchantView }) {
+/** Driver phase 2: the shop, its checked-in drivers and the drivers of its running trips. */
+function ShopMap({ view }: { view: MerchantView }) {
   const { t } = useI18n();
-  const l = t.merchant.live;
+  const m = t.drivers.tracking;
+  const now = useNow(30_000);
+  const points: TrackPoint[] = [{ id: "shop", kind: "shop", lat: view.merchant.lat, lng: view.merchant.lng, label: view.merchant.name }];
+  const shown = new Set<string>();
+  const add = (id: string, name: string, p: DriverPosition | null) => {
+    if (!p || shown.has(name)) return;
+    shown.add(name);
+    points.push({ id, kind: "driver", lat: p.lat, lng: p.lng, label: name });
+  };
+  for (const c of view.checkins) add(`checkin-${c.driverId}`, c.driverName, freshPosition(c.position, now.getTime()));
+  for (const j of view.live) if (j.driver) add(`job-${j.id}`, j.driver.name, freshPosition(j.driver.position, now.getTime()));
+  return (
+    <Block title={m.shopMap} hint={m.shopMapHint}>
+      <TrackMap points={points} className="h-64" />
+      {points.length === 1 && <p className="text-xs text-gp-muted">{m.noPositions}</p>}
+    </Block>
+  );
+}
+
+/** Live: a map, trips running now and drivers checked in at the shop, with check-out. */
+export function MerchantLive({ view }: { view: MerchantView }) {
   const { backend } = useApp();
   const { data: stations } = useLiveQuery(() => backend.listStations());
+  return (
+    <div className="space-y-4">
+      <ShopMap view={view} />
+      <LiveLists view={view} stations={stations ?? []} />
+    </div>
+  );
+}
+
+function LiveLists({ view, stations }: { view: MerchantView; stations: StationView[] }) {
+  const { t } = useI18n();
+  const l = t.merchant.live;
   return (
     <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
       <Block title={l.trips}>
@@ -98,7 +134,7 @@ export function MerchantLive({ view }: { view: MerchantView }) {
           <ul className="space-y-2">
             {view.live.map((j) => (
               <li key={j.id} className="space-y-1 rounded-xl border border-black/10 p-3 text-sm dark:border-white/10">
-                <JobDetails job={j} stations={stations ?? []} />
+                <JobDetails job={j} stations={stations} />
                 <BookedByLine job={j} />
                 <ShopReturn job={j} />
               </li>

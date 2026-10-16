@@ -24,6 +24,7 @@ import { useApp } from "../app-provider";
 import { SizePicker } from "../parcels/size-picker";
 import { useI18n } from "../i18n-provider";
 import { Button, CountUp, formatRemaining, useReducedMotion, useToast } from "../ui";
+import { DriverTracking } from "./driver-tracking";
 import { input, JobStatusPill, Notice, primary, secondary, small, useFcfa, useJobRoute } from "./shared";
 
 const HomePicker = dynamic(() => import("./home-picker").then((m) => m.HomePicker), { ssr: false });
@@ -489,6 +490,7 @@ export function JobDetails({ job: j, stations, showRoute = true }: { job: Delive
           )}
         </div>
       )}
+      <DriverTracking job={j} stations={stations} />
       {j.handoverCode && (
         <div className="rounded-lg bg-gp-green/10 p-3">
           <p className="font-mono text-lg font-semibold tracking-widest">{format(t.runs.handoverCode, { code: j.handoverCode })}</p>

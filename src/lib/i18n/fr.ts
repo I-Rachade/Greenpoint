@@ -1126,6 +1126,15 @@ export const fr = {
       failed: "Non livré, rendu à la station",
       cancelled: "Annulé",
     },
+    tracking: {
+      away: "{name} est à {distance} de la prochaine étape (position de {time}).",
+      seen: "Position de {name} à {time}.",
+      fleetMap: "Où sont les chauffeurs",
+      fleetMapHint: "Chauffeurs en service (file, course ou boutique) dont l'app a envoyé sa position ces 10 dernières minutes.",
+      noPositions: "Aucune position récente.",
+      shopMap: "Sur la carte",
+      shopMapHint: "Vos chauffeurs présents et ceux de vos courses en cours, d'après leur dernière position.",
+    },
     /** A shop's courier whose recipient was absent (planung/marchand.md). */
     shopReturning: "Retour à la boutique",
     shopReturned: "Non livré, revenu à la boutique",
