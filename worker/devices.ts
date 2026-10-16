@@ -126,7 +126,7 @@ export function ingest(db: D1Database): Ingest {
           .bind(status, o.power_watts ?? null, o.energy_wh ?? null, point.id),
       );
       // The charge staff started on this outlet adds up the energy and ends with it (worker/charging.ts).
-      statements.push(chargeReadingStatement(db, point.id, o.status, o.energy_wh, now));
+      statements.push(chargeReadingStatement(db, point.id, o.status, o.energy_wh, now, o.transaction_id));
       updated++;
       // A charge staff started is not a reservation's plug-in.
       if (o.status === "charging" && point.status !== "charging" && !(await hasOpenCharge(db, point.id))) {

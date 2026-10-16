@@ -155,9 +155,18 @@ export async function stationTariff(db: D1Database, stationId: string): Promise<
  *   deltas, and a reading below the last one (the socket started a new count) adds in full;
  * - "charging" marks that the outlet really draws power;
  * - once it did, "free", "done" or "fault" ends the charge (battery full, unplugged, fault).
- * Paid and cancelled charges no longer change. All SET expressions read the old row.
+ * Paid and cancelled charges no longer change, and a stopped one no longer once the next charge
+ * runs on the outlet. A reading that names its charge (`transactionId`, Xingke cloud) only
+ * applies to that charge. All SET expressions read the old row.
  */
-export function chargeReadingStatement(db: D1Database, pointId: string, status: string | undefined, energyWh: number | undefined, now: string) {
+export function chargeReadingStatement(
+  db: D1Database,
+  pointId: string,
+  status: string | undefined,
+  energyWh: number | undefined,
+  now: string,
+  transactionId?: string,
+) {
   return db
     .prepare(
       `update charging_sessions set
@@ -167,9 +176,65 @@ export function chargeReadingStatement(db: D1Database, pointId: string, status: 
          seen_charging = case when ?3 = 'charging' then 1 else seen_charging end,
          status = case when status = 'charging' and seen_charging = 1 and ?3 in ('free', 'done', 'fault') then 'stopped' else status end,
          stopped_at = case when status = 'charging' and seen_charging = 1 and ?3 in ('free', 'done', 'fault') then ?4 else stopped_at end
-       where charging_point_id = ?1 and status in ('charging', 'stopped')`,
+       where charging_point_id = ?1 and status in ('charging', 'stopped')
+         and (status = 'charging' or not exists (select 1 from charging_sessions n where n.charging_point_id = ?1 and n.status = 'charging'))
+         and (?5 is null or order_no = ?5 or (order_no is null and status = 'charging'))`,
     )
-    .bind(pointId, energyWh ?? null, status ?? null, now);
+    .bind(pointId, energyWh ?? null, status ?? null, now, transactionId ?? null);
+}
+
+/**
+ * The socket refused to start (Xingke CommandResult "Failed"): the charge it opened took no
+ * energy, so it is cancelled at no cost and the customer's reservation it used holds again.
+ * `order` is the start's transaction id; a charge whose id is not stored yet is the outlet's open one.
+ */
+export async function chargeStartFailed(db: D1Database, deviceId: string, outlet: number, order: string) {
+  const s = await db
+    .prepare(
+      `select id, station_id, user_id from charging_sessions
+        where device_id = ? and outlet = ? and status = 'charging' and energy_wh = 0 and (order_no = ? or order_no is null)`,
+    )
+    .bind(deviceId, outlet, order)
+    .first<{ id: string; station_id: string; user_id: string | null }>();
+  if (!s) return;
+  const now = nowIso();
+  await db.batch([
+    db.prepare("update charging_sessions set status = 'cancelled', stopped_at = ? where id = ? and status = 'charging' and energy_wh = 0").bind(now, s.id),
+    auditIfChanged(db, null, s, { status: ["charging", "cancelled"], reason: "start_refused" }),
+    db
+      .prepare(
+        `update reservations set status = 'active', charging_point_id = null
+          where id = (select r.id from reservations r join charging_sessions cs on cs.id = ?1
+                       where r.user_id = cs.user_id and r.station_id = cs.station_id and r.kind = 'charging_point'
+                         and r.status = 'completed' and r.charging_point_id = cs.charging_point_id and r.expires_at > ?2
+                         and cs.status = 'cancelled' and cs.stopped_at = ?2
+                       order by r.created_at desc limit 1)`,
+      )
+      .bind(s.id, now),
+  ]);
+}
+
+/**
+ * The socket did not carry out a stop (Xingke CommandResult "Failed") and still reports
+ * charging: the charge someone stopped runs again, so it can be stopped again and its energy
+ * is not billed as if it had ended. Not once a payment for it is under way.
+ */
+export async function chargeStopFailed(db: D1Database, deviceId: string, outlet: number, order: string) {
+  const s = await db
+    .prepare(
+      `select cs.id, cs.station_id, cs.user_id from charging_sessions cs join charging_points p on p.id = cs.charging_point_id
+        where cs.device_id = ? and cs.outlet = ? and cs.order_no = ? and cs.status = 'stopped' and cs.stopped_by is not null
+          and p.status = 'charging'
+          and not exists (select 1 from payments where charging_session_id = cs.id and status = 'pending')
+          and not exists (select 1 from charging_sessions n where n.charging_point_id = cs.charging_point_id and n.status = 'charging')`,
+    )
+    .bind(deviceId, outlet, order)
+    .first<{ id: string; station_id: string; user_id: string | null }>();
+  if (!s) return;
+  await db.batch([
+    db.prepare("update charging_sessions set status = 'charging', stopped_at = null, stopped_by = null where id = ? and status = 'stopped'").bind(s.id),
+    auditIfChanged(db, null, s, { status: ["stopped", "charging"], reason: "stop_refused" }),
+  ]);
 }
 
 /**
@@ -365,22 +430,34 @@ export async function stopCharge(env: Env, user: Profile, isStaffOf: StaffCheck,
   return stopSession(env, await staffSession(env, user, isStaffOf, stationId, id), user.id);
 }
 
+/**
+ * Marks the charge stopped first, so a device's answer to the stop always finds it stopped
+ * (a refused stop reopens it, chargeStopFailed), then switches the outlet off. If the command
+ * cannot be sent, the charge runs on as before.
+ */
 async function stopSession(env: Env, s: SessionRow, actor: string): Promise<ChargeSession> {
   if (s.status !== "charging") return toSession(s);
-  try {
-    await stopOutlet(env, s.device_id, s.outlet, actor);
-  } catch (err) {
-    // OCPP: the charge point already ended its transaction. Anything else stays an error.
-    if (!(err instanceof ApiError && err.code === "device_not_charging")) throw err;
-  }
-  const now = nowIso();
-  await env.DB.batch([
-    env.DB
-      .prepare("update charging_sessions set status = 'stopped', stopped_at = ?, stopped_by = ? where id = ? and status = 'charging'")
-      .bind(now, actor, s.id),
-    auditIfChanged(env.DB, actor, s, { status: ["charging", "stopped"] }),
+  const db = env.DB;
+  const [stopped] = await db.batch([
+    db.prepare("update charging_sessions set status = 'stopped', stopped_at = ?, stopped_by = ? where id = ? and status = 'charging'").bind(nowIso(), actor, s.id),
+    auditIfChanged(db, actor, s, { status: ["charging", "stopped"] }),
   ]);
-  return toSession(await loadSession(env.DB, s.id));
+  // A double tap that lost the race sends no second stop.
+  if (stopped.meta.changes > 0) {
+    try {
+      await stopOutlet(env, s.device_id, s.outlet, actor);
+    } catch (err) {
+      // OCPP: the charge point already ended its transaction. Anything else stays an error.
+      if (!(err instanceof ApiError && err.code === "device_not_charging")) {
+        await db.batch([
+          db.prepare("update charging_sessions set status = 'charging', stopped_at = null, stopped_by = null where id = ? and status = 'stopped'").bind(s.id),
+          auditIfChanged(db, actor, s, { status: ["stopped", "charging"], reason: "stop_not_sent" }),
+        ]);
+        throw err;
+      }
+    }
+  }
+  return toSession(await loadSession(db, s.id));
 }
 
 /** POST …/cancel: closes a stopped charge that took no energy; there is nothing to pay. */
@@ -648,6 +725,17 @@ export async function startSelfCharge(env: Env, user: Profile, pointId: string):
   const db = env.DB;
   const p = await loadQrPoint(db, pointId);
   await requireService(db, p.station_id, "charging");
+  // A stopped charge that took no energy has nothing to pay: it is closed, not held against the customer.
+  const { results: empty } = await db
+    .prepare("select id, station_id, user_id from charging_sessions where user_id = ? and status = 'stopped' and energy_wh = 0")
+    .bind(user.id)
+    .all<{ id: string; station_id: string; user_id: string | null }>();
+  for (const e of empty) {
+    await db.batch([
+      db.prepare("update charging_sessions set status = 'cancelled' where id = ? and status = 'stopped' and energy_wh = 0").bind(e.id),
+      auditIfChanged(db, user.id, e, { status: ["stopped", "cancelled"], reason: "no_energy" }),
+    ]);
+  }
   const open = await db
     .prepare("select 1 from charging_sessions where user_id = ? and status in ('charging', 'stopped')")
     .bind(user.id)

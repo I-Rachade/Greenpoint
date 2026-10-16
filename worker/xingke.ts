@@ -8,6 +8,7 @@ import {
   type XingkeCallback,
   type XingkeCommand,
 } from "../src/lib/iot/xingke-cloud";
+import { chargeStartFailed, chargeStopFailed } from "./charging";
 import { ingest, recountFreeSlots } from "./devices";
 import type { Env } from "./env";
 import { ApiError, nowIso } from "./http";
@@ -78,6 +79,9 @@ export async function dispatchXingkeCommand(env: Env, deviceRef: string, command
   )
     .bind(result.uncertain ? "sent" : "failed", result.detail ? `${result.code}: ${result.detail}` : result.code, now, result.uncertain ? null : now, command.messageId)
     .run();
+  // A start that may have reached the device keeps its charge open: the CommandResult tells
+  // whether it runs, and a "Failed" one closes it (chargeStartFailed).
+  if (result.uncertain && command.action === "RemoteStartTransaction") return;
   if (BUSY_CODES.has(result.code)) throw new ApiError("device_offline", 409);
   throw new ApiError("device_command_failed", 502);
 }
@@ -143,12 +147,12 @@ async function applyCallback(db: D1Database, cb: XingkeCallback, body: unknown) 
     const c = effect.command;
     const status = commandStatus(c.status);
     const row = await db
-      .prepare("select kind, outlet from device_commands where message_id = ? and external_id = ?")
+      .prepare("select kind, outlet, order_no from device_commands where message_id = ? and external_id = ?")
       .bind(c.messageId, deviceId)
-      .first<{ kind: "start" | "stop"; outlet: number }>();
+      .first<{ kind: "start" | "stop"; outlet: number; order_no: string }>();
     if (row) {
       // A late Unknown never overwrites a confirmed result.
-      await db
+      const closed = await db
         .prepare(
           `update device_commands set status = coalesce(?, status), result = ?, done_at = case when ? is null then done_at else ? end
            where message_id = ? and status in ('pending', 'sent')`,
@@ -159,6 +163,11 @@ async function applyCallback(db: D1Database, cb: XingkeCallback, body: unknown) 
       if (c.status === "Succeeded") {
         const shown = row.kind === "start" ? "charging" : "free";
         outlets.push({ outlet: row.outlet, status: shown, power_watts: undefined, energy_wh: undefined });
+      }
+      // The device refused: a refused start ends its charge at no cost, a refused stop lets it run on.
+      if (c.status === "Failed" && closed.meta.changes > 0) {
+        if (row.kind === "start") await chargeStartFailed(db, deviceId, row.outlet, row.order_no);
+        else await chargeStopFailed(db, deviceId, row.outlet, row.order_no);
       }
     }
   }
