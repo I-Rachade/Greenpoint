@@ -2506,6 +2506,17 @@ export const en: Dictionary = {
       parcels: "Parcels",
       trips: "Trips",
       myStation: "My station",
+      scan: "Scan",
+      deliveries: "Deliveries",
+    },
+    deliveries: {
+      title: "Parcels and trips",
+      intro: "Send a parcel or order a trip: pick what you want to do.",
+      send: "Send a parcel",
+      order: "Order a trip",
+      follow: "Follow up",
+      myParcels: "My parcels",
+      myTrips: "My trips",
     },
     trips: {
       title: "My deliveries",
