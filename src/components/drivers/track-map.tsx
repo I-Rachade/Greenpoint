@@ -109,7 +109,8 @@ export function TrackMap({
     }
     const bounds = new LngLatBounds();
     for (const p of points) bounds.extend([p.lng, p.lat]);
-    map.fitBounds(bounds, { padding: 40, maxZoom: 16, duration: 0 });
+    // More room on the right, where the zoom buttons sit, and on top for the pins' height.
+    map.fitBounds(bounds, { padding: { top: 56, bottom: 32, left: 40, right: 72 }, maxZoom: 16, duration: 0 });
   }, [points]);
 
   return (
