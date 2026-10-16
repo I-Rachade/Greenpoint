@@ -112,6 +112,8 @@ Der Worker erlaubt Anfragen aus der App (`https://localhost`, `capacitor://local
 
 Fahrer sehen neue Angebote auch bei geschlossener App; Kunden und Händler bekommen dieselben Hinweise wie per E-Mail.
 
+Eingerichtet: Firebase-Projekt `poinderecharge-app` mit der Android-App `com.poinderecharge.app`; `android/app/google-services.json` liegt im Repo und `.github/workflows/android.yml` setzt `NEXT_PUBLIC_PUSH=1`. Offen ist nur noch Schritt 2 (Secret in Cloudflare). iOS-Push ist noch nicht eingerichtet.
+
 1. In der Firebase-Konsole ein Projekt anlegen und eine Android-App mit der Paket-ID aus `capacitor.config.ts` hinzufügen. `google-services.json` herunterladen und nach `android/app/google-services.json` legen.
 2. Unter **Projekteinstellungen > Dienstkonten** einen neuen privaten Schlüssel erzeugen und den ganzen JSON-Inhalt als Worker-Secret `FCM_SERVICE_ACCOUNT` speichern.
 3. Die App mit `NEXT_PUBLIC_PUSH=1` bauen (zusätzlich zu den Werten oben). Ohne diesen Wert fragt die App nicht nach Push, denn ohne `google-services.json` würde Android beim Registrieren abstürzen.
