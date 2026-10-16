@@ -344,30 +344,32 @@ export function BookCourier({
                 label={t.drivers.customer.size}
                 hidePrice
               />
-              <p className="text-xs text-gp-muted">{t.phase1b.courier.priceHint}</p>
+              {payWith === "cash" && <p className="text-xs text-gp-muted">{t.phase1b.courier.priceHint}</p>}
               <TripPaymentChoice fare={fare} value={payWith} onChange={setPayWith} />
             </>
           )}
           <Notice error={error} notice="" />
         </div>
         {/* The price stays in sight while the pins move; it is the exact fare the driver collects. */}
-        <div className="sticky bottom-0 flex items-center gap-3 rounded-b-xl border-t border-black/10 bg-gp-surface/95 p-3 backdrop-blur dark:border-white/10">
-          <div className="min-w-0 flex-1" aria-live="polite">
-            <div className="text-xs text-gp-muted">{t.phase1b.courier.price}</div>
+        <div className="sticky bottom-0 space-y-2 rounded-b-xl border-t border-black/10 bg-gp-surface/95 p-3 backdrop-blur dark:border-white/10">
+          <div className="flex items-baseline justify-between gap-3" aria-live="polite">
+            <span className="text-sm text-gp-muted">{t.phase1b.courier.price}</span>
             {fare !== null ? (
-              <CountUp value={fare} format={fcfa} className="text-lg font-semibold" />
+              <CountUp value={fare} format={fcfa} className="whitespace-nowrap text-lg font-semibold" />
             ) : (
               <span className="text-xs text-gp-muted">{t.phase1b.courier.pricePending}</span>
             )}
           </div>
-          {step > 0 && (
-            <Button variant="secondary" disabled={busy} onClick={() => go(step - 1)}>
-              {t.phase1b.courier.back}
+          <div className="flex gap-3">
+            {step > 0 && (
+              <Button variant="secondary" disabled={busy} onClick={() => go(step - 1)}>
+                {t.phase1b.courier.back}
+              </Button>
+            )}
+            <Button type="submit" busy={busy} disabled={!canGoOn} className="flex-1">
+              {step < 2 ? t.phase1b.courier.next : t.drivers.customer.courierBook}
             </Button>
-          )}
-          <Button type="submit" busy={busy} disabled={!canGoOn}>
-            {step < 2 ? t.phase1b.courier.next : t.drivers.customer.courierBook}
-          </Button>
+          </div>
         </div>
       </form>
     </section>

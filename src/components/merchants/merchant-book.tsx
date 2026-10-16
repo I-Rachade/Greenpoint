@@ -217,18 +217,20 @@ function RideForm({ info, start, onBooked }: { info: ParcelInfo; start: HomePoin
           <DropoffFields value={dropoff} onChange={setDropoff} title={r.to} hint={r.toHint} noteLabel={r.toNote} />
           <Notice error={error} notice="" />
         </div>
-        <div className="sticky bottom-0 flex items-center gap-3 rounded-b-xl border-t border-black/10 bg-gp-surface/95 p-3 backdrop-blur dark:border-white/10">
-          <div className="min-w-0 flex-1" aria-live="polite">
-            <div className="text-xs text-gp-muted">{t.phase1b.courier.price}</div>
+        <div className="sticky bottom-0 space-y-2 rounded-b-xl border-t border-black/10 bg-gp-surface/95 p-3 backdrop-blur dark:border-white/10">
+          <div className="flex items-baseline justify-between gap-3" aria-live="polite">
+            <span className="text-sm text-gp-muted">{t.phase1b.courier.price}</span>
             {fare !== null ? (
-              <CountUp value={fare} format={fcfa} className="text-lg font-semibold" />
+              <CountUp value={fare} format={fcfa} className="whitespace-nowrap text-lg font-semibold" />
             ) : (
               <span className="text-xs text-gp-muted">{t.phase1b.courier.pricePending}</span>
             )}
           </div>
-          <Button type="submit" busy={busy} disabled={!ready}>
-            {r.submit}
-          </Button>
+          <div className="flex gap-3">
+            <Button type="submit" busy={busy} disabled={!ready} className="flex-1">
+              {r.submit}
+            </Button>
+          </div>
         </div>
       </form>
     </section>
