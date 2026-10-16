@@ -30,7 +30,7 @@ import { ConfirmSheet } from "./confirm-sheet";
 import { BackIcon, BatteryIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, ScooterIcon, ShareIcon, StoreIcon, SunIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { EvBadge, FavoriteButton, RestBadge, stationHref } from "./station-card";
-import { AMENITY_ICONS, OpenBadge, RatingInline, useHoursLabel } from "./station-look";
+import { AMENITY_ICONS, OpenBadge, RatingInline, useHoursLabel, useTodayHoursLabel } from "./station-look";
 import { SolarBadge } from "./solar-badge";
 import { StationReviews } from "./station-reviews";
 import { Countdown, SuccessCheck } from "./ui";
@@ -119,6 +119,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
   const relativeTime = useRelativeTime();
   const errorMessage = useErrorMessage();
   const hours = useHoursLabel();
+  const todayLabel = useTodayHoursLabel();
   const { position } = usePosition();
   const gallery = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
@@ -260,7 +261,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gp-forest dark:text-zinc-200">
               <span className="flex items-center gap-1">
                 <ClockIcon size={15} className="text-gp-muted" />
-                {hours(station.openingHours)}
+                {todayLabel(station.openingHours, now)}
               </span>
               {distance !== null && (
                 <span className="flex items-center gap-1 border-l border-gp-border pl-3 dark:border-white/15">

@@ -14,7 +14,7 @@ import type { StationView } from "@/lib/types";
 import { BatteryIcon, BenchIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, HeartIcon, NavigateIcon, PinIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { SolarBadge } from "./solar-badge";
-import { OpenBadge, RatingInline, StationPhoto, useHoursLabel } from "./station-look";
+import { OpenBadge, RatingInline, StationPhoto, useTodayHoursLabel } from "./station-look";
 
 /** Link to the full station screen. */
 export const stationHref = (id: string) => `/station?id=${encodeURIComponent(id)}`;
@@ -137,7 +137,7 @@ export function StationCard({
   nearest?: boolean;
 }) {
   const { t } = useI18n();
-  const hours = useHoursLabel();
+  const hours = useTodayHoursLabel();
   return (
     <div className="relative rounded-3xl border border-gp-border bg-gp-surface p-3 shadow-sm transition-shadow hover:shadow-md dark:border-white/10">
       <div className="flex gap-3">

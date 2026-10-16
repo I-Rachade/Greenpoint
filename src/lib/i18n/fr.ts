@@ -2641,6 +2641,8 @@ export const fr = {
     closed: "Fermé",
     restArea: "Point de repos",
     allDay: "24h/24",
+    closesAt: "Ferme à {time}",
+    closedToday: "Fermé aujourd'hui",
     /** Monday first, as the ISO weekdays of src/lib/opening-hours.ts. */
     weekdays: ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"],
     weekdaysLong: ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"],
