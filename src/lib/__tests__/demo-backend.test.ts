@@ -506,4 +506,25 @@ describe("DemoBackend driver phase 2 (as in the Worker)", () => {
     expect((await backend.driverHome()).driver!.balanceFcfa).toBe(0);
     expect((await backend.driverHome()).payout).toMatchObject({ status: "paid", reference: "FL-1" });
   });
+
+  it("adds a nearby parcel trip to a busy driver's tour", async () => {
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    await backend.setDriversEnabled(true);
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.joinDriverQueue("st-be", HOME);
+    await asRole(backend, "customer");
+    const booking = { pickup: HOME, dropoff: { lat: 6.13, lng: 1.22, note: "Porte bleue" }, recipientPhone: "+22897200001", content: "Pagne", size: "S" as const };
+    const first = await backend.bookCourier(booking);
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.acceptJob(first.id);
+    await backend.reportDriverPosition({ lat: HOME.lat, lng: HOME.lng });
+    await asRole(backend, "customer");
+    const second = await backend.bookCourier(booking);
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    const home = await backend.driverHome();
+    expect(home.jobs?.map((j) => [j.id, j.status])).toEqual([
+      [second.id, "assigned"],
+      [first.id, "accepted"],
+    ]);
+  });
 });

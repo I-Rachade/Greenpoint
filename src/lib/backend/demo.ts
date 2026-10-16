@@ -182,6 +182,7 @@ import {
   type StationDrivers,
   owedToDriver,
   PAYOUT_NETWORKS,
+  TOUR_KINDS,
   type AdminDriverPayout,
   type DriverPayout,
   type PayoutNetwork,
@@ -703,6 +704,8 @@ interface DemoJob extends Omit<DeliveryJob, "driver" | "trackingNo"> {
   /** The shop that booked the trip and who of it (delivery_jobs.merchant_id, booked_by). */
   merchantId?: string | null;
   bookedBy?: string | null;
+  /** Which of the driver's trips this is on a tour (delivery_jobs.tour_slot). */
+  tourSlot?: number;
 }
 
 interface DemoRun {
@@ -3313,7 +3316,14 @@ export class DemoBackend implements Backend {
   }
 
   private busyJob(state: DemoState, driverId: string): DemoJob | null {
-    return (state.jobs ?? []).find((j) => j.driverId === driverId && BUSY_JOB_STATUSES.includes(j.status)) ?? null;
+    return this.busyJobs(state, driverId)[0] ?? null;
+  }
+
+  /** Every trip under way of a driver (several on a tour): an open offer first, then by slot (busyJobs in worker/drivers.ts). */
+  private busyJobs(state: DemoState, driverId: string): DemoJob[] {
+    return (state.jobs ?? [])
+      .filter((j) => j.driverId === driverId && BUSY_JOB_STATUSES.includes(j.status))
+      .sort((a, b) => Number(b.status === "assigned") - Number(a.status === "assigned") || (a.tourSlot ?? 1) - (b.tourSlot ?? 1) || (a.assignedAt ?? "").localeCompare(b.assignedAt ?? ""));
   }
 
   private viewJob(state: DemoState, j: DemoJob): DeliveryJob {
@@ -3518,9 +3528,10 @@ export class DemoBackend implements Backend {
       queue = queue.filter((q) => q.driverId !== picked.driverId);
       checkedIn = checkedIn.filter((k) => k.driverId !== picked.driverId);
       jobs = jobs.map((j) =>
-        j.id === job.id ? { ...j, status: "assigned" as const, driverId: picked.driverId, driverStationId: picked.stationId, assignedAt: new Date().toISOString() } : j,
+        j.id === job.id ? { ...j, status: "assigned" as const, driverId: picked.driverId, driverStationId: picked.stationId, assignedAt: new Date().toISOString(), tourSlot: 1 } : j,
       );
     }
+    jobs = this.offerTours(state, jobs, drivers, s);
     const checkinsChanged = JSON.stringify(checkins) !== JSON.stringify(state.merchantCheckins ?? []);
     if (expired.length || checkinsChanged || JSON.stringify(jobs) !== JSON.stringify(state.jobs ?? []) || queue.length !== (state.driverQueue ?? []).length) {
       const next = { ...state, jobs, driverQueue: queue, drivers, parcels: state.parcels ? parcels : state.parcels, ...(checkinsChanged ? { merchantCheckins: checkins } : {}) };
@@ -3530,6 +3541,48 @@ export class DemoBackend implements Backend {
           : next,
       );
     }
+  }
+
+  /** Tours (offerTours in worker/drivers.ts): parcel trips nobody in line took go to a busy driver nearby. */
+  private offerTours(state: DemoState, jobs: DemoJob[], drivers: DemoDriver[], s: DriverSettings): DemoJob[] {
+    if (s.tourMax < 2) return jobs;
+    const fleet = state.fleet ?? seedFleet();
+    const tiers = state.parcelSizes ?? DEFAULT_PARCEL_SIZES;
+    const busyOf = (id: string) => jobs.filter((j) => j.driverId === id && BUSY_JOB_STATUSES.includes(j.status));
+    let candidates = drivers
+      .map((d) => {
+        const v = fleet.find((x) => x.id === d.vehicleId);
+        const position = freshPosition(state.driverPositions?.[d.userId]);
+        const busy = busyOf(d.userId);
+        const ok =
+          this.drives(state, d) &&
+          v?.isActive &&
+          position &&
+          busy.length > 0 &&
+          busy.length < s.tourMax &&
+          busy.every((j) => j.status !== "assigned" && TOUR_KINDS.includes(j.kind)) &&
+          !this.openCheckin(state, d.userId);
+        return ok ? { driverId: d.userId, vehicleType: v!.type, position: position!, slots: busy.map((j) => j.tourSlot ?? 1) } : null;
+      })
+      .filter((x) => x !== null);
+    for (const job of jobs.filter((j) => j.status === "open" && TOUR_KINDS.includes(j.kind)).sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+      if (!candidates.length) break;
+      const start = job.kind === "express" ? this.stationAt(state, job.fromStationId) : job.home;
+      if (!start) continue;
+      const weight = job.weightKg ?? tiers.find((t) => t.size === job.size)?.maxWeightKg ?? 50;
+      const near = candidates
+        .filter((c) => !job.declined.includes(c.driverId) && jobFits({ ...job, vehicleType: job.vehicleType ?? null, passengers: job.passengers ?? null }, c.vehicleType, weight, s))
+        .map((c) => ({ c, m: distanceMeters(start, c.position) }))
+        .filter((x) => x.m <= s.tourRadiusM && this.balanceOfDriver(state, x.c.driverId) < s.cashLimitFcfa)
+        .sort((a, b) => a.m - b.m)[0];
+      if (!near) continue;
+      const slot = Array.from({ length: s.tourMax }, (_, i) => i + 1).find((n) => !near.c.slots.includes(n))!;
+      jobs = jobs.map((j) =>
+        j.id === job.id ? { ...j, status: "assigned" as const, driverId: near.c.driverId, driverStationId: null, assignedAt: new Date().toISOString(), tourSlot: slot } : j,
+      );
+      candidates = candidates.filter((c) => c.driverId !== near.c.driverId);
+    }
+    return jobs;
   }
 
   private saveJobs(state: DemoState, jobs: DemoJob[], audit?: AuditInput, extra: Partial<DemoState> = {}) {
@@ -3704,7 +3757,8 @@ export class DemoBackend implements Backend {
     // Converted accounts only exist on Cloudflare (migration 0031): nothing waits in the demo.
     if (!d) return { driver: null, job: null, history: [], ledger: [], settings, lastExpiredAt: null, formerAccount: null };
     const mine = (state.jobs ?? []).filter((j) => j.driverId === profile.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const busy = mine.find((j) => BUSY_JOB_STATUSES.includes(j.status));
+    const under = this.busyJobs(state, profile.id);
+    const busy = under[0];
     const week = new Date(Date.now() - 7 * 86_400_000).toISOString();
     const payout = (state.driverPayouts ?? [])
       .filter((p) => p.driverId === profile.id && (p.status === "requested" || (p.decidedAt ?? "") >= week))
@@ -3713,7 +3767,8 @@ export class DemoBackend implements Backend {
       payout: payout ? (({ driverId, ...p }) => (void driverId, p))(payout) : null,
       driver: this.viewDriver(state, d, true),
       job: busy ? this.viewJob(state, busy) : null,
-      history: mine.filter((j) => j !== busy).slice(0, 30).map((j) => this.viewJob(state, j)),
+      jobs: under.map((j) => this.viewJob(state, j)),
+      history: mine.filter((j) => !under.includes(j)).slice(0, 30).map((j) => this.viewJob(state, j)),
       ledger: (state.ledger ?? []).filter((e) => e.driverId === profile.id).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 100),
       settings,
       lastExpiredAt: d.lastExpiredAt ?? null,
@@ -3848,7 +3903,9 @@ export class DemoBackend implements Backend {
     const { driver, job } = this.myDemoJob(state, id);
     const jobs = this.updateJob(state, job.id, ["assigned"], { status: "open", driverId: null, assignedAt: null, declined: [...job.declined, driver.userId] });
     const queue = (state.driverQueue ?? []).filter((q) => q.driverId !== driver.userId);
-    if (job.driverStationId) queue.push({ driverId: driver.userId, stationId: job.driverStationId, since: new Date().toISOString() });
+    // Still carrying other trips of a tour: back in line only once they are done.
+    const others = jobs.some((j) => j.id !== job.id && j.driverId === driver.userId && BUSY_JOB_STATUSES.includes(j.status));
+    if (job.driverStationId && !others) queue.push({ driverId: driver.userId, stationId: job.driverStationId, since: new Date().toISOString() });
     this.saveJobs(state, jobs, undefined, { driverQueue: queue });
     this.dispatch();
   }
@@ -3858,7 +3915,8 @@ export class DemoBackend implements Backend {
     const { driver, job } = this.myDemoJob(state, id);
     const jobs = this.updateJob(state, job.id, ["accepted"], { status: "open", driverId: null, assignedAt: null, acceptedAt: null, declined: [...job.declined, driver.userId] });
     const queue = (state.driverQueue ?? []).filter((q) => q.driverId !== driver.userId);
-    if (job.driverStationId && this.balanceOfDriver(state, driver.userId) < this.settingsOf(state).cashLimitFcfa) {
+    const others = jobs.some((j) => j.id !== job.id && j.driverId === driver.userId && BUSY_JOB_STATUSES.includes(j.status));
+    if (job.driverStationId && !others && this.balanceOfDriver(state, driver.userId) < this.settingsOf(state).cashLimitFcfa) {
       queue.push({ driverId: driver.userId, stationId: job.driverStationId, since: new Date().toISOString() });
     }
     this.saveJobs(
@@ -4321,16 +4379,17 @@ export class DemoBackend implements Backend {
     return driver;
   }
 
-  private stationJobs(state: DemoState, stationId: string, driverId: string) {
-    const job = this.busyJob(state, driverId);
+  private stationJobs(state: DemoState, stationId: string, driverId: string, jobId?: string) {
+    // On a tour the driver may take one parcel here and bring another.
+    const jobs = this.busyJobs(state, driverId).filter((j) => !jobId || j.id === jobId);
     const handOver =
-      job && job.fromStationId === stationId && (job.kind === "express" || job.kind === "delivery") && ["assigned", "accepted"].includes(job.status) ? job : null;
+      jobs.find((job) => job.fromStationId === stationId && (job.kind === "express" || job.kind === "delivery") && ["assigned", "accepted"].includes(job.status)) ?? null;
     const receive =
-      job &&
-      ((job.status === "picked_up" && job.toStationId === stationId && (job.kind === "express" || job.kind === "pickup")) ||
-        (job.status === "returning" && job.fromStationId === stationId && job.kind === "delivery"))
-        ? job
-        : null;
+      jobs.find(
+        (job) =>
+          (job.status === "picked_up" && job.toStationId === stationId && (job.kind === "express" || job.kind === "pickup")) ||
+          (job.status === "returning" && job.fromStationId === stationId && job.kind === "delivery"),
+      ) ?? null;
     return { handOver, receive };
   }
 
@@ -4359,7 +4418,7 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const { profile, role } = this.stationActor(state, stationId);
     const d = this.byBadge(state, badge);
-    const { handOver: job } = this.stationJobs(state, stationId, d.userId);
+    const { handOver: job } = this.stationJobs(state, stationId, d.userId, jobId);
     if (!job || job.id !== jobId) throw new BackendError("job_wrong_status");
     this.tripParcel(state, job, parcelCode);
     const now = new Date().toISOString();
@@ -4384,7 +4443,7 @@ export class DemoBackend implements Backend {
     const loaded = this.load();
     const { profile, role } = this.stationActor(loaded, stationId);
     const d = this.byBadge(loaded, badge);
-    const { receive: job } = this.stationJobs(loaded, stationId, d.userId);
+    const { receive: job } = this.stationJobs(loaded, stationId, d.userId, jobId);
     if (!job || job.id !== jobId) throw new BackendError("job_wrong_status");
     this.tripParcel(loaded, job, parcelCode);
     const now = new Date();

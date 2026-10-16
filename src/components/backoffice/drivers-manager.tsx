@@ -270,7 +270,7 @@ function SettingsForm({ settings, onReport }: { settings: DriverSettings; onRepo
   const { backend } = useApp();
   const run = useRun(onReport);
   const [s, setS] = useState(settings);
-  const keys = ["baseFcfa", "perKmFcfa", "expressFcfa", "driverSharePct", "cashLimitFcfa", "waitMinutes", "acceptMinutes", "queueRadiusM"] as const;
+  const keys = ["baseFcfa", "perKmFcfa", "expressFcfa", "driverSharePct", "cashLimitFcfa", "waitMinutes", "acceptMinutes", "queueRadiusM", "tourMax", "tourRadiusM"] as const;
   return (
     <div className={`${card} space-y-3`}>
       <div className="grid gap-3 sm:grid-cols-4">

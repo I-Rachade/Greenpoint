@@ -251,3 +251,58 @@ describe("paying trips online and payouts to the phone (driver phase 2)", () => 
     expect(cash.body.collectFcfa).toBe(cash.body.fareFcfa);
   });
 });
+
+describe("tours: several parcel trips at once (driver phase 2)", () => {
+  const RIDE = { pickup: { ...BE, note: "Maison", phone: "90 11 22 33" }, dropoff: { lat: 6.14, lng: 1.23, note: "Marché" }, passengers: 1 };
+
+  it("adds a parcel trip near a busy driver to their tour, never a ride, up to tourMax", async () => {
+    const { env, db } = await setup();
+    await call(env, "kofi", "POST", "/api/driver/queue", { stationId: "st", position: BE });
+    const first = await call<DeliveryJob>(env, "yao", "POST", "/api/jobs/courier", COURIER);
+    await call(env, "kofi", "POST", `/api/driver/jobs/${first.body.id}/accept`);
+    await call(env, "kofi", "POST", "/api/driver/position", { lat: 6.1325, lng: 1.2232 });
+
+    // Nobody in line: the next courier starting nearby is offered to kofi on his tour.
+    const second = await call<DeliveryJob>(env, "ama", "POST", "/api/jobs/courier", COURIER);
+    let home = (await call<DriverHome>(env, "kofi", "GET", "/api/driver")).body;
+    expect(home.jobs?.map((j) => [j.id, j.status])).toEqual([
+      [second.body.id, "assigned"],
+      [first.body.id, "accepted"],
+    ]);
+    expect(home.job?.id).toBe(second.body.id);
+    // One offer at a time; a ride never joins a tour.
+    const ride = await call<DeliveryJob>(env, "ama", "POST", "/api/jobs/ride", RIDE);
+    expect((await call<DeliveryJob[]>(env, "ama", "GET", "/api/jobs/mine")).body.find((j) => j.id === ride.body.id)?.status).toBe("open");
+
+    // Declining a tour trip keeps the driver out of the line while they still carry the first one.
+    await call(env, "kofi", "POST", `/api/driver/jobs/${second.body.id}/decline`);
+    expect(db.prepare("select count(*) as n from driver_queue").get()).toEqual({ n: 0 });
+    const third = await call<DeliveryJob>(env, "yao", "POST", "/api/jobs/courier", COURIER);
+    await call(env, "kofi", "POST", `/api/driver/jobs/${third.body.id}/accept`);
+    home = (await call<DriverHome>(env, "kofi", "GET", "/api/driver")).body;
+    expect(home.jobs?.map((j) => j.id)).toEqual([first.body.id, third.body.id]);
+    expect(db.prepare("select tour_slot from delivery_jobs where id = ?").get(third.body.id)).toEqual({ tour_slot: 2 });
+
+    // Both run side by side: the first is done while the second is still on board.
+    await call(env, "kofi", "POST", `/api/driver/jobs/${first.body.id}/board`);
+    const code = (db.prepare("select handover_code from delivery_jobs where id = ?").get(first.body.id) as { handover_code: string }).handover_code;
+    expect((await call(env, "kofi", "POST", `/api/driver/jobs/${first.body.id}/finish`, { code })).status).toBe(200);
+    expect((await call<DriverHome>(env, "kofi", "GET", "/api/driver")).body.jobs?.map((j) => j.id)).toEqual([third.body.id]);
+  });
+
+  it("stays with one trip at a time when tourMax is 1, or the driver is far away", async () => {
+    const { env } = await setup();
+    await call(env, "kofi", "POST", "/api/driver/queue", { stationId: "st", position: BE });
+    const first = await call<DeliveryJob>(env, "yao", "POST", "/api/jobs/courier", COURIER);
+    await call(env, "kofi", "POST", `/api/driver/jobs/${first.body.id}/accept`);
+    // Far from the next start: no tour.
+    await call(env, "kofi", "POST", "/api/driver/position", { lat: 6.2, lng: 1.3 });
+    await call(env, "ama", "POST", "/api/jobs/courier", COURIER);
+    expect((await call<DriverHome>(env, "kofi", "GET", "/api/driver")).body.jobs).toHaveLength(1);
+    // Near again, but tours switched off.
+    const settings = (await call<DriverHome>(env, "kofi", "GET", "/api/driver")).body.settings;
+    expect((await call(env, "admin", "POST", "/api/admin/driver-settings", { settings: { ...settings, tourMax: 1 } })).status).toBeLessThan(300);
+    await call(env, "kofi", "POST", "/api/driver/position", { lat: 6.1325, lng: 1.2232 });
+    expect((await call<DriverHome>(env, "kofi", "GET", "/api/driver")).body.jobs).toHaveLength(1);
+  });
+});

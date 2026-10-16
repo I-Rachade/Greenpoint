@@ -18,6 +18,8 @@ import {
   validSettings,
   vehicleFits,
   freshPosition,
+  POSITION_FRESH_MINUTES,
+  TOUR_KINDS,
   TRACKED_JOB_STATUSES,
   type DriverPosition,
   MAX_PASSENGERS,
@@ -163,6 +165,8 @@ export interface JobRow {
   passengers: number | null;
   vehicle_type: FleetVehicleType | null;
   handover_code?: string | null;
+  /** Which of the driver's trips this is on a tour (0037); 1 outside tours. */
+  tour_slot?: number;
   /** Paid online from the wallet (0037), and when that went back. */
   prepaid_fcfa?: number | null;
   prepaid_refunded_at?: string | null;
@@ -280,6 +284,8 @@ export async function saveDriverSettings(c: ParcelCtx, input: unknown) {
     waitMinutes: next.waitMinutes,
     acceptMinutes: next.acceptMinutes,
     queueRadiusM: next.queueRadiusM,
+    tourMax: next.tourMax,
+    tourRadiusM: next.tourRadiusM,
     vehicles: FLEET_VEHICLE_TYPES.map((type) => {
       const v = next.vehicles.find((x) => x.type === type)!;
       return { type, maxSize: v.maxSize, maxWeightKg: v.maxWeightKg };
@@ -397,7 +403,16 @@ export async function loadJob(db: D1Database, id: string): Promise<JobRow> {
 }
 
 export async function currentJob(db: D1Database, driverId: string): Promise<JobRow | null> {
-  return db.prepare(`${JOB_SELECT} where j.driver_id = ? and j.status in ${BUSY_SQL}`).bind(driverId).first<JobRow>();
+  return (await busyJobs(db, driverId))[0] ?? null;
+}
+
+/** Every trip a driver has under way (several on a tour, phase 2): an open offer first, then by slot. */
+export async function busyJobs(db: D1Database, driverId: string): Promise<JobRow[]> {
+  const { results } = await db
+    .prepare(`${JOB_SELECT} where j.driver_id = ? and j.status in ${BUSY_SQL} order by j.status = 'assigned' desc, j.tour_slot, j.assigned_at`)
+    .bind(driverId)
+    .all<JobRow>();
+  return results;
 }
 
 /** jobFits (src/lib/drivers.ts) for a row. */
@@ -435,6 +450,8 @@ function ledger(c: ParcelCtx, driverId: string, kind: LedgerEntry["kind"], amoun
  */
 async function requeue(db: D1Database, driverId: string, stationId: string | null, s: DriverSettings): Promise<D1PreparedStatement[]> {
   if (!stationId) return [];
+  // Still carrying other trips of a tour: back in line only once they are done.
+  if (await currentJob(db, driverId)) return [];
   const row = await driverRow(db, driverId);
   if (!drives(row) || !row.vehicle_id || !row.v_active) return [];
   if ((await balance(db, driverId)).balance >= s.cashLimitFcfa) return [];
@@ -533,11 +550,16 @@ export async function dispatch(c: Pick<ParcelCtx, "db" | "audit"> & { env?: Env 
     .prepare(
       `select q.driver_id, q.station_id, q.since, v.type from driver_queue q
        join drivers d on d.user_id = q.driver_id join users u on u.id = d.user_id join fleet_vehicles v on v.id = d.vehicle_id
-       where d.status = 'active' and u.role = '${DB_DRIVER}' and v.is_active = 1 and ${unlockedSql("q.station_id", "drivers")}`,
+       where d.status = 'active' and u.role = '${DB_DRIVER}' and v.is_active = 1 and ${unlockedSql("q.station_id", "drivers")}
+         and not exists (select 1 from delivery_jobs b where b.driver_id = q.driver_id and b.status in ${BUSY_SQL})`,
     )
     .all<{ driver_id: string; station_id: string; since: string; type: FleetVehicleType }>();
   let queue: QueueEntry[] = queueRows.map((q) => ({ driverId: q.driver_id, stationId: q.station_id, since: q.since, vehicleType: q.type }));
-  if (!queue.length && !checkedIn.length) return;
+  const taken = new Set<string>();
+  if (!queue.length && !checkedIn.length) {
+    await offerTours(c, open, taken, s);
+    return;
+  }
   const stations = await depotStations(c.db);
   const points = new Map(stations.map((st) => [st.id, st]));
   const offers: Promise<void>[] = [];
@@ -572,18 +594,84 @@ export async function dispatch(c: Pick<ParcelCtx, "db" | "audit"> & { env?: Env 
     const now = nowIso();
     try {
       if (
-        await moveJob(c.db, job.id, ["open"], "status = 'assigned', driver_id = ?, driver_station_id = ?, assigned_at = ?", pick.driverId, pick.stationId, now)
+        await moveJob(c.db, job.id, ["open"], "status = 'assigned', driver_id = ?, driver_station_id = ?, assigned_at = ?, tour_slot = 1", pick.driverId, pick.stationId, now)
       ) {
         await c.db.batch([
           c.db.prepare("delete from driver_queue where driver_id = ?").bind(pick.driverId),
           jobAudit(c as ParcelCtx, null, { ...job, driver_id: pick.driverId }, { status: ["open", "assigned"], station: pick.stationId }),
         ]);
         offers.push(tellOffer(c.env, pick.driverId, job, s));
+        taken.add(job.id);
       }
     } catch (err) {
       // The driver got another trip in the meantime (one trip per driver).
       if (!/UNIQUE/i.test(String(err))) throw err;
     }
+  }
+  await Promise.all(offers);
+  await offerTours(c, open, taken, s);
+}
+
+/**
+ * Tours (planung/fahrer.md phase 2): a parcel trip nobody in line took goes to a driver already
+ * carrying parcels whose last position is within tourRadiusM of its start, nearest first, while
+ * they have fewer than tourMax trips, no passenger and no offer waiting. Drivers checked in at a
+ * shop keep to that shop's trips. The driver confirms it like any offer.
+ */
+async function offerTours(c: Pick<ParcelCtx, "db" | "audit"> & { env?: Env }, open: JobRow[], taken: Set<string>, s: DriverSettings) {
+  if (s.tourMax < 2) return;
+  const jobs = open.filter((j) => !taken.has(j.id) && TOUR_KINDS.includes(j.kind));
+  if (!jobs.length) return;
+  const fresh = new Date(Date.now() - POSITION_FRESH_MINUTES * 60_000).toISOString();
+  const { results } = await c.db
+    .prepare(
+      `select d.user_id as driver_id, v.type, p.lat, p.lng,
+              (select count(*) from delivery_jobs b where b.driver_id = d.user_id and b.status in ${BUSY_SQL}) as busy,
+              (select group_concat(b.tour_slot) from delivery_jobs b where b.driver_id = d.user_id and b.status in ${BUSY_SQL}) as slots
+         from drivers d join users u on u.id = d.user_id join fleet_vehicles v on v.id = d.vehicle_id
+         join driver_positions p on p.driver_id = d.user_id
+        where d.status = 'active' and u.role = '${DB_DRIVER}' and v.is_active = 1 and p.at >= ?
+          and exists (select 1 from delivery_jobs b where b.driver_id = d.user_id and b.status in ${BUSY_SQL})
+          and not exists (select 1 from delivery_jobs b where b.driver_id = d.user_id and b.status in ${BUSY_SQL}
+                            and (b.status = 'assigned' or b.kind not in (${TOUR_KINDS.map((k) => `'${k}'`).join(", ")})))
+          and not exists (select 1 from merchant_checkins k where k.driver_id = d.user_id and k.out_at is null)`,
+    )
+    .bind(fresh)
+    .all<{ driver_id: string; type: FleetVehicleType; lat: number; lng: number; busy: number; slots: string | null }>();
+  let drivers = results.filter((r) => r.busy < s.tourMax);
+  if (!drivers.length) return;
+  const stations = await depotStations(c.db);
+  const offers: Promise<void>[] = [];
+  for (const job of jobs) {
+    const start =
+      job.kind === "express" ? (stations.find((st) => st.id === job.from_station_id) ?? null) : job.home_lat != null ? { lat: job.home_lat, lng: job.home_lng! } : null;
+    if (!start) continue;
+    const declined = new Set(job.declined.split(",").filter(Boolean));
+    const weight = job.weight_kg ?? (await maxWeight(c.db, job.size));
+    const near = drivers
+      .filter((d) => !declined.has(d.driver_id) && rowFits(job, d.type, weight, s))
+      .map((d) => ({ d, m: distanceMeters(start, d) }))
+      .filter((x) => x.m <= s.tourRadiusM)
+      .sort((a, b) => a.m - b.m);
+    for (const { d } of near) {
+      if ((await balance(c.db, d.driver_id)).balance >= s.cashLimitFcfa) continue;
+      const used = new Set((d.slots ?? "").split(",").map(Number));
+      const slot = Array.from({ length: s.tourMax }, (_, i) => i + 1).find((n) => !used.has(n));
+      if (!slot) continue;
+      try {
+        if (!(await moveJob(c.db, job.id, ["open"], "status = 'assigned', driver_id = ?, driver_station_id = null, assigned_at = ?, tour_slot = ?", d.driver_id, nowIso(), slot))) break;
+      } catch (err) {
+        // Another dispatch filled that slot at the same moment.
+        if (!/UNIQUE/i.test(String(err))) throw err;
+        continue;
+      }
+      await jobAudit(c as ParcelCtx, null, { ...job, driver_id: d.driver_id }, { status: ["open", "assigned"], tour_slot: slot }).run();
+      offers.push(tellOffer(c.env, d.driver_id, job, s));
+      // One offer at a time per driver: the next trip waits until they answer this one.
+      drivers = drivers.filter((x) => x.driver_id !== d.driver_id);
+      break;
+    }
+    if (!drivers.length) break;
   }
   await Promise.all(offers);
 }
@@ -638,9 +726,9 @@ export async function driverHome(c: ParcelCtx): Promise<DriverHome> {
     user.role === "driver" ? formerAccountOf(c.db, user.id) : Promise.resolve(null),
   ]);
   if (!row) return { driver: null, job: null, history: [], ledger: [], settings: s, lastExpiredAt: null, formerAccount };
-  const [driver, job, history, entries, expired, payout] = await Promise.all([
+  const [driver, jobs, history, entries, expired, payout] = await Promise.all([
     toDriver(c.db, row, true),
-    currentJob(c.db, user.id),
+    busyJobs(c.db, user.id),
     c.db
       .prepare(`${JOB_SELECT} where j.driver_id = ? and j.status not in ${BUSY_SQL} order by j.created_at desc limit 30`)
       .bind(user.id)
@@ -661,7 +749,8 @@ export async function driverHome(c: ParcelCtx): Promise<DriverHome> {
   return {
     payout,
     driver,
-    job: job ? toJob(job) : null,
+    job: jobs[0] ? toJob(jobs[0]) : null,
+    jobs: jobs.map(toJob),
     history: history.results.map(toJob),
     ledger: entries.results.map((e) => ({ id: e.id, at: e.at, kind: e.kind, amountFcfa: e.amount_fcfa, jobId: e.job_id, stationId: e.station_id })),
     settings: s,
@@ -877,7 +966,7 @@ export async function declineJob(c: ParcelCtx, jobId: string) {
     throw new ApiError("job_wrong_status");
   }
   const batch = [jobAudit(c, user.id, job, { status: ["assigned", "open"], reason: "declined" })];
-  if (job.driver_station_id) {
+  if (job.driver_station_id && !(await currentJob(c.db, user.id))) {
     batch.push(
       c.db
         .prepare("insert or replace into driver_queue (driver_id, station_id, since) values (?, ?, ?)")
@@ -1305,9 +1394,10 @@ function receiveJob(job: JobRow | null, stationId: string): JobRow | null {
 export async function driverAtStation(c: ParcelCtx, stationId: string, badge: unknown): Promise<DriverAtStation> {
   await requireStaff(c, stationId);
   const row = await driverByBadge(c, badge);
-  const job = await currentJob(c.db, row.user_id);
-  const handOver = handOverJob(job, stationId);
-  const receive = receiveJob(job, stationId);
+  // On a tour the driver may take one parcel here and bring another.
+  const jobs = await busyJobs(c.db, row.user_id);
+  const handOver = jobs.map((j) => handOverJob(j, stationId)).find(Boolean) ?? null;
+  const receive = jobs.map((j) => receiveJob(j, stationId)).find(Boolean) ?? null;
   return {
     driver: { userId: row.user_id, name: row.full_name, phone: row.phone, plate: row.v_plate, vehicleType: row.v_type },
     balanceFcfa: (await balance(c.db, row.user_id)).balance,
@@ -1330,8 +1420,8 @@ async function tripParcel(c: ParcelCtx, job: JobRow, code: unknown): Promise<Par
 export async function handToDriver(c: ParcelCtx, stationId: string, badge: unknown, jobId: string, parcelCode: unknown) {
   const { user: staff, role } = await parcelStationActor(c, stationId);
   const row = await driverByBadge(c, badge);
-  const job = handOverJob(await currentJob(c.db, row.user_id), stationId);
-  if (!job || job.id !== jobId || !job.parcel_id) throw new ApiError("job_wrong_status");
+  const job = handOverJob((await busyJobs(c.db, row.user_id)).find((j) => j.id === jobId) ?? null, stationId);
+  if (!job || !job.parcel_id) throw new ApiError("job_wrong_status");
   const parcel = await tripParcel(c, job, parcelCode);
   const now = nowIso();
   if (job.kind === "express") {
@@ -1373,8 +1463,8 @@ export async function handToDriver(c: ParcelCtx, stationId: string, badge: unkno
 export async function receiveFromDriver(c: ParcelCtx, stationId: string, badge: unknown, jobId: string, parcelCode: unknown) {
   const { user: staff, role } = await parcelStationActor(c, stationId);
   const row = await driverByBadge(c, badge);
-  const job = receiveJob(await currentJob(c.db, row.user_id), stationId);
-  if (!job || job.id !== jobId || !job.parcel_id) throw new ApiError("job_wrong_status");
+  const job = receiveJob((await busyJobs(c.db, row.user_id)).find((j) => j.id === jobId) ?? null, stationId);
+  if (!job || !job.parcel_id) throw new ApiError("job_wrong_status");
   const parcel = await tripParcel(c, job, parcelCode);
   const now = nowIso();
   const scan = scanStatement(c.db, { parcelId: parcel.id, runId: job.id, kind: "received_at_station", driverId: row.user_id, stationId, by: staff.id, role });
@@ -1768,7 +1858,12 @@ export async function closeJob(c: Pick<ParcelCtx, "db" | "audit">, job: JobRow, 
   // A driver who was offered the trip goes back into line where they were.
   if (job.driver_id && job.driver_station_id) {
     batch.push(
-      c.db.prepare("insert or ignore into driver_queue (driver_id, station_id, since) values (?, ?, ?)").bind(job.driver_id, job.driver_station_id, nowIso()),
+      c.db
+        .prepare(
+          `insert or ignore into driver_queue (driver_id, station_id, since) select ?1, ?2, ?3
+            where not exists (select 1 from delivery_jobs where driver_id = ?1 and status in ${BUSY_SQL} and id <> ?4)`,
+        )
+        .bind(job.driver_id, job.driver_station_id, nowIso(), job.id),
     );
   }
   await c.db.batch(batch);
@@ -2020,7 +2115,7 @@ export async function handJob(c: ParcelCtx, actorId: string, job: JobRow, driver
   if (!rowFits(job, row.v_type, job.weight_kg ?? (await maxWeight(c.db, job.size)), s)) throw new ApiError("vehicle_too_small");
   if (job.status !== "open") await cancelOffer(c, job, actorId);
   const queued = checkin ? null : await queueOf(c.db, driverId);
-  if (!(await moveJob(c.db, job.id, ["open"], "status = 'assigned', driver_id = ?, driver_station_id = ?, assigned_at = ?", driverId, queued?.stationId ?? null, nowIso()))) {
+  if (!(await moveJob(c.db, job.id, ["open"], "status = 'assigned', driver_id = ?, driver_station_id = ?, assigned_at = ?, tour_slot = 1", driverId, queued?.stationId ?? null, nowIso()))) {
     throw new ApiError("job_wrong_status");
   }
   await c.db.batch([

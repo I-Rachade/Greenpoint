@@ -79,3 +79,13 @@ create table driver_payouts (
 create index driver_payouts_status on driver_payouts (status, requested_at);
 -- At most one open request per driver.
 create unique index driver_payouts_one_open on driver_payouts (driver_id) where status = 'requested';
+
+-- Tours (planung/fahrer.md phase 2): a driver carrying parcels may take more parcel trips on
+-- the way, up to tourMax in the driver settings. Until now one index allowed one trip per
+-- driver; now each of a driver's trips holds a slot (1 = the trip from the queue, 2.. = added
+-- on the tour), and two trips cannot share a slot, so two dispatches at once still cannot hand
+-- the same place twice.
+drop index delivery_jobs_one_per_driver;
+alter table delivery_jobs add column tour_slot integer not null default 1 check (tour_slot between 1 and 5);
+create unique index delivery_jobs_one_per_slot on delivery_jobs (driver_id, tour_slot)
+  where status in ('assigned', 'accepted', 'picked_up', 'at_door', 'returning');

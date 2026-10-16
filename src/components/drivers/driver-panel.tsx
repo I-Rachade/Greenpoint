@@ -965,7 +965,12 @@ export function DriverPanel() {
         {!driver.vehicle && <p className="rounded-lg bg-amber-100 p-3 text-sm text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">{t.drivers.page.noVehicle}</p>}
         {home.lastExpiredAt && home.job?.status !== "assigned" && <ExpiredNotice key={home.lastExpiredAt} at={home.lastExpiredAt} />}
         {(home.job || driver.queue) && <PositionReporter />}
-        {home.job && <CurrentJob key={home.job.id} job={home.job} home={home} stations={stations} info={info} />}
+        {(home.jobs ?? (home.job ? [home.job] : [])).length > 1 && (
+          <p className="rounded-lg bg-gp-green/10 p-3 text-sm font-medium">{format(t.drivers.page.tour, { n: home.jobs!.length })}</p>
+        )}
+        {(home.jobs ?? (home.job ? [home.job] : [])).map((job) => (
+          <CurrentJob key={job.id} job={job} home={home} stations={stations} info={info} />
+        ))}
         <DriverShopsSection onTrip={!!home.job} queue={!home.job && driver.vehicle ? <Queue driver={driver} stations={stations} info={info} /> : null} />
         <Badge driver={driver} />
         <Balance home={home} />

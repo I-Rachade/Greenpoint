@@ -70,6 +70,10 @@ export interface DriverSettings {
   acceptMinutes: number;
   /** How close to a station a driver must be to queue there, in metres; 0 = no check. */
   queueRadiusM: number;
+  /** Phase 2, tours: most parcel trips one driver carries at once; 1 = one trip at a time. */
+  tourMax: number;
+  /** Tours: how near the driver must be to a trip's start to have it added, in metres. */
+  tourRadiusM: number;
   vehicles: VehicleLimit[];
 }
 
@@ -83,6 +87,8 @@ export const DEFAULT_DRIVER_SETTINGS: DriverSettings = {
   waitMinutes: 10,
   acceptMinutes: 5,
   queueRadiusM: 500,
+  tourMax: 3,
+  tourRadiusM: 2000,
   vehicles: [
     { type: "moto", maxSize: "M", maxWeightKg: 20 },
     { type: "tricycle", maxSize: "L", maxWeightKg: 50 },
@@ -160,9 +166,16 @@ export function jobFits(
  */
 export function withAllVehicles(s: DriverSettings): DriverSettings {
   if (!s || !Array.isArray(s.vehicles)) return s;
+  // Settings saved before tours (phase 2) get the default tour values.
+  const tours = s.tourMax === undefined || s.tourRadiusM === undefined ? { tourMax: s.tourMax ?? DEFAULT_DRIVER_SETTINGS.tourMax, tourRadiusM: s.tourRadiusM ?? DEFAULT_DRIVER_SETTINGS.tourRadiusM } : null;
   const missing = DEFAULT_DRIVER_SETTINGS.vehicles.filter((d) => !s.vehicles.some((v) => v?.type === d.type));
-  return missing.length ? { ...s, vehicles: [...s.vehicles, ...missing] } : s;
+  return missing.length || tours ? { ...s, ...tours, vehicles: [...s.vehicles, ...missing] } : s;
 }
+
+/** Trips that can share a tour: parcels, never a passenger. */
+export const TOUR_KINDS: JobKind[] = ["courier", "pickup", "delivery", "express"];
+/** Highest tourMax the settings accept (delivery_jobs.tour_slot). */
+export const TOUR_MAX_LIMIT = 5;
 
 export function validSettings(s: DriverSettings): boolean {
   const int = (v: unknown, min: number, max: number) => Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
@@ -176,6 +189,8 @@ export function validSettings(s: DriverSettings): boolean {
     int(s.waitMinutes, 0, 120) &&
     int(s.acceptMinutes, 1, 120) &&
     int(s.queueRadiusM, 0, 50_000) &&
+    int(s.tourMax, 1, TOUR_MAX_LIMIT) &&
+    int(s.tourRadiusM, 0, 20_000) &&
     Array.isArray(s.vehicles) &&
     FLEET_VEHICLE_TYPES.every((type) => {
       const v = s.vehicles.find((x) => x.type === type);
@@ -526,7 +541,10 @@ export function balanceOf(entries: Pick<LedgerEntry, "kind" | "amountFcfa">[]): 
 export interface DriverHome {
   /** Null when the user never applied. */
   driver: Driver | null;
+  /** The first of the driver's trips under way (an offer first); see jobs for a tour. */
   job: DeliveryJob | null;
+  /** Phase 2: every trip under way, an open offer first, then in the order they were taken. */
+  jobs?: DeliveryJob[];
   history: DeliveryJob[];
   ledger: LedgerEntry[];
   settings: DriverSettings;
