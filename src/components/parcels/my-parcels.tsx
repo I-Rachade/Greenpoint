@@ -214,15 +214,11 @@ export function HowToSend() {
   );
 }
 
-/** "Colis" tab: two ways to send (at a station, or express door to door), then your parcels and their trips. */
-export function MyParcels() {
+/** The two ways to send a parcel; on the "Colis" page and on the parcels-and-trips page (src/components/deliveries.tsx). */
+export function ParcelTiles() {
   const { t } = useI18n();
-  const { backend, features } = useApp();
-  const { data } = useLiveQuery(() => Promise.all([backend.myParcels(), backend.listStations(), backend.parcelInfo(), backend.myJobs()]));
-  const [slip, setSlip] = useState<Parcel | null>(null);
-  const focus = useFocusedJob();
-
-  const tiles = (
+  const { features } = useApp();
+  return (
     <div className="grid grid-cols-2 gap-3">
       <ChoiceTile href="/colis/regulier" icon={StoreIcon} label={t.parcels.regular} hint={t.parcels.regularHint} />
       <ChoiceTile
@@ -234,6 +230,17 @@ export function MyParcels() {
       />
     </div>
   );
+}
+
+/** "Colis" tab: two ways to send (at a station, or express door to door), then your parcels and their trips. */
+export function MyParcels() {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { data } = useLiveQuery(() => Promise.all([backend.myParcels(), backend.listStations(), backend.parcelInfo(), backend.myJobs()]));
+  const [slip, setSlip] = useState<Parcel | null>(null);
+  const focus = useFocusedJob();
+
+  const tiles = <ParcelTiles />;
   if (!data) {
     return (
       <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">

@@ -2507,6 +2507,16 @@ export const fr = {
       trips: "Courses",
       myStation: "Ma station",
       scan: "Scanner",
+      deliveries: "Livraisons",
+    },
+    deliveries: {
+      title: "Colis et courses",
+      intro: "Envoyez un colis ou commandez une course : choisissez ce que vous voulez faire.",
+      send: "Envoyer un colis",
+      order: "Commander une course",
+      follow: "Suivre",
+      myParcels: "Mes colis",
+      myTrips: "Mes courses",
     },
     trips: {
       title: "Mes courses",

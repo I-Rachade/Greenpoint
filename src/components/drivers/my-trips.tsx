@@ -84,16 +84,15 @@ export function HowToList({ steps }: { steps: readonly string[] }) {
   );
 }
 
-/** "Courses" tab: pick a vehicle, then order the delivery on its page; your deliveries below. */
-export function MyTrips() {
+/** The vehicles a trip can be ordered with; on the "Courses" page and on the parcels-and-trips page (src/components/deliveries.tsx). */
+export function TripTiles() {
   const { t } = useI18n();
   const { backend, features } = useApp();
-  const { data } = useLiveQuery(() => Promise.all([backend.myJobs(), backend.listStations(), backend.parcelInfo()]));
-  const orders = data?.[0].filter((j) => j.kind === "courier") ?? [];
-  const settings = data?.[2].driverSettings ?? DEFAULT_DRIVER_SETTINGS;
+  const { data: info } = useLiveQuery(() => backend.parcelInfo());
+  const settings = info?.driverSettings ?? DEFAULT_DRIVER_SETTINGS;
   // Without drivers in service nothing can be ordered; otherwise, until we know, every vehicle shows as available.
   const soon = (type: BookableVehicleType) =>
-    !features.drivers || (data && !data[2].bookableVehicles.includes(type)) ? t.ui.trips.soon : undefined;
+    !features.drivers || (info && !info.bookableVehicles.includes(type)) ? t.ui.trips.soon : undefined;
   const hint = (type: BookableVehicleType) => {
     const limit = settings.vehicles.find((v) => v.type === type);
     return limit ? format(t.ui.trips.upTo, { size: limit.maxSize, kg: limit.maxWeightKg }) : "";
@@ -101,16 +100,27 @@ export function MyTrips() {
   const tile = (type: BookableVehicleType, slug: string, icon: ComponentType<{ size?: number }>) => (
     <ChoiceTile href={`/courses/${slug}`} icon={icon} label={t.ui.trips[type]} hint={hint(type)} soon={soon(type)} />
   );
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      {tile("moto", "moto", ScooterIcon)}
+      {tile("cargo_tricycle", "tricycle-bagage", CargoTricycleIcon)}
+    </div>
+  );
+}
+
+/** "Courses" tab: pick a vehicle, then order the delivery on its page; your deliveries below. */
+export function MyTrips() {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { data } = useLiveQuery(() => Promise.all([backend.myJobs(), backend.listStations()]));
+  const orders = data?.[0].filter((j) => j.kind === "courier") ?? [];
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-6">
       <h1 className="text-2xl font-semibold">{t.ui.trips.title}</h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.ui.trips.intro}</p>
       <InfoLink href="/courses/comment" label={t.ui.trips.howTo} />
-      <div className="grid grid-cols-2 gap-3">
-        {tile("moto", "moto", ScooterIcon)}
-        {tile("cargo_tricycle", "tricycle-bagage", CargoTricycleIcon)}
-      </div>
+      <TripTiles />
       {data && <MyJobs jobs={orders} stations={data[1]} title={t.ui.trips.mine} />}
     </div>
   );

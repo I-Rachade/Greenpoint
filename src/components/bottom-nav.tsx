@@ -48,8 +48,14 @@ export function BottomNav() {
     { href: "/chauffeur", label: t.nav.driver, icon: ScooterIcon, active: pathname.startsWith("/chauffeur"), show: driver },
     { href: "/flotte", label: t.nav.fleet, icon: TruckIcon, active: pathname.startsWith("/flotte"), show: fleet && features.parcels },
     { href: "/marchand", label: t.merchant.nav, icon: StoreIcon, active: pathname.startsWith("/marchand"), show: merchant },
-    { href: "/colis", label: t.ui.tabs.parcels, icon: BoxIcon, active: pathname.startsWith("/colis"), show: features.parcels && customer },
-    { href: "/courses", label: t.ui.tabs.trips, icon: ScooterIcon, active: pathname.startsWith("/courses"), show: features.parcels && customer },
+    // Parcels and trips share one tab: it opens a page to pick what to do (src/components/deliveries.tsx).
+    {
+      href: "/livraisons",
+      label: t.ui.tabs.deliveries,
+      icon: BoxIcon,
+      active: ["/livraisons", "/colis", "/courses"].some((p) => pathname.startsWith(p)),
+      show: features.parcels && customer,
+    },
     {
       href: profile ? "/compte" : "/login",
       label: t.ui.tabs.account,
