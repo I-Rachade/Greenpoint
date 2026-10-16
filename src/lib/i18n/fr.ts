@@ -2506,6 +2506,7 @@ export const fr = {
       parcels: "Colis",
       trips: "Courses",
       myStation: "Ma station",
+      scan: "Scanner",
     },
     trips: {
       title: "Mes courses",

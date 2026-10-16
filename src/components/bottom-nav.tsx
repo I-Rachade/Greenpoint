@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { useApp } from "./app-provider";
-import { BoxIcon, ListIcon, MapIcon, ScooterIcon, StoreIcon, TruckIcon, UserIcon } from "./icons";
+import { BoxIcon, ListIcon, MapIcon, QrIcon, ScooterIcon, StoreIcon, TruckIcon, UserIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
 import { isStationStaff } from "@/lib/operators";
@@ -60,13 +60,32 @@ export function BottomNav() {
     },
   ].filter((tab) => tab.show);
 
+  // Charging by QR code (src/components/charging/charge-at-point.tsx): a raised button in the middle of the bar,
+  // on every page. Only customers can start a charge themselves, so staff, drivers, fleets and merchants don't get it.
+  const scanAt = customer ? Math.ceil(tabs.length / 2) : -1;
+
   return (
     <nav
       className="fixed inset-x-0 bottom-0 z-30 border-t border-gp-border bg-gp-surface/95 backdrop-blur md:hidden dark:border-white/10"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       <ul className="mx-auto flex h-16 max-w-lg items-stretch">
-        {tabs.map(({ href, label, icon: Icon, active, badge }) => (
+        {tabs.flatMap(({ href, label, icon: Icon, active, badge }, i) => [
+          i === scanAt && (
+            <li key="scan" className="flex-1">
+              <Link
+                href="/recharge?scan=1"
+                aria-label={t.charging.qr.scan}
+                aria-current={pathname.startsWith("/recharge") ? "page" : undefined}
+                className="flex h-full flex-col items-center justify-end gap-0.5 pb-1.5 text-[11px] font-medium text-gp-muted dark:text-zinc-400"
+              >
+                <span className="-mt-7 flex h-14 w-14 items-center justify-center rounded-full bg-gp-yellow text-gp-forest shadow-lg ring-4 ring-gp-surface">
+                  <QrIcon size={26} strokeWidth={2.2} />
+                </span>
+                {t.ui.tabs.scan}
+              </Link>
+            </li>
+          ),
           <li key={href} className="flex-1">
             <Link
               href={href}
@@ -85,8 +104,8 @@ export function BottomNav() {
               </span>
               {label}
             </Link>
-          </li>
-        ))}
+          </li>,
+        ])}
       </ul>
     </nav>
   );

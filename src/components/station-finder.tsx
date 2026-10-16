@@ -13,7 +13,7 @@ import { hasRestArea } from "@/lib/station-extras";
 import { VEHICLE_TYPES, type StationView, type VehicleType } from "@/lib/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
-import { BellIcon, ChevronIcon, FilterIcon, QrIcon, SearchIcon } from "./icons";
+import { BellIcon, ChevronIcon, FilterIcon, SearchIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { LoadFailed, OfflineNotice } from "./load-state";
 import { StationCard, StationPhotoCard, stationHref } from "./station-card";
@@ -100,15 +100,6 @@ export function StationFinder() {
               className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-gp-muted"
             />
           </label>
-          {/* Charging by QR code: opens the camera for the sticker on a socket (src/components/charging/charge-at-point.tsx). */}
-          <Link
-            href="/recharge?scan=1"
-            aria-label={t.charging.qr.scan}
-            title={t.charging.qr.scan}
-            className="flex w-12 shrink-0 items-center justify-center rounded-2xl bg-gp-yellow text-gp-forest shadow-sm"
-          >
-            <QrIcon size={22} strokeWidth={2.2} />
-          </Link>
           <button
             type="button"
             onClick={() => setShowFilters(!showFilters)}
