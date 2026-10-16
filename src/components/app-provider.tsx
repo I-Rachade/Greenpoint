@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { getBackend, type Backend } from "@/lib/backend";
 import { sameFeatures, UNKNOWN_FEATURES, type Features } from "@/lib/features";
 import type { Profile } from "@/lib/types";
+import { PushRegistrar } from "./push-registrar";
 
 interface AppContextValue {
   backend: Backend;
@@ -97,7 +98,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, [backend]);
 
-  return <AppContext value={{ backend, profile, ready, features, featuresReady }}>{children}</AppContext>;
+  return (
+    <AppContext value={{ backend, profile, ready, features, featuresReady }}>
+      {children}
+      <PushRegistrar />
+    </AppContext>
+  );
 }
 
 export function useApp(): AppContextValue {

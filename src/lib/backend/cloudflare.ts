@@ -86,6 +86,7 @@ import { getActiveStation } from "../active-station";
 import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEntry, type SwapFilter, type SwapInput } from "../station-work";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
 import { kindFrom, type ReservationKind } from "../reservations";
+import { storedPushToken, storePushToken } from "../push";
 
 const TOKEN_KEY = "poinderecharge-session";
 /** How often open pages reload station data (other customers' holds, staff updates). */
@@ -348,6 +349,12 @@ export class CloudflareBackend implements Backend {
   }
 
   async signOut() {
+    // This phone gets no more notices for the account that leaves.
+    const token = storedPushToken();
+    if (token) {
+      await this.call("POST", "/api/push/token/remove", { token }).catch(() => undefined);
+      storePushToken(null);
+    }
     await this.call("POST", "/api/auth/logout").catch(() => undefined);
     this.dropSession();
     this.changed();
@@ -742,6 +749,10 @@ export class CloudflareBackend implements Backend {
   }
 
   // No change notice: other screens of the driver do not depend on it.
+  async registerPushToken(token: string, platform: "android" | "ios") {
+    await this.call("POST", "/api/push/token", { token, platform });
+  }
+
   reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }) {
     return this.call<{ kept: boolean }>("POST", "/api/driver/position", position);
   }

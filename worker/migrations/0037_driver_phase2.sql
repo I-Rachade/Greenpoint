@@ -12,3 +12,14 @@ create table driver_positions (
   accuracy_m real,
   at text not null
 );
+
+-- Push notifications (planung/fahrer.md): the Firebase Cloud Messaging token of each app
+-- install, so drivers hear about a new offer with the app closed. A token belongs to the
+-- account last signed in on that phone; signing out removes it.
+create table push_tokens (
+  token text primary key,
+  user_id text not null references users (id) on delete cascade,
+  platform text not null,
+  updated_at text not null
+);
+create index push_tokens_user on push_tokens (user_id);

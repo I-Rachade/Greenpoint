@@ -1,5 +1,6 @@
 import type { Env } from "./env";
 import { nowIso } from "./http";
+import { noticeOf, sendPush } from "./push";
 
 /** Sender of all e-mails; its domain is onboarded in Cloudflare Email Service (see wrangler.jsonc). */
 export const EMAIL_FROM = "noreply@poinderecharge.com";
@@ -70,6 +71,7 @@ export async function notifyPerson(
  * too (alerts). Never throws.
  */
 export async function notifyUser(env: Env, userId: string, message: Message): Promise<void> {
+  await sendPush(env, userId, noticeOf(message));
   try {
     const user = await env.DB.prepare("select email from users where id = ?").bind(userId).first<{ email: string | null }>();
     if (user?.email) await sendEmail(env, user.email, message);

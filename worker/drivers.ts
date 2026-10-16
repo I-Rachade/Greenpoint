@@ -74,6 +74,7 @@ import { autoCheckouts, bookingShop, hourlyTrip, membershipOf, openCheckin, type
 import { FAVORITE_ROUND_MINUTES } from "../src/lib/merchants";
 import { ApiError, nowIso, randomDigits, uuid } from "./http";
 import { EMAIL_FROM, notifyPerson, type Message } from "./notify";
+import { noticeOf, sendPush } from "./push";
 import {
   accountFor,
   APP_URL,
@@ -442,6 +443,8 @@ async function requeue(db: D1Database, driverId: string, stationId: string | nul
  */
 async function tellUser(env: Env | undefined, userId: string | null, parcelId: string | null, kind: string, message: Message) {
   if (!env || !userId) return;
+  // Phase 2: a push notice reaches the phone even with the app closed.
+  await sendPush(env, userId, noticeOf(message));
   if (parcelId) return notifyPerson(env, parcelId, kind, userId, message);
   if (!env.EMAIL) return;
   try {

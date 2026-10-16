@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { handleApi } from "./api";
 import { hashPin } from "./auth";
@@ -109,5 +109,72 @@ describe("live position of drivers (driver phase 2)", () => {
     // Done and not back in a queue: off duty, the position is dropped.
     expect((await call(env, "kofi", "POST", "/api/driver/position", { lat: 6.13, lng: 1.22 })).body).toEqual({ kept: false });
     expect(positions(db)).toEqual([]);
+  });
+});
+
+async function serviceAccount() {
+  const pair = (await crypto.subtle.generateKey(
+    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const der = Buffer.from(await crypto.subtle.exportKey("pkcs8", pair.privateKey)).toString("base64");
+  return JSON.stringify({ project_id: "gp-test", client_email: "push@gp-test.iam.gserviceaccount.com", private_key: `-----BEGIN PRIVATE KEY-----\n${der}\n-----END PRIVATE KEY-----\n` });
+}
+
+const tokens = (db: DatabaseSync) => db.prepare("select token, user_id from push_tokens order by token").all();
+
+describe("push notifications (driver phase 2)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("registers the phone of the signed-in account and drops it on sign-out", async () => {
+    const { env, db } = await setup();
+    expect((await call(env, null, "POST", "/api/push/token", { token: "tok-1", platform: "android" })).status).toBe(401);
+    expect((await call(env, "kofi", "POST", "/api/push/token", { token: "tok-1", platform: "windows" })).status).toBe(400);
+    expect((await call(env, "kofi", "POST", "/api/push/token", { token: "tok-1", platform: "android" })).status).toBe(200);
+    // The same phone signs in as someone else: the token moves.
+    await call(env, "ama", "POST", "/api/push/token", { token: "tok-1", platform: "android" });
+    expect(tokens(db)).toEqual([{ token: "tok-1", user_id: "ama" }]);
+    // Only one's own token can be removed.
+    await call(env, "kofi", "POST", "/api/push/token/remove", { token: "tok-1" });
+    expect(tokens(db)).toHaveLength(1);
+    await call(env, "ama", "POST", "/api/push/token/remove", { token: "tok-1" });
+    expect(tokens(db)).toEqual([]);
+  });
+
+  it("sends the offer to the driver's phones through Firebase, and forgets removed installs", async () => {
+    const { env, db } = await setup();
+    env.FCM_SERVICE_ACCOUNT = await serviceAccount();
+    const sent: { url: string; body: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        sent.push({ url, body: String(init.body) });
+        if (url.startsWith("https://oauth2.googleapis.com/")) return Response.json({ access_token: "at", expires_in: 3600 });
+        const token = JSON.parse(String(init.body)).message.token as string;
+        return token === "gone" ? new Response("{}", { status: 404 }) : Response.json({ name: "m1" });
+      }),
+    );
+    await call(env, "kofi", "POST", "/api/push/token", { token: "phone", platform: "android" });
+    await call(env, "kofi", "POST", "/api/push/token", { token: "gone", platform: "android" });
+    await call(env, "kofi", "POST", "/api/driver/queue", { stationId: "st", position: BE });
+    await call(env, "yao", "POST", "/api/jobs/courier", COURIER);
+
+    const pushes = sent.filter((x) => x.url.includes("fcm.googleapis.com/v1/projects/gp-test/messages:send")).map((x) => JSON.parse(x.body).message);
+    const toPhone = pushes.find((m) => m.token === "phone");
+    expect(toPhone.notification.title).toBe("Nouvelle course pour vous");
+    expect(toPhone.notification.body).not.toContain("https://");
+    expect(toPhone.data).toEqual({ path: "/chauffeur" });
+    expect(tokens(db)).toEqual([{ token: "phone", user_id: "kofi" }]);
+  });
+
+  it("sends nothing without the Firebase secret", async () => {
+    const { env } = await setup();
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    await call(env, "kofi", "POST", "/api/push/token", { token: "phone", platform: "android" });
+    await call(env, "kofi", "POST", "/api/driver/queue", { stationId: "st", position: BE });
+    await call(env, "yao", "POST", "/api/jobs/courier", COURIER);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

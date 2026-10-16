@@ -215,6 +215,7 @@ import type { Env } from "./env";
 import { notifyUser } from "./notify";
 import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setDriversEnabled, setLiteEnabled, setParcelsEnabled } from "./features";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
+import { registerPushToken, removePushToken } from "./push";
 import { activeServices, decideService, listStationServices, requestService, requireService, setService } from "./services";
 import { customerStation } from "../src/lib/station-services";
 import { DB_CUSTOMER, refuseNonCustomer, roleFromDb, roleToDb } from "./roles";
@@ -2120,6 +2121,8 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/deliver$/, async (c, [id]) => deliverJob(c, id, (await readJson<{ code: string }>(c.request)).code)],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/absent$/, (c, [id]) => failDelivery(c, id)],
   ["POST", /^\/api\/driver\/position$/, async (c) => reportPosition(c, await readJson<unknown>(c.request))],
+  ["POST", /^\/api\/push\/token$/, async (c) => registerPushToken(c, await readJson<unknown>(c.request))],
+  ["POST", /^\/api\/push\/token\/remove$/, async (c) => removePushToken(c, await readJson<unknown>(c.request))],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/board$/, (c, [id]) => boardRide(c, id)],
   [
     "POST",

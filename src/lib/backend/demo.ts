@@ -3682,6 +3682,9 @@ export class DemoBackend implements Backend {
   }
 
   /** As reportPosition() in worker/drivers.ts: kept only while the driver is on duty. */
+  /** The demo runs in the browser: no push notices. */
+  async registerPushToken() {}
+
   async reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }) {
     const state = this.load();
     const { driver } = this.demoDriver(state);

@@ -458,6 +458,8 @@ export interface Backend {
   joinDriverQueue(stationId: string, position: LatLng | null): Promise<void>;
   leaveDriverQueue(): Promise<void>;
   /** The driver app's position while on duty (driver phase 2); kept: false when off duty. */
+  /** Signs this phone up for push notices of the signed-in account (planung/fahrer.md phase 2). */
+  registerPushToken(token: string, platform: "android" | "ios"): Promise<void>;
   reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }): Promise<{ kept: boolean }>;
   acceptJob(id: string): Promise<void>;
   /** The trip goes to the next in line; the driver goes to the back. */
