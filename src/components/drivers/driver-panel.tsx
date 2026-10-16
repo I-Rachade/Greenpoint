@@ -30,6 +30,7 @@ import { QrImage } from "../parcels/qr-image";
 import { Button, Countdown, Input } from "../ui";
 import { PIN_LENGTH } from "@/lib/pin";
 import { FleetInvitesCard } from "./fleet-invites";
+import { DriverShopsSection } from "./driver-shops";
 import { input, JobStatusPill, Notice, PhotoButton, primary, secondary, shrinkImage, useFcfa, useJobRoute } from "./shared";
 
 function Card({ title, children, className = "" }: { title?: string; children: ReactNode; className?: string }) {
@@ -838,11 +839,8 @@ export function DriverPanel() {
       <>
         {!driver.vehicle && <p className="rounded-lg bg-amber-100 p-3 text-sm text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">{t.drivers.page.noVehicle}</p>}
         {home.lastExpiredAt && home.job?.status !== "assigned" && <ExpiredNotice key={home.lastExpiredAt} at={home.lastExpiredAt} />}
-        {home.job ? (
-          <CurrentJob key={home.job.id} job={home.job} home={home} stations={stations} info={info} />
-        ) : (
-          driver.vehicle && <Queue driver={driver} stations={stations} info={info} />
-        )}
+        {home.job && <CurrentJob key={home.job.id} job={home.job} home={home} stations={stations} info={info} />}
+        <DriverShopsSection onTrip={!!home.job} queue={!home.job && driver.vehicle ? <Queue driver={driver} stations={stations} info={info} /> : null} />
         <Badge driver={driver} />
         <Balance home={home} />
         <History jobs={home.history} stations={stations} />

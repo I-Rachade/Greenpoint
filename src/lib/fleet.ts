@@ -140,6 +140,8 @@ export interface FleetDriver {
   queue: { stationId: string; since: string; position: number } | null;
   /** The trip the driver is on or was offered. */
   job: DeliveryJob | null;
+  /** Checked in at a shop (planung/marchand.md): which and since when. */
+  shop?: { name: string; since: string } | null;
 }
 
 export interface FleetView {

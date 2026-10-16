@@ -29,7 +29,7 @@ import { input, JobStatusPill, Notice, primary, secondary, small, useFcfa, useJo
 const HomePicker = dynamic(() => import("./home-picker").then((m) => m.HomePicker), { ssr: false });
 
 /** Map pin, "my position", directions and phone: where the driver should go. */
-function HomeFields({ value, onChange, title }: { value: HomePoint; onChange: (h: HomePoint) => void; title?: string }) {
+export function HomeFields({ value, onChange, title }: { value: HomePoint; onChange: (h: HomePoint) => void; title?: string }) {
   const { t } = useI18n();
   const { profile } = useApp();
   const { position } = usePosition();
@@ -80,14 +80,28 @@ function useEmptyHome(): HomePoint {
   return { lat: 0, lng: 0, note: "", phone: profile?.phone ?? "" };
 }
 
-/** The customer books a driver to fetch a parcel at home and bring it to a station. How it works is on its own page. */
-export function BookPickup({ info, stations }: { info: ParcelInfo; stations: StationView[] }) {
+/**
+ * The customer books a driver to fetch a parcel at home and bring it to a station. How it works is on its own page.
+ * A shop (planung/marchand.md) passes its address as `start` and stays on its page with `onBooked`.
+ */
+export function BookPickup({
+  info,
+  stations,
+  start,
+  onBooked,
+}: {
+  info: ParcelInfo;
+  stations: StationView[];
+  start?: HomePoint;
+  onBooked?: (job: DeliveryJob) => void;
+}) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
   const router = useRouter();
   const toast = useToast();
-  const emptyHome = useEmptyHome();
+  const blankHome = useEmptyHome();
+  const emptyHome = start ?? blankHome;
   const [home, setHome] = useState(emptyHome);
   const emptyForm = { toStationId: "", recipientPhone: "", content: "", size: "S" as ParcelSize };
   const [form, setForm] = useState(emptyForm);
@@ -119,7 +133,10 @@ export function BookPickup({ info, stations }: { info: ParcelInfo; stations: Sta
       setForm(emptyForm);
       setHome(emptyHome);
       toast(t.drivers.customer.booked);
-      router.push(`/colis${jobAnchor(job.id)}`);
+      if (onBooked) {
+        setBusy(false);
+        onBooked(job);
+      } else router.push(`/colis${jobAnchor(job.id)}`);
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
@@ -167,7 +184,7 @@ export function BookPickup({ info, stations }: { info: ParcelInfo; stations: Sta
 }
 
 /** Where a ride or courier ends: a pin on the map and directions. */
-function DropoffFields({ value, onChange, title, hint, noteLabel }: { value: DropoffPoint; onChange: (d: DropoffPoint) => void; title: string; hint: string; noteLabel: string }) {
+export function DropoffFields({ value, onChange, title, hint, noteLabel }: { value: DropoffPoint; onChange: (d: DropoffPoint) => void; title: string; hint: string; noteLabel: string }) {
   const { t } = useI18n();
   const pinned = value.lat !== 0 || value.lng !== 0;
   const outside = pinned && !inServiceArea(value);
@@ -190,8 +207,19 @@ const pinned = (p: { lat: number; lng: number }) => p.lat !== 0 || p.lng !== 0;
  * A driver takes a parcel at one place and brings it straight to its destination.
  * Without `vehicle`: "Envoi express" on the Colis tab, any vehicle that fits.
  * With `vehicle`: the "Courses" tab, only that kind of vehicle and the sizes it carries.
+ * A shop (planung/marchand.md) passes its address as `start` and stays on its page with `onBooked`.
  */
-export function BookCourier({ info, vehicle }: { info: ParcelInfo; vehicle?: BookableVehicleType }) {
+export function BookCourier({
+  info,
+  vehicle,
+  start,
+  onBooked,
+}: {
+  info: ParcelInfo;
+  vehicle?: BookableVehicleType;
+  start?: HomePoint;
+  onBooked?: (job: DeliveryJob) => void;
+}) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
@@ -199,7 +227,8 @@ export function BookCourier({ info, vehicle }: { info: ParcelInfo; vehicle?: Boo
   const toast = useToast();
   const fcfa = useFcfa();
   const reduced = useReducedMotion();
-  const emptyHome = useEmptyHome();
+  const blankHome = useEmptyHome();
+  const emptyHome = start ?? blankHome;
   const emptyDropoff: DropoffPoint = { lat: 0, lng: 0, note: "" };
   const emptyForm = { recipientPhone: "", content: "", size: "S" as ParcelSize };
   const [pickup, setPickup] = useState(emptyHome);
@@ -254,7 +283,10 @@ export function BookCourier({ info, vehicle }: { info: ParcelInfo; vehicle?: Boo
       setForm(emptyForm);
       setStep(0);
       toast(t.drivers.customer.courierBooked);
-      router.push(`${vehicle ? "/courses" : "/colis"}${jobAnchor(job.id)}`);
+      if (onBooked) {
+        setBusy(false);
+        onBooked(job);
+      } else router.push(`${vehicle ? "/courses" : "/colis"}${jobAnchor(job.id)}`);
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);

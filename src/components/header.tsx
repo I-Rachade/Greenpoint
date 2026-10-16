@@ -11,6 +11,7 @@ import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
 import { isStationStaff, runsOperator, worksAtStations } from "@/lib/operators";
 import { isDriverAccount } from "@/lib/drivers";
+import { isMerchantAccount } from "@/lib/merchants";
 
 export function Header() {
   const { t, locale, setLocale } = useI18n();
@@ -23,7 +24,9 @@ export function Header() {
   // Drivers and fleet managers are never customers (plan phases 5 and 7): their home is
   // the driver page or the fleet page, with no customer links.
   const fleet = profile?.role === "fleet_manager";
-  const customer = !!profile && !isDriverAccount(profile) && !fleet;
+  // Shop accounts are not customers either (planung/marchand.md): their home is /marchand.
+  const merchant = isMerchantAccount(profile);
+  const customer = !!profile && !isDriverAccount(profile) && !fleet && !merchant;
 
   const links: { href: string; label: string; show: boolean }[] = [
     { href: "/", label: t.nav.map, show: true },
@@ -37,6 +40,7 @@ export function Header() {
     { href: "/chauffeur", label: t.nav.driver, show: !!profile?.driverStatus && features.parcels },
     { href: "/compte", label: t.nav.account, show: !!profile },
     { href: "/flotte", label: t.nav.fleet, show: fleet && features.parcels },
+    { href: "/marchand", label: t.merchant.nav, show: merchant },
     { href: "/exploitant", label: t.nav.owner, show: runsOperator(profile) },
     { href: "/operator", label: t.nav.operator, show: worksAtStations(profile) },
     { href: "/admin", label: t.nav.admin, show: profile?.role === "admin" },

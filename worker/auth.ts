@@ -627,6 +627,11 @@ export async function deleteAccount(
     env.DB.prepare("update wallet_topups set phone = null where user_id = ?").bind(profile.id),
     // Other people's history keeps the booking but no longer names this person.
     env.DB.prepare("update wallet_transactions set counterparty_label = null where counterparty_user_id = ?").bind(profile.id),
+    // A merchant's shop goes with the account (cascade): its employees become customers again (R15).
+    env.DB.prepare(
+      `update users set role = 'rider' where role = 'merchant' and id <> ?1
+         and id in (select mm.user_id from merchant_members mm join merchants m on m.id = mm.merchant_id where m.owner_id = ?1)`,
+    ).bind(profile.id),
     env.DB.prepare("delete from users where id = ?").bind(profile.id),
   ]);
 }

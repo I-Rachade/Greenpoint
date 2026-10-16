@@ -58,6 +58,23 @@ import type {
   FleetView,
   MyFleetInvite,
 } from "../fleet";
+import type {
+  AdminMerchant,
+  DriverShops,
+  MerchantActivity,
+  MerchantAssignmentRequest,
+  MerchantBookingsQuery,
+  MerchantDecision,
+  MerchantDriver,
+  MerchantDriverInput,
+  MerchantInvite,
+  MerchantJob,
+  MerchantPayMode,
+  MerchantShopInput,
+  MerchantTier,
+  MerchantView,
+  MyMerchantInvite,
+} from "../merchants";
 import type { StationService, StationServiceInfo } from "../station-services";
 import type { ReservationKind } from "../reservations";
 import type { BatteryEventInput, BatteryEventView, StationCounter, SwapEntry, SwapFilter, SwapInput } from "../station-work";
@@ -511,6 +528,53 @@ export interface Backend {
   adminFleets(): Promise<AdminFleet[]>;
   reviewFleet(managerId: string, action: FleetDecision): Promise<void>;
   setFleetTier(managerId: string, tier: FleetTier): Promise<void>;
+
+  // Merchants (see src/lib/merchants.ts, planung/marchand.md)
+  /**
+   * Merchant registration: its own path, never a customer account (W5). Makes the account,
+   * its shop (pending until an admin approves it) and the membership as its merchant, and signs in.
+   */
+  registerMerchant(contact: string, code: string, pin: string, shop: MerchantShopInput): Promise<Profile>;
+  /** The signed-in member's shop: live trips, today's counts; the merchant also team and drivers. */
+  merchantView(): Promise<MerchantView>;
+  /** The shop's bookings in a period (YYYY-MM-DD, both days included), newest first. */
+  merchantBookings(query: MerchantBookingsQuery): Promise<MerchantJob[]>;
+  /** The shop's activity log (merchant only). */
+  merchantActivity(): Promise<MerchantActivity[]>;
+  updateMerchantShop(input: MerchantShopInput): Promise<void>;
+  inviteMerchantEmployee(phone: string): Promise<MerchantInvite>;
+  revokeMerchantInvite(inviteId: string): Promise<void>;
+  /** Takes an employee out of the shop: back to a customer account (R15). */
+  removeMerchantEmployee(userId: string): Promise<void>;
+  /** A favorite (told only) or an assigned driver with a pay option (to approve). */
+  addMerchantDriver(input: MerchantDriverInput): Promise<MerchantDriver>;
+  /** A new pay option for an assigned driver: approved again. */
+  changeMerchantPay(assignmentId: string, payMode: MerchantPayMode, ratePerHourFcfa: number | null): Promise<void>;
+  /** Ends a favorite or an assignment (the merchant, the driver or an admin). */
+  endMerchantDriver(assignmentId: string): Promise<void>;
+  /** The merchant checks a driver out of the shop. */
+  merchantCheckout(driverId: string): Promise<void>;
+  /** Open shop invites for the signed-in customer's phone number. */
+  myMerchantInvites(): Promise<MyMerchantInvite[]>;
+  /** Accepts a shop invite: the account becomes an employee account of the shop. */
+  acceptMerchantInvite(token: string): Promise<void>;
+  declineMerchantInvite(token: string): Promise<void>;
+  /** Assignments waiting for the signed-in driver, fleet manager (their drivers) or admin. */
+  merchantAssignmentRequests(): Promise<MerchantAssignmentRequest[]>;
+  decideMerchantAssignment(assignmentId: string, approve: boolean): Promise<void>;
+  /** The driver's shops: assignments, favorites, the check-in and hours to confirm. */
+  driverShops(): Promise<DriverShops>;
+  /** "Je suis chez <shop>": within 500 m of the shop. */
+  checkInAtShop(merchantId: string, position: LatLng): Promise<void>;
+  checkOutOfShop(): Promise<void>;
+  /** The driver confirms the shop paid the hours of a check-in. */
+  confirmShopHoursReceived(checkinId: string): Promise<void>;
+  /** Backoffice: every shop, pending ones first (admins only). */
+  adminMerchants(): Promise<AdminMerchant[]>;
+  reviewMerchant(merchantId: string, action: MerchantDecision): Promise<void>;
+  setMerchantTier(merchantId: string, tier: MerchantTier): Promise<void>;
+  setMerchantOwner(merchantId: string, userId: string): Promise<void>;
+  adminRemoveMerchantEmployee(merchantId: string, userId: string): Promise<void>;
 
   // Partner API (see src/lib/partners.ts)
   /** Parcels other apps booked for drop-off at this station (its staff). */

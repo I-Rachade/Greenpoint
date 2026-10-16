@@ -254,6 +254,44 @@ import { validEvCharger, type EvCharger, type EvChargerInput } from "../ev-charg
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 import { ocppKey } from "../iot/ocpp";
 import {
+  cleanMerchantName,
+  cleanRate,
+  employeeLimit,
+  endOfDay,
+  FAVORITE_ROUND_MINUTES,
+  hourlyAmount,
+  MERCHANT_ADDRESS_MAX,
+  MERCHANT_INVITE_DAYS,
+  MERCHANT_PAY_MODES,
+  MERCHANT_TIERS,
+  nearShop,
+  STANDARD_EMPLOYEE_LIMIT,
+  type AdminMerchant,
+  type CheckoutBy,
+  type DriverShops,
+  type MerchantActivity,
+  type MerchantApprover,
+  type MerchantAssignmentRequest,
+  type MerchantBookingsQuery,
+  type MerchantCheckin,
+  type MerchantDecision,
+  type MerchantDriver,
+  type MerchantDriverInput,
+  type MerchantDriverKind,
+  type MerchantDriverStatus,
+  type MerchantInfo,
+  type MerchantInvite,
+  type MerchantJob,
+  type MerchantMember,
+  type MerchantPayMode,
+  type MerchantShopInput,
+  type MerchantStatus,
+  type MerchantTier,
+  type MerchantToday,
+  type MerchantView,
+  type MyMerchantInvite,
+} from "../merchants";
+import {
   customerStation,
   globalServices,
   isStationService,
@@ -360,6 +398,95 @@ interface DemoState {
   staffReassignments?: DemoReassignment[];
   /** Every station action, newest first (as table station_actions, migration 0033). */
   stationActions?: { stationId: string; personId: string; role: StationRole; createdAt: string }[];
+  /** Shops (as table merchants, 0035); missing = the demo shop "Boutique Akwaba". */
+  merchants?: DemoMerchant[];
+  /** Who belongs to which shop (merchant_members); missing = the demo merchant in the demo shop. */
+  merchantMembers?: DemoMember[];
+  /** Employee invites, newest first (merchant_invites). */
+  merchantInvites?: DemoMerchantInvite[];
+  /** Favorite and assigned drivers of the shops (merchant_drivers). */
+  merchantDrivers?: DemoMerchantDriver[];
+  /** Check-ins of assigned drivers, newest first (merchant_checkins). */
+  merchantCheckins?: DemoCheckin[];
+}
+
+interface DemoMerchant {
+  id: string;
+  ownerId: string;
+  name: string;
+  phone: string;
+  address: string;
+  lat: number;
+  lng: number;
+  status: MerchantStatus;
+  tier: MerchantTier;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
+interface DemoMember {
+  userId: string;
+  merchantId: string;
+  isOwner: boolean;
+  createdAt: string;
+}
+
+interface DemoMerchantInvite extends MerchantInvite {
+  merchantId: string;
+  userId: string | null;
+}
+
+interface DemoMerchantDriver {
+  id: string;
+  merchantId: string;
+  driverId: string;
+  kind: MerchantDriverKind;
+  status: MerchantDriverStatus;
+  payMode: MerchantPayMode | null;
+  ratePerHourFcfa: number | null;
+  createdAt: string;
+  approvedAt: string | null;
+  approvedAs: MerchantApprover | null;
+  endedAt: string | null;
+}
+
+interface DemoCheckin {
+  id: string;
+  merchantId: string;
+  driverId: string;
+  assignmentId: string;
+  payMode: MerchantPayMode;
+  ratePerHourFcfa: number | null;
+  inAt: string;
+  outAt: string | null;
+  outBy: CheckoutBy | null;
+  amountFcfa: number | null;
+  receivedAt: string | null;
+}
+
+/** The demo shop: approved, near the Bè station, run by the demo merchant login. */
+const DEMO_MERCHANT_ID = "merchant-akwaba";
+
+function seedMerchants(): DemoMerchant[] {
+  return [
+    {
+      id: DEMO_MERCHANT_ID,
+      ownerId: "demo-merchant",
+      name: "Boutique Akwaba",
+      phone: "+22890000066",
+      address: "Bè Kpota, à côté de la station",
+      lat: 6.1382,
+      lng: 1.2431,
+      status: "approved",
+      tier: "standard",
+      createdAt: "2026-10-01T08:00:00.000Z",
+      reviewedAt: "2026-10-01T08:00:00.000Z",
+    },
+  ];
+}
+
+function seedMembers(): DemoMember[] {
+  return [{ userId: "demo-merchant", merchantId: DEMO_MERCHANT_ID, isOwner: true, createdAt: "2026-10-01T08:00:00.000Z" }];
 }
 
 interface DemoReassignment {
@@ -538,6 +665,9 @@ interface DemoJob extends Omit<DeliveryJob, "driver" | "trackingNo"> {
   driverId: string | null;
   driverStationId: string | null;
   declined: string[];
+  /** The shop that booked the trip and who of it (delivery_jobs.merchant_id, booked_by). */
+  merchantId?: string | null;
+  bookedBy?: string | null;
 }
 
 interface DemoRun {
@@ -755,6 +885,11 @@ function withAudit(state: DemoState, entry: AuditInput): DemoState {
   return { ...state, audit: [row, ...audit].slice(0, 500) };
 }
 
+/** Couriers and a shop's rides are paid when the trip starts; a customer's ride at the end (collectsAtStart in worker/drivers.ts). */
+function collectsAtStart(job: Pick<DemoJob, "kind" | "merchantId">): boolean {
+  return job.kind === "courier" || (job.kind === "ride" && !!job.merchantId);
+}
+
 /** `{column: [old, new]}` for the fields that changed. */
 function diff<T extends object>(before: T, after: T): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -906,7 +1041,14 @@ export class DemoBackend implements Backend {
   private profileOf(state: DemoState): Profile | null {
     if (!state.profile) return null;
     const driver = (state.drivers ?? []).find((d) => d.userId === state.profile!.id);
-    return { ...state.profile, driverStatus: driver?.status ?? null };
+    const member = state.profile.role === "merchant" ? this.membershipOf(state, state.profile.id) : null;
+    return {
+      ...state.profile,
+      driverStatus: driver?.status ?? null,
+      ...(state.profile.role === "merchant"
+        ? { merchant: member ? { id: member.shop.id, name: member.shop.name, status: member.shop.status, isOwner: member.isOwner } : null }
+        : {}),
+    };
   }
 
   async getProfile() {
@@ -946,8 +1088,8 @@ export class DemoBackend implements Backend {
       phone: isEmail ? null : contact,
       email: isEmail ? contact : null,
       fullName: known?.fullName ?? (demoRole === "driver" ? "Kodjo (chauffeur)" : null),
-      // A demo customer approved as a driver stays a driver account (as on Cloudflare).
-      role: known?.role === "driver" ? "driver" : demoRole,
+      // A demo customer approved as a driver, or taken on by a shop, keeps that account (as on Cloudflare).
+      role: known?.role === "driver" || known?.role === "merchant" ? known.role : demoRole,
       ownerOf: ownedOperators(state, `demo-${demoRole}`),
     };
     const signedIn: AdminUser = {
@@ -956,7 +1098,7 @@ export class DemoBackend implements Backend {
       lastSignInAt: new Date().toISOString(),
     };
     this.save({ ...state, profile, users: [signedIn, ...users.filter((u) => u.id !== profile.id)], ...this.demoDriverSeed(state, profile) });
-    return profile;
+    return this.profileOf(this.load())!;
   }
 
   /** The demo driver login comes with an approved driver on the moto, in the demo fleet. */
@@ -1005,9 +1147,9 @@ export class DemoBackend implements Backend {
     };
   }
 
-  /** R11/R2: drivers, fleet managers and station staff/owners are never customers (refuseNonCustomer in worker/roles.ts). */
+  /** R11/R2: drivers, fleet managers, station staff/owners and merchants are never customers (refuseNonCustomer in worker/roles.ts). */
   private refuseNonCustomer(profile: Profile) {
-    if (profile.role === "driver" || profile.role === "fleet_manager" || profile.role === "operator") throw new BackendError("forbidden");
+    if (profile.role === "driver" || profile.role === "fleet_manager" || profile.role === "operator" || profile.role === "merchant") throw new BackendError("forbidden");
   }
 
   /** R15 (customerThingsOpen in worker/drivers.ts): money, an active reservation, an open parcel or a booked trip. */
@@ -3288,6 +3430,19 @@ export class DemoBackend implements Backend {
     const drivers = (state.drivers ?? []).map((d) => (expired.some((j) => j.driverId === d.userId) ? { ...d, lastExpiredAt: now } : d));
     const stations = this.depotPoints(state);
     const tiers = state.parcelSizes ?? DEFAULT_PARCEL_SIZES;
+    // A driver forgotten at a shop after the end of the day is checked out at 23:59:59 (autoCheckouts in worker/merchant-rules.ts).
+    const checkins = this.autoCheckouts(state, jobs);
+    // Drivers checked in at a shop: free, with an active vehicle; they only get that shop's trips, the first to check in first.
+    let checkedIn = checkins
+      .filter((k) => !k.outAt && !jobs.some((j) => j.driverId === k.driverId && BUSY_JOB_STATUSES.includes(j.status)))
+      .sort((a, b) => a.inAt.localeCompare(b.inAt))
+      .map((k) => {
+        const d = drivers.find((x) => x.userId === k.driverId);
+        const v = fleet.find((x) => x.id === d?.vehicleId);
+        return this.drives(state, d) && v?.isActive ? { ...k, vehicleType: v.type } : null;
+      })
+      .filter((k) => k !== null);
+    const favoriteSince = new Date(Date.now() - FAVORITE_ROUND_MINUTES * 60_000).toISOString();
     for (const job of [...jobs].filter((j) => j.status === "open").sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
       const start = job.kind === "pickup" || job.kind === "ride" || job.kind === "courier" ? job.home : this.stationAt(state, job.fromStationId);
       if (!start) continue;
@@ -3301,15 +3456,29 @@ export class DemoBackend implements Backend {
         })
         .filter((q) => q !== null);
       const weight = job.weightKg ?? tiers.find((t) => t.size === job.size)?.maxWeightKg ?? 50;
-      const pick = pickDriver(start, entries, stations, (type) => jobFits({ ...job, vehicleType: job.vehicleType ?? null, passengers: job.passengers ?? null }, type, weight, s));
+      const fits = (type: FleetVehicle["type"]) => jobFits({ ...job, vehicleType: job.vehicleType ?? null, passengers: job.passengers ?? null }, type, weight, s);
+      // A shop trip: its checked-in drivers first, then for a few minutes its favorites in the queue, then everyone.
+      let pick: { driverId: string; stationId: string | null } | null = null;
+      if (job.merchantId) {
+        const here = checkedIn.find(
+          (k) => k.merchantId === job.merchantId && !job.declined.includes(k.driverId) && fits(k.vehicleType) && this.balanceOfDriver(state, k.driverId) < s.cashLimitFcfa,
+        );
+        if (here) pick = { driverId: here.driverId, stationId: null };
+        const favs = new Set(this.merchantDriversOf(state).filter((m) => m.merchantId === job.merchantId && m.kind === "favorite" && m.status === "active").map((m) => m.driverId));
+        if (!pick && favs.size && job.createdAt > favoriteSince) pick = pickDriver(start, entries.filter((q) => favs.has(q.driverId)), stations, fits);
+      }
+      pick ??= pickDriver(start, entries, stations, fits);
       if (!pick) continue;
-      queue = queue.filter((q) => q.driverId !== pick.driverId);
+      const picked = pick;
+      queue = queue.filter((q) => q.driverId !== picked.driverId);
+      checkedIn = checkedIn.filter((k) => k.driverId !== picked.driverId);
       jobs = jobs.map((j) =>
-        j.id === job.id ? { ...j, status: "assigned" as const, driverId: pick.driverId, driverStationId: pick.stationId, assignedAt: new Date().toISOString() } : j,
+        j.id === job.id ? { ...j, status: "assigned" as const, driverId: picked.driverId, driverStationId: picked.stationId, assignedAt: new Date().toISOString() } : j,
       );
     }
-    if (expired.length || JSON.stringify(jobs) !== JSON.stringify(state.jobs ?? []) || queue.length !== (state.driverQueue ?? []).length) {
-      const next = { ...state, jobs, driverQueue: queue, drivers, parcels: state.parcels ? parcels : state.parcels };
+    const checkinsChanged = JSON.stringify(checkins) !== JSON.stringify(state.merchantCheckins ?? []);
+    if (expired.length || checkinsChanged || JSON.stringify(jobs) !== JSON.stringify(state.jobs ?? []) || queue.length !== (state.driverQueue ?? []).length) {
+      const next = { ...state, jobs, driverQueue: queue, drivers, parcels: state.parcels ? parcels : state.parcels, ...(checkinsChanged ? { merchantCheckins: checkins } : {}) };
       this.save(
         lapsed.length
           ? withAudit(next, { table: "delivery_jobs", action: "update", rowId: lapsed.map((j) => j.id).join(","), changes: { status: ["open", "cancelled"], reason: "no_driver" } })
@@ -3467,6 +3636,8 @@ export class DemoBackend implements Backend {
     const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === driver.vehicleId);
     if (!vehicle?.isActive) throw new BackendError("no_vehicle");
     if (this.busyJob(state, driver.userId)) throw new BackendError("driver_busy");
+    // Checked in at a shop: only the shop's trips until the driver checks out.
+    if (this.openCheckin(state, driver.userId)) throw new BackendError("checked_in_at_shop");
     if (this.balanceOfDriver(state, driver.userId) >= this.settingsOf(state).cashLimitFcfa) throw new BackendError("cash_limit");
     if (!this.depotOpen(state, stationId)) throw new BackendError("depot_inactive");
     // Drivers queue only where the station is unlocked for them.
@@ -3634,7 +3805,7 @@ export class DemoBackend implements Backend {
         greenpoint: this.tripGreenpoint(state, driver.userId, job, job.fromStationId),
         ledger: [
           this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null),
-          this.ledgerEntry(driver.userId, "earning", driverEarning(job.fareFcfa, this.settingsOf(state)), job.id, null),
+          ...this.earning(state, job, driver.userId, null),
           ...(state.ledger ?? []),
         ],
       },
@@ -3657,7 +3828,8 @@ export class DemoBackend implements Backend {
     // Courier: the code the recipient gives at the door, made now; the sender sees it in the app.
     const handoverCode = job.kind === "courier" ? String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0") : undefined;
     const jobs = this.updateJob(state, job.id, ["accepted"], { status: "picked_up", pickedUpAt: new Date().toISOString(), handoverCode });
-    if (job.kind === "ride") return this.saveJobs(state, jobs);
+    // Couriers and a shop's rides are paid when the trip starts (collectsAtStart in worker/drivers.ts).
+    if (!collectsAtStart(job)) return this.saveJobs(state, jobs);
     this.saveJobs(state, jobs, undefined, {
       ledger: [this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null), ...(state.ledger ?? [])],
     });
@@ -3676,9 +3848,9 @@ export class DemoBackend implements Backend {
       {
         greenpoint: this.tripGreenpoint(state, driver.userId, job, job.driverStationId),
         ledger: [
-          // A courier was paid when the driver took the parcel.
-          ...(job.kind === "ride" ? [this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null)] : []),
-          this.ledgerEntry(driver.userId, "earning", driverEarning(job.fareFcfa, this.settingsOf(state)), job.id, null),
+          // A courier (and a shop's ride) was paid when the trip started.
+          ...(collectsAtStart(job) ? [] : [this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null)]),
+          ...this.earning(state, job, driver.userId, null),
           ...(state.ledger ?? []),
         ],
       },
@@ -3705,8 +3877,11 @@ export class DemoBackend implements Backend {
   async myJobs(): Promise<DeliveryJob[]> {
     const state = this.load();
     if (!state.profile) return [];
+    // A shop's members all see the shop's trips (planung/marchand.md, decision 4).
+    const shop = state.profile.role === "merchant" ? this.membershipOf(state, state.profile.id)?.shop : null;
+    if (state.profile.role === "merchant" && !shop) return [];
     return (state.jobs ?? [])
-      .filter((j) => j.customerUserId === state.profile!.id)
+      .filter((j) => (shop ? j.merchantId === shop.id : j.customerUserId === state.profile!.id))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       // The sender of a courier sees the code the recipient gives at the door, to pass it on.
       .map((j) => ({ ...this.viewJob(state, j), ...(j.kind === "courier" && j.handoverCode && j.status === "picked_up" ? { handoverCode: j.handoverCode } : {}) }));
@@ -3723,7 +3898,7 @@ export class DemoBackend implements Backend {
   async bookPickup(input: PickupBooking): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    this.refuseNonCustomer(profile);
+    const shop = this.bookingShop(state, profile);
     this.requireDrivers(state);
     const home = this.cleanHome(input.home);
     if (!this.depotOpen(state, input.toStationId)) throw new BackendError("depot_inactive");
@@ -3752,7 +3927,8 @@ export class DemoBackend implements Backend {
       fareFcfa: fare,
       collectFcfa: tier.priceFcfa + fare,
       customerUserId: profile.id,
-      customerName: profile.fullName,
+      customerName: shop?.name ?? profile.fullName,
+      ...this.shopColumns(shop, profile),
     });
     this.saveJobs(state, [job, ...(state.jobs ?? [])], {
       table: "delivery_jobs",
@@ -3760,7 +3936,7 @@ export class DemoBackend implements Backend {
       rowId: job.id,
       stationId: input.toStationId,
       userId: profile.id,
-      changes: { kind: "pickup", fare_fcfa: fare },
+      changes: { kind: "pickup", fare_fcfa: fare, ...(shop ? { merchant_id: shop.id } : {}) },
     });
     this.dispatch();
     const saved = this.load();
@@ -3770,13 +3946,15 @@ export class DemoBackend implements Backend {
   async bookRide(input: RideBooking): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    this.refuseNonCustomer(profile);
+    const shop = this.bookingShop(state, profile);
     this.requireDrivers(state);
     const pickup = this.cleanHome(input.pickup);
     const d = this.cleanDropoff(input.dropoff);
     if (!Number.isInteger(input.passengers) || input.passengers < 1 || input.passengers > MAX_PASSENGERS) throw new BackendError("unknown", "passengers");
     const done: JobStatus[] = ["done", "failed", "cancelled"];
-    if ((state.jobs ?? []).some((j) => j.kind === "ride" && j.customerUserId === profile.id && !done.includes(j.status))) throw new BackendError("ride_open");
+    // A customer rides once at a time; a shop books rides for several people.
+    if (!shop && (state.jobs ?? []).some((j) => j.kind === "ride" && j.customerUserId === profile.id && !done.includes(j.status))) throw new BackendError("ride_open");
+    const passenger = shop ? (input.passengerName ?? "").trim().replace(/\s+/g, " ").slice(0, 80) || null : null;
     const distanceM = Math.round(distanceMeters(pickup, d));
     const fare = fareFor(distanceM, false, this.settingsOf(state));
     const job = this.newJob({
@@ -3789,14 +3967,15 @@ export class DemoBackend implements Backend {
       fareFcfa: fare,
       collectFcfa: fare,
       customerUserId: profile.id,
-      customerName: profile.fullName,
+      customerName: shop ? (passenger ?? shop.name) : profile.fullName,
+      ...this.shopColumns(shop, profile),
     });
     this.saveJobs(state, [job, ...(state.jobs ?? [])], {
       table: "delivery_jobs",
       action: "insert",
       rowId: job.id,
       userId: profile.id,
-      changes: { kind: "ride", passengers: input.passengers, fare_fcfa: fare },
+      changes: { kind: "ride", passengers: input.passengers, fare_fcfa: fare, ...(shop ? { merchant_id: shop.id } : {}) },
     });
     this.dispatch();
     const saved = this.load();
@@ -3812,7 +3991,7 @@ export class DemoBackend implements Backend {
   async bookCourier(input: CourierBooking): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    this.refuseNonCustomer(profile);
+    const shop = this.bookingShop(state, profile);
     this.requireDrivers(state);
     const pickup = this.cleanHome(input.pickup);
     const dropoff = this.cleanDropoff(input.dropoff);
@@ -3845,14 +4024,15 @@ export class DemoBackend implements Backend {
       fareFcfa: fare,
       collectFcfa: fare,
       customerUserId: profile.id,
-      customerName: profile.fullName,
+      customerName: shop?.name ?? profile.fullName,
+      ...this.shopColumns(shop, profile),
     });
     this.saveJobs(state, [job, ...(state.jobs ?? [])], {
       table: "delivery_jobs",
       action: "insert",
       rowId: job.id,
       userId: profile.id,
-      changes: { kind: "courier", size: tier.size, vehicle_type: vehicleType, fare_fcfa: fare },
+      changes: { kind: "courier", size: tier.size, vehicle_type: vehicleType, fare_fcfa: fare, ...(shop ? { merchant_id: shop.id } : {}) },
     });
     this.dispatch();
     const saved = this.load();
@@ -3902,9 +4082,12 @@ export class DemoBackend implements Backend {
   async cancelJob(id: string) {
     const state = this.load();
     const profile = this.requireProfile(state);
+    const shop = profile.role === "merchant" ? this.membershipOf(state, profile.id)?.shop : null;
+    if (!shop) this.refuseNonCustomer(profile);
     const job = (state.jobs ?? []).find((j) => j.id === id);
     if (!job) throw new BackendError("job_not_found");
-    if (profile.role !== "admin" && job.customerUserId !== profile.id) throw new BackendError("forbidden");
+    const mine = shop ? job.merchantId === shop.id : job.customerUserId === profile.id;
+    if (profile.role !== "admin" && !mine) throw new BackendError("forbidden");
     if (!["open", "assigned", "accepted"].includes(job.status)) throw new BackendError("job_wrong_status");
     this.cancelJobs(state, (j) => j.id === id);
   }
@@ -4041,7 +4224,7 @@ export class DemoBackend implements Backend {
         parcels: (state.parcels ?? []).map((p) =>
           p.id === job.parcelId ? { ...p, status: "arrived" as const, arrivedAt: now.toISOString(), pickupDeadline: deadline, pickupCode: code } : p,
         ),
-        ledger: [this.ledgerEntry(d.userId, "earning", driverEarning(job.fareFcfa, this.settingsOf(state)), job.id, stationId), ...(state.ledger ?? [])],
+        ledger: [...this.earning(state, job, d.userId, stationId), ...(state.ledger ?? [])],
         greenpoint: this.tripGreenpoint(state, d.userId, job, stationId),
       },
     );
@@ -4288,11 +4471,14 @@ export class DemoBackend implements Backend {
     const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === d?.vehicleId);
     if (!this.drives(state, d) || !vehicle?.isActive) throw new BackendError("driver_not_found");
     if (this.busyJob(state, driverId)) throw new BackendError("driver_busy");
+    // A driver checked in at a shop takes only that shop's trips (planung/marchand.md).
+    const checkin = this.openCheckin(state, driverId);
+    if (checkin && checkin.merchantId !== job.merchantId) throw new BackendError("driver_checked_in");
     const weight = job.weightKg ?? (state.parcelSizes ?? DEFAULT_PARCEL_SIZES).find((t) => t.size === job.size)?.maxWeightKg ?? 50;
     if (!jobFits({ ...job, vehicleType: job.vehicleType ?? null, passengers: job.passengers ?? null }, vehicle.type, weight, this.settingsOf(state))) {
       throw new BackendError("vehicle_too_small");
     }
-    const queued = (state.driverQueue ?? []).find((q) => q.driverId === driverId);
+    const queued = checkin ? null : (state.driverQueue ?? []).find((q) => q.driverId === driverId);
     this.saveJobs(
       state,
       (state.jobs ?? []).map((j) =>
@@ -4770,6 +4956,870 @@ export class DemoBackend implements Backend {
         { table: "fleets", action: "update", rowId: managerId, userId: managerId, changes: { status: [fleet.status, status] } },
       ),
     );
+  }
+
+  // Merchants (as worker/merchants.ts and worker/merchant-rules.ts) ----------------------
+
+  private merchantsOf(state: DemoState): DemoMerchant[] {
+    return state.merchants ?? seedMerchants();
+  }
+
+  private membersOf(state: DemoState): DemoMember[] {
+    return state.merchantMembers ?? seedMembers();
+  }
+
+  /** Open invites whose time ran out are 'expired' (expireInvites in worker/merchants.ts). */
+  private merchantInvitesOf(state: DemoState): DemoMerchantInvite[] {
+    const now = new Date().toISOString();
+    return (state.merchantInvites ?? []).map((i) => (i.status === "pending" && i.expiresAt <= now ? { ...i, status: "expired" as const, decidedAt: i.expiresAt } : i));
+  }
+
+  private merchantDriversOf(state: DemoState): DemoMerchantDriver[] {
+    return state.merchantDrivers ?? [];
+  }
+
+  private checkinsOf(state: DemoState): DemoCheckin[] {
+    return state.merchantCheckins ?? [];
+  }
+
+  /** The shop the user belongs to, with whether they are its merchant. */
+  private membershipOf(state: DemoState, userId: string): { shop: DemoMerchant; isOwner: boolean } | null {
+    const m = this.membersOf(state).find((x) => x.userId === userId);
+    const shop = m && this.merchantsOf(state).find((x) => x.id === m.merchantId);
+    return m && shop ? { shop, isOwner: m.isOwner } : null;
+  }
+
+  /** The driver's open check-in, if any. */
+  private openCheckin(state: DemoState, driverId: string): DemoCheckin | null {
+    return this.checkinsOf(state).find((k) => k.driverId === driverId && !k.outAt) ?? null;
+  }
+
+  /**
+   * Who books a trip: a customer (null) or a member of an approved shop (the shop), as
+   * bookingShop() in worker/merchant-rules.ts. Other accounts are refused (R11).
+   */
+  private bookingShop(state: DemoState, profile: Profile): DemoMerchant | null {
+    if (profile.role !== "merchant") {
+      this.refuseNonCustomer(profile);
+      return null;
+    }
+    const member = this.membershipOf(state, profile.id);
+    if (!member || member.shop.status !== "approved") throw new BackendError("merchant_not_approved");
+    return member.shop;
+  }
+
+  private shopColumns(shop: DemoMerchant | null, profile: Profile): Pick<DemoJob, "merchantId" | "bookedBy"> {
+    return shop ? { merchantId: shop.id, bookedBy: profile.id } : { merchantId: null, bookedBy: null };
+  }
+
+  /**
+   * The driver's share of a finished trip, except for a shop trip driven while checked in
+   * there at an hourly rate: the shop pays the hours, the whole fare is ours (decision A).
+   */
+  private earning(state: DemoState, job: DemoJob, driverId: string, stationId: string | null): DemoLedger[] {
+    const at = job.assignedAt;
+    const hourly =
+      !!job.merchantId &&
+      !!at &&
+      this.checkinsOf(state).some((k) => k.driverId === driverId && k.merchantId === job.merchantId && k.payMode === "hourly" && k.inAt <= at && (!k.outAt || k.outAt >= at));
+    return hourly ? [] : [this.ledgerEntry(driverId, "earning", driverEarning(job.fareFcfa, this.settingsOf(state)), job.id, stationId)];
+  }
+
+  /** Ends a check-in (an hourly one gets its amount: hours x rate), as closeCheckin() in worker/merchant-rules.ts. */
+  private closeCheckin(state: DemoState, row: DemoCheckin, by: CheckoutBy, at = new Date().toISOString()): DemoState {
+    const amount = row.payMode === "hourly" && row.ratePerHourFcfa ? hourlyAmount(row.inAt, at, row.ratePerHourFcfa) : null;
+    return withAudit(
+      { ...state, merchantCheckins: this.checkinsOf(state).map((k) => (k.id === row.id ? { ...k, outAt: at, outBy: by, amountFcfa: amount } : k)) },
+      { table: "merchant_checkins", action: "update", rowId: row.id, userId: row.driverId, changes: { merchant_id: row.merchantId, out_by: by, out_at: at, amount_fcfa: amount } },
+    );
+  }
+
+  /** Check-ins of an earlier day still open are ended at 23:59:59 of that day, unless the driver is on a trip. */
+  private autoCheckouts(state: DemoState, jobs: DemoJob[]): DemoCheckin[] {
+    const today = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
+    return this.checkinsOf(state).map((k) => {
+      if (k.outAt || k.inAt >= today || jobs.some((j) => j.driverId === k.driverId && BUSY_JOB_STATUSES.includes(j.status))) return k;
+      const at = endOfDay(k.inAt);
+      return { ...k, outAt: at, outBy: "auto" as const, amountFcfa: k.payMode === "hourly" && k.ratePerHourFcfa ? hourlyAmount(k.inAt, at, k.ratePerHourFcfa) : null };
+    });
+  }
+
+  /** Employees (the merchant not counted) plus open invites: what the limit counts. */
+  private merchantUsed(state: DemoState, merchantId: string): number {
+    return (
+      this.membersOf(state).filter((m) => m.merchantId === merchantId && !m.isOwner).length +
+      this.merchantInvitesOf(state).filter((i) => i.merchantId === merchantId && i.status === "pending").length
+    );
+  }
+
+  private merchantInfo(state: DemoState, m: DemoMerchant, used = this.merchantUsed(state, m.id)): MerchantInfo {
+    return {
+      id: m.id,
+      name: m.name,
+      phone: m.phone,
+      address: m.address,
+      lat: m.lat,
+      lng: m.lng,
+      status: m.status,
+      tier: m.tier,
+      employeeLimit: employeeLimit(m.tier),
+      used,
+      ownerId: m.ownerId,
+      createdAt: m.createdAt,
+    };
+  }
+
+  private viewMerchantInvite(i: DemoMerchantInvite): MerchantInvite {
+    return { id: i.id, phone: i.phone, status: i.status, token: i.token, createdAt: i.createdAt, expiresAt: i.expiresAt, decidedAt: i.decidedAt };
+  }
+
+  private viewMember(state: DemoState, m: DemoMember): MerchantMember {
+    const u = (state.users ?? demoUsers(new Date())).find((x) => x.id === m.userId);
+    return { userId: m.userId, fullName: u?.fullName ?? null, phone: u?.phone ?? null, email: u?.email ?? null, isOwner: m.isOwner, since: m.createdAt };
+  }
+
+  private viewMerchantDriver(state: DemoState, md: DemoMerchantDriver): MerchantDriver {
+    const d = (state.drivers ?? []).find((x) => x.userId === md.driverId);
+    const u = (state.users ?? demoUsers(new Date())).find((x) => x.id === md.driverId);
+    const v = (state.fleet ?? seedFleet()).find((x) => x.id === d?.vehicleId);
+    const here = this.checkinsOf(state).find((k) => k.driverId === md.driverId && k.merchantId === md.merchantId && !k.outAt);
+    return {
+      id: md.id,
+      merchantId: md.merchantId,
+      driverId: md.driverId,
+      driverName: d?.fullName ?? "",
+      driverPhone: u?.phone ?? d?.phone ?? null,
+      vehicle: v ? { type: v.type, plate: v.plate } : null,
+      kind: md.kind,
+      status: md.status,
+      payMode: md.payMode,
+      ratePerHourFcfa: md.ratePerHourFcfa,
+      createdAt: md.createdAt,
+      approvedAt: md.approvedAt,
+      approvedAs: md.approvedAs,
+      endedAt: md.endedAt,
+      checkedInSince: md.kind === "assigned" ? (here?.inAt ?? null) : null,
+    };
+  }
+
+  private viewCheckin(state: DemoState, k: DemoCheckin): MerchantCheckin {
+    return {
+      id: k.id,
+      merchantId: k.merchantId,
+      merchantName: this.merchantsOf(state).find((m) => m.id === k.merchantId)?.name ?? "",
+      driverId: k.driverId,
+      driverName: (state.drivers ?? []).find((d) => d.userId === k.driverId)?.fullName ?? "",
+      payMode: k.payMode,
+      ratePerHourFcfa: k.ratePerHourFcfa,
+      inAt: k.inAt,
+      outAt: k.outAt,
+      outBy: k.outBy,
+      amountFcfa: k.amountFcfa,
+      receivedAt: k.receivedAt,
+    };
+  }
+
+  /** A shop's trip with who of the shop booked it. */
+  private viewMerchantJob(state: DemoState, j: DemoJob): MerchantJob {
+    const u = j.bookedBy ? (state.users ?? demoUsers(new Date())).find((x) => x.id === j.bookedBy) : null;
+    return {
+      ...this.viewJob(state, j),
+      ...(j.kind === "courier" && j.handoverCode && j.status === "picked_up" ? { handoverCode: j.handoverCode } : {}),
+      bookedBy: j.bookedBy ? { userId: j.bookedBy, name: u?.fullName ?? u?.phone ?? u?.email ?? null } : null,
+    };
+  }
+
+  private requireMember(state: DemoState): { profile: Profile; shop: DemoMerchant; isOwner: boolean } {
+    const profile = this.requireProfile(state);
+    if (profile.role !== "merchant") throw new BackendError("forbidden");
+    const member = this.membershipOf(state, profile.id);
+    if (!member) throw new BackendError("forbidden");
+    return { profile, ...member };
+  }
+
+  /** Until an admin approves the shop (and while it is suspended), its functions answer merchant_not_approved. */
+  private requireApprovedMember(state: DemoState) {
+    const m = this.requireMember(state);
+    if (m.shop.status !== "approved") throw new BackendError("merchant_not_approved");
+    return m;
+  }
+
+  /** The backoffice is the merchant's only (not the employees'). */
+  private requireOwner(state: DemoState) {
+    const m = this.requireApprovedMember(state);
+    if (!m.isOwner) throw new BackendError("forbidden");
+    return m;
+  }
+
+  /** The shop's details as stored, checked (cleanShop in worker/merchant-rules.ts). */
+  private cleanShop(input: Partial<MerchantShopInput> | null | undefined): MerchantShopInput {
+    const name = cleanMerchantName(input?.name);
+    if (!name) throw new BackendError("unknown", "bad_request");
+    const phone = normalizeTogoPhone(String(input?.phone ?? ""));
+    if (!phone) throw new BackendError("phone_not_allowed");
+    const address = String(input?.address ?? "").trim().replace(/\s+/g, " ");
+    if (address.length < 2 || address.length > MERCHANT_ADDRESS_MAX) throw new BackendError("unknown", "bad_request");
+    const point = { lat: Number(input?.lat), lng: Number(input?.lng) };
+    if (!validPoint(point)) throw new BackendError("unknown", "bad_request");
+    if (!inServiceArea(point)) throw new BackendError("outside_area");
+    return { name, phone, address, lat: point.lat, lng: point.lng };
+  }
+
+  private updateMerchant(state: DemoState, id: string, patch: Partial<DemoMerchant>): DemoState {
+    return { ...state, merchants: this.merchantsOf(state).map((m) => (m.id === id ? { ...m, ...patch } : m)) };
+  }
+
+  async registerMerchant(contact: string, code: string, pin: string, input: MerchantShopInput): Promise<Profile> {
+    if (HOSTED_DEMO) throw new BackendError("forbidden");
+    const shop = this.cleanShop(input);
+    if (!validPinFormat(pin)) throw new BackendError("bad_pin");
+    if (weakPin(pin)) throw new BackendError("weak_pin");
+    const state = this.load();
+    const users = state.users ?? demoUsers(new Date());
+    const isEmail = contact.includes("@");
+    if (state.pins?.[contact] !== undefined || users.some((u) => (isEmail ? u.email : u.phone) === contact)) throw new BackendError("account_exists");
+    if (code.trim() !== DEMO_CODE) throw new BackendError("invalid_code");
+    const now = new Date().toISOString();
+    const stamp = Date.now().toString(36);
+    const profile: Profile = {
+      id: `demo-merchant-${stamp}`,
+      phone: isEmail ? null : contact,
+      email: isEmail ? contact : null,
+      fullName: shop.name,
+      role: "merchant",
+      ownerOf: [],
+    };
+    const merchant: DemoMerchant = { id: `merchant-${stamp}`, ownerId: profile.id, ...shop, status: "pending", tier: "standard", createdAt: now, reviewedAt: null };
+    let next = withAudit(
+      {
+        ...state,
+        profile,
+        pins: { ...state.pins, [contact]: pin },
+        users: [{ ...profile, createdAt: now, lastSignInAt: now }, ...users],
+        merchants: [merchant, ...this.merchantsOf(state)],
+        merchantMembers: [...this.membersOf(state), { userId: profile.id, merchantId: merchant.id, isOwner: true, createdAt: now }],
+      },
+      { table: "profiles", action: "insert", rowId: profile.id, userId: profile.id, changes: { [isEmail ? "email" : "phone"]: contact, role: "merchant" } },
+    );
+    next = withAudit(next, { table: "merchants", action: "insert", rowId: merchant.id, userId: profile.id, changes: { merchant_id: merchant.id, name: shop.name, status: "pending", tier: "standard" } });
+    this.save(next);
+    return this.profileOf(this.load())!;
+  }
+
+  async merchantView(): Promise<MerchantView> {
+    this.dispatch();
+    const state = this.load();
+    const { shop, isOwner } = this.requireMember(state);
+    const settings = this.settingsOf(state);
+    const today: MerchantToday = { booked: 0, running: 0, done: 0, failed: 0, cancelled: 0 };
+    const empty = { live: [], members: [], invites: [], drivers: [], checkins: [], unpaid: [] };
+    if (shop.status !== "approved") return { merchant: this.merchantInfo(state, shop, 0), isOwner, today, settings, ...empty };
+    const jobs = (state.jobs ?? []).filter((j) => j.merchantId === shop.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const running: JobStatus[] = ["open", ...BUSY_JOB_STATUSES];
+    const dayStart = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
+    for (const j of jobs.filter((x) => x.createdAt >= dayStart)) {
+      today.booked++;
+      if (j.status === "done") today.done++;
+      else if (j.status === "failed") today.failed++;
+      else if (j.status === "cancelled") today.cancelled++;
+      else today.running++;
+    }
+    const base = {
+      merchant: this.merchantInfo(state, shop),
+      isOwner,
+      today,
+      settings,
+      live: jobs.filter((j) => running.includes(j.status)).slice(0, 100).map((j) => this.viewMerchantJob(state, j)),
+    };
+    if (!isOwner) return { ...base, members: [], invites: [], drivers: [], checkins: [], unpaid: [] };
+    const monthAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    const checkins = this.checkinsOf(state).filter((k) => k.merchantId === shop.id);
+    return {
+      ...base,
+      members: this.membersOf(state)
+        .filter((m) => m.merchantId === shop.id)
+        .sort((a, b) => Number(b.isOwner) - Number(a.isOwner) || a.createdAt.localeCompare(b.createdAt))
+        .map((m) => this.viewMember(state, m)),
+      invites: this.merchantInvitesOf(state)
+        .filter((i) => i.merchantId === shop.id)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 30)
+        .map((i) => this.viewMerchantInvite(i)),
+      drivers: this.merchantDriversOf(state)
+        .filter((md) => md.merchantId === shop.id && (md.status === "pending" || md.status === "active" || md.createdAt > monthAgo))
+        .sort((a, b) => a.kind.localeCompare(b.kind) || b.createdAt.localeCompare(a.createdAt))
+        .map((md) => this.viewMerchantDriver(state, md)),
+      checkins: checkins.filter((k) => !k.outAt).sort((a, b) => a.inAt.localeCompare(b.inAt)).map((k) => this.viewCheckin(state, k)),
+      unpaid: checkins
+        .filter((k) => k.payMode === "hourly" && k.outAt && !k.receivedAt)
+        .sort((a, b) => a.inAt.localeCompare(b.inAt))
+        .map((k) => this.viewCheckin(state, k)),
+    };
+  }
+
+  async merchantBookings(query: MerchantBookingsQuery): Promise<MerchantJob[]> {
+    const state = this.load();
+    const { shop } = this.requireApprovedMember(state);
+    const from = String(query?.from ?? "");
+    const to = String(query?.to ?? "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) throw new BackendError("unknown", "bad_request");
+    const end = new Date(`${to}T00:00:00.000Z`);
+    end.setUTCDate(end.getUTCDate() + 1);
+    const start = `${from}T00:00:00.000Z`;
+    return (state.jobs ?? [])
+      .filter(
+        (j) =>
+          j.merchantId === shop.id &&
+          j.createdAt >= start &&
+          j.createdAt < end.toISOString() &&
+          (!query.status || j.status === query.status) &&
+          (!query.bookedBy || j.bookedBy === query.bookedBy),
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 500)
+      .map((j) => this.viewMerchantJob(state, j));
+  }
+
+  async merchantActivity(): Promise<MerchantActivity[]> {
+    const state = this.load();
+    const { shop } = this.requireOwner(state);
+    const jobIds = new Set((state.jobs ?? []).filter((j) => j.merchantId === shop.id).map((j) => j.id));
+    const users = state.users ?? demoUsers(new Date());
+    return (state.audit ?? [])
+      .filter((a) => a.changes?.merchant_id === shop.id || (a.table === "delivery_jobs" && a.rowId.split(",").some((id) => jobIds.has(id))))
+      .slice(0, 300)
+      .map((a) => {
+        const u = users.find((x) => x.id === a.actorId);
+        return { id: a.id, at: a.at, actorName: u?.fullName ?? u?.phone ?? u?.email ?? null, table: a.table, action: a.action, changes: a.changes };
+      });
+  }
+
+  async updateMerchantShop(input: MerchantShopInput) {
+    const state = this.load();
+    const { shop } = this.requireOwner(state);
+    const next = this.cleanShop(input);
+    const changes: Record<string, unknown> = {};
+    for (const key of ["name", "phone", "address", "lat", "lng"] as const) {
+      if (shop[key] !== next[key]) changes[key] = [shop[key], next[key]];
+    }
+    if (!Object.keys(changes).length) return;
+    this.save(withAudit(this.updateMerchant(state, shop.id, next), { table: "merchants", action: "update", rowId: shop.id, changes: { merchant_id: shop.id, ...changes } }));
+  }
+
+  /** R12: a number without an account, or an empty customer account, may be invited (checkInvitable in worker/merchants.ts). */
+  private checkMerchantInvitable(state: DemoState, phone: string) {
+    const account = (state.users ?? demoUsers(new Date())).find((u) => u.phone === phone);
+    if (!account) return;
+    const role = this.roleOf(state, account.id);
+    if (role === "merchant") throw new BackendError("already_in_merchant");
+    if (role !== "customer") throw new BackendError("invite_number_taken");
+    if (this.customerThingsOpen(state, account.id, phone)) throw new BackendError("invite_account_not_empty");
+  }
+
+  async inviteMerchantEmployee(rawPhone: string): Promise<MerchantInvite> {
+    const state = this.load();
+    const { shop } = this.requireOwner(state);
+    const phone = normalizeTogoPhone(rawPhone ?? "");
+    if (!phone) throw new BackendError("phone_not_allowed");
+    this.checkMerchantInvitable(state, phone);
+    const invites = this.merchantInvitesOf(state);
+    if (invites.some((i) => i.merchantId === shop.id && i.phone === phone && i.status === "pending")) throw new BackendError("invite_pending");
+    // Decision B: a standard shop has at most 3 employees, open invites included; unlocked: no limit.
+    if (shop.tier !== "unlocked" && this.merchantUsed(state, shop.id) >= STANDARD_EMPLOYEE_LIMIT) throw new BackendError("merchant_limit");
+    const now = new Date();
+    const invite: DemoMerchantInvite = {
+      id: crypto.randomUUID(),
+      merchantId: shop.id,
+      phone,
+      status: "pending",
+      token: newDriverCode(),
+      createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + MERCHANT_INVITE_DAYS * 86_400_000).toISOString(),
+      decidedAt: null,
+      userId: null,
+    };
+    this.save(
+      withAudit({ ...state, merchantInvites: [invite, ...invites] }, { table: "merchant_invites", action: "insert", rowId: invite.id, changes: { merchant_id: shop.id, phone } }),
+    );
+    return this.viewMerchantInvite(invite);
+  }
+
+  async revokeMerchantInvite(inviteId: string) {
+    const state = this.load();
+    const { shop } = this.requireOwner(state);
+    const invites = this.merchantInvitesOf(state);
+    const invite = invites.find((i) => i.id === inviteId);
+    if (!invite || invite.status !== "pending" || invite.merchantId !== shop.id) throw new BackendError("invite_not_found");
+    const now = new Date().toISOString();
+    this.save(
+      withAudit(
+        { ...state, merchantInvites: invites.map((i) => (i.id === inviteId ? { ...i, status: "revoked" as const, decidedAt: now } : i)) },
+        { table: "merchant_invites", action: "update", rowId: inviteId, changes: { merchant_id: shop.id, status: ["pending", "revoked"] } },
+      ),
+    );
+  }
+
+  /** Takes an employee out of a shop: the account becomes a customer account again (releaseMember in worker/merchants.ts). */
+  private releaseMember(state: DemoState, memberId: string, merchantId: string): DemoState {
+    let next: DemoState = { ...state, merchantMembers: this.membersOf(state).filter((m) => !(m.userId === memberId && m.merchantId === merchantId && !m.isOwner)) };
+    if (this.roleOf(next, memberId) === "merchant") next = this.withRole(next, memberId, "customer");
+    next = withAudit(next, { table: "merchant_members", action: "delete", rowId: memberId, userId: memberId, changes: { merchant_id: merchantId } });
+    return withAudit(next, { table: "profiles", action: "update", rowId: memberId, userId: memberId, changes: { role: ["merchant", "customer"] } });
+  }
+
+  async removeMerchantEmployee(userId: string) {
+    const state = this.load();
+    const { shop } = this.requireOwner(state);
+    const member = this.membersOf(state).find((m) => m.userId === userId && m.merchantId === shop.id);
+    if (!member) throw new BackendError("unknown", "not_found");
+    if (member.isOwner) throw new BackendError("forbidden");
+    this.save(this.releaseMember(state, userId, shop.id));
+  }
+
+  /** An active driver by driver code (under their QR code) or phone number. */
+  private findMerchantDriverAccount(state: DemoState, raw: unknown): DemoDriver {
+    const text = String(raw ?? "");
+    const phone = normalizeTogoPhone(text);
+    const code = phone ? null : parseDriverBadge(text);
+    const users = state.users ?? demoUsers(new Date());
+    const d = (state.drivers ?? []).find((x) =>
+      phone ? (users.find((u) => u.id === x.userId)?.phone ?? x.phone) === phone : !!code && x.code === code,
+    );
+    if (!this.drives(state, d)) throw new BackendError("driver_not_found");
+    return d;
+  }
+
+  private cleanPay(payMode: unknown, ratePerHourFcfa: unknown): { mode: MerchantPayMode; rate: number | null } {
+    const mode = payMode as MerchantPayMode;
+    if (!MERCHANT_PAY_MODES.includes(mode)) throw new BackendError("unknown", "bad_request");
+    const rate = cleanRate(mode, ratePerHourFcfa);
+    if (rate === undefined) throw new BackendError("unknown", "bad_request");
+    return { mode, rate };
+  }
+
+  private merchantDriverRow(state: DemoState, id: string): DemoMerchantDriver {
+    const row = this.merchantDriversOf(state).find((m) => m.id === id);
+    if (!row) throw new BackendError("assignment_not_found");
+    return row;
+  }
+
+  private withMerchantDriver(state: DemoState, id: string, patch: Partial<DemoMerchantDriver>): DemoState {
+    return { ...state, merchantDrivers: this.merchantDriversOf(state).map((m) => (m.id === id ? { ...m, ...patch } : m)) };
+  }
+
+  async addMerchantDriver(input: MerchantDriverInput): Promise<MerchantDriver> {
+    const state = this.load();
+    const { shop } = this.requireOwner(state);
+    this.requireDrivers(state);
+    const kind = input?.kind;
+    if (kind !== "favorite" && kind !== "assigned") throw new BackendError("unknown", "bad_request");
+    const pay = kind === "assigned" ? this.cleanPay(input.payMode, input.ratePerHourFcfa) : null;
+    const driver = this.findMerchantDriverAccount(state, input.driver);
+    const rows = this.merchantDriversOf(state);
+    if (rows.some((m) => m.merchantId === shop.id && m.driverId === driver.userId && m.kind === kind && (m.status === "pending" || m.status === "active"))) {
+      throw new BackendError("merchant_driver_exists");
+    }
+    const row: DemoMerchantDriver = {
+      id: crypto.randomUUID(),
+      merchantId: shop.id,
+      driverId: driver.userId,
+      kind,
+      // Favorites are only told (decision 8); an assignment waits for approval (decision 9).
+      status: kind === "favorite" ? "active" : "pending",
+      payMode: pay?.mode ?? null,
+      ratePerHourFcfa: pay?.rate ?? null,
+      createdAt: new Date().toISOString(),
+      approvedAt: null,
+      approvedAs: null,
+      endedAt: null,
+    };
+    const next = withAudit(
+      { ...state, merchantDrivers: [row, ...rows] },
+      {
+        table: "merchant_drivers",
+        action: "insert",
+        rowId: row.id,
+        userId: driver.userId,
+        changes: { merchant_id: shop.id, kind, driver: driver.userId, pay_mode: row.payMode, rate_per_hour_fcfa: row.ratePerHourFcfa },
+      },
+    );
+    this.save(next);
+    return this.viewMerchantDriver(next, row);
+  }
+
+  async changeMerchantPay(assignmentId: string, payMode: MerchantPayMode, ratePerHourFcfa: number | null) {
+    const state = this.load();
+    const { shop } = this.requireOwner(state);
+    const row = this.merchantDriverRow(state, assignmentId);
+    if (row.merchantId !== shop.id || row.kind !== "assigned" || !["pending", "active"].includes(row.status)) throw new BackendError("assignment_not_found");
+    const pay = this.cleanPay(payMode, ratePerHourFcfa);
+    if (this.openCheckin(state, row.driverId)?.merchantId === shop.id) throw new BackendError("driver_checked_in_here");
+    if (pay.mode === row.payMode && pay.rate === row.ratePerHourFcfa) return;
+    this.save(
+      withAudit(this.withMerchantDriver(state, row.id, { payMode: pay.mode, ratePerHourFcfa: pay.rate, status: "pending", approvedAt: null, approvedAs: null }), {
+        table: "merchant_drivers",
+        action: "update",
+        rowId: row.id,
+        userId: row.driverId,
+        changes: { merchant_id: shop.id, pay_mode: [row.payMode, pay.mode], rate_per_hour_fcfa: [row.ratePerHourFcfa, pay.rate], status: [row.status, "pending"] },
+      }),
+    );
+  }
+
+  async endMerchantDriver(assignmentId: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    if (profile.role !== "admin" && profile.role !== "driver" && profile.role !== "merchant") throw new BackendError("forbidden");
+    const row = this.merchantDriverRow(state, assignmentId);
+    if (!["pending", "active"].includes(row.status)) throw new BackendError("assignment_not_found");
+    let by: "merchant" | "driver" | "admin";
+    if (profile.role === "admin") by = "admin";
+    else if (profile.role === "driver" && profile.id === row.driverId) by = "driver";
+    else {
+      const { shop } = this.requireOwner(state);
+      if (shop.id !== row.merchantId) throw new BackendError("assignment_not_found");
+      by = "merchant";
+    }
+    const checkin = row.kind === "assigned" ? this.openCheckin(state, row.driverId) : null;
+    const here = checkin && checkin.merchantId === row.merchantId ? checkin : null;
+    if (here && this.busyJob(state, row.driverId)) throw new BackendError("driver_busy");
+    const now = new Date().toISOString();
+    let next = withAudit(this.withMerchantDriver(state, row.id, { status: "ended", endedAt: now }), {
+      table: "merchant_drivers",
+      action: "update",
+      rowId: row.id,
+      userId: row.driverId,
+      changes: { merchant_id: row.merchantId, status: [row.status, "ended"], by },
+    });
+    if (here) next = this.closeCheckin(next, here, by, now);
+    this.save(next);
+  }
+
+  async merchantCheckout(driverId: string) {
+    const state = this.load();
+    const { shop } = this.requireOwner(state);
+    const checkin = this.openCheckin(state, driverId);
+    if (!checkin || checkin.merchantId !== shop.id) throw new BackendError("not_assigned");
+    if (this.busyJob(state, driverId)) throw new BackendError("driver_busy");
+    this.save(this.closeCheckin(state, checkin, "merchant"));
+  }
+
+  async myMerchantInvites(): Promise<MyMerchantInvite[]> {
+    const state = this.load();
+    const profile = state.profile;
+    if (!profile?.phone || profile.role !== "customer") return [];
+    const shops = this.merchantsOf(state);
+    return this.merchantInvitesOf(state)
+      .filter((i) => i.phone === profile.phone && i.status === "pending" && shops.find((m) => m.id === i.merchantId)?.status === "approved")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((i) => ({ token: i.token, merchantName: shops.find((m) => m.id === i.merchantId)!.name, expiresAt: i.expiresAt }));
+  }
+
+  private merchantInviteForMe(state: DemoState, profile: Profile, token: string): DemoMerchantInvite {
+    const invite = this.merchantInvitesOf(state).find((i) => i.token === String(token ?? "").trim().toUpperCase());
+    if (!invite || invite.status !== "pending" || !profile.phone || invite.phone !== profile.phone) throw new BackendError("invite_not_found");
+    return invite;
+  }
+
+  async acceptMerchantInvite(token: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const invite = this.merchantInviteForMe(state, profile, token);
+    if (profile.role !== "customer") throw new BackendError("has_other_role");
+    const shop = this.merchantsOf(state).find((m) => m.id === invite.merchantId);
+    if (!shop || shop.status !== "approved") throw new BackendError("invite_not_found");
+    if (this.customerThingsOpen(state, profile.id, profile.phone)) throw new BackendError("invite_account_not_empty");
+    if (this.membershipOf(state, profile.id)) throw new BackendError("already_in_merchant");
+    const now = new Date().toISOString();
+    const invites = this.merchantInvitesOf(state).map((i) =>
+      i.id === invite.id
+        ? { ...i, status: "accepted" as const, decidedAt: now, userId: profile.id }
+        : i.phone === invite.phone && i.status === "pending"
+          ? { ...i, status: "expired" as const, decidedAt: now }
+          : i,
+    );
+    let next = withAudit(
+      {
+        ...this.withRole(state, profile.id, "merchant"),
+        merchantInvites: invites,
+        merchantMembers: [...this.membersOf(state), { userId: profile.id, merchantId: shop.id, isOwner: false, createdAt: now }],
+      },
+      { table: "merchant_invites", action: "update", rowId: invite.id, userId: profile.id, changes: { merchant_id: shop.id, status: ["pending", "accepted"] } },
+    );
+    next = withAudit(next, { table: "merchant_members", action: "insert", rowId: profile.id, userId: profile.id, changes: { merchant_id: shop.id, invite: invite.id } });
+    this.save(withAudit(next, { table: "profiles", action: "update", rowId: profile.id, userId: profile.id, changes: { role: ["customer", "merchant"] } }));
+  }
+
+  async declineMerchantInvite(token: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const invite = this.merchantInviteForMe(state, profile, token);
+    const now = new Date().toISOString();
+    this.save(
+      withAudit(
+        { ...state, merchantInvites: this.merchantInvitesOf(state).map((i) => (i.id === invite.id ? { ...i, status: "declined" as const, decidedAt: now, userId: profile.id } : i)) },
+        { table: "merchant_invites", action: "update", rowId: invite.id, userId: profile.id, changes: { merchant_id: invite.merchantId, status: ["pending", "declined"] } },
+      ),
+    );
+  }
+
+  async merchantAssignmentRequests(): Promise<MerchantAssignmentRequest[]> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    let mine: (md: DemoMerchantDriver) => boolean;
+    if (profile.role === "admin") mine = () => true;
+    else if (profile.role === "driver") mine = (md) => md.driverId === profile.id;
+    else if (profile.role === "fleet_manager") {
+      const drivers = new Set((state.fleetLinks ?? []).filter((l) => l.managerId === profile.id).map((l) => l.driverId));
+      mine = (md) => drivers.has(md.driverId);
+    } else throw new BackendError("forbidden");
+    const shops = this.merchantsOf(state);
+    return this.merchantDriversOf(state)
+      .filter((md) => md.kind === "assigned" && md.status === "pending" && shops.find((m) => m.id === md.merchantId)?.status === "approved" && mine(md))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((md) => {
+        const shop = shops.find((m) => m.id === md.merchantId)!;
+        return {
+          id: md.id,
+          merchantId: shop.id,
+          merchantName: shop.name,
+          merchantAddress: shop.address,
+          driverId: md.driverId,
+          driverName: (state.drivers ?? []).find((d) => d.userId === md.driverId)?.fullName ?? "",
+          payMode: md.payMode!,
+          ratePerHourFcfa: md.ratePerHourFcfa,
+          createdAt: md.createdAt,
+        };
+      });
+  }
+
+  async decideMerchantAssignment(assignmentId: string, approve: boolean) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    if (profile.role !== "admin" && profile.role !== "driver" && profile.role !== "fleet_manager") throw new BackendError("forbidden");
+    const row = this.merchantDriverRow(state, assignmentId);
+    if (row.kind !== "assigned" || row.status !== "pending") throw new BackendError("assignment_not_found");
+    let as: MerchantApprover;
+    if (profile.role === "admin") as = "admin";
+    else if (profile.role === "driver" && profile.id === row.driverId) as = "driver";
+    else if (profile.role === "fleet_manager" && (state.fleetLinks ?? []).some((l) => l.driverId === row.driverId && l.managerId === profile.id)) as = "fleet_manager";
+    else throw new BackendError("assignment_not_found");
+    if (this.merchantsOf(state).find((m) => m.id === row.merchantId)?.status !== "approved") throw new BackendError("merchant_not_approved");
+    const status: MerchantDriverStatus = approve ? "active" : "declined";
+    this.save(
+      withAudit(this.withMerchantDriver(state, row.id, { status, approvedAt: new Date().toISOString(), approvedAs: as }), {
+        table: "merchant_drivers",
+        action: "update",
+        rowId: row.id,
+        userId: row.driverId,
+        changes: { merchant_id: row.merchantId, status: ["pending", status], as, pay_mode: row.payMode, rate_per_hour_fcfa: row.ratePerHourFcfa },
+      }),
+    );
+  }
+
+  async driverShops(): Promise<DriverShops> {
+    this.dispatch();
+    const state = this.load();
+    const { profile } = this.demoDriver(state);
+    const shops = this.merchantsOf(state);
+    const approved = (id: string) => shops.find((m) => m.id === id && m.status === "approved");
+    const mine = this.merchantDriversOf(state).filter((md) => md.driverId === profile.id && approved(md.merchantId));
+    const checkins = this.checkinsOf(state).filter((k) => k.driverId === profile.id);
+    const open = checkins.find((k) => !k.outAt);
+    return {
+      assignments: mine
+        .filter((md) => md.kind === "assigned" && (md.status === "pending" || md.status === "active"))
+        .map((md) => {
+          const shop = approved(md.merchantId)!;
+          return { ...this.viewMerchantDriver(state, md), merchantName: shop.name, merchantAddress: shop.address, merchantLat: shop.lat, merchantLng: shop.lng };
+        })
+        .sort((a, b) => a.merchantName.localeCompare(b.merchantName)),
+      favoriteOf: mine
+        .filter((md) => md.kind === "favorite" && md.status === "active")
+        .map((md) => ({ merchantId: md.merchantId, merchantName: approved(md.merchantId)!.name }))
+        .sort((a, b) => a.merchantName.localeCompare(b.merchantName)),
+      checkin: open ? this.viewCheckin(state, open) : null,
+      unpaid: checkins
+        .filter((k) => k.payMode === "hourly" && k.outAt && !k.receivedAt)
+        .sort((a, b) => a.inAt.localeCompare(b.inAt))
+        .map((k) => this.viewCheckin(state, k)),
+    };
+  }
+
+  /**
+   * "Je suis chez <shop>": with an approved assignment, close to the shop (decision 12), not on a
+   * trip and below the cash limit. The driver leaves any station queue. One check-in at a time.
+   */
+  async checkInAtShop(merchantId: string, position: LatLng) {
+    const state = this.load();
+    const { driver } = this.demoDriver(state);
+    this.requireDrivers(state);
+    const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === driver.vehicleId);
+    if (!vehicle?.isActive) throw new BackendError("no_vehicle");
+    const link = this.merchantDriversOf(state).find((md) => md.merchantId === merchantId && md.driverId === driver.userId && md.kind === "assigned" && md.status === "active");
+    const shop = this.merchantsOf(state).find((m) => m.id === merchantId);
+    if (!link || !shop) throw new BackendError("not_assigned");
+    if (shop.status !== "approved") throw new BackendError("merchant_not_approved");
+    if (this.openCheckin(state, driver.userId)) throw new BackendError("checked_in_at_shop");
+    if (this.busyJob(state, driver.userId)) throw new BackendError("driver_busy");
+    if (this.balanceOfDriver(state, driver.userId) >= this.settingsOf(state).cashLimitFcfa) throw new BackendError("cash_limit");
+    if (!position || typeof position.lat !== "number" || typeof position.lng !== "number" || !nearShop(position, shop)) throw new BackendError("too_far");
+    const checkin: DemoCheckin = {
+      id: crypto.randomUUID(),
+      merchantId: shop.id,
+      driverId: driver.userId,
+      assignmentId: link.id,
+      payMode: link.payMode ?? "per_trip",
+      ratePerHourFcfa: link.ratePerHourFcfa,
+      inAt: new Date().toISOString(),
+      outAt: null,
+      outBy: null,
+      amountFcfa: null,
+      receivedAt: null,
+    };
+    this.save(
+      withAudit(
+        { ...state, merchantCheckins: [checkin, ...this.checkinsOf(state)], driverQueue: (state.driverQueue ?? []).filter((q) => q.driverId !== driver.userId) },
+        {
+          table: "merchant_checkins",
+          action: "insert",
+          rowId: checkin.id,
+          userId: driver.userId,
+          changes: { merchant_id: shop.id, pay_mode: checkin.payMode, rate_per_hour_fcfa: checkin.ratePerHourFcfa },
+        },
+      ),
+    );
+    this.dispatch();
+  }
+
+  async checkOutOfShop() {
+    const state = this.load();
+    const { driver } = this.demoDriver(state);
+    const checkin = this.openCheckin(state, driver.userId);
+    if (!checkin) return;
+    if (this.busyJob(state, driver.userId)) throw new BackendError("driver_busy");
+    this.save(this.closeCheckin(state, checkin, "driver"));
+  }
+
+  async confirmShopHoursReceived(checkinId: string) {
+    const state = this.load();
+    const { driver } = this.demoDriver(state);
+    const row = this.checkinsOf(state).find((k) => k.id === checkinId);
+    if (!row || row.driverId !== driver.userId || row.payMode !== "hourly" || !row.outAt || row.receivedAt) throw new BackendError("unknown", "not_found");
+    this.save(
+      withAudit(
+        { ...state, merchantCheckins: this.checkinsOf(state).map((k) => (k.id === row.id ? { ...k, receivedAt: new Date().toISOString() } : k)) },
+        { table: "merchant_checkins", action: "update", rowId: row.id, userId: driver.userId, changes: { merchant_id: row.merchantId, received: row.amountFcfa } },
+      ),
+    );
+  }
+
+  async adminMerchants(): Promise<AdminMerchant[]> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const users = state.users ?? demoUsers(new Date());
+    const order: Record<MerchantStatus, number> = { pending: 0, approved: 1, suspended: 2, rejected: 3 };
+    const invites = this.merchantInvitesOf(state);
+    return [...this.merchantsOf(state)]
+      .sort((a, b) => order[a.status] - order[b.status] || b.createdAt.localeCompare(a.createdAt))
+      .map((m) => {
+        const owner = users.find((u) => u.id === m.ownerId);
+        return {
+          ...this.merchantInfo(state, m),
+          contact: owner?.phone ?? owner?.email ?? null,
+          reviewedAt: m.reviewedAt,
+          members: this.membersOf(state)
+            .filter((x) => x.merchantId === m.id)
+            .sort((a, b) => Number(b.isOwner) - Number(a.isOwner) || a.createdAt.localeCompare(b.createdAt))
+            .map((x) => this.viewMember(state, x)),
+          invites: invites.filter((i) => i.merchantId === m.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((i) => this.viewMerchantInvite(i)),
+          drivers: this.merchantDriversOf(state)
+            .filter((md) => md.merchantId === m.id && (md.status === "pending" || md.status === "active"))
+            .sort((a, b) => a.kind.localeCompare(b.kind) || b.createdAt.localeCompare(a.createdAt))
+            .map((md) => this.viewMerchantDriver(state, md)),
+        };
+      });
+  }
+
+  /**
+   * Approves, rejects (pending only), suspends or reactivates a shop. Suspending checks its
+   * drivers out and calls off its trips whose driver has nothing yet; trips under way finish.
+   */
+  async reviewMerchant(merchantId: string, action: MerchantDecision) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const shop = this.merchantsOf(state).find((m) => m.id === merchantId);
+    if (!shop) throw new BackendError("unknown", "not_found");
+    const allowed: Record<MerchantDecision, MerchantStatus[]> = {
+      approve: ["pending", "rejected"],
+      reject: ["pending"],
+      suspend: ["approved"],
+      reactivate: ["suspended"],
+    };
+    const target: Record<MerchantDecision, MerchantStatus> = { approve: "approved", reject: "rejected", suspend: "suspended", reactivate: "approved" };
+    if (!allowed[action]) throw new BackendError("unknown", "bad_request");
+    if (!allowed[action].includes(shop.status)) throw new BackendError("forbidden");
+    const status = target[action];
+    const now = new Date().toISOString();
+    let next = withAudit(this.updateMerchant(state, shop.id, { status, reviewedAt: now }), {
+      table: "merchants",
+      action: "update",
+      rowId: shop.id,
+      userId: shop.ownerId,
+      changes: { merchant_id: shop.id, status: [shop.status, status] },
+    });
+    if (action === "suspend") {
+      for (const k of this.checkinsOf(next).filter((x) => x.merchantId === shop.id && !x.outAt)) next = this.closeCheckin(next, k, "admin", now);
+    }
+    this.save(next);
+    if (action === "suspend") this.cancelJobs(this.load(), (j) => j.merchantId === shop.id);
+  }
+
+  async setMerchantTier(merchantId: string, tier: MerchantTier) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!MERCHANT_TIERS.includes(tier)) throw new BackendError("unknown", "bad_request");
+    const shop = this.merchantsOf(state).find((m) => m.id === merchantId);
+    if (!shop) throw new BackendError("unknown", "not_found");
+    if (shop.tier === tier) return;
+    this.save(
+      withAudit(this.updateMerchant(state, shop.id, { tier }), {
+        table: "merchants",
+        action: "update",
+        rowId: shop.id,
+        userId: shop.ownerId,
+        changes: { merchant_id: shop.id, tier: [shop.tier, tier] },
+      }),
+    );
+  }
+
+  /** An admin makes another member of the shop its merchant (the former merchant stays as an employee). */
+  async setMerchantOwner(merchantId: string, userId: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const shop = this.merchantsOf(state).find((m) => m.id === merchantId);
+    if (!shop) throw new BackendError("unknown", "not_found");
+    if (shop.ownerId === userId) return;
+    const members = this.membersOf(state);
+    if (!members.some((m) => m.userId === userId && m.merchantId === shop.id)) throw new BackendError("unknown", "not_found");
+    this.save(
+      withAudit(
+        {
+          ...this.updateMerchant(state, shop.id, { ownerId: userId }),
+          merchantMembers: members.map((m) => (m.merchantId === shop.id ? { ...m, isOwner: m.userId === userId } : m)),
+        },
+        { table: "merchants", action: "update", rowId: shop.id, userId, changes: { merchant_id: shop.id, owner_id: [shop.ownerId, userId] } },
+      ),
+    );
+  }
+
+  async adminRemoveMerchantEmployee(merchantId: string, userId: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const member = this.membersOf(state).find((m) => m.userId === userId && m.merchantId === merchantId);
+    if (!member) throw new BackendError("unknown", "not_found");
+    if (member.isOwner) throw new BackendError("forbidden");
+    this.save(this.releaseMember(state, userId, merchantId));
   }
 
   async setFleetTier(managerId: string, tier: FleetTier) {

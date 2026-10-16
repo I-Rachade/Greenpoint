@@ -157,7 +157,7 @@ export async function fleetView(c: ParcelCtx): Promise<FleetView> {
   const rows = await managedRows(c, user);
   const ids = rows.map((r) => r.user_id);
   const marks = ids.map(() => "?").join(", ");
-  const [jobs, open, invites] = await Promise.all([
+  const [jobs, open, invites, shops] = await Promise.all([
     ids.length
       ? c.db.prepare(`${JOB_SELECT} where j.driver_id in (${marks}) and j.status in ${BUSY_SQL}`).bind(...ids).all<JobRow>()
       : Promise.resolve({ results: [] as JobRow[] }),
@@ -165,11 +165,18 @@ export async function fleetView(c: ParcelCtx): Promise<FleetView> {
     fleet
       ? c.db.prepare("select * from fleet_invites where manager_id = ? order by created_at desc limit 30").bind(user.id).all<InviteRow>()
       : Promise.resolve({ results: [] as InviteRow[] }),
+    ids.length
+      ? c.db
+          .prepare(`select k.driver_id, k.in_at, m.name from merchant_checkins k join merchants m on m.id = k.merchant_id where k.out_at is null and k.driver_id in (${marks})`)
+          .bind(...ids)
+          .all<{ driver_id: string; in_at: string; name: string }>()
+      : Promise.resolve({ results: [] as { driver_id: string; in_at: string; name: string }[] }),
   ]);
   const drivers: FleetDriver[] = await Promise.all(
     rows.map(async (r) => {
       const [money, queue] = await Promise.all([balance(c.db, r.user_id), queueOf(c.db, r.user_id)]);
       const job = jobs.results.find((j) => j.driver_id === r.user_id);
+      const shop = shops.results.find((k) => k.driver_id === r.user_id);
       return {
         userId: r.user_id,
         fullName: r.full_name,
@@ -179,6 +186,7 @@ export async function fleetView(c: ParcelCtx): Promise<FleetView> {
         balanceFcfa: money.balance,
         queue,
         job: job ? jobForManager(toJob(job)) : null,
+        shop: shop ? { name: shop.name, since: shop.in_at } : null,
       };
     }),
   );

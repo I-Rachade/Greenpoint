@@ -334,3 +334,15 @@ describe("the admin's Merchants page", () => {
     expect((await call(env, "admin", "POST", "/api/admin/users/esi/role", { role: "customer" })).body).toEqual({ error: "has_other_role" });
   });
 });
+
+describe("deleting the merchant's account", () => {
+  it("removes the shop and makes its employees customers again", async () => {
+    const { env, db } = await setup();
+    const { token } = await approvedShop(env, db);
+    const esi = await call<MerchantInvite>(env, null, "POST", "/api/merchant/invites", { phone: "91000001" }, token);
+    await call(env, "esi", "POST", `/api/merchant-invites/${esi.body.token}/accept`);
+    expect((await call(env, null, "POST", "/api/auth/delete-account", { pin: PIN }, token)).status).toBe(200);
+    expect(db.prepare("select count(*) as n from merchants").get()).toEqual({ n: 0 });
+    expect(role(db, "esi")).toBe("rider");
+  });
+});

@@ -15,6 +15,7 @@ export function demoUsers(now: Date): AdminUser[] {
     { id: "demo-u2", phone: "+22892222222", email: null, fullName: null, role: "customer", createdAt: daysAgo(12), lastSignInAt: daysAgo(2) },
     { id: "demo-u3", phone: "+22893333333", email: null, fullName: "Ama", role: "customer", createdAt: daysAgo(3), lastSignInAt: daysAgo(0.5) },
     { id: "demo-fleet_manager", phone: "+22890000005", email: null, fullName: "Flotte Express", role: "fleet_manager", createdAt: daysAgo(8), lastSignInAt: null },
+    { id: "demo-merchant", phone: "+22890000006", email: null, fullName: "Boutique Akwaba", role: "merchant", createdAt: daysAgo(15), lastSignInAt: null },
   ];
 }
 

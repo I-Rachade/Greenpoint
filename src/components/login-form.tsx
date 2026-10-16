@@ -19,9 +19,11 @@ import { MailIcon, PhoneIcon } from "./icons";
 import { OtpInput } from "./otp-input";
 import { runsOperator } from "@/lib/operators";
 import { cleanFleetName, FLEET_NAME_MAX } from "@/lib/fleet";
+import type { MerchantShopInput } from "@/lib/merchants";
+import { EMPTY_SHOP, ShopFields, useShopProblem } from "./merchants/shop-fields";
 
 // On the public site the demo only offers the customer view (anyone could otherwise "log in" as admin).
-const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["customer"] : ["customer", "operator", "fleet_manager", "driver", "admin"];
+const DEMO_ROLES: UserRole[] = HOSTED_DEMO ? ["customer"] : ["customer", "operator", "fleet_manager", "driver", "merchant", "admin"];
 
 /**
  * "pin": everyday login with phone number or e-mail address, and PIN.
@@ -39,14 +41,20 @@ const digits = (value: string, max: number) => value.replace(/\D/g, "").slice(0,
 /**
  * fleet: the fleet manager registration (/flotte/inscription). Only the "register" steps, plus
  * the fleet name; the account is a fleet manager account with a fleet waiting for an admin.
+ * merchant: the shop registration (/marchand/inscription), the same with the shop's name,
+ * phone, address and pin; the account is a merchant account with a shop waiting for an admin.
  */
-export function LoginForm({ fleet = false }: { fleet?: boolean }) {
+export function LoginForm({ fleet = false, merchant = false }: { fleet?: boolean; merchant?: boolean }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const router = useRouter();
   const errorMessage = useErrorMessage();
-  const [mode, setMode] = useState<Mode>(fleet ? "register" : "pin");
+  const shopProblem = useShopProblem();
+  // Fleet and shop registrations only have the "register" steps.
+  const signup = fleet || merchant;
+  const [mode, setMode] = useState<Mode>(signup ? "register" : "pin");
   const [fleetName, setFleetName] = useState("");
+  const [shop, setShop] = useState<MerchantShopInput>(EMPTY_SHOP);
   const [method, setMethod] = useState<Method>("phone");
   const [country, setCountry] = useState(DEFAULT_PHONE_COUNTRY);
   const [phoneInput, setPhoneInput] = useState("");
@@ -100,7 +108,8 @@ export function LoginForm({ fleet = false }: { fleet?: boolean }) {
     setPhoneInput("");
     setEmailInput("");
     setFleetName("");
-    switchMode(fleet ? "register" : "pin");
+    setShop(EMPTY_SHOP);
+    switchMode(signup ? "register" : "pin");
     // Customers go back to the page that sent them here (/login?next=/station?id=…), read
     // from the address bar because the page is static.
     const next = safeNextPath(new URLSearchParams(window.location.search).get("next"));
@@ -115,7 +124,9 @@ export function LoginForm({ fleet = false }: { fleet?: boolean }) {
               ? "/chauffeur"
               : profile.role === "fleet_manager"
                 ? "/flotte"
-                : (next ?? "/"),
+                : profile.role === "merchant"
+                  ? "/marchand"
+                  : (next ?? "/"),
     );
   }
 
@@ -134,6 +145,11 @@ export function LoginForm({ fleet = false }: { fleet?: boolean }) {
     }
     if (fleet && !cleanFleetName(fleetName)) {
       setError(t.fleet.nameInvalid);
+      return;
+    }
+    const wrongShop = merchant ? shopProblem(shop) : null;
+    if (wrongShop) {
+      setError(wrongShop);
       return;
     }
     const contact = contactOrError();
@@ -155,7 +171,9 @@ export function LoginForm({ fleet = false }: { fleet?: boolean }) {
       done(
         fleet
           ? await backend.registerFleetManager(codeSentTo.value, code, pin, cleanFleetName(fleetName) ?? "")
-          : await backend.register(codeSentTo.value, code, pin, demoRole),
+          : merchant
+            ? await backend.registerMerchant(codeSentTo.value, code, pin, { ...shop, name: shop.name.trim(), address: shop.address.trim() })
+            : await backend.register(codeSentTo.value, code, pin, demoRole),
       ),
     );
   }
@@ -267,7 +285,7 @@ export function LoginForm({ fleet = false }: { fleet?: boolean }) {
     </Fragment>
   ));
 
-  const roleField = !fleet && backend.mode === "demo" && DEMO_ROLES.length > 1 && (
+  const roleField = !signup && backend.mode === "demo" && DEMO_ROLES.length > 1 && (
     <label className="block space-y-1">
       <span className="text-sm font-medium">{t.demo.role}</span>
       <select className={input} value={demoRole} onChange={(e) => setDemoRole(e.target.value as UserRole)}>
@@ -301,21 +319,31 @@ export function LoginForm({ fleet = false }: { fleet?: boolean }) {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/logo.svg" alt="" width={64} height={64} className="h-16 w-16" />
         <h1 className="text-2xl font-bold">
-          {codeSentTo ? t.ui.auth.otpTitle : fleet ? t.fleet.registerTitle : mode === "reset" ? t.login.resetTitle : t.ui.auth.welcome}
+          {codeSentTo
+            ? t.ui.auth.otpTitle
+            : fleet
+              ? t.fleet.registerTitle
+              : merchant
+                ? t.merchant.registerTitle
+                : mode === "reset"
+                  ? t.login.resetTitle
+                  : t.ui.auth.welcome}
         </h1>
         <p className="max-w-xs text-sm text-white/75">
           {codeSentTo
             ? format(codeSentTo.kind === "email" ? t.login.codeSentEmail : t.login.codeSentSms, { contact: codeSentTo.value })
             : fleet
               ? t.fleet.registerIntro
-              : mode === "pin"
+              : merchant
+                ? t.merchant.registerIntro
+                : mode === "pin"
                 ? t.ui.auth.welcomeText
                 : t.login.codeIntro}
         </p>
       </div>
 
       <div className="mx-auto -mt-8 w-full max-w-sm flex-1 space-y-4 rounded-t-3xl bg-background px-6 pb-8 pt-6">
-        {!fleet && !codeSentTo && mode !== "reset" && (
+        {!signup && !codeSentTo && mode !== "reset" && (
           <div role="tablist" className="flex rounded-full bg-gp-border/60 p-1 dark:bg-white/10">
             {tab("pin", t.ui.auth.tabLogin)}
             {tab("register", t.ui.auth.tabRegister)}
@@ -339,6 +367,9 @@ export function LoginForm({ fleet = false }: { fleet?: boolean }) {
             <Link href="/flotte/inscription" className={`${link} flex min-h-11 items-center justify-center text-center`}>
               {t.fleet.registerLink}
             </Link>
+            <Link href="/marchand/inscription" className={`${link} flex min-h-11 items-center justify-center text-center`}>
+              {t.merchant.registerLink}
+            </Link>
           </form>
         ) : !codeSentTo ? (
           <form onSubmit={sendCode} className="space-y-4">
@@ -355,6 +386,8 @@ export function LoginForm({ fleet = false }: { fleet?: boolean }) {
                 />
               </label>
             )}
+            {merchant && <ShopFields value={shop} onChange={setShop} inputClass={input} />}
+            {merchant && <h2 className="pt-2 text-base font-semibold">{t.merchant.loginTitle}</h2>}
             {methodSwitch}
             {contactField}
             {mode === "register" && (
@@ -377,9 +410,9 @@ export function LoginForm({ fleet = false }: { fleet?: boolean }) {
                 {t.login.backToLogin}
               </button>
             )}
-            {fleet && (
+            {signup && (
               <Link href="/login" className={`${link} flex min-h-11 items-center justify-center text-center`}>
-                {t.fleet.backToLogin}
+                {fleet ? t.fleet.backToLogin : t.merchant.backToLogin}
               </Link>
             )}
           </form>
@@ -400,7 +433,7 @@ export function LoginForm({ fleet = false }: { fleet?: boolean }) {
               className={button}
               disabled={busy || code.length < 6 || pin.length < PIN_LENGTH || pinConfirm.length < PIN_LENGTH}
             >
-              {fleet ? t.fleet.registerSubmit : t.login.confirm}
+              {fleet ? t.fleet.registerSubmit : merchant ? t.merchant.registerSubmit : t.login.confirm}
             </button>
             <button
               type="button"

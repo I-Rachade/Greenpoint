@@ -13,6 +13,7 @@ import { ConfirmSheet } from "../confirm-sheet";
 import { CountryPicker } from "../country-picker";
 import { useI18n } from "../i18n-provider";
 import { Badge, Button, Input, useToast, type BadgeTone } from "../ui";
+import { AssignmentRequestList, useClock } from "./driver-shops";
 import { input, JobStatusPill, Notice, primary, secondary, useFcfa, useJobRoute } from "./shared";
 
 function Section({ title, hint, action, children }: { title: string; hint?: string; action?: ReactNode; children: ReactNode }) {
@@ -42,7 +43,12 @@ function DriverCard({ d, stations, canRemove }: { d: FleetDriver; stations: Stat
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const name = (id: string | null) => stations.find((s) => s.id === id)?.name ?? "?";
-  const where = d.queue ? format(f.inQueue, { station: name(d.queue.stationId), pos: d.queue.position }) : f.notQueued;
+  const clock = useClock();
+  const where = d.shop
+    ? format(t.merchantDrivers.requests.atShop, { shop: d.shop.name, time: clock(d.shop.since) })
+    : d.queue
+      ? format(f.inQueue, { station: name(d.queue.stationId), pos: d.queue.position })
+      : f.notQueued;
 
   async function remove() {
     setBusy(true);
@@ -520,6 +526,19 @@ function FleetHeader({ fleet }: { fleet: FleetInfo }) {
   );
 }
 
+/** Shop assignments of the manager's drivers waiting for approval (plan marchand.md §4). */
+function ShopRequests() {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { data } = useLiveQuery(() => backend.merchantAssignmentRequests());
+  if (!data || data.length === 0) return null;
+  return (
+    <Section title={t.merchantDrivers.requests.title} hint={t.merchantDrivers.requests.hint}>
+      <AssignmentRequestList requests={data} showDriver />
+    </Section>
+  );
+}
+
 /** /flotte: a fleet manager's drivers, invites, manual dispatch, the swaps billed to the fleet and figures (src/lib/fleet.ts). */
 export function FleetPanel() {
   const { t } = useI18n();
@@ -585,6 +604,7 @@ export function FleetPanel() {
         )}
       </Section>
       {manager && <InviteSheet open={inviting} onClose={() => setInviting(false)} />}
+      {manager && <ShopRequests />}
       {fleet && (
         <Section title={f.invites}>
           {pendingInvites.length + answered.length === 0 ? (

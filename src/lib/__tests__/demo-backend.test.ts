@@ -321,3 +321,97 @@ describe("DemoBackend fleets (phase 6, as in the Worker)", () => {
     await expect(backend.myFleetInvites()).resolves.toEqual([]);
   });
 });
+
+describe("DemoBackend merchants", () => {
+  let backend: DemoBackend;
+  const SHOP = { lat: 6.1382, lng: 1.2431 };
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-12T09:00:00Z"));
+    backend = new DemoBackend();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("runs the demo shop: team limit, booking, assigned driver checked in at an hourly rate", async () => {
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    await backend.setDriversEnabled(true);
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    const code = (await backend.driverHome()).driver!.code!;
+
+    const merchant = await backend.register("+22890000006", DEMO_CODE, "2580", "merchant");
+    expect(merchant.merchant).toMatchObject({ name: "Boutique Akwaba", status: "approved", isOwner: true });
+    // R11: a merchant is not a customer.
+    await expect(backend.reserve(STATION, "battery", null)).rejects.toMatchObject({ code: "forbidden" });
+    const assignment = await backend.addMerchantDriver({ kind: "assigned", driver: code, payMode: "hourly", ratePerHourFcfa: 1000 });
+    expect(assignment.status).toBe("pending");
+    await expect(backend.addMerchantDriver({ kind: "assigned", driver: code, payMode: "per_trip" })).rejects.toMatchObject({ code: "merchant_driver_exists" });
+    const invite = await backend.inviteMerchantEmployee("+22897100001");
+    await backend.inviteMerchantEmployee("+22897100002");
+    await backend.inviteMerchantEmployee("+22897100003");
+    await expect(backend.inviteMerchantEmployee("+22897100004")).rejects.toMatchObject({ code: "merchant_limit" });
+
+    // The invited customer accepts and books a courier for the shop.
+    await backend.register("+22897100001", DEMO_CODE, "2580", "customer");
+    expect((await backend.myMerchantInvites()).map((i) => i.merchantName)).toEqual(["Boutique Akwaba"]);
+    await backend.acceptMerchantInvite(invite.token);
+    expect((await backend.getProfile())?.merchant).toMatchObject({ isOwner: false });
+    const job = await backend.bookCourier({
+      pickup: { ...SHOP, note: "Boutique", phone: "+22890000066" },
+      dropoff: { lat: 6.13, lng: 1.22, note: "Porte bleue" },
+      recipientPhone: "+22897200001",
+      content: "Pagne",
+      size: "S",
+    });
+    expect(job.customerName).toBe("Boutique Akwaba");
+    await expect(backend.merchantActivity()).rejects.toMatchObject({ code: "forbidden" });
+
+    // The driver approves, checks in near the shop and gets the shop's trip first.
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.decideMerchantAssignment(assignment.id, true);
+    await expect(backend.checkInAtShop("merchant-akwaba", { lat: 6.2, lng: 1.2 })).rejects.toMatchObject({ code: "too_far" });
+    await backend.checkInAtShop("merchant-akwaba", SHOP);
+    const home = await backend.driverHome();
+    expect(home.job?.id).toBe(job.id);
+    await backend.acceptJob(job.id);
+    await backend.boardRide(job.id);
+    await expect(backend.checkOutOfShop()).rejects.toMatchObject({ code: "driver_busy" });
+
+    await backend.register("+22897100001", DEMO_CODE, "2580", "customer");
+    const handover = (await backend.myJobs()).find((j) => j.id === job.id)!.handoverCode!;
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.finishRide(job.id, handover);
+    // Decision A: no share of the fare for an hourly driver.
+    expect((await backend.driverHome()).ledger.filter((e) => e.kind === "earning")).toEqual([]);
+    await expect(backend.joinDriverQueue("st-be", SHOP)).rejects.toMatchObject({ code: "checked_in_at_shop" });
+    vi.setSystemTime(new Date("2026-10-12T11:00:00Z"));
+    await backend.checkOutOfShop();
+    const shops = await backend.driverShops();
+    expect(shops.checkin).toBeNull();
+    expect(shops.unpaid.map((k) => k.amountFcfa)).toEqual([2000]);
+    await backend.confirmShopHoursReceived(shops.unpaid[0].id);
+
+    await backend.register("+22890000006", DEMO_CODE, "2580", "merchant");
+    const view = await backend.merchantView();
+    expect(view.members.map((m) => m.isOwner)).toEqual([true, false]);
+    expect(view.today.done).toBe(1);
+    expect((await backend.merchantActivity()).some((a) => a.table === "merchant_checkins")).toBe(true);
+    await expect(backend.removeMerchantEmployee(view.merchant.ownerId)).rejects.toMatchObject({ code: "forbidden" });
+    await backend.removeMerchantEmployee(view.members[1].userId);
+
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    await backend.reviewMerchant("merchant-akwaba", "suspend");
+    await backend.register("+22890000006", DEMO_CODE, "2580", "merchant");
+    await expect(backend.bookRide({ pickup: { ...SHOP, note: "", phone: "+22890000066" }, dropoff: { lat: 6.13, lng: 1.22, note: "" }, passengers: 1 })).rejects.toMatchObject({
+      code: "merchant_not_approved",
+    });
+  });
+
+  it("registers a merchant with a pending shop", async () => {
+    const profile = await backend.registerMerchant("+22897300001", DEMO_CODE, "2580", { name: "Chez Ama", phone: "+22897300002", address: "Tokoin", lat: 6.15, lng: 1.22 });
+    expect(profile.merchant).toMatchObject({ name: "Chez Ama", status: "pending", isOwner: true });
+    await expect(backend.inviteMerchantEmployee("+22897300003")).rejects.toMatchObject({ code: "merchant_not_approved" });
+    expect((await backend.merchantView()).merchant.status).toBe("pending");
+  });
+});

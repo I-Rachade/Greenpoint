@@ -49,6 +49,23 @@ import type {
   FleetView,
   MyFleetInvite,
 } from "../fleet";
+import type {
+  AdminMerchant,
+  DriverShops,
+  MerchantActivity,
+  MerchantAssignmentRequest,
+  MerchantBookingsQuery,
+  MerchantDecision,
+  MerchantDriver,
+  MerchantDriverInput,
+  MerchantInvite,
+  MerchantJob,
+  MerchantPayMode,
+  MerchantShopInput,
+  MerchantTier,
+  MerchantView,
+  MyMerchantInvite,
+} from "../merchants";
 import type { LatLng } from "../geo";
 import type {
   Operator,
@@ -904,6 +921,122 @@ export class CloudflareBackend implements Backend {
 
   setFleetTier(managerId: string, tier: FleetTier) {
     return this.act("POST", `/api/admin/fleets/${encodeURIComponent(managerId)}/tier`, { tier });
+  }
+
+  // Merchants ------------------------------------------------------------------------
+
+  registerMerchant(contact: string, code: string, pin: string, shop: MerchantShopInput) {
+    return this.startSession("/api/auth/register-merchant", { contact, code: code.trim(), pin, shop });
+  }
+
+  merchantView() {
+    return this.call<MerchantView>("GET", "/api/merchant");
+  }
+
+  merchantBookings(query: MerchantBookingsQuery) {
+    return this.call<MerchantJob[]>("POST", "/api/merchant/bookings", query);
+  }
+
+  merchantActivity() {
+    return this.call<MerchantActivity[]>("GET", "/api/merchant/activity");
+  }
+
+  async updateMerchantShop(input: MerchantShopInput) {
+    await this.act("POST", "/api/merchant/shop", input);
+    // The shop's name is in the profile.
+    const profile = await this.getProfile();
+    this.authListeners.forEach((fn) => fn(profile));
+  }
+
+  async inviteMerchantEmployee(phone: string) {
+    const invite = await this.call<MerchantInvite>("POST", "/api/merchant/invites", { phone });
+    this.changed();
+    return invite;
+  }
+
+  revokeMerchantInvite(inviteId: string) {
+    return this.act("POST", `/api/merchant/invites/${encodeURIComponent(inviteId)}/revoke`);
+  }
+
+  removeMerchantEmployee(userId: string) {
+    return this.act("POST", `/api/merchant/members/${encodeURIComponent(userId)}/remove`);
+  }
+
+  async addMerchantDriver(input: MerchantDriverInput) {
+    const driver = await this.call<MerchantDriver>("POST", "/api/merchant/drivers", input);
+    this.changed();
+    return driver;
+  }
+
+  changeMerchantPay(assignmentId: string, payMode: MerchantPayMode, ratePerHourFcfa: number | null) {
+    return this.act("POST", `/api/merchant/drivers/${encodeURIComponent(assignmentId)}/pay`, { payMode, ratePerHourFcfa });
+  }
+
+  endMerchantDriver(assignmentId: string) {
+    return this.act("POST", `/api/merchant/drivers/${encodeURIComponent(assignmentId)}/end`);
+  }
+
+  merchantCheckout(driverId: string) {
+    return this.act("POST", `/api/merchant/drivers/${encodeURIComponent(driverId)}/checkout`);
+  }
+
+  myMerchantInvites() {
+    return this.call<MyMerchantInvite[]>("GET", "/api/merchant-invites");
+  }
+
+  async acceptMerchantInvite(token: string) {
+    await this.act("POST", `/api/merchant-invites/${encodeURIComponent(token)}/accept`);
+    // The account is a merchant account now: the menu follows the role.
+    const profile = await this.getProfile();
+    this.authListeners.forEach((fn) => fn(profile));
+  }
+
+  declineMerchantInvite(token: string) {
+    return this.act("POST", `/api/merchant-invites/${encodeURIComponent(token)}/decline`);
+  }
+
+  merchantAssignmentRequests() {
+    return this.call<MerchantAssignmentRequest[]>("GET", "/api/merchant-assignments");
+  }
+
+  decideMerchantAssignment(assignmentId: string, approve: boolean) {
+    return this.act("POST", `/api/merchant-assignments/${encodeURIComponent(assignmentId)}/${approve ? "approve" : "decline"}`);
+  }
+
+  driverShops() {
+    return this.call<DriverShops>("GET", "/api/driver/shops");
+  }
+
+  checkInAtShop(merchantId: string, position: LatLng) {
+    return this.act("POST", `/api/driver/shops/${encodeURIComponent(merchantId)}/checkin`, { position });
+  }
+
+  checkOutOfShop() {
+    return this.act("POST", "/api/driver/shops/checkout");
+  }
+
+  confirmShopHoursReceived(checkinId: string) {
+    return this.act("POST", `/api/driver/shops/hours/${encodeURIComponent(checkinId)}/received`);
+  }
+
+  adminMerchants() {
+    return this.call<AdminMerchant[]>("GET", "/api/admin/merchants");
+  }
+
+  reviewMerchant(merchantId: string, action: MerchantDecision) {
+    return this.act("POST", `/api/admin/merchants/${encodeURIComponent(merchantId)}/review`, { action });
+  }
+
+  setMerchantTier(merchantId: string, tier: MerchantTier) {
+    return this.act("POST", `/api/admin/merchants/${encodeURIComponent(merchantId)}/tier`, { tier });
+  }
+
+  setMerchantOwner(merchantId: string, userId: string) {
+    return this.act("POST", `/api/admin/merchants/${encodeURIComponent(merchantId)}/owner`, { userId });
+  }
+
+  adminRemoveMerchantEmployee(merchantId: string, userId: string) {
+    return this.act("POST", `/api/admin/merchants/${encodeURIComponent(merchantId)}/members/${encodeURIComponent(userId)}/remove`);
   }
 
   /** Private photos need the session, so they are fetched and shown from memory. */
