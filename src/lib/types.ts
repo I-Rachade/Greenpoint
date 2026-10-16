@@ -9,7 +9,7 @@ import type { ReservationKind, ReservationTargetKind } from "./reservations";
 export type VehicleType = "scooter" | "tricycle" | "ebike" | "moped";
 /** Battery services of a station; "parcel" = neither swap nor charging, a parcel point only. See station-points.ts. */
 export type StationKind = "charging" | "swap" | "both" | "parcel";
-export type UserRole = "customer" | "operator" | "fleet_manager" | "admin" | "driver";
+export type UserRole = "customer" | "operator" | "fleet_manager" | "admin" | "driver" | "merchant";
 export type ReservationType = "battery" | "slot";
 export type ReservationStatus = "active" | "completed" | "cancelled" | "expired";
 export type ChargingPointStatus = "free" | "reserved" | "charging" | "done" | "fault";
@@ -124,6 +124,8 @@ export interface Profile {
   driverStatus?: "pending" | "active" | "rejected" | "suspended" | null;
   /** Operators this person runs (operator accounts, see operators.ts). */
   ownerOf?: string[];
+  /** Merchant accounts: the shop and whether this is its merchant (src/lib/merchants.ts). */
+  merchant?: { id: string; name: string; status: "pending" | "approved" | "rejected" | "suspended"; isOwner: boolean } | null;
 }
 
 export interface StationInput {

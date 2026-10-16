@@ -7,7 +7,7 @@ import type { WalletView } from "../src/lib/wallet";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { sha256 } from "./http";
-import { applyMigration, fakeD1 } from "./test-d1";
+import { applyMigration, fakeD1, migrationFiles } from "./test-d1";
 
 // Migration 0031 makes existing drivers driver accounts and moves their wallet and
 // greenpoints to a new customer account the person claims later (plan phase 5, R16).
@@ -80,6 +80,8 @@ function migrated() {
   seed(db);
   const before = totals(db);
   applyMigration(db, "0031_convert_drivers.sql");
+  // The later migrations too: the API of today runs on today's tables.
+  for (const file of migrationFiles()) if (file > "0031_convert_drivers.sql") applyMigration(db, file);
   const rider = (db.prepare("select rider_id from former_rider_accounts where driver_id = 'kofi'").get() as { rider_id: string }).rider_id;
   return { db, d1, before, rider };
 }

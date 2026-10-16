@@ -190,6 +190,15 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "staff_other_station",
   "opening_hours_invalid",
   "proof_required",
+  "merchant_not_approved",
+  "merchant_limit",
+  "already_in_merchant",
+  "checked_in_at_shop",
+  "driver_checked_in",
+  "not_assigned",
+  "assignment_not_found",
+  "merchant_driver_exists",
+  "driver_checked_in_here",
 ];
 
 /**

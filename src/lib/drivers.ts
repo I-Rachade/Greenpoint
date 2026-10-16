@@ -444,6 +444,8 @@ export interface RideBooking {
   pickup: HomePoint;
   dropoff: DropoffPoint;
   passengers: number;
+  /** A shop booking a ride for someone else (planung/marchand.md): the passenger's name, shown to the driver. */
+  passengerName?: string;
 }
 
 /**

@@ -13,7 +13,7 @@ import { d1Of, fakeD1 } from "./test-d1";
 // matrix of the plan (bauplan "Role matrix"); a role the matrix leaves out gets 401 (not signed
 // in) or 403, a role it allows never does. Each call runs on a fresh copy of the same database.
 
-type Role = "anonymous" | "rider" | "staff" | "owner" | "driver" | "fleet_manager" | "admin";
+type Role = "anonymous" | "rider" | "staff" | "owner" | "driver" | "fleet_manager" | "merchant" | "admin";
 const ROLES: Record<Role, string | null> = {
   anonymous: null,
   rider: "ama",
@@ -21,10 +21,11 @@ const ROLES: Record<Role, string | null> = {
   owner: "yao", // owns Bè and Lomé
   driver: "yawa",
   fleet_manager: "edem",
+  merchant: "kofi", // the merchant of an approved shop
   admin: "admin",
 };
 
-const SIGNED: Role[] = ["rider", "staff", "owner", "driver", "fleet_manager", "admin"];
+const SIGNED: Role[] = ["rider", "staff", "owner", "driver", "fleet_manager", "merchant", "admin"];
 const ALL: Role[] = ["anonymous", ...SIGNED];
 /** Wallet, greenpoints, payments, reservations, bookings: customers; an admin keeps them, to test. */
 const CUSTOMER: Role[] = ["rider", "admin"];
@@ -35,6 +36,11 @@ const OWNER: Role[] = ["owner", "admin"];
 const ADMIN: Role[] = ["admin"];
 const DRIVER: Role[] = ["driver"];
 const FLEET: Role[] = ["fleet_manager", "admin"];
+/** Shop bookings (planung/marchand.md): customers, members of an approved shop, an admin. */
+const BOOKING: Role[] = ["rider", "merchant", "admin"];
+const MERCHANT: Role[] = ["merchant"];
+/** Assignments to a shop are approved by the driver, their fleet manager or an admin (decision 9). */
+const APPROVER: Role[] = ["driver", "fleet_manager", "admin"];
 
 /** Who may call each route; every route of the Worker is listed (the first test checks it). */
 const POLICY: Record<string, Role[]> = {
@@ -47,6 +53,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/auth/send": ALL,
   "POST /api/auth/register": ALL,
   "POST /api/auth/register-fleet": ALL,
+  "POST /api/auth/register-merchant": ALL,
   "POST /api/auth/login": ALL,
   "POST /api/auth/contact/send": SIGNED,
   "POST /api/auth/contact": SIGNED,
@@ -179,11 +186,36 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/driver/jobs/:id/board": DRIVER,
   "POST /api/driver/jobs/:id/finish": DRIVER,
   "GET /api/jobs/mine": ALL, // empty when signed out
-  "POST /api/jobs/pickup": CUSTOMER,
-  "POST /api/jobs/ride": CUSTOMER,
-  "POST /api/jobs/courier": CUSTOMER,
+  "POST /api/jobs/pickup": BOOKING,
+  "POST /api/jobs/ride": BOOKING,
+  "POST /api/jobs/courier": BOOKING,
   "POST /api/parcels/:id/delivery": CUSTOMER,
-  "POST /api/jobs/:id/cancel": CUSTOMER,
+  "POST /api/jobs/:id/cancel": BOOKING, // a shop's member cancels the shop's trips
+  "GET /api/merchant": MERCHANT,
+  "POST /api/merchant/bookings": MERCHANT,
+  "GET /api/merchant/activity": MERCHANT,
+  "POST /api/merchant/shop": MERCHANT,
+  "POST /api/merchant/invites": MERCHANT,
+  "POST /api/merchant/invites/:id/revoke": MERCHANT,
+  "POST /api/merchant/members/:id/remove": MERCHANT,
+  "POST /api/merchant/drivers": MERCHANT,
+  "POST /api/merchant/drivers/:id/pay": MERCHANT,
+  "POST /api/merchant/drivers/:id/end": ["merchant", "driver", "admin"], // the driver may end it too
+  "POST /api/merchant/drivers/:id/checkout": MERCHANT,
+  "GET /api/merchant-invites": ALL, // empty when signed out
+  "POST /api/merchant-invites/:id/accept": SIGNED, // an invite to the caller's own number
+  "POST /api/merchant-invites/:id/decline": SIGNED,
+  "GET /api/merchant-assignments": APPROVER,
+  "POST /api/merchant-assignments/:id/:id": APPROVER,
+  "GET /api/driver/shops": DRIVER,
+  "POST /api/driver/shops/:id/checkin": DRIVER,
+  "POST /api/driver/shops/checkout": DRIVER,
+  "POST /api/driver/shops/hours/:id/received": DRIVER,
+  "GET /api/admin/merchants": ADMIN,
+  "POST /api/admin/merchants/:id/review": ADMIN,
+  "POST /api/admin/merchants/:id/tier": ADMIN,
+  "POST /api/admin/merchants/:id/owner": ADMIN,
+  "POST /api/admin/merchants/:id/members/:id/remove": ADMIN,
   "GET /api/stations/:id/drivers": STATION,
   "POST /api/stations/:id/drivers/scan": STATION,
   "POST /api/stations/:id/drivers/:id": STATION,
@@ -227,6 +259,7 @@ beforeAll(async () => {
     ["ama", "+22890000006", "rider"],
     ["edem", "+22890000008", "fleet_manager"],
     ["yawa", "+22890000009", "driver"],
+    ["kofi", "+22890000010", "merchant"],
   ];
   for (const [id, phone, role] of users) {
     db.prepare("insert into users (id, phone, full_name, role, created_at, pin_hash) values (?, ?, ?, ?, ?, ?)").run(id, phone, id, role, now, pinHash);
@@ -243,6 +276,8 @@ beforeAll(async () => {
     insert into drivers (user_id, status, full_name, id_number, license_number, wanted_type, code, created_at) values ('yawa', 'active', 'Yawa', 'ID1', 'LIC1', 'moto', 'ABCDEFGH', '${now}');
     insert into fleets (manager_id, name, status, tier, created_at) values ('edem', 'Flotte Edem', 'approved', 'unlocked', '${now}');
     insert into app_settings (key, value, updated_at) values ('drivers_enabled', '1', '${now}');
+    insert into merchants (id, owner_id, name, phone, address, lat, lng, status, tier, created_at) values ('shop', 'kofi', 'Boutique Kofi', '+22890000011', 'Bè', 6.13, 1.22, 'approved', 'standard', '${now}');
+    insert into merchant_members (user_id, merchant_id, is_owner, created_at) values ('kofi', 'shop', 1, '${now}');
     -- Rows named "be", the id every path segment gets below: the rider's reservation at Bè.
     insert into reservations (id, user_id, station_id, type, status, pickup_code, created_at, expires_at) values ('be', 'ama', 'be', 'battery', 'active', '1234', '${now}', '${later}');
   `);

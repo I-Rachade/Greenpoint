@@ -88,6 +88,11 @@ export type AuditTable =
   | "fleet_manager_drivers"
   | "fleets"
   | "fleet_invites"
+  | "merchants"
+  | "merchant_members"
+  | "merchant_invites"
+  | "merchant_drivers"
+  | "merchant_checkins"
   | "battery_types"
   | "ev_chargers"
   | "charging_sessions"
@@ -121,6 +126,11 @@ export const AUDIT_TABLES: AuditTable[] = [
   "fleet_manager_drivers",
   "fleets",
   "fleet_invites",
+  "merchants",
+  "merchant_members",
+  "merchant_invites",
+  "merchant_drivers",
+  "merchant_checkins",
   "partners",
   "partner_api_keys",
   "partner_bookings",
