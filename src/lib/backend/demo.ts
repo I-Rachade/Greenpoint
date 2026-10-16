@@ -5323,12 +5323,15 @@ export class DemoBackend implements Backend {
     return { ...g, ledger: [entry, ...g.ledger].slice(0, 500) };
   }
 
-  /** Adds a swap or charge to the ledger, only at a solar station and below the daily limit (as earnStatement in the Worker). */
+  /** Adds a swap or charge to the ledger, only for an app customer at a solar station below the daily limit (as earnStatement in the Worker). */
   private earn(
     state: DemoState,
     input: { userId: string; type: ReservationType; stationId: string; reservationId: string | null; vehicle?: VehicleType },
   ): DemoState {
     if (!state.stations.find((s) => s.id === input.stationId)?.isSolar) return state;
+    // Only customers who have the app (signed in at least once), as hasApp in the Worker.
+    const account = (state.users ?? demoUsers(new Date())).find((u) => u.id === input.userId);
+    if (state.profile?.id !== input.userId && !account?.lastSignInAt) return state;
     const g = this.gp(state);
     const today = dayStart();
     const earnedToday = g.ledger.filter((l) => l.userId === input.userId && l.points > 0 && l.kind !== "admin_adjust" && l.createdAt >= today).length;
@@ -5435,31 +5438,6 @@ export class DemoBackend implements Backend {
         redemptions: g.redemptions.map((r) => (r.id === id && r.userId === profile.id && r.status === "open" ? { ...r, status: "cancelled" as const } : r)),
       },
     });
-  }
-
-  async recordGreenpointVisit(stationId: string, input: { contact: string; service: "swap" | "charge"; vehicle?: VehicleType }): Promise<GreenpointReceipt> {
-    const state = this.load();
-    const profile = this.stationActor(state, stationId).profile;
-    const station = state.stations.find((s) => s.id === stationId);
-    if (!station) throw new BackendError("station_not_found");
-    const offered = input.service === "swap" ? offersSwap(station.kind) : offersCharging(station.kind);
-    if (!offered) throw new BackendError("service_not_offered");
-    if (!station.isSolar) throw new BackendError("greenpoint_not_solar");
-    const rider = this.findWalletUser(state, input.contact);
-    if (rider.id === profile.id) throw new BackendError("own_reservation");
-    if (rider.role === "driver" || rider.role === "fleet_manager") throw new BackendError("greenpoint_fleet_driver");
-    if (this.isStationStaff(state, rider.id)) throw new BackendError("greenpoint_station_staff");
-    const next = this.earn(state, {
-      userId: rider.id,
-      type: input.service === "swap" ? "battery" : "slot",
-      stationId,
-      reservationId: null,
-      vehicle: input.vehicle,
-    });
-    if (next === state) throw new BackendError("greenpoint_daily_limit");
-    this.save(next);
-    const entry = this.gp(next).ledger[0];
-    return { person: personLabel(rider), co2Grams: entry.co2Grams, points: entry.points, rewardTitle: null };
   }
 
   async confirmRedemption(stationId: string, code: string): Promise<GreenpointReceipt> {
@@ -5665,7 +5643,9 @@ export class DemoBackend implements Backend {
     let points = 0;
     const g = this.gp(state);
     const solar = state.stations.find((s) => s.id === c.stationId)?.isSolar;
-    if (c.userId && solar) {
+    const account = (state.users ?? demoUsers(new Date())).find((u) => u.id === c.userId);
+    const hasApp = state.profile?.id === c.userId || !!account?.lastSignInAt;
+    if (c.userId && solar && hasApp) {
       const grams = Math.round((c.energyWh / 1000) * g.factors.kwhGrams);
       points = pointsFor(grams);
       if (points > 0) {

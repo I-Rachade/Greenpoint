@@ -141,10 +141,6 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "reward_unavailable",
   "redemption_open",
   "not_enough_points",
-  "greenpoint_daily_limit",
-  "greenpoint_fleet_driver",
-  "greenpoint_station_staff",
-  "greenpoint_not_solar",
   "charge_busy",
   "charge_wrong_status",
   "service_already_unlocked",
@@ -1081,10 +1077,6 @@ export class CloudflareBackend implements Backend {
 
   async cancelRedemption(id: string) {
     await this.call("POST", `/api/greenpoint/redemptions/${encodeURIComponent(id)}/cancel`);
-  }
-
-  recordGreenpointVisit(stationId: string, input: { contact: string; service: "swap" | "charge"; vehicle?: VehicleType }) {
-    return this.call<GreenpointReceipt>("POST", `/api/stations/${encodeURIComponent(stationId)}/greenpoint/visits`, input);
   }
 
   confirmRedemption(stationId: string, code: string) {

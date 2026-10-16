@@ -31,7 +31,8 @@ async function setup() {
   const { db, d1 } = fakeD1();
   const now = new Date().toISOString();
   for (const u of [STAFF, KOFI, ADMIN]) {
-    db.prepare("insert into users (id, phone, email, full_name, role, created_at, pin_hash) values (?, ?, ?, ?, ?, ?, ?)").run(
+    // Signed into the app once: charges earn greenpoints (hasApp in greenpoint.ts).
+    db.prepare("insert into users (id, phone, email, full_name, role, created_at, pin_hash, last_sign_in_at) values (?, ?, ?, ?, ?, ?, ?, ?)").run(
       u.id,
       u.phone,
       u.email,
@@ -39,6 +40,7 @@ async function setup() {
       roleToDb(u.role),
       now,
       pinHash,
+      now,
     );
     db.prepare("insert into sessions (token_hash, user_id, created_at, expires_at) values (?, ?, ?, ?)").run(
       await sha256(TOKENS[u.id]),

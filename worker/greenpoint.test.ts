@@ -8,7 +8,7 @@ import type { Env } from "./env";
 import { tripStatement } from "./greenpoint";
 import { sha256 } from "./http";
 
-// greenpoint: CO2 and points for swaps and charges, staff visits, reward codes.
+// greenpoint: CO2 and points for swaps and charges (automatic, only for customers with the app), reward codes.
 // Runs the API on a minimal D1 on top of SQLite, with the real migrations (as in stations.test.ts).
 
 type Value = string | number | null;
@@ -64,7 +64,8 @@ async function setup() {
     ["admin", "+22890000001", "Admin", "admin"],
   ];
   for (const [id, phone, name, role] of users) {
-    db.prepare("insert into users (id, phone, full_name, role, created_at) values (?, ?, ?, ?, ?)").run(id, phone, name, role, now);
+    // Everyone here has signed into the app once (hasApp in greenpoint.ts).
+    db.prepare("insert into users (id, phone, full_name, role, created_at, last_sign_in_at) values (?, ?, ?, ?, ?, ?)").run(id, phone, name, role, now, now);
     db.prepare("insert into sessions (token_hash, user_id, created_at, expires_at) values (?, ?, ?, ?)").run(
       await sha256(TOKENS[id as keyof typeof TOKENS]),
       id,
@@ -106,7 +107,10 @@ async function swapWithReservation(env: Env) {
   });
 }
 
-const visit = (env: Env, body: unknown) => call<GreenpointReceipt>(env, "staff", "POST", "/api/stations/st/greenpoint/visits", body);
+let counter = 0;
+/** A swap at the counter without reservation, the customer's phone number typed by staff. */
+const counterSwap = (env: Env, contact = "+22896123456") =>
+  call<{ error?: string }>(env, "staff", "POST", "/api/stations/st/swaps", { requestId: `counter-${++counter}`, customerType: "app", contact, payment: "cash" });
 
 describe("greenpoint", () => {
   it("credits CO2 and points when staff complete a reservation, by the rider's vehicle", async () => {
@@ -120,14 +124,32 @@ describe("greenpoint", () => {
     expect(view.history[0]).toMatchObject({ kind: "swap", vehicle: "moped", stationName: "Bè" });
   });
 
-  it("lets staff record a visit without reservation, but never for themselves", async () => {
+  it("credits a counter swap automatically when the customer has the app, even with a typed phone number", async () => {
     const { env } = await setup();
-    const ok = await visit(env, { contact: "96 12 34 56", service: "swap", vehicle: "tricycle" });
-    expect(ok.status).toBe(200);
-    expect(ok.body).toMatchObject({ co2Grams: 4000, points: 40 });
-    expect((await visit(env, { contact: "+22890000002", service: "swap" })).body).toEqual({ error: "own_reservation" });
-    expect((await visit(env, { contact: "+22899999999", service: "swap" })).body).toEqual({ error: "recipient_not_found" });
-    expect((await call(env, "kofi", "POST", "/api/stations/st/greenpoint/visits", { contact: "+22890000002", service: "swap" })).status).toBe(403);
+    await call(env, "kofi", "POST", "/api/greenpoint/vehicle", { vehicle: "tricycle" });
+    expect((await counterSwap(env, "96 12 34 56")).status).toBe(200);
+    expect(await mine(env)).toMatchObject({ co2Grams: 4000, points: 40 });
+    expect((await mine(env)).history[0]).toMatchObject({ kind: "visit", stationName: "Bè" });
+  });
+
+  it("gives no greenpoints to an account that never opened the app (e.g. made for a parcel)", async () => {
+    const { env, db } = await setup();
+    db.exec("update users set last_sign_in_at = null where id = 'kofi'");
+    expect((await counterSwap(env)).status).toBe(200);
+    expect((await swapWithReservation(env)).status).toBe(200);
+    expect(db.prepare("select count(*) as n from greenpoint_ledger").get()).toEqual({ n: 0 });
+    // Once the person signs in, the next swap counts.
+    db.exec(`update users set last_sign_in_at = '${new Date().toISOString()}' where id = 'kofi'`);
+    expect((await counterSwap(env)).status).toBe(200);
+    expect((await mine(env)).points).toBe(15);
+  });
+
+  it("lets nobody add greenpoints by hand: the staff visit form is gone", async () => {
+    const { env } = await setup();
+    const body = { contact: "+22896123456", service: "swap" };
+    expect((await call(env, "staff", "POST", "/api/stations/st/greenpoint/visits", body)).status).toBe(404);
+    expect((await call(env, "admin", "POST", "/api/stations/st/greenpoint/visits", body)).status).toBe(404);
+    expect((await mine(env)).points).toBe(0);
   });
 
   it("only gives greenpoints at stations the admin marked as solar", async () => {
@@ -136,13 +158,12 @@ describe("greenpoint", () => {
     // A reservation still completes, it just earns nothing.
     expect((await swapWithReservation(env)).status).toBe(200);
     expect((await mine(env)).points).toBe(0);
-    expect((await visit(env, { contact: "+22896123456", service: "swap" })).body).toEqual({ error: "greenpoint_not_solar" });
 
     const input = { operatorId: OPERATOR, name: "Bè", address: "", lat: 6.13, lng: 1.22, kind: "both", vehicleTypes: ["scooter"], chargingSlots: 0, batteryCapacity: 10, openingHours: "00:00-24:00", phone: null };
     expect((await call(env, "admin", "POST", "/api/admin/stations", { id: "st", input: { ...input, isSolar: true } })).status).toBe(200);
     const st = (await call<{ id: string; isSolar: boolean }[]>(env, "kofi", "GET", "/api/stations")).body.find((s) => s.id === "st");
     expect(st?.isSolar).toBe(true);
-    expect((await visit(env, { contact: "+22896123456", service: "swap" })).status).toBe(200);
+    expect((await counterSwap(env)).status).toBe(200);
     expect((await mine(env)).points).toBe(15);
     // Saving without isSolar keeps the mark.
     await call(env, "admin", "POST", "/api/admin/stations", { id: "st", input });
@@ -151,9 +172,8 @@ describe("greenpoint", () => {
 
   it("counts at most 3 swaps or charges per day", async () => {
     const { env } = await setup();
-    for (let i = 0; i < 3; i++) expect((await visit(env, { contact: "+22896123456", service: "charge" })).status).toBe(200);
-    expect((await visit(env, { contact: "+22896123456", service: "charge" })).body).toEqual({ error: "greenpoint_daily_limit" });
-    // A reservation over the limit still completes, it just earns nothing.
+    for (let i = 0; i < 4; i++) expect((await counterSwap(env)).status).toBe(200);
+    // Swaps over the limit still go through, they just earn nothing.
     expect((await swapWithReservation(env)).status).toBe(200);
     expect((await mine(env)).points).toBe(45);
   });
@@ -162,7 +182,8 @@ describe("greenpoint", () => {
     const { env, db } = await setup();
     db.exec("update greenpoint_rewards set stock = 5 where id = 'free-swap'");
     expect((await call(env, "kofi", "POST", "/api/greenpoint/redemptions", { rewardId: "free-swap" })).body).toEqual({ error: "not_enough_points" });
-    for (let i = 0; i < 3; i++) await visit(env, { contact: "+22896123456", service: "swap", vehicle: "tricycle" });
+    await call(env, "kofi", "POST", "/api/greenpoint/vehicle", { vehicle: "tricycle" });
+    for (let i = 0; i < 3; i++) await counterSwap(env);
     expect((await mine(env)).points).toBe(120);
     db.exec("update greenpoint_ledger set points = 60");
 
@@ -188,7 +209,8 @@ describe("greenpoint", () => {
     expect((await call(env, "kofi", "POST", "/api/admin/greenpoint/factors", factors)).status).toBe(403);
     expect((await call(env, "admin", "POST", "/api/admin/greenpoint/factors", factors)).status).toBe(200);
     expect((await call(env, "admin", "POST", "/api/admin/greenpoint/factors", { batteryGrams: {}, kwhGrams: 1 })).status).toBe(400);
-    expect((await visit(env, { contact: "+22896123456", service: "swap" })).body).toMatchObject({ co2Grams: 1000, points: 10 });
+    expect((await counterSwap(env)).status).toBe(200);
+    expect(await mine(env)).toMatchObject({ co2Grams: 1000, points: 10 });
 
     const reward = { title: "Jus offert", description: "", costPoints: 30, provider: "partner", partnerName: "Café Bè", stock: null, validUntil: null, isActive: true };
     expect((await call(env, "admin", "POST", "/api/admin/greenpoint/rewards", { id: null, input: reward })).status).toBe(200);
@@ -215,18 +237,16 @@ describe("greenpoint", () => {
     expect(view.co2Grams).toBe(750);
     expect(view.points).toBe(0);
     expect(view.history[0]).toMatchObject({ kind: "delivery", vehicle: "tricycle" });
-    expect((await visit(env, { contact: "+22896123456", service: "swap" })).body).toEqual({ error: "greenpoint_fleet_driver" });
     expect(await tripStatement(d1, { driverId: "staff", jobId: "job-2", distanceMeters: 1000, stationId: null, createdBy: null })).toBeNull();
   });
 
-  it("gives station staff no greenpoints: no balance, no rewards, no visits credited", async () => {
-    const { env, db } = await setup();
-    db.prepare("insert into users (id, phone, full_name, role, created_at) values ('ama', '+22890000003', 'Ama', 'operator', ?)").run(new Date().toISOString());
-    expect((await visit(env, { contact: "+22890000003", service: "swap" })).body).toEqual({ error: "greenpoint_station_staff" });
+  it("gives station staff no greenpoints: no balance, no rewards", async () => {
+    const { env } = await setup();
     expect((await call(env, "staff", "GET", "/api/greenpoint")).status).toBe(403);
     expect((await call(env, "staff", "POST", "/api/greenpoint/redemptions", { rewardId: "x" })).status).toBe(403);
     expect((await call(env, "staff", "POST", "/api/greenpoint/vehicle", { vehicle: "moped" })).status).toBe(403);
-    // Staff still credit riders.
-    expect((await visit(env, { contact: "+22896123456", service: "swap" })).status).toBe(200);
+    // Their customers' swaps still earn.
+    expect((await counterSwap(env)).status).toBe(200);
+    expect((await mine(env)).points).toBe(15);
   });
 });

@@ -159,10 +159,6 @@ export type BackendErrorCode =
   | "reward_unavailable"
   | "redemption_open"
   | "not_enough_points"
-  | "greenpoint_daily_limit"
-  | "greenpoint_fleet_driver"
-  | "greenpoint_station_staff"
-  | "greenpoint_not_solar"
   | "charge_busy"
   | "charge_wrong_status"
   | "service_already_unlocked"
@@ -555,8 +551,6 @@ export interface Backend {
   /** A code for a reward, valid REDEEM_CODE_MINUTES; points are taken when staff enter it. */
   startRedemption(rewardId: string): Promise<GreenpointRedemption>;
   cancelRedemption(id: string): Promise<void>;
-  /** Staff enter a swap or charge without reservation by the rider's phone number or e-mail. */
-  recordGreenpointVisit(stationId: string, input: { contact: string; service: "swap" | "charge"; vehicle?: VehicleType }): Promise<GreenpointReceipt>;
   /** Staff enter the code a rider shows for a reward. */
   confirmRedemption(stationId: string, code: string): Promise<GreenpointReceipt>;
   /** Backoffice: factors, rewards, totals and the latest movements (admins only). */

@@ -1,4 +1,3 @@
-import { parseContact } from "../src/lib/contact";
 import {
   dayStart,
   levelFor,
@@ -21,7 +20,6 @@ import {
   type GreenpointReward,
   type GreenpointView,
 } from "../src/lib/greenpoint";
-import { offersCharging, offersSwap } from "../src/lib/availability";
 import type { FleetVehicleType } from "../src/lib/drivers";
 import { VEHICLE_TYPES, type Profile, type ReservationType, type VehicleType } from "../src/lib/types";
 import { personLabel } from "../src/lib/wallet";
@@ -137,6 +135,16 @@ async function isSolarStation(db: D1Database, stationId: string): Promise<boolea
   return !!row?.is_solar;
 }
 
+/**
+ * greenpoints only go to customers who have the app (decided 2026-10-16): the account was
+ * signed in at least once. Accounts made for someone else (a parcel recipient, a converted
+ * driver's waiting account) earn nothing until the person opens the app.
+ */
+async function hasApp(db: D1Database, userId: string): Promise<boolean> {
+  const row = await db.prepare("select 1 from users where id = ? and last_sign_in_at is not null").bind(userId).first();
+  return !!row;
+}
+
 /** Station staff (role operator) have no greenpoints: they earn nothing and have no balance. */
 async function isStationStaff(db: D1Database, userId: string): Promise<boolean> {
   const row = await db.prepare("select 1 from users where id = ? and role = 'operator'").bind(userId).first();
@@ -193,14 +201,15 @@ export async function tripStatement(
 
 /**
  * The ledger row for a completed swap or charge, or null when the station does not
- * charge with solar power or the person already earned MAX_EARNINGS_PER_DAY times
- * today. Callers put it into the same batch as the completion, so both are written or neither.
+ * charge with solar power, the person has no app or already earned MAX_EARNINGS_PER_DAY
+ * times today. Added automatically, never by hand: staff cannot hand out greenpoints. Callers put it into the same batch as the completion, so both are written or neither.
  */
 export async function earnStatement(
   db: D1Database,
   input: { userId: string; type: ReservationType; stationId: string; reservationId?: string | null; createdBy: string | null; vehicle?: VehicleType },
 ): Promise<{ statement: D1PreparedStatement; co2Grams: number; points: number } | null> {
   if (!(await isSolarStation(db, input.stationId))) return null;
+  if (!(await hasApp(db, input.userId))) return null;
   if ((await earnedToday(db, input.userId)) >= MAX_EARNINGS_PER_DAY) return null;
   if (await drivesFleetVehicle(db, input.userId)) return null;
   if (await isStationStaff(db, input.userId)) return null;
@@ -230,6 +239,7 @@ export async function chargeEarnStatement(
   input: { userId: string; stationId: string; sessionId: string; energyWh: number; paidRef: string; createdBy: string | null },
 ): Promise<{ statement: D1PreparedStatement; co2Grams: number; points: number } | null> {
   if (!(await isSolarStation(db, input.stationId))) return null;
+  if (!(await hasApp(db, input.userId))) return null;
   if ((await earnedToday(db, input.userId)) >= MAX_EARNINGS_PER_DAY) return null;
   if (await drivesFleetVehicle(db, input.userId)) return null;
   if (await isStationStaff(db, input.userId)) return null;
@@ -364,44 +374,6 @@ interface UserRow {
 }
 
 const label = (u: UserRow) => personLabel({ fullName: u.full_name, phone: u.phone, email: u.email });
-
-/** Staff enter a swap or charge without reservation (cash or app), by the rider's phone number or e-mail. */
-export async function recordVisit(env: Env, user: Profile, isStaffOf: StaffCheck, stationId: string, request: Request): Promise<GreenpointReceipt> {
-  if (!(await isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
-  const body = await readJson<{ contact?: string; service?: string; vehicle?: string }>(request);
-  const type: ReservationType = body.service === "charge" ? "slot" : body.service === "swap" ? "battery" : (() => {
-    throw new ApiError("bad_request");
-  })();
-  const vehicle = body.vehicle === undefined ? undefined : (body.vehicle as VehicleType);
-  if (vehicle !== undefined && !VEHICLE_TYPES.includes(vehicle)) throw new ApiError("bad_request");
-  const db = env.DB;
-  const station = await db
-    .prepare("select kind, has_battery, is_solar from stations where id = ?")
-    .bind(stationId)
-    .first<{ kind: "charging" | "swap" | "both"; has_battery: number; is_solar: number }>();
-  if (!station) throw new ApiError("station_not_found", 404);
-  const offered = station.has_battery !== 0 && (type === "battery" ? offersSwap(station.kind) : offersCharging(station.kind));
-  if (!offered) throw new ApiError("service_not_offered");
-  if (!station.is_solar) throw new ApiError("greenpoint_not_solar");
-
-  const text = String(body.contact ?? "");
-  const contact = parseContact(text);
-  if (!contact) throw new ApiError(text.includes("@") ? "invalid_contact" : "phone_not_allowed");
-  const rider = await db
-    .prepare(`select id, phone, email, full_name from users where ${contact.kind === "phone" ? "phone" : "email"} = ?`)
-    .bind(contact.value)
-    .first<UserRow>();
-  if (!rider) throw new ApiError("recipient_not_found", 404);
-  // Staff never credit themselves.
-  if (rider.id === user.id) throw new ApiError("own_reservation");
-  if ((await drivesFleetVehicle(db, rider.id)) || (await isDriverAccount(db, rider.id))) throw new ApiError("greenpoint_fleet_driver");
-  if (await isStationStaff(db, rider.id)) throw new ApiError("greenpoint_station_staff");
-
-  const earned = await earnStatement(db, { userId: rider.id, type, stationId, createdBy: user.id, vehicle });
-  if (!earned) throw new ApiError("greenpoint_daily_limit");
-  await earned.statement.run();
-  return { person: label(rider), co2Grams: earned.co2Grams, points: earned.points, rewardTitle: null };
-}
 
 /** Staff enter the code the rider shows; the points are taken and the stock goes down. */
 export async function confirmRedemption(env: Env, user: Profile, isStaffOf: StaffCheck, stationId: string, request: Request): Promise<GreenpointReceipt> {

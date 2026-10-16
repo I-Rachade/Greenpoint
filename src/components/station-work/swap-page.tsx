@@ -312,7 +312,7 @@ function SwapView({ station }: { station: StationView }) {
         {t.work.swap.log}
       </Button>
       {/* Swaps record the customer's greenpoints themselves; reward codes are confirmed here. */}
-      <GreenpointStaff station={station} only={[]} />
+      <GreenpointStaff station={station} />
     </>
   );
 }
