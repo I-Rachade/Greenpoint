@@ -7,6 +7,9 @@ import {
   DRIVER_DOCUMENTS,
   driverBadgePayload,
   driverEarning,
+  owedToDriver,
+  PAYOUT_NETWORKS,
+  type PayoutNetwork,
   FLEET_VEHICLE_TYPES,
   type AbandonReason,
   type DeliveryJob,
@@ -318,7 +321,78 @@ function Balance({ home }: { home: DriverHome }) {
           </ul>
         </details>
       )}
+      <PhonePayout home={home} />
     </Card>
+  );
+}
+
+/** Phase 2: what we owe the driver, sent to their Flooz or T-Money number instead of paid at a station. */
+function PhonePayout({ home }: { home: DriverHome }) {
+  const { t } = useI18n();
+  const p = t.drivers.pay;
+  const { backend, profile } = useApp();
+  const when = useDateTime();
+  const fcfa = useFcfa();
+  const { run, busy, status } = useAction();
+  const [network, setNetwork] = useState<PayoutNetwork>("tmoney");
+  const [phone, setPhone] = useState(profile?.phone ?? "");
+  const owed = owedToDriver(home.driver!.balanceFcfa);
+  const payout = home.payout;
+  const networkName = (n: PayoutNetwork) => (n === "flooz" ? "Flooz" : "T-Money");
+
+  if (payout?.status === "requested") {
+    return (
+      <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-900/30 dark:text-amber-100">
+        {format(p.payoutRequested, { amount: fcfa(payout.amountFcfa), network: networkName(payout.network), phone: payout.phone })}
+      </p>
+    );
+  }
+  const last =
+    payout &&
+    (payout.status === "paid"
+      ? format(p.payoutPaid, {
+          amount: fcfa(payout.amountFcfa),
+          network: networkName(payout.network),
+          date: payout.decidedAt ? when(payout.decidedAt) : "",
+          reference: payout.reference ? format(p.reference, { reference: payout.reference }) : "",
+        })
+      : format(p.payoutRejected, { amount: fcfa(payout.amountFcfa) }));
+  return (
+    <>
+      {last && <p className="text-xs text-zinc-500">{last}</p>}
+      {owed > 0 && (
+        <form
+          className="space-y-2 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(() => backend.requestDriverPayout(network, phone), p.payoutAsked);
+          }}
+        >
+          <p className="font-medium">{p.payoutTitle}</p>
+          <p className="text-xs text-zinc-500">{format(p.payoutIntro, { amount: fcfa(owed) })}</p>
+          <div className="flex flex-wrap gap-2">
+            <label className="space-y-1">
+              <span className="block text-xs">{p.payoutNetwork}</span>
+              <select className={input} value={network} onChange={(e) => setNetwork(e.target.value as PayoutNetwork)}>
+                {PAYOUT_NETWORKS.map((n) => (
+                  <option key={n} value={n}>
+                    {networkName(n)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="min-w-40 flex-1 space-y-1">
+              <span className="block text-xs">{p.payoutPhone}</span>
+              <input className={input} type="tel" inputMode="tel" required value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="90 12 34 56" />
+            </label>
+          </div>
+          <button type="submit" className={primary} disabled={busy}>
+            {p.payoutAsk}
+          </button>
+          {status}
+        </form>
+      )}
+    </>
   );
 }
 
@@ -492,13 +566,15 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
   const station = (id: string | null) => stations.find((s) => s.id === id);
   const name = (id: string | null) => station(id)?.name ?? "?";
 
+  // Phase 2: paid online from the wallet, the driver takes no cash.
+  const paid = !!job.prepaidFcfa && !job.refunded && job.collectFcfa === 0;
   let step = "";
   let target: LatLng | null = null;
   if (job.kind === "express") {
     step = job.status === "picked_up" ? format(t.drivers.page.stepExpressBring, { to: name(job.toStationId) }) : format(t.drivers.page.stepExpress, { from: name(job.fromStationId), to: name(job.toStationId) });
     target = (job.status === "picked_up" ? station(job.toStationId) : station(job.fromStationId)) ?? null;
   } else if (job.kind === "ride") {
-    step = job.status === "picked_up" ? format(t.drivers.page.stepRideDrive, { n: job.collectFcfa }) : t.drivers.page.stepRideGo;
+    step = job.status !== "picked_up" ? t.drivers.page.stepRideGo : paid ? t.drivers.pay.rideDrive : format(t.drivers.page.stepRideDrive, { n: job.collectFcfa });
     target = job.status === "picked_up" ? job.dropoff : job.home;
   } else if (job.kind === "courier") {
     // A shop's courier: when the recipient is absent, back to where the driver took it.
@@ -507,7 +583,9 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
         ? format(t.drivers.page.stepShopReturn, { shop: job.customerName ?? "" })
         : job.status === "picked_up" || job.status === "at_door"
           ? t.drivers.page.stepCourierDrive
-          : format(t.drivers.page.stepCourierGo, { n: job.collectFcfa });
+          : paid
+            ? t.drivers.pay.courierGo
+            : format(t.drivers.page.stepCourierGo, { n: job.collectFcfa });
     target = job.status === "picked_up" || job.status === "at_door" ? job.dropoff : job.home;
   } else if (job.kind === "pickup") {
     step = job.status === "picked_up" ? format(t.drivers.page.stepPickupBring, { no: job.trackingNo ?? "", to: name(job.toStationId) }) : t.drivers.page.stepPickupGo;
@@ -567,6 +645,7 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
         )}
       </div>
       {job.collectFcfa > 0 && !(job.kind === "courier" && job.status !== "accepted") && <p className="text-sm font-semibold">{format(t.drivers.page.collect, { n: job.collectFcfa })}</p>}
+      {paid && <p className="text-sm font-semibold text-gp-green-dark dark:text-gp-green">✓ {t.drivers.pay.driverPaid}</p>}
       <p className="text-xs text-zinc-500">{format(t.drivers.page.earning, { n: driverEarning(job.fareFcfa, home.settings) })}</p>
       {job.kind === "pickup" && job.status === "accepted" && <PickupCollect job={job} info={info} onDone={(no) => setCollected(format(t.drivers.page.collected, { no }))} />}
       {job.kind === "delivery" && (job.status === "picked_up" || job.status === "at_door") && <DoorActions job={job} home={home} />}
@@ -577,12 +656,12 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
       )}
       {job.kind === "ride" && job.status === "picked_up" && (
         <button type="button" className={primary} disabled={busy} onClick={() => void run(() => backend.finishRide(job.id), t.drivers.page.finished)}>
-          {format(t.drivers.page.finishButton, { n: job.collectFcfa })}
+          {paid ? t.drivers.pay.rideFinish : format(t.drivers.page.finishButton, { n: job.collectFcfa })}
         </button>
       )}
       {job.kind === "courier" && job.status === "accepted" && (
         <button type="button" className={primary} disabled={busy} onClick={() => void run(() => backend.boardRide(job.id))}>
-          {format(t.drivers.page.courierPickButton, { n: job.collectFcfa })}
+          {paid ? t.drivers.pay.courierPick : format(t.drivers.page.courierPickButton, { n: job.collectFcfa })}
         </button>
       )}
       {job.kind === "courier" && (job.status === "picked_up" || job.status === "at_door") && <CourierFinish job={job} />}

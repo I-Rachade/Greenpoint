@@ -46,6 +46,10 @@ import type {
   RideBooking,
   CourierBooking,
   StationDrivers,
+  TripPayment,
+  PayoutNetwork,
+  DriverPayout,
+  AdminDriverPayout,
 } from "../drivers";
 import type {
   AdminFleet,
@@ -167,6 +171,9 @@ export type BackendErrorCode =
   | "wallet_disabled"
   | "wallet_frozen"
   | "insufficient_balance"
+  | "nothing_owed"
+  | "payout_pending"
+  | "payout_not_open"
   | "recipient_not_found"
   | "account_not_found"
   | "self_transfer"
@@ -486,7 +493,7 @@ export interface Backend {
   /** Express parcel: a driver takes it at the sender's door straight to the recipient's door. */
   bookCourier(input: CourierBooking): Promise<DeliveryJob>;
   /** The recipient has a waiting parcel brought home; the driver gets the pickup right. */
-  bookDelivery(parcelId: string, home: HomePoint): Promise<DeliveryJob>;
+  bookDelivery(parcelId: string, home: HomePoint, payWith?: TripPayment): Promise<DeliveryJob>;
   /** Customer (before the driver has the parcel) or admin. */
   cancelJob(id: string): Promise<void>;
   /** Station staff: drivers in line and parcels drivers take or bring. */
@@ -499,6 +506,12 @@ export interface Backend {
   receiveFromDriver(stationId: string, badge: string, jobId: string, parcelCode: string): Promise<void>;
   /** Daily settlement for the balance staff saw. */
   settleDriver(stationId: string, badge: string, amountFcfa: number): Promise<void>;
+  /** Phase 2: the driver asks for what we owe them on Flooz or T-Money. */
+  requestDriverPayout(network: PayoutNetwork, phone: string): Promise<DriverPayout>;
+  /** Backoffice: payout requests of drivers, open ones first. */
+  adminDriverPayouts(): Promise<AdminDriverPayout[]>;
+  /** Backoffice: the money was sent (with the provider's reference), or the request is refused. */
+  decideDriverPayout(id: string, status: "paid" | "rejected", reference?: string): Promise<void>;
   /** Backoffice: drivers, vehicles, trips and prices (admins only). */
   adminDrivers(): Promise<AdminDrivers>;
   reviewDriver(userId: string, decision: DriverDecision): Promise<void>;

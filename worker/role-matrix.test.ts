@@ -186,6 +186,9 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/driver/jobs/:id/board": DRIVER,
   "POST /api/driver/position": DRIVER,
   "POST /api/push/token": SIGNED,
+  "POST /api/driver/payouts": DRIVER,
+  "GET /api/admin/driver-payouts": ADMIN,
+  "POST /api/admin/driver-payouts/:id": ADMIN,
   "POST /api/push/token/remove": SIGNED,
   "POST /api/driver/jobs/:id/finish": DRIVER,
   "GET /api/jobs/mine": ALL, // empty when signed out

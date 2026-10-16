@@ -75,6 +75,7 @@ import { FAVORITE_ROUND_MINUTES } from "../src/lib/merchants";
 import { ApiError, nowIso, randomDigits, uuid } from "./http";
 import { EMAIL_FROM, notifyPerson, type Message } from "./notify";
 import { noticeOf, sendPush } from "./push";
+import { cashDue, cleanPayWith, hasOpenPayout, payoutOf, refundStatements, requestPayout, walletFailure, walletPayment } from "./trip-payments";
 import {
   accountFor,
   APP_URL,
@@ -162,6 +163,9 @@ export interface JobRow {
   passengers: number | null;
   vehicle_type: FleetVehicleType | null;
   handover_code?: string | null;
+  /** Paid online from the wallet (0037), and when that went back. */
+  prepaid_fcfa?: number | null;
+  prepaid_refunded_at?: string | null;
   /** The shop that booked the trip and who of it (0035_merchants.sql). */
   merchant_id?: string | null;
   booked_by?: string | null;
@@ -214,7 +218,8 @@ export function toJob(r: JobRow): DeliveryJob {
     content: r.content,
     distanceM: r.distance_m,
     fareFcfa: r.fare_fcfa,
-    collectFcfa: r.collect_fcfa,
+    collectFcfa: cashDue(r),
+    ...(r.prepaid_fcfa ? { prepaidFcfa: r.prepaid_fcfa, ...(r.prepaid_refunded_at ? { refunded: true as const } : {}) } : {}),
     recipient: r.recipient_phone ? { phone: r.recipient_phone, name: r.recipient_name } : null,
     declaredValue: r.declared_value,
     driver: r.driver_id
@@ -633,7 +638,7 @@ export async function driverHome(c: ParcelCtx): Promise<DriverHome> {
     user.role === "driver" ? formerAccountOf(c.db, user.id) : Promise.resolve(null),
   ]);
   if (!row) return { driver: null, job: null, history: [], ledger: [], settings: s, lastExpiredAt: null, formerAccount };
-  const [driver, job, history, entries, expired] = await Promise.all([
+  const [driver, job, history, entries, expired, payout] = await Promise.all([
     toDriver(c.db, row, true),
     currentJob(c.db, user.id),
     c.db
@@ -651,8 +656,10 @@ export async function driverHome(c: ParcelCtx): Promise<DriverHome> {
       )
       .bind(user.id)
       .first<{ at: string | null }>(),
+    payoutOf(c.db, user.id),
   ]);
   return {
+    payout,
     driver,
     job: job ? toJob(job) : null,
     history: history.results.map(toJob),
@@ -1079,7 +1086,7 @@ export async function deliverJob(c: ParcelCtx, jobId: string, rawCode: unknown) 
     // The recipient's code at the door is the scan of this handover.
     scanStatement(c.db, { parcelId: parcel.id, runId: job.id, kind: "delivered", driverId: user.id, stationId: null, by: user.id, role: "driver" }),
     c.audit(user.id, "parcels", "update", parcel.id, { status: ["arrived", "picked_up"], delivery_status: ["out_for_delivery", "delivered"] }, { userId: parcel.recipient_user_id }),
-    ...(job.collect_fcfa ? [ledger(c, user.id, "collected", job.collect_fcfa, job.id, null, user.id)] : []),
+    ...(cashDue(job) ? [ledger(c, user.id, "collected", cashDue(job), job.id, null, user.id)] : []),
     ...(await earning(c, job, user.id, s, null, user.id)),
     jobAudit(c, user.id, job, { status: [job.status, "done"] }),
   ]);
@@ -1149,7 +1156,7 @@ export async function boardRide(c: ParcelCtx, jobId: string) {
     throw new ApiError("job_wrong_status");
   }
   await c.db.batch([
-    ...(collectsAtStart(job) ? [ledger(c, user.id, "collected", job.collect_fcfa, job.id, null, user.id)] : []),
+    ...(collectsAtStart(job) && cashDue(job) ? [ledger(c, user.id, "collected", cashDue(job), job.id, null, user.id)] : []),
     jobAudit(c, user.id, job, { status: ["accepted", "picked_up"] }),
   ]);
   if (job.kind === "courier") {
@@ -1181,7 +1188,7 @@ export async function finishRide(c: ParcelCtx, jobId: string, rawCode?: unknown)
   const trip = await tripStatement(c.db, { driverId: user.id, jobId: job.id, distanceMeters: job.distance_m, stationId: job.driver_station_id, createdBy: user.id });
   await c.db.batch([
     ...(trip ? [trip] : []),
-    ...(collectsAtStart(job) ? [] : [ledger(c, user.id, "collected", job.collect_fcfa, job.id, null, user.id)]),
+    ...(collectsAtStart(job) || !cashDue(job) ? [] : [ledger(c, user.id, "collected", cashDue(job), job.id, null, user.id)]),
     ...(await earning(c, job, user.id, s, null, user.id)),
     jobAudit(c, user.id, job, { status: [job.status, "done"], collect_fcfa: job.collect_fcfa }),
   ]);
@@ -1354,7 +1361,7 @@ export async function handToDriver(c: ParcelCtx, stationId: string, badge: unkno
   if (job.kind === "delivery") {
     await notifyPerson(c.env, parcel.id, "out_for_delivery", parcel.recipient_user_id, {
       subject: `Votre colis ${parcel.tracking_no} est en route`,
-      text: `poinderecharge : ${row.full_name}${row.phone ? ` (${row.phone})` : ""}${row.v_plate ? `, ${row.v_plate}` : ""} vous apporte votre colis ${parcel.tracking_no}. Préparez votre code de retrait et ${job.collect_fcfa} FCFA. Suivi : ${APP_URL}`,
+      text: `poinderecharge : ${row.full_name}${row.phone ? ` (${row.phone})` : ""}${row.v_plate ? `, ${row.v_plate}` : ""} vous apporte votre colis ${parcel.tracking_no}. Préparez votre code de retrait${cashDue(job) ? ` et ${cashDue(job)} FCFA` : " (course déjà payée)"}. Suivi : ${APP_URL}`,
     });
   }
 }
@@ -1378,6 +1385,8 @@ export async function receiveFromDriver(c: ParcelCtx, stationId: string, badge: 
       c.db.prepare("update parcels set delivery_status = 'failed' where id = ? and delivery_status = 'out_for_delivery'").bind(parcel.id),
       c.audit(staff.id, "parcels", "update", parcel.id, { delivery_status: ["out_for_delivery", "failed"] }, { stationId }),
       jobAudit(c, staff.id, job, { status: ["returning", "failed"] }),
+      // Nobody was home: the recipient pays nothing (planung/fahrer.md), an online payment goes back.
+      ...refundStatements(c.db, job, refundLabel(job)),
     ]);
     return;
   }
@@ -1404,11 +1413,19 @@ export async function settleDriver(c: ParcelCtx, stationId: string, badge: unkno
   const row = await driverByBadge(c, badge);
   const current = (await balance(c.db, row.user_id)).balance;
   if (Number(amount) !== current) throw new ApiError("balance_changed");
+  // Phase 2: a payout to the phone is on its way; paying here too would pay twice.
+  if (current < 0 && (await hasOpenPayout(c.db, row.user_id))) throw new ApiError("payout_pending");
   if (current === 0) return;
   await c.db.batch([
     ledger(c, row.user_id, "settlement", current, null, stationId, staff.id),
     c.audit(staff.id, "driver_ledger", "insert", row.user_id, { settlement: current }, { stationId, userId: row.user_id }),
   ]);
+}
+
+/** Phase 2: the driver asks for what we owe them on Flooz or T-Money (trip-payments.ts). */
+export async function askPayout(c: ParcelCtx, input: unknown) {
+  const { user } = await requireDriver(c);
+  return requestPayout(c, user.id, (await balance(c.db, user.id)).balance, input);
 }
 
 // Customers ------------------------------------------------------------------------
@@ -1517,10 +1534,12 @@ export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<Delive
         .first();
   if (open) throw new ApiError("ride_open");
   const passenger = shop ? cleanName(input.passengerName) : null;
+  const payWith = shop ? "cash" : cleanPayWith(input?.payWith);
   const s = await driverSettings(c.db);
   const distance = Math.round(distanceMeters(pickup, d));
   const fare = fareFor(distance, false, s);
   const id = uuid();
+  const pay = payWith === "wallet" ? await walletPayment(c, user, id, fare, tripLabel("ride", null)) : [];
   await c.db.batch([
     c.db
       .prepare(
@@ -1546,8 +1565,9 @@ export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<Delive
         nowIso(),
         ...shopColumns(shop, user),
       ),
-    c.audit(user.id, "delivery_jobs", "insert", id, { kind: "ride", passengers, fare_fcfa: fare, ...shopAudit(shop) }, { userId: user.id }),
-  ]);
+    ...pay,
+    c.audit(user.id, "delivery_jobs", "insert", id, { kind: "ride", passengers, fare_fcfa: fare, ...shopAudit(shop), ...(pay.length ? { prepaid_fcfa: fare } : {}) }, { userId: user.id }),
+  ]).catch(walletFailure);
   await dispatch(c);
   return toJob(await loadJob(c.db, id));
 }
@@ -1577,9 +1597,11 @@ export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<
     if (!(await bookableVehicles(c.db)).includes(vehicleType)) throw new ApiError("vehicle_soon");
     if (!vehicleFits(vehicleType, input.size, weight, s)) throw new ApiError("parcel_too_large");
   }
+  const payWith = shop ? "cash" : cleanPayWith(input?.payWith);
   const distance = Math.round(distanceMeters(pickup, d));
   const fare = fareFor(distance, false, s);
   const id = uuid();
+  const pay = payWith === "wallet" ? await walletPayment(c, user, id, fare, tripLabel("courier", null)) : [];
   await c.db.batch([
     c.db
       .prepare(
@@ -1616,20 +1638,22 @@ export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<
       "delivery_jobs",
       "insert",
       id,
-      { kind: "courier", size: input.size, vehicle_type: vehicleType, fare_fcfa: fare, ...shopAudit(shop) },
+      { kind: "courier", size: input.size, vehicle_type: vehicleType, fare_fcfa: fare, ...shopAudit(shop), ...(pay.length ? { prepaid_fcfa: fare } : {}) },
       { userId: user.id },
     ),
-  ]);
+    ...pay,
+  ]).catch(walletFailure);
   await dispatch(c);
   return toJob(await loadJob(c.db, id));
 }
 
 /** The recipient of a parcel waiting at a station has it brought home; this hands the pickup right to the driver. */
-export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unknown): Promise<DeliveryJob> {
+export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unknown, rawPayWith?: unknown): Promise<DeliveryJob> {
   const user = await c.requireUser();
   refuseNonCustomer(user);
   await requireDrivers(c.db);
   const home = cleanHome(rawHome);
+  const payWith = cleanPayWith(rawPayWith);
   const parcel = await c.db.prepare("select * from parcels where id = ?").bind(parcelId).first<ParcelRow>();
   if (!parcel) throw new ApiError("parcel_not_found", 404);
   const isRecipient = parcel.recipient_user_id === user.id || (!!user.phone && parcel.recipient_phone === user.phone);
@@ -1641,6 +1665,7 @@ export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unkn
   const distance = Math.round(distanceMeters(from, home));
   const fare = fareFor(distance, false, s);
   const id = uuid();
+  const pay = payWith === "wallet" ? await walletPayment(c, user, id, fare, tripLabel("delivery", parcel.tracking_no)) : [];
   // Claim the parcel first, checking its delivery status as it is saved: of two bookings
   // at the same time only one gets it (Atlas finding: a home delivery booked twice).
   const claimed = await c.db
@@ -1678,6 +1703,7 @@ export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unkn
           nowIso(),
         ),
       c.audit(user.id, "parcels", "update", parcel.id, { delivery_status: [parcel.delivery_status, "booked"] }, { stationId: parcel.to_station_id, userId: user.id }),
+      ...pay,
     ]);
   } catch (err) {
     // The trip could not be saved: the parcel is free again.
@@ -1686,7 +1712,7 @@ export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unkn
       .bind(parcel.delivery_status, parcel.job_id, parcel.id, id)
       .run();
     if (/UNIQUE/i.test(String(err))) throw new ApiError("parcel_wrong_status");
-    throw err;
+    walletFailure(err);
   }
   await dispatch(c);
   return toJob(await loadJob(c.db, id));
@@ -1712,6 +1738,16 @@ const CANCELLABLE: JobStatus[] = ["open", "assigned", "accepted"];
 /** cancelled_by of trips called off because no driver took them in time (expireOpenJobs). */
 const NO_DRIVER = "no_driver";
 
+/** What the customer's wallet shows for a trip's payment and refund. */
+function refundLabel(job: Pick<JobRow, "kind" | "tracking_no">): string {
+  return tripLabel(job.kind, job.tracking_no);
+}
+
+function tripLabel(kind: JobKind, trackingNo: string | null): string {
+  const what = kind === "ride" ? "trajet" : kind === "delivery" ? "livraison" : "coursier";
+  return trackingNo ? `${what} ${trackingNo}` : what;
+}
+
 /** Calls a trip off while it is still in `from`; false when it moved on in the meantime. */
 export async function closeJob(c: Pick<ParcelCtx, "db" | "audit">, job: JobRow, from: JobStatus[], actor: string): Promise<boolean> {
   if (!(await moveJob(c.db, job.id, from, "status = 'cancelled', done_at = ?, cancelled_by = ?", nowIso(), actor))) return false;
@@ -1723,6 +1759,8 @@ export async function closeJob(c: Pick<ParcelCtx, "db" | "audit">, job: JobRow, 
   if (job.parcel_id && job.kind === "delivery") {
     batch.push(c.db.prepare("update parcels set delivery_status = null where id = ? and delivery_status = 'booked'").bind(job.parcel_id));
   }
+  // Paid online: the fare goes back to the wallet.
+  batch.push(...refundStatements(c.db, job, refundLabel(job)));
   // An express parcel whose trip is called off goes on the next collection run.
   if (job.parcel_id && job.kind === "express") {
     batch.push(c.db.prepare("update parcels set express = 0 where id = ? and status = 'deposited'").bind(job.parcel_id));

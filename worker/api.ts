@@ -110,6 +110,7 @@ import {
   assignJob,
   boardRide,
   reportPosition,
+  askPayout,
   bookDelivery,
   bookPickup,
   bookRide,
@@ -216,6 +217,7 @@ import { notifyUser } from "./notify";
 import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setDriversEnabled, setLiteEnabled, setParcelsEnabled } from "./features";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 import { registerPushToken, removePushToken } from "./push";
+import { adminPayouts, decidePayout } from "./trip-payments";
 import { activeServices, decideService, listStationServices, requestService, requireService, setService } from "./services";
 import { customerStation } from "../src/lib/station-services";
 import { DB_CUSTOMER, refuseNonCustomer, roleFromDb, roleToDb } from "./roles";
@@ -2121,6 +2123,9 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/deliver$/, async (c, [id]) => deliverJob(c, id, (await readJson<{ code: string }>(c.request)).code)],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/absent$/, (c, [id]) => failDelivery(c, id)],
   ["POST", /^\/api\/driver\/position$/, async (c) => reportPosition(c, await readJson<unknown>(c.request))],
+  ["POST", /^\/api\/driver\/payouts$/, async (c) => askPayout(c, await readJson<unknown>(c.request))],
+  ["GET", /^\/api\/admin\/driver-payouts$/, (c) => adminPayouts(c)],
+  ["POST", /^\/api\/admin\/driver-payouts\/([\w-]+)$/, async (c, [id]) => decidePayout(c, id, await readJson<unknown>(c.request))],
   ["POST", /^\/api\/push\/token$/, async (c) => registerPushToken(c, await readJson<unknown>(c.request))],
   ["POST", /^\/api\/push\/token\/remove$/, async (c) => removePushToken(c, await readJson<unknown>(c.request))],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/board$/, (c, [id]) => boardRide(c, id)],
@@ -2134,7 +2139,14 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/jobs\/pickup$/, async (c) => bookPickup(c, await readJson<PickupBooking>(c.request))],
   ["POST", /^\/api\/jobs\/ride$/, async (c) => bookRide(c, await readJson<RideBooking>(c.request))],
   ["POST", /^\/api\/jobs\/courier$/, async (c) => bookCourier(c, await readJson<CourierBooking>(c.request))],
-  ["POST", /^\/api\/parcels\/([\w-]+)\/delivery$/, async (c, [id]) => bookDelivery(c, id, (await readJson<{ home: unknown }>(c.request)).home)],
+  [
+    "POST",
+    /^\/api\/parcels\/([\w-]+)\/delivery$/,
+    async (c, [id]) => {
+      const body = await readJson<{ home: unknown; payWith?: unknown }>(c.request);
+      return bookDelivery(c, id, body.home, body.payWith);
+    },
+  ],
   ["POST", /^\/api\/jobs\/([\w-]+)\/cancel$/, (c, [id]) => cancelJob(c, id)],
   ["GET", /^\/api\/stations\/([\w-]+)\/drivers$/, (c, [id]) => stationDrivers(c, id)],
   [

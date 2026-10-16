@@ -13,6 +13,7 @@ import {
   type DropoffPoint,
   type HomePoint,
   type BookableVehicleType,
+  type TripPayment,
 } from "@/lib/drivers";
 import { distanceMeters, type LatLng } from "@/lib/geo";
 import { useErrorMessage, useNow } from "@/lib/hooks";
@@ -25,6 +26,7 @@ import { SizePicker } from "../parcels/size-picker";
 import { useI18n } from "../i18n-provider";
 import { Button, CountUp, formatRemaining, useReducedMotion, useToast } from "../ui";
 import { DriverTracking } from "./driver-tracking";
+import { TripPaymentChoice } from "./trip-payment";
 import { input, JobStatusPill, Notice, primary, secondary, small, useFcfa, useJobRoute } from "./shared";
 
 const HomePicker = dynamic(() => import("./home-picker").then((m) => m.HomePicker), { ssr: false });
@@ -235,6 +237,7 @@ export function BookCourier({
   const [pickup, setPickup] = useState(emptyHome);
   const [dropoff, setDropoff] = useState<DropoffPoint>(emptyDropoff);
   const [form, setForm] = useState(emptyForm);
+  const [payWith, setPayWith] = useState<TripPayment>("cash");
   // Three steps: where to collect, where to deliver, then the parcel and the price.
   const [step, setStep] = useState(0);
   // +1 going forward, -1 going back: which side the next step slides in from.
@@ -277,6 +280,7 @@ export function BookCourier({
         recipientPhone: form.recipientPhone,
         content: form.content,
         size: form.size,
+        payWith,
       });
       // Straight to the tracking, with an empty form behind: no second booking by accident.
       setPickup(emptyHome);
@@ -341,6 +345,7 @@ export function BookCourier({
                 hidePrice
               />
               <p className="text-xs text-gp-muted">{t.phase1b.courier.priceHint}</p>
+              <TripPaymentChoice fare={fare} value={payWith} onChange={setPayWith} />
             </>
           )}
           <Notice error={error} notice="" />
@@ -376,6 +381,7 @@ export function BookDelivery({ parcel, station, info }: { parcel: Parcel; statio
   const errorMessage = useErrorMessage();
   const [open, setOpen] = useState(false);
   const [home, setHome] = useState(useEmptyHome());
+  const [payWith, setPayWith] = useState<TripPayment>("cash");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const pinned = home.lat !== 0 || home.lng !== 0;
@@ -394,7 +400,7 @@ export function BookDelivery({ parcel, station, info }: { parcel: Parcel; statio
     setError("");
     setBusy(true);
     try {
-      await backend.bookDelivery(parcel.id, home);
+      await backend.bookDelivery(parcel.id, home, payWith);
       setOpen(false);
     } catch (err) {
       setError(errorMessage(err));
@@ -409,6 +415,7 @@ export function BookDelivery({ parcel, station, info }: { parcel: Parcel; statio
       <p className="text-gp-muted">{t.drivers.customer.deliverIntro}</p>
       <HomeFields value={home} onChange={setHome} />
       {fare !== null && <p className="font-semibold">{format(t.drivers.customer.deliverFare, { n: fare })}</p>}
+      <TripPaymentChoice fare={fare} value={payWith} onChange={setPayWith} />
       <p className="text-xs text-gp-muted">{t.drivers.customer.deliverHint}</p>
       <div className="flex flex-wrap gap-2">
         <button type="submit" className={primary} disabled={busy || !pinned || !inServiceArea(home)}>
@@ -499,6 +506,11 @@ export function JobDetails({ job: j, stations, showRoute = true }: { job: Delive
       )}
       <div className="flex flex-wrap items-center gap-2">
         {j.collectFcfa > 0 && <span className="font-semibold">{fcfa(j.collectFcfa)}</span>}
+        {!!j.prepaidFcfa && (
+          <span className="rounded-full bg-gp-green/10 px-2 py-0.5 text-xs font-medium text-gp-green-dark dark:text-gp-green">
+            {fcfa(j.prepaidFcfa)} · {j.refunded ? t.drivers.pay.refunded : t.drivers.pay.paidOnline}
+          </span>
+        )}
         <span className="flex-1" />
         {["open", "assigned", "accepted"].includes(j.status) && (
           <button

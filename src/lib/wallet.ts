@@ -8,7 +8,8 @@ export type WalletTxType =
   | "transfer" // user -> user (spec: TRANSFER-MONEY)
   | "admin_adjust" // correction by an admin (spec: ADD-SUBTRACT-BALANCE)
   | "topup" // paid in from Flooz or T-Money (spec: ADD-MONEY)
-  | "charge"; // a charge at a socket paid from the balance (worker/charging.ts)
+  | "charge" // a charge at a socket paid from the balance (worker/charging.ts)
+  | "trip"; // a driver's trip paid from the balance, or its refund (worker/trip-payments.ts)
 
 /** Direction from the owner's point of view; a transfer has one row per side with the same trxId. */
 export type WalletTxAttribute = "send" | "received";
@@ -43,7 +44,7 @@ export const WALLET_MAX_AMOUNT = 100_000_000;
 export const WALLET_REMARK_MAX = 120;
 
 /** Prefix of the transaction number per type (spec 1.3.1). */
-const TRX_PREFIX: Record<WalletTxType, string> = { transfer: "SM", admin_adjust: "AB", topup: "AM", charge: "RC" };
+const TRX_PREFIX: Record<WalletTxType, string> = { transfer: "SM", admin_adjust: "AB", topup: "AM", charge: "RC", trip: "CO" };
 
 /** Transaction number shown to people: prefix + 8 digits 1-9 (unique per side in the database). */
 export function newTrxId(type: WalletTxType, random: () => number = Math.random): string {

@@ -455,3 +455,55 @@ describe("DemoBackend merchants", () => {
     expect((await backend.merchantView()).merchant.status).toBe("pending");
   });
 });
+
+describe("DemoBackend driver phase 2 (as in the Worker)", () => {
+  let backend: DemoBackend;
+  const HOME = { lat: 6.1382, lng: 1.2431, note: "Maison", phone: "+22890123456" };
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-12T09:00:00Z"));
+    backend = new DemoBackend();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("pays a courier from the wallet, refunds a cancelled one and pays the driver out on the phone", async () => {
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    await backend.setDriversEnabled(true);
+    await backend.setWalletEnabled(true);
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.joinDriverQueue("st-be", HOME);
+
+    await asRole(backend, "customer");
+    const before = (await backend.myWallet()).balanceXof;
+    const booking = { pickup: HOME, dropoff: { lat: 6.13, lng: 1.22, note: "Porte bleue" }, recipientPhone: "+22897200001", content: "Pagne", size: "S" as const };
+    const job = await backend.bookCourier({ ...booking, payWith: "wallet" });
+    expect(job).toMatchObject({ prepaidFcfa: job.fareFcfa, collectFcfa: 0 });
+    expect((await backend.myWallet()).balanceXof).toBe(before - job.fareFcfa);
+    const second = await backend.bookCourier({ ...booking, payWith: "wallet" });
+    await backend.cancelJob(second.id);
+    expect((await backend.myWallet()).balanceXof).toBe(before - job.fareFcfa);
+    expect((await backend.myJobs()).find((j) => j.id === second.id)).toMatchObject({ refunded: true });
+
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.acceptJob(job.id);
+    await backend.boardRide(job.id);
+    await asRole(backend, "customer");
+    const code = (await backend.myJobs()).find((j) => j.id === job.id)!.handoverCode!;
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.finishRide(job.id, code);
+    const home = await backend.driverHome();
+    expect(home.ledger.map((e) => e.kind)).toEqual(["earning"]);
+    const owed = -home.driver!.balanceFcfa;
+    expect((await backend.requestDriverPayout("flooz", "90 11 22 33")).amountFcfa).toBe(owed);
+    await expect(backend.requestDriverPayout("flooz", "90 11 22 33")).rejects.toMatchObject({ code: "payout_pending" });
+
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    const [payout] = await backend.adminDriverPayouts();
+    await backend.decideDriverPayout(payout.id, "paid", "FL-1");
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    expect((await backend.driverHome()).driver!.balanceFcfa).toBe(0);
+    expect((await backend.driverHome()).payout).toMatchObject({ status: "paid", reference: "FL-1" });
+  });
+});

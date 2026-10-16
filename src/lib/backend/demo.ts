@@ -180,6 +180,12 @@ import {
   type BookableVehicleType,
   type DropoffPoint,
   type StationDrivers,
+  owedToDriver,
+  PAYOUT_NETWORKS,
+  type AdminDriverPayout,
+  type DriverPayout,
+  type PayoutNetwork,
+  type TripPayment,
 } from "../drivers";
 import { distanceMeters, type LatLng } from "../geo";
 import { parseContact } from "../contact";
@@ -424,6 +430,8 @@ interface DemoState {
   merchantAddresses?: (MerchantAddress & { merchantId: string })[];
   /** The last position each driver on duty reported (driver_positions, 0037). */
   driverPositions?: Record<string, DriverPosition>;
+  /** Driver phase 2: requests to be paid out on Flooz/T-Money (driver_payouts). */
+  driverPayouts?: (DriverPayout & { driverId: string })[];
 }
 
 interface DemoMerchant {
@@ -681,6 +689,12 @@ interface DemoDriver {
 }
 
 /** A trip as the demo keeps it: the view (driver filled in on reading) plus bookkeeping. */
+/** What the wallet shows for a trip's payment and refund (tripLabel in worker/drivers.ts). */
+function tripLabel(kind: DeliveryJob["kind"], trackingNo?: string | null): string {
+  const what = kind === "ride" ? "trajet" : kind === "delivery" ? "livraison" : "coursier";
+  return trackingNo ? `${what} ${trackingNo}` : what;
+}
+
 interface DemoJob extends Omit<DeliveryJob, "driver" | "trackingNo"> {
   customerUserId: string | null;
   driverId: string | null;
@@ -3324,6 +3338,7 @@ export class DemoBackend implements Backend {
       distanceM: j.distanceM,
       fareFcfa: j.fareFcfa,
       collectFcfa: j.collectFcfa,
+      ...(j.prepaidFcfa ? { prepaidFcfa: j.prepaidFcfa, ...(j.refunded ? { refunded: true as const } : {}) } : {}),
       recipient: j.recipient,
       declaredValue: j.declaredValue,
       driver: driver
@@ -3542,10 +3557,122 @@ export class DemoBackend implements Backend {
       return p;
     });
     const back = hit.filter((j) => j.driverId && j.driverStationId).map((j) => ({ driverId: j.driverId!, stationId: j.driverStationId!, since: new Date().toISOString() }));
+    const refunded = this.refundTrips({ ...state, jobs }, hit);
     this.save(
       withAudit(
-        { ...state, jobs, parcels, driverQueue: [...(state.driverQueue ?? []).filter((q) => !back.some((b) => b.driverId === q.driverId)), ...back] },
+        { ...refunded, parcels, driverQueue: [...(state.driverQueue ?? []).filter((q) => !back.some((b) => b.driverId === q.driverId)), ...back] },
         { table: "delivery_jobs", action: "update", rowId: hit.map((j) => j.id).join(","), changes: { status: ["open", "cancelled"] } },
+      ),
+    );
+  }
+
+  /** Phase 2: takes a trip's fare from the customer's wallet (worker/trip-payments.ts). */
+  private payTripFromWallet(state: DemoState, profile: Profile, amount: number, label: string): DemoWallet {
+    this.walletAccess(state);
+    const w = this.wallet(state);
+    const before = this.balance(w, profile.id);
+    if (before < amount) throw new BackendError("insufficient_balance");
+    return {
+      ...w,
+      balances: { ...w.balances, [profile.id]: before - amount },
+      transactions: [this.tripTx(profile.id, profile, "send", amount, before - amount, label), ...w.transactions],
+    };
+  }
+
+  private tripTx(userId: string, profile: Pick<Profile, "fullName" | "phone" | "email"> | null, attribute: "send" | "received", amount: number, after: number, label: string) {
+    const tx: DemoWallet["transactions"][number] = {
+      id: crypto.randomUUID(),
+      trxId: newTrxId("trip"),
+      type: "trip",
+      attribute,
+      status: "success",
+      amountXof: amount,
+      feeXof: 0,
+      totalXof: amount,
+      balanceAfterXof: after,
+      counterparty: label,
+      remark: null,
+      createdAt: new Date().toISOString(),
+      userId,
+      userLabel: profile ? [profile.fullName, profile.phone ?? profile.email].filter(Boolean).join(" · ") : "",
+      adminId: null,
+    };
+    return tx;
+  }
+
+  /** Online payments of trips that did not happen go back to the wallet, once. */
+  private refundTrips(state: DemoState, which: DemoJob[]): DemoState {
+    const due = which.filter((j) => j.prepaidFcfa && !j.refunded && j.customerUserId);
+    if (!due.length) return state;
+    let w = this.wallet(state);
+    for (const j of due) {
+      const after = this.balance(w, j.customerUserId!) + j.prepaidFcfa!;
+      w = { ...w, balances: { ...w.balances, [j.customerUserId!]: after }, transactions: [this.tripTx(j.customerUserId!, null, "received", j.prepaidFcfa!, after, tripLabel(j.kind)), ...w.transactions] };
+    }
+    return { ...state, wallet: w, jobs: (state.jobs ?? []).map((j) => (due.some((d) => d.id === j.id) ? { ...j, refunded: true as const } : j)) };
+  }
+
+  async requestDriverPayout(network: PayoutNetwork, phone: string): Promise<DriverPayout> {
+    const state = this.load();
+    const { driver } = this.demoDriver(state);
+    if (!PAYOUT_NETWORKS.includes(network)) throw new BackendError("unknown", "bad_request");
+    const normalized = normalizeTogoPhone(phone);
+    if (!normalized) throw new BackendError("phone_not_allowed");
+    const amount = owedToDriver(this.balanceOfDriver(state, driver.userId));
+    if (!amount) throw new BackendError("nothing_owed");
+    if ((state.driverPayouts ?? []).some((p) => p.driverId === driver.userId && p.status === "requested")) throw new BackendError("payout_pending");
+    const payout: DriverPayout & { driverId: string } = {
+      id: crypto.randomUUID(),
+      driverId: driver.userId,
+      amountFcfa: amount,
+      network,
+      phone: normalized,
+      status: "requested",
+      reference: null,
+      requestedAt: new Date().toISOString(),
+      decidedAt: null,
+    };
+    this.save(
+      withAudit(
+        { ...state, driverPayouts: [payout, ...(state.driverPayouts ?? [])] },
+        { table: "driver_ledger", action: "insert", rowId: payout.id, userId: driver.userId, changes: { payout_requested: amount, network } },
+      ),
+    );
+    const { driverId, ...view } = payout;
+    void driverId;
+    return view;
+  }
+
+  async adminDriverPayouts(): Promise<AdminDriverPayout[]> {
+    const state = this.load();
+    this.requireAdmin(state);
+    return [...(state.driverPayouts ?? [])]
+      .sort((a, b) => Number(b.status === "requested") - Number(a.status === "requested") || b.requestedAt.localeCompare(a.requestedAt))
+      .map(({ driverId, ...p }) => {
+        const d = (state.drivers ?? []).find((x) => x.userId === driverId);
+        return { ...p, driverId, driverName: d?.fullName ?? "", driverPhone: d?.phone ?? null, balanceFcfa: this.balanceOfDriver(state, driverId) };
+      });
+  }
+
+  async decideDriverPayout(id: string, status: "paid" | "rejected", reference?: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const admin = this.requireProfile(state);
+    const payout = (state.driverPayouts ?? []).find((p) => p.id === id);
+    if (!payout || payout.status !== "requested") throw new BackendError("payout_not_open");
+    const now = new Date().toISOString();
+    const ref = reference?.trim().slice(0, 80) || null;
+    this.save(
+      withAudit(
+        {
+          ...state,
+          driverPayouts: (state.driverPayouts ?? []).map((p) => (p.id === id ? { ...p, status, reference: ref, decidedAt: now } : p)),
+          ledger:
+            status === "paid"
+              ? [{ ...this.ledgerEntry(payout.driverId, "settlement", -payout.amountFcfa, null, null), by: admin.id }, ...(state.ledger ?? [])]
+              : state.ledger,
+        },
+        { table: "driver_ledger", action: "update", rowId: id, userId: payout.driverId, changes: { payout: ["requested", status], amount_fcfa: payout.amountFcfa, reference: ref } },
       ),
     );
   }
@@ -3578,7 +3705,12 @@ export class DemoBackend implements Backend {
     if (!d) return { driver: null, job: null, history: [], ledger: [], settings, lastExpiredAt: null, formerAccount: null };
     const mine = (state.jobs ?? []).filter((j) => j.driverId === profile.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const busy = mine.find((j) => BUSY_JOB_STATUSES.includes(j.status));
+    const week = new Date(Date.now() - 7 * 86_400_000).toISOString();
+    const payout = (state.driverPayouts ?? [])
+      .filter((p) => p.driverId === profile.id && (p.status === "requested" || (p.decidedAt ?? "") >= week))
+      .sort((a, b) => Number(b.status === "requested") - Number(a.status === "requested") || b.requestedAt.localeCompare(a.requestedAt))[0];
     return {
+      payout: payout ? (({ driverId, ...p }) => (void driverId, p))(payout) : null,
       driver: this.viewDriver(state, d, true),
       job: busy ? this.viewJob(state, busy) : null,
       history: mine.filter((j) => j !== busy).slice(0, 30).map((j) => this.viewJob(state, j)),
@@ -3852,7 +3984,7 @@ export class DemoBackend implements Backend {
         ),
         greenpoint: this.tripGreenpoint(state, driver.userId, job, job.fromStationId),
         ledger: [
-          this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null),
+          ...(job.collectFcfa ? [this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null)] : []),
           ...this.earning(state, job, driver.userId, null),
           ...(state.ledger ?? []),
         ],
@@ -3883,7 +4015,7 @@ export class DemoBackend implements Backend {
     const handoverCode = job.kind === "courier" ? String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0") : undefined;
     const jobs = this.updateJob(state, job.id, ["accepted"], { status: "picked_up", pickedUpAt: new Date().toISOString(), handoverCode });
     // Couriers and a shop's rides are paid when the trip starts (collectsAtStart in worker/drivers.ts).
-    if (!collectsAtStart(job)) return this.saveJobs(state, jobs);
+    if (!collectsAtStart(job) || !job.collectFcfa) return this.saveJobs(state, jobs);
     this.saveJobs(state, jobs, undefined, {
       ledger: [this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null), ...(state.ledger ?? [])],
     });
@@ -3904,7 +4036,7 @@ export class DemoBackend implements Backend {
         greenpoint: this.tripGreenpoint(state, driver.userId, job, job.driverStationId),
         ledger: [
           // A courier (and a shop's ride) was paid when the trip started.
-          ...(collectsAtStart(job) ? [] : [this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null)]),
+          ...(collectsAtStart(job) || !job.collectFcfa ? [] : [this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null)]),
           ...this.earning(state, job, driver.userId, null),
           ...(state.ledger ?? []),
         ],
@@ -4012,7 +4144,9 @@ export class DemoBackend implements Backend {
     const passenger = shop ? (input.passengerName ?? "").trim().replace(/\s+/g, " ").slice(0, 80) || null : null;
     const distanceM = Math.round(distanceMeters(pickup, d));
     const fare = fareFor(distanceM, false, this.settingsOf(state));
+    const wallet = !shop && input.payWith === "wallet" ? this.payTripFromWallet(state, profile, fare, tripLabel("ride")) : null;
     const job = this.newJob({
+      ...(wallet ? { prepaidFcfa: fare } : {}),
       kind: "ride",
       home: pickup,
       dropoff: d,
@@ -4020,12 +4154,12 @@ export class DemoBackend implements Backend {
       size: "S",
       distanceM,
       fareFcfa: fare,
-      collectFcfa: fare,
+      collectFcfa: wallet ? 0 : fare,
       customerUserId: profile.id,
       customerName: shop ? (passenger ?? shop.name) : profile.fullName,
       ...this.shopColumns(shop, profile),
     });
-    this.saveJobs(state, [job, ...(state.jobs ?? [])], {
+    this.saveJobs(wallet ? { ...state, wallet } : state, [job, ...(state.jobs ?? [])], {
       table: "delivery_jobs",
       action: "insert",
       rowId: job.id,
@@ -4066,7 +4200,9 @@ export class DemoBackend implements Backend {
     }
     const distanceM = Math.round(distanceMeters(pickup, dropoff));
     const fare = fareFor(distanceM, false, this.settingsOf(state));
+    const wallet = !shop && input.payWith === "wallet" ? this.payTripFromWallet(state, profile, fare, tripLabel("courier")) : null;
     const job = this.newJob({
+      ...(wallet ? { prepaidFcfa: fare } : {}),
       kind: "courier",
       vehicleType,
       home: pickup,
@@ -4077,12 +4213,12 @@ export class DemoBackend implements Backend {
       recipient: { phone: recipientPhone, name: input.recipientName?.trim() || null },
       distanceM,
       fareFcfa: fare,
-      collectFcfa: fare,
+      collectFcfa: wallet ? 0 : fare,
       customerUserId: profile.id,
       customerName: shop?.name ?? profile.fullName,
       ...this.shopColumns(shop, profile),
     });
-    this.saveJobs(state, [job, ...(state.jobs ?? [])], {
+    this.saveJobs(wallet ? { ...state, wallet } : state, [job, ...(state.jobs ?? [])], {
       table: "delivery_jobs",
       action: "insert",
       rowId: job.id,
@@ -4094,7 +4230,7 @@ export class DemoBackend implements Backend {
     return this.viewJob(saved, (saved.jobs ?? []).find((j) => j.id === job.id)!);
   }
 
-  async bookDelivery(parcelId: string, input: HomePoint): Promise<DeliveryJob> {
+  async bookDelivery(parcelId: string, input: HomePoint, payWith?: TripPayment): Promise<DeliveryJob> {
     const state = this.load();
     const profile = this.requireProfile(state);
     this.refuseNonCustomer(profile);
@@ -4109,7 +4245,9 @@ export class DemoBackend implements Backend {
     const from = this.stationAt(state, parcel.toStationId)!;
     const distanceM = Math.round(distanceMeters(from, home));
     const fare = fareFor(distanceM, false, this.settingsOf(state));
+    const wallet = payWith === "wallet" ? this.payTripFromWallet(state, profile, fare, tripLabel("delivery", parcel.trackingNo)) : null;
     const job = this.newJob({
+      ...(wallet ? { prepaidFcfa: fare } : {}),
       kind: "delivery",
       parcelId: parcel.id,
       fromStationId: parcel.toStationId,
@@ -4119,12 +4257,12 @@ export class DemoBackend implements Backend {
       content: parcel.content,
       distanceM,
       fareFcfa: fare,
-      collectFcfa: fare,
+      collectFcfa: wallet ? 0 : fare,
       customerUserId: profile.id,
       customerName: parcel.recipient.name ?? profile.fullName,
     });
     this.saveJobs(
-      state,
+      wallet ? { ...state, wallet } : state,
       [job, ...(state.jobs ?? [])],
       { table: "parcels", action: "update", rowId: parcel.id, stationId: parcel.toStationId, userId: profile.id, changes: { delivery_status: [parcel.deliveryStatus ?? null, "booked"] } },
       { parcels: (state.parcels ?? []).map((p) => (p.id === parcel.id ? { ...p, deliveryStatus: "booked" as const, jobId: job.id } : p)) },
@@ -4261,9 +4399,12 @@ export class DemoBackend implements Backend {
       at: now.toISOString(),
     });
     if (job.status === "returning") {
+      // Nobody was home: the recipient pays nothing, an online payment goes back.
+      const failed = this.updateJob(state, job.id, ["returning"], { status: "failed", doneAt: now.toISOString() });
+      const refunded = this.refundTrips({ ...state, jobs: failed }, [job]);
       this.saveJobs(
-        state,
-        this.updateJob(state, job.id, ["returning"], { status: "failed", doneAt: now.toISOString() }),
+        refunded,
+        refunded.jobs ?? failed,
         { table: "delivery_jobs", action: "update", rowId: job.id, stationId, userId: d.userId, changes: { status: ["returning", "failed"] } },
         { parcels: (state.parcels ?? []).map((p) => (p.id === job.parcelId ? { ...p, deliveryStatus: "failed" as const } : p)) },
       );
@@ -4291,6 +4432,7 @@ export class DemoBackend implements Backend {
     const d = this.byBadge(state, badge);
     const current = this.balanceOfDriver(state, d.userId);
     if (amountFcfa !== current) throw new BackendError("balance_changed");
+    if (current < 0 && (state.driverPayouts ?? []).some((p) => p.driverId === d.userId && p.status === "requested")) throw new BackendError("payout_pending");
     if (current === 0) return;
     this.save(
       withAudit(

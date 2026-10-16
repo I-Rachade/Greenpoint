@@ -536,6 +536,8 @@ function History({ items }: { items: WalletTransaction[] }) {
               ? format(t.wallet.viaNetwork, { name: x.counterparty ?? "" })
               : x.type === "charge"
                 ? format(t.wallet.chargeAt, { name: x.counterparty ?? "" })
+              : x.type === "trip"
+                ? format(incoming ? t.wallet.tripRefund : t.wallet.tripPaid, { name: x.counterparty ?? "" })
               : format(incoming ? t.wallet.from : t.wallet.to, { name: x.counterparty ?? "?" });
         return (
           <li key={x.id} className="flex items-start gap-3 p-3 text-sm">

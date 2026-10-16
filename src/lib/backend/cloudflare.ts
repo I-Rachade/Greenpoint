@@ -36,6 +36,10 @@ import type {
   RideBooking,
   CourierBooking,
   StationDrivers,
+  TripPayment,
+  PayoutNetwork,
+  DriverPayout,
+  AdminDriverPayout,
 } from "../drivers";
 import type { ReviewInput, StationReview } from "../station-extras";
 import type {
@@ -150,6 +154,9 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "wallet_disabled",
   "wallet_frozen",
   "insufficient_balance",
+  "nothing_owed",
+  "payout_pending",
+  "payout_not_open",
   "recipient_not_found",
   "self_transfer",
   "invalid_amount",
@@ -826,8 +833,8 @@ export class CloudflareBackend implements Backend {
     return job;
   }
 
-  async bookDelivery(parcelId: string, home: HomePoint) {
-    const job = await this.call<DeliveryJob>("POST", `/api/parcels/${encodeURIComponent(parcelId)}/delivery`, { home });
+  async bookDelivery(parcelId: string, home: HomePoint, payWith?: TripPayment) {
+    const job = await this.call<DeliveryJob>("POST", `/api/parcels/${encodeURIComponent(parcelId)}/delivery`, { home, payWith });
     this.changed();
     return job;
   }
@@ -854,6 +861,20 @@ export class CloudflareBackend implements Backend {
 
   settleDriver(stationId: string, badge: string, amountFcfa: number) {
     return this.act("POST", `/api/stations/${encodeURIComponent(stationId)}/drivers/settle`, { badge, amount: amountFcfa });
+  }
+
+  async requestDriverPayout(network: PayoutNetwork, phone: string) {
+    const payout = await this.call<DriverPayout>("POST", "/api/driver/payouts", { network, phone });
+    this.changed();
+    return payout;
+  }
+
+  adminDriverPayouts() {
+    return this.call<AdminDriverPayout[]>("GET", "/api/admin/driver-payouts");
+  }
+
+  decideDriverPayout(id: string, status: "paid" | "rejected", reference?: string) {
+    return this.act("POST", `/api/admin/driver-payouts/${encodeURIComponent(id)}`, { status, reference });
   }
 
   adminDrivers() {

@@ -430,8 +430,12 @@ export interface DeliveryJob {
   content: string;
   distanceM: number;
   fareFcfa: number;
-  /** Cash the driver collects from the customer (0 for express). */
+  /** Cash the driver collects from the customer (0 for express, and when paid online). */
   collectFcfa: number;
+  /** Phase 2: the fare the customer paid online from the wallet (Flooz/T-Money); absent for cash. */
+  prepaidFcfa?: number;
+  /** The online payment went back to the wallet (the trip did not happen). */
+  refunded?: true;
   /** Pickup bookings: who gets the parcel at station B. Couriers: who gets it at the door. */
   recipient: { phone: string; name: string | null } | null;
   declaredValue: number | null;
@@ -470,6 +474,13 @@ export interface PickupBooking {
   declaredValue?: number | null;
 }
 
+/**
+ * How a customer pays a trip (planung/fahrer.md phase 2): cash to the driver, or online from
+ * the wallet, which they top up with Flooz or T-Money. Shops always pay cash.
+ */
+export type TripPayment = "cash" | "wallet";
+export const TRIP_PAYMENTS: TripPayment[] = ["cash", "wallet"];
+
 /** A customer books a driver to take them from A to B. */
 export interface RideBooking {
   pickup: HomePoint;
@@ -477,6 +488,7 @@ export interface RideBooking {
   passengers: number;
   /** A shop booking a ride for someone else (planung/marchand.md): the passenger's name, shown to the driver. */
   passengerName?: string;
+  payWith?: TripPayment;
 }
 
 /**
@@ -491,6 +503,7 @@ export interface CourierBooking {
   content: string;
   size: ParcelSize;
   vehicleType?: BookableVehicleType;
+  payWith?: TripPayment;
 }
 
 export type LedgerKind = "collected" | "earning" | "settlement";
@@ -524,6 +537,39 @@ export interface DriverHome {
   lastExpiredAt: string | null;
   /** Converted drivers: the customer account that took over their wallet and greenpoints (0031). */
   formerAccount?: FormerAccount | null;
+  /** Phase 2: the open request to be paid out on Flooz/T-Money, else the last one decided. */
+  payout?: DriverPayout | null;
+}
+
+export type PayoutNetwork = "flooz" | "tmoney";
+export const PAYOUT_NETWORKS: PayoutNetwork[] = ["flooz", "tmoney"];
+
+/**
+ * Payout to the phone (phase 2): a driver we owe money asks for it on Flooz or T-Money; an
+ * admin sends it and marks it paid, which settles that amount like a payout at a station.
+ */
+export interface DriverPayout {
+  id: string;
+  amountFcfa: number;
+  network: PayoutNetwork;
+  phone: string;
+  status: "requested" | "paid" | "rejected";
+  reference: string | null;
+  requestedAt: string;
+  decidedAt: string | null;
+}
+
+/** A payout request in the backoffice, with who asked and what we owe them now. */
+export interface AdminDriverPayout extends DriverPayout {
+  driverId: string;
+  driverName: string;
+  driverPhone: string | null;
+  balanceFcfa: number;
+}
+
+/** What we owe the driver (0 when they owe us): a negative balance. */
+export function owedToDriver(balance: number): number {
+  return balance < 0 ? -balance : 0;
 }
 
 /**
