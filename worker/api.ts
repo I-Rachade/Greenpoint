@@ -188,7 +188,6 @@ import {
   earnStatement,
   myGreenpoint,
   networkTotal,
-  recordVisit,
   saveFactors,
   saveReward,
   setVehicle,
@@ -1862,11 +1861,6 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/greenpoint\/vehicle$/, async (c) => setVehicle(c.env, await c.requireUser(), c.request)],
   ["POST", /^\/api\/greenpoint\/redemptions$/, async (c) => startRedemption(c.env, await c.requireUser(), c.request)],
   ["POST", /^\/api\/greenpoint\/redemptions\/([\w-]+)\/cancel$/, async (c, [id]) => cancelRedemption(c.env, await customerUser(c), id)],
-  [
-    "POST",
-    /^\/api\/stations\/([\w-]+)\/greenpoint\/visits$/,
-    async (c, [id]) => recordVisit(c.env, await c.requireUser(), c.actAt, id, c.request),
-  ],
   [
     "POST",
     /^\/api\/stations\/([\w-]+)\/greenpoint\/redeem$/,

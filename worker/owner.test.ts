@@ -248,11 +248,11 @@ describe("active station on every station action (R7), logged with station, pers
     expect((await call(env, "yao", "POST", `/api/parcels/${parcel.body.id}/cancel`, undefined, "lome")).status).toBe(409);
     expect((await call(env, "efo", "POST", `/api/parcels/${parcel.body.id}/cancel`, undefined, "kara")).status).toBe(403);
     expect((await call(env, "yao", "POST", `/api/parcels/${parcel.body.id}/cancel`, undefined, "be")).status).toBe(200);
-    // greenpoint visit at the counter.
-    const visit = { contact: "+22890000007", service: "swap" };
-    expect((await call(env, "yao", "POST", "/api/stations/be/greenpoint/visits", visit)).status).toBe(409);
-    expect((await call(env, "afi", "POST", "/api/stations/lome/greenpoint/visits", visit)).status).toBe(403);
-    expect((await call(env, "afi", "POST", "/api/stations/be/greenpoint/visits", visit)).status).toBe(200);
+    // greenpoint reward code at the counter (a wrong code is not logged: nothing went through).
+    const redeem = { code: "123456" };
+    expect((await call(env, "yao", "POST", "/api/stations/be/greenpoint/redeem", redeem)).status).toBe(409);
+    expect((await call(env, "afi", "POST", "/api/stations/lome/greenpoint/redeem", redeem)).status).toBe(403);
+    expect((await call(env, "afi", "POST", "/api/stations/be/greenpoint/redeem", redeem)).body).toEqual({ error: "invalid_code" });
     // Charging at a socket.
     expect((await call(env, "admin", "POST", "/api/stations/be/charging", { pointId: "x" })).status).toBe(409);
     expect((await call(env, "admin", "POST", "/api/stations/be/charging", { pointId: "x" }, "be")).status).toBe(404);
@@ -263,7 +263,6 @@ describe("active station on every station action (R7), logged with station, pers
     expect(db.prepare("select station_id, person_id, role, action from station_actions order by id").all()).toEqual([
       { station_id: "be", person_id: "yao", role: "owner", action: "POST /api/stations/:station/parcels" },
       { station_id: "be", person_id: "yao", role: "owner", action: `POST /api/parcels/${parcel.body.id}/cancel` },
-      { station_id: "be", person_id: "afi", role: "staff", action: "POST /api/stations/:station/greenpoint/visits" },
       { station_id: "kara", person_id: "kossi", role: "owner", action: "PATCH /api/stations/:station/status" },
     ]);
   });

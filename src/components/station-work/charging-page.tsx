@@ -195,7 +195,7 @@ export function ChargingPage() {
           <FromReservation key={station.id} station={station} />
           {offersCharging(station.kind) && <FreeSlots station={station} />}
           <StaffCharging station={station} />
-          <GreenpointStaff station={station} only={["charge"]} />
+          <GreenpointStaff station={station} />
         </>
       )}
     </WorkShell>

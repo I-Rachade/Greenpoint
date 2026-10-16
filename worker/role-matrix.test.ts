@@ -110,7 +110,6 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/greenpoint/vehicle": CUSTOMER,
   "POST /api/greenpoint/redemptions": CUSTOMER,
   "POST /api/greenpoint/redemptions/:id/cancel": CUSTOMER,
-  "POST /api/stations/:id/greenpoint/visits": STATION,
   "POST /api/stations/:id/greenpoint/redeem": STATION,
   "GET /api/stations/:id/charging": STATION,
   "POST /api/stations/:id/charging": STATION,
