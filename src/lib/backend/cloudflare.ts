@@ -1,5 +1,5 @@
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
-import type { AdminCharging, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
+import type { AdminCharging, ChargePointInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
 import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { OwnerLive, OwnerReport, ReportPeriod } from "../owner-backoffice";
 import type { EvCharger, EvChargerInput } from "../ev-chargers";
@@ -172,6 +172,9 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "not_enough_points",
   "charge_busy",
   "charge_wrong_status",
+  "charge_unpaid",
+  "charge_qr_disabled",
+  "point_reserved",
   "service_already_unlocked",
   "service_request_pending",
   "no_pending_request",
@@ -611,6 +614,11 @@ export class CloudflareBackend implements Backend {
 
   async deleteDevice(externalId: string) {
     await this.call("DELETE", `/api/admin/devices/${encodeURIComponent(externalId)}`);
+    this.changed();
+  }
+
+  async setQrStart(pointId: string, enabled: boolean) {
+    await this.call("POST", `/api/admin/charging-points/${encodeURIComponent(pointId)}/qr`, { enabled });
     this.changed();
   }
 
@@ -1326,6 +1334,22 @@ export class CloudflareBackend implements Backend {
 
   myCharges() {
     return this.call<ChargeSession[]>("GET", "/api/charging/mine");
+  }
+
+  chargePoint(pointId: string) {
+    return this.call<ChargePointInfo>("GET", `/api/charging/points/${encodeURIComponent(pointId)}`);
+  }
+
+  async startSelfCharge(pointId: string) {
+    const s = await this.call<ChargeSession>("POST", `/api/charging/points/${encodeURIComponent(pointId)}/start`, {});
+    this.changed();
+    return s;
+  }
+
+  async stopSelfCharge(id: string) {
+    const s = await this.call<ChargeSession>("POST", `/api/charging/${encodeURIComponent(id)}/stop`, {});
+    this.changed();
+    return s;
   }
 
   async payChargeWallet(id: string, input: { pin: string; idempotencyKey: string }) {

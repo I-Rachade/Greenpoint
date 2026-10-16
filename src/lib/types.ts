@@ -59,6 +59,8 @@ export interface ChargingPoint {
   lastSeenAt: string | null;
   /** Station list only: an active reservation holds this outlet (src/lib/reservations.ts). */
   reserved?: boolean;
+  /** Customers may start a charge here by scanning the outlet's QR code (set in the backoffice). */
+  qrStart?: boolean;
 }
 
 /** A station merged with its live status and the reservations currently holding capacity. */

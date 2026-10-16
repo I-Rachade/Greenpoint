@@ -246,6 +246,10 @@ import {
   payWithMobile,
   payWithWallet,
   saveChargeTariff,
+  chargePointInfo,
+  setQrStart,
+  startSelfCharge,
+  stopSelfCharge,
   startCharge,
   stationCharging,
   stopCharge,
@@ -1934,6 +1938,11 @@ const ROUTES: [string, RegExp, Handler][] = [
     },
   ],
   ["GET", /^\/api\/charging\/mine$/, async (c) => myCharges(c.env, await customerUser(c))],
+  // Charging by QR code: the outlet's page is readable before signing in.
+  ["GET", /^\/api\/charging\/points\/([\w-]+)$/, async (c, [id]) => chargePointInfo(c.env, await c.user(), id)],
+  ["POST", /^\/api\/charging\/points\/([\w-]+)\/start$/, async (c, [id]) => startSelfCharge(c.env, await customerUser(c), id)],
+  ["POST", /^\/api\/charging\/([\w-]+)\/stop$/, async (c, [id]) => stopSelfCharge(c.env, await customerUser(c), id)],
+  ["POST", /^\/api\/admin\/charging-points\/([\w-]+)\/qr$/, async (c, [id]) => setQrStart(c.env, await c.requireAdmin(), id, c.request)],
   ["POST", /^\/api\/charging\/([\w-]+)\/pay\/wallet$/, async (c, [id]) => payWithWallet(c.env, await customerUser(c), id, c.request)],
   ["POST", /^\/api\/charging\/([\w-]+)\/pay\/mobile$/, async (c, [id]) => payWithMobile(c.env, await customerUser(c), id, c.request)],
   ["GET", /^\/api\/admin\/charging$/, async (c) => {
@@ -2309,6 +2318,7 @@ export const OPEN_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/fleet-invites",
   "GET /api/merchant-invites",
   "GET /api/jobs/mine",
+  "GET /api/charging/points/:id",
 ]);
 
 /** "GET /api/stations/:id/reviews" for the route's pattern: every capture group reads ":id". */

@@ -7,6 +7,8 @@ import {
   type ChargePaymentMethod,
   type ChargeSession,
   type ChargeStatus,
+  type ChargePointInfo,
+  type ChargePointState,
   type ChargeTariff,
   type StationCharging,
   contactFromCode,
@@ -15,7 +17,8 @@ import { parseContact } from "../src/lib/contact";
 import type { Profile } from "../src/lib/types";
 import { newTrxId, personLabel } from "../src/lib/wallet";
 import { verifyPin } from "./auth";
-import { onlineSince, startOutlet, stopOutlet } from "./devices";
+import { canSwitch, type DeviceLink, type DeviceProtocol } from "../src/lib/iot/devices";
+import { liveFreePointsSql, onlineSince, startOutlet, stopOutlet } from "./devices";
 import type { Env } from "./env";
 import { chargeEarnStatement } from "./greenpoint";
 import { ApiError, nowIso, readJson, uuid } from "./http";
@@ -59,6 +62,7 @@ interface SessionRow {
   phone: string | null;
   email: string | null;
   greenpoints: number | null;
+  started_by: string;
 }
 
 const SESSION_SELECT = `
@@ -90,6 +94,7 @@ function toSession(r: SessionRow): ChargeSession {
     paymentMethod: r.payment_method,
     paidAt: r.paid_at,
     greenpoints: r.greenpoints ?? 0,
+    ...(r.user_id && r.started_by === r.user_id ? { selfStarted: true } : {}),
   };
 }
 
@@ -223,11 +228,29 @@ export async function startCharge(env: Env, user: Profile, isStaffOf: StaffCheck
   const customer = reservation ? { id: reservation.user_id } : await findCustomer(db, body.contact);
   // Staff never charge for themselves through the counter (greenpoints, cash).
   if (customer?.id === user.id) throw new ApiError("own_reservation");
+  return openCharge(env, point as OutletPoint, { customerId: customer?.id ?? null, actorId: user.id, reservation });
+}
 
+type OutletPoint = { id: string; station_id: string; label: string; device_id: string; outlet: number };
+
+/**
+ * Opens the charge row and switches the outlet on, for staff (startCharge) or the customer
+ * (startSelfCharge). A named reservation is completed first and the charge only starts if
+ * this request completed it; without one, the customer's charging reservation at the
+ * station is used now. If the outlet does not switch on, the charge is cancelled again.
+ */
+async function openCharge(
+  env: Env,
+  point: OutletPoint,
+  who: { customerId: string | null; actorId: string; reservation: ReservationRow | null },
+): Promise<ChargeSession> {
+  const db = env.DB;
+  const stationId = point.station_id;
+  const { reservation, actorId: actor } = who;
   const tariff = await stationTariff(db, stationId);
   const now = nowIso();
   const id = uuid();
-  const row = { id, station_id: stationId, user_id: customer?.id ?? null };
+  const row = { id, station_id: stationId, user_id: who.customerId };
   const statements: D1PreparedStatement[] = [];
   if (reservation) {
     // The reservation first: the charge only starts if this request completed it.
@@ -243,7 +266,7 @@ export async function startCharge(env: Env, user: Profile, isStaffOf: StaffCheck
         `insert into charging_sessions (id, station_id, charging_point_id, device_id, outlet, point_label, user_id, kwh_xof, min_xof, started_by, started_at)
          select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11 where ?12 = 0 or changes() > 0`,
       )
-      .bind(id, stationId, point.id, point.device_id, point.outlet, point.label, row.user_id, tariff.kwhXof, tariff.minXof, user.id, now, reservation ? 1 : 0),
+      .bind(id, stationId, point.id, point.device_id, point.outlet, point.label, row.user_id, tariff.kwhXof, tariff.minXof, actor, now, reservation ? 1 : 0),
     // Old values of the previous charge must not show as this one's.
     db.prepare("update charging_points set power_watts = null, energy_wh = null where id = ? and exists (select 1 from charging_sessions where id = ?)").bind(point.id, id),
     db
@@ -251,11 +274,19 @@ export async function startCharge(env: Env, user: Profile, isStaffOf: StaffCheck
         `insert into audit_log (at, actor, table_name, action, row_id, station_id, user_id, changes)
          select ?, ?, 'charging_sessions', 'insert', ?, ?, ?, ? where exists (select 1 from charging_sessions where id = ?)`,
       )
-      .bind(nowIso(), user.id, id, stationId, row.user_id, JSON.stringify({ point: point.label, customer: row.user_id, tariff, reservation: reservation?.id ?? null }), id),
+      .bind(
+        nowIso(),
+        actor,
+        id,
+        stationId,
+        row.user_id,
+        JSON.stringify({ point: point.label, customer: row.user_id, tariff, reservation: reservation?.id ?? null, ...(actor === row.user_id ? { qr: true } : {}) }),
+        id,
+      ),
   );
   // Without a reservation named: the customer's charging reservation here is used now (the
   // one for this outlet first, never a car charger's); the charge earns the greenpoints.
-  if (customer && !reservation) {
+  if (who.customerId && !reservation) {
     statements.push(
       db
         .prepare(
@@ -263,7 +294,7 @@ export async function startCharge(env: Env, user: Profile, isStaffOf: StaffCheck
            where id = (select r.id from reservations r where r.user_id = ?1 and r.station_id = ?2 and r.kind = 'charging_point' and r.status = 'active'
                          and not ${evTargetSql("r")} order by (r.target = ?3) desc, r.created_at limit 1)`,
         )
-        .bind(customer.id, stationId, point.id),
+        .bind(who.customerId, stationId, point.id),
     );
   }
   try {
@@ -274,13 +305,13 @@ export async function startCharge(env: Env, user: Profile, isStaffOf: StaffCheck
   }
   if (!(await db.prepare("select 1 from charging_sessions where id = ?").bind(id).first())) throw new ApiError("reservation_not_active");
   try {
-    const { order } = await startOutlet(env, point.device_id, point.outlet, user.id);
+    const { order } = await startOutlet(env, point.device_id, point.outlet, actor);
     await db.prepare("update charging_sessions set order_no = ? where id = ?").bind(order, id).run();
   } catch (err) {
     // The outlet did not switch on: nothing was charged, and the reservation holds again.
     await db.batch([
-      db.prepare("update charging_sessions set status = 'cancelled', stopped_at = ?, stopped_by = ? where id = ?").bind(nowIso(), user.id, id),
-      audit(db, user.id, "update", row, { status: ["charging", "cancelled"], reason: "start_failed" }),
+      db.prepare("update charging_sessions set status = 'cancelled', stopped_at = ?, stopped_by = ? where id = ?").bind(nowIso(), actor, id),
+      audit(db, actor, "update", row, { status: ["charging", "cancelled"], reason: "start_failed" }),
       ...(reservation
         ? [db.prepare("update reservations set status = 'active', charging_point_id = null where id = ? and status = 'completed'").bind(reservation.id)]
         : []),
@@ -299,10 +330,13 @@ async function staffSession(env: Env, user: Profile, isStaffOf: StaffCheck, stat
 
 /** POST /api/stations/:id/charging/:session/stop: switches the outlet off; the price is then final. */
 export async function stopCharge(env: Env, user: Profile, isStaffOf: StaffCheck, stationId: string, id: string): Promise<ChargeSession> {
-  const s = await staffSession(env, user, isStaffOf, stationId, id);
+  return stopSession(env, await staffSession(env, user, isStaffOf, stationId, id), user.id);
+}
+
+async function stopSession(env: Env, s: SessionRow, actor: string): Promise<ChargeSession> {
   if (s.status !== "charging") return toSession(s);
   try {
-    await stopOutlet(env, s.device_id, s.outlet, user.id);
+    await stopOutlet(env, s.device_id, s.outlet, actor);
   } catch (err) {
     // OCPP: the charge point already ended its transaction. Anything else stays an error.
     if (!(err instanceof ApiError && err.code === "device_not_charging")) throw err;
@@ -311,10 +345,10 @@ export async function stopCharge(env: Env, user: Profile, isStaffOf: StaffCheck,
   await env.DB.batch([
     env.DB
       .prepare("update charging_sessions set status = 'stopped', stopped_at = ?, stopped_by = ? where id = ? and status = 'charging'")
-      .bind(now, user.id, id),
-    auditIfChanged(env.DB, user.id, s, { status: ["charging", "stopped"] }),
+      .bind(now, actor, s.id),
+    auditIfChanged(env.DB, actor, s, { status: ["charging", "stopped"] }),
   ]);
-  return toSession(await loadSession(env.DB, id));
+  return toSession(await loadSession(env.DB, s.id));
 }
 
 /** POST …/cancel: closes a stopped charge that took no energy; there is nothing to pay. */
@@ -502,6 +536,125 @@ export async function chargePaymentSucceeded(env: Env, p: { id: string; charging
   const s = await loadSession(env.DB, p.charging_session_id).catch(() => null);
   if (!s || s.status !== "stopped") return;
   await bookPayment(env, s, { method: p.network, amountXof: p.amount_xof, ref: p.id, by: p.user_id });
+}
+
+// Charging by QR code ------------------------------------------------------------------
+
+interface QrPointRow {
+  id: string;
+  station_id: string;
+  station_name: string;
+  label: string;
+  status: string;
+  device_id: string | null;
+  outlet: number | null;
+  last_seen_at: string | null;
+  qr_start: number;
+  vendor: string | null;
+  link: DeviceLink | null;
+  protocol: DeviceProtocol | null;
+}
+
+async function loadQrPoint(db: D1Database, pointId: string): Promise<QrPointRow> {
+  const p = await db
+    .prepare(
+      `select p.id, p.station_id, s.name as station_name, p.label, p.status, p.device_id, p.outlet, p.last_seen_at, p.qr_start,
+              d.vendor, d.link, d.protocol
+         from charging_points p join stations s on s.id = p.station_id left join devices d on d.external_id = p.device_id
+        where p.id = ? and s.is_active = 1`,
+    )
+    .bind(pointId)
+    .first<QrPointRow>();
+  if (!p || !p.device_id || !p.outlet) throw new ApiError("not_found", 404);
+  return p;
+}
+
+/** Whether someone else holds this outlet: a reservation naming it, or the station's last free places counted for reservations without an outlet. */
+async function heldForOthers(db: D1Database, p: QrPointRow, userId: string | null): Promise<boolean> {
+  const now = nowIso();
+  const row = await db
+    .prepare(
+      `select
+         exists (select 1 from reservations where kind = 'charging_point' and target = ?1 and status = 'active' and expires_at > ?3 and user_id is not ?4) as named,
+         ${liveFreePointsSql("?2", "?5")}
+           - (select count(*) from reservations r where r.station_id = ?2 and r.kind = 'charging_point' and r.status = 'active' and r.expires_at > ?3
+                and r.target is null and r.user_id is not ?4) as spare`,
+    )
+    .bind(p.id, p.station_id, now, userId, onlineSince())
+    .first<{ named: number; spare: number }>();
+  return !!row?.named || (row?.spare ?? 0) <= 0;
+}
+
+async function qrPointState(db: D1Database, p: QrPointRow, userId: string | null): Promise<ChargePointState> {
+  if (!p.qr_start || !canSwitch({ externalId: p.device_id!, vendor: p.vendor ?? "", link: p.link ?? "lorawan", protocol: p.protocol })) {
+    return "disabled";
+  }
+  if (!p.last_seen_at || p.last_seen_at <= onlineSince()) return "offline";
+  if (p.status === "fault") return "fault";
+  if (p.status === "charging" || (await hasOpenCharge(db, p.id))) return "busy";
+  if (p.status !== "free" && p.status !== "done" && p.status !== "reserved") return "busy";
+  return (await heldForOthers(db, p, userId)) ? "reserved" : "free";
+}
+
+/** GET /api/charging/points/:id: what the QR code of an outlet shows, also before signing in. */
+export async function chargePointInfo(env: Env, user: Profile | null, pointId: string): Promise<ChargePointInfo> {
+  const p = await loadQrPoint(env.DB, pointId);
+  const [state, tariff] = await Promise.all([qrPointState(env.DB, p, user?.id ?? null), stationTariff(env.DB, p.station_id)]);
+  return { pointId: p.id, label: p.label, stationId: p.station_id, stationName: p.station_name, state, tariff };
+}
+
+/**
+ * POST /api/charging/points/:id/start: the customer switches the outlet on after scanning its
+ * QR code. Only where an admin allowed it, on a live free outlet nobody else holds, and only
+ * with no other charge of the customer running or waiting for payment.
+ */
+export async function startSelfCharge(env: Env, user: Profile, pointId: string): Promise<ChargeSession> {
+  const db = env.DB;
+  const p = await loadQrPoint(db, pointId);
+  await requireService(db, p.station_id, "charging");
+  const open = await db
+    .prepare("select 1 from charging_sessions where user_id = ? and status in ('charging', 'stopped')")
+    .bind(user.id)
+    .first();
+  if (open) throw new ApiError("charge_unpaid", 409);
+  const state = await qrPointState(db, p, user.id);
+  if (state === "disabled") throw new ApiError("charge_qr_disabled", 403);
+  if (state === "offline") throw new ApiError("device_offline", 409);
+  if (state === "reserved") throw new ApiError("point_reserved", 409);
+  if (state !== "free") throw new ApiError("charge_busy", 409);
+  return openCharge(env, { id: p.id, station_id: p.station_id, label: p.label, device_id: p.device_id!, outlet: p.outlet! }, {
+    customerId: user.id,
+    actorId: user.id,
+    reservation: null,
+  });
+}
+
+/** POST /api/charging/:id/stop: the customer ends a charge they started by QR code. */
+export async function stopSelfCharge(env: Env, user: Profile, id: string): Promise<ChargeSession> {
+  const s = await ownSession(env, user, id);
+  if (s.started_by !== user.id) throw new ApiError("forbidden", 403);
+  await stopSession(env, s, user.id);
+  return customerView(env, user, await loadSession(env.DB, id));
+}
+
+/** POST /api/admin/charging-points/:id/qr { enabled }: allows or forbids charging by QR code at this outlet. */
+export async function setQrStart(env: Env, admin: Profile, pointId: string, request: Request) {
+  const { enabled } = await readJson<{ enabled?: unknown }>(request);
+  if (typeof enabled !== "boolean") throw new ApiError("bad_request");
+  const db = env.DB;
+  const p = await db
+    .prepare("select station_id, qr_start from charging_points where id = ? and device_id is not null")
+    .bind(pointId)
+    .first<{ station_id: string; qr_start: number }>();
+  if (!p) throw new ApiError("not_found", 404);
+  if (!!p.qr_start === enabled) return { ok: true };
+  await db.batch([
+    db.prepare("update charging_points set qr_start = ? where id = ?").bind(enabled ? 1 : 0, pointId),
+    db
+      .prepare("insert into audit_log (at, actor, table_name, action, row_id, station_id, changes) values (?, ?, 'charging_points', 'update', ?, ?, ?)")
+      .bind(nowIso(), admin.id, pointId, p.station_id, JSON.stringify({ qr_start: [!!p.qr_start, enabled] })),
+  ]);
+  return { ok: true };
 }
 
 // Backoffice ----------------------------------------------------------------------------

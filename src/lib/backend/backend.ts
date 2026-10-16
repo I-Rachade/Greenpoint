@@ -1,5 +1,5 @@
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
-import type { AdminCharging, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
+import type { AdminCharging, ChargePointInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
 import type {
   Operator,
   VehicleType,
@@ -189,6 +189,9 @@ export type BackendErrorCode =
   | "not_enough_points"
   | "charge_busy"
   | "charge_wrong_status"
+  | "charge_unpaid"
+  | "charge_qr_disabled"
+  | "point_reserved"
   | "service_already_unlocked"
   | "service_request_pending"
   | "no_pending_request"
@@ -397,6 +400,8 @@ export interface Backend {
   deleteDevice(externalId: string): Promise<void>;
   /** Switches an outlet on (until full) or off; only where `canSwitch`. */
   switchOutlet(externalId: string, outlet: number, on: boolean): Promise<void>;
+  /** Allows or forbids customers to start a charge at this outlet by scanning its QR code. */
+  setQrStart(pointId: string, enabled: boolean): Promise<void>;
 
   // Modules (see src/lib/features.ts)
   /** Which modules are switched on. Public. */
@@ -674,6 +679,12 @@ export interface Backend {
   payChargeCash(stationId: string, id: string): Promise<ChargeSession>;
   /** The signed-in customer's charges, newest first, with the ways to pay in the app. */
   myCharges(): Promise<ChargeSession[]>;
+  /** The outlet behind a scanned QR code: station, price and whether a charge can start now (no sign-in needed). */
+  chargePoint(pointId: string): Promise<ChargePointInfo>;
+  /** The customer switches the outlet on after scanning its QR code (where the backoffice allows it). */
+  startSelfCharge(pointId: string): Promise<ChargeSession>;
+  /** The customer switches off a charge they started by QR code; the price is then final. */
+  stopSelfCharge(id: string): Promise<ChargeSession>;
   /** Pays a stopped charge from the wallet; the PIN is checked on the server. */
   payChargeWallet(id: string, input: { pin: string; idempotencyKey: string }): Promise<ChargeSession>;
   /** Asks the customer's Flooz/T-Money account for the money; the charge is paid once the provider confirms. */

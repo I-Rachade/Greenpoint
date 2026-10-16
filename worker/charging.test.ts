@@ -306,3 +306,95 @@ describe("paying in the app", () => {
     expect(db.prepare("select status from payments").get()).toEqual({ status: "succeeded" });
   });
 });
+
+describe("charging by QR code", () => {
+  const info = (env: Env, point: string, who = "kofi") => api<{ state: string; label: string; stationName: string; error?: string }>(env, who, "GET", `/api/charging/points/${point}`);
+  const selfStart = (env: Env, point: string, who = "kofi") => api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/points/${point}/start`, {});
+  const selfStop = (env: Env, id: string, who = "kofi") => api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/${id}/stop`, {});
+  const allow = (env: Env, point: string, enabled: boolean, who = "admin") => api<{ ok?: boolean; error?: string }>(env, who, "POST", `/api/admin/charging-points/${point}/qr`, { enabled });
+
+  it("is off until an admin switches it on for the outlet", async () => {
+    const { db, env } = await setup();
+    expect((await info(env, "p1")).data).toMatchObject({ state: "disabled", label: "3456-1", stationName: "Bè" });
+    expect((await selfStart(env, "p1")).data.error).toBe("charge_qr_disabled");
+    // Only admins switch it.
+    expect((await allow(env, "p1", true, "staff")).status).toBe(403);
+    expect((await allow(env, "p1", true)).data).toEqual({ ok: true });
+    expect(db.prepare("select qr_start from charging_points where id = 'p1'").get()).toEqual({ qr_start: 1 });
+    expect(db.prepare("select changes from audit_log where table_name = 'charging_points'").get()).toEqual({ changes: '{"qr_start":[false,true]}' });
+    expect((await info(env, "p1")).data.state).toBe("free");
+    // The other outlet stays off.
+    expect((await info(env, "p2")).data.state).toBe("disabled");
+    // The outlet's page is readable before signing in.
+    const anonymous = await handleApi(new Request("https://app.poinderecharge.com/api/charging/points/p1"), env);
+    expect(await anonymous.json()).toMatchObject({ state: "free" });
+  });
+
+  it("lets the customer start, follow, stop and pay a charge without staff", async () => {
+    const { db, env } = await setup();
+    await allow(env, "p1", true);
+    const started = await selfStart(env, "p1");
+    expect(started.status).toBe(200);
+    expect(started.data).toMatchObject({ status: "charging", customer: "Kofi M.", pointLabel: "3456-1", selfStarted: true });
+    expect(db.prepare("select kind, outlet from device_commands").get()).toEqual({ kind: "start", outlet: 1 });
+    expect(db.prepare("select started_by, user_id from charging_sessions").get()).toEqual({ started_by: "kofi", user_id: "kofi" });
+    // Busy for everyone now, and staff see the charge too.
+    expect((await info(env, "p1")).data.state).toBe("busy");
+    expect((await api<StationCharging>(env, "staff", "GET", "/api/stations/st/charging")).data.open).toHaveLength(1);
+
+    await read(env, [{ outlet: 1, status: "charging", power_watts: 180, energy_wh: 1000 }]);
+    // Another customer cannot stop it.
+    expect((await selfStop(env, started.data.id, "admin")).status).toBe(404);
+    const stopped = await selfStop(env, started.data.id);
+    expect(stopped.data).toMatchObject({ status: "stopped", amountXof: 150, payOptions: { wallet: true } });
+    expect(db.prepare("select count(*) as n from device_commands where kind = 'stop'").get()).toEqual({ n: 1 });
+
+    // Unpaid: no second charge, anywhere.
+    await allow(env, "p2", true);
+    expect((await selfStart(env, "p2")).data.error).toBe("charge_unpaid");
+    // Cash at the counter still works.
+    expect((await act(env, started.data.id, "pay")).data.status).toBe("paid");
+    expect((await selfStart(env, "p2")).status).toBe(200);
+  });
+
+  it("cannot stop a charge staff started", async () => {
+    const { env } = await setup();
+    const { data } = await start(env, { pointId: "p1", contact: KOFI.phone });
+    expect(data.selfStarted).toBeUndefined();
+    expect((await selfStop(env, data.id)).status).toBe(403);
+  });
+
+  it("refuses offline, busy and reserved outlets, and uses the customer's own reservation", async () => {
+    const { db, env } = await setup();
+    await allow(env, "p1", true);
+    await allow(env, "p2", true);
+    const later = new Date(Date.now() + 600_000).toISOString();
+    const now = new Date().toISOString();
+    // Someone else reserved outlet 1.
+    db.exec(`insert into reservations (id, user_id, station_id, type, kind, target, status, created_at, expires_at, pickup_code)
+             values ('r-admin', 'admin', 'st', 'slot', 'charging_point', 'p1', 'active', '${now}', '${later}', '1234')`);
+    expect((await info(env, "p1")).data.state).toBe("reserved");
+    expect((await selfStart(env, "p1")).data.error).toBe("point_reserved");
+    // Its owner may use it.
+    expect((await info(env, "p1", "admin")).data.state).toBe("free");
+
+    // Kofi's own reservation of outlet 2 is used by his charge.
+    db.exec(`insert into reservations (id, user_id, station_id, type, kind, target, status, created_at, expires_at, pickup_code)
+             values ('r-kofi', 'kofi', 'st', 'slot', 'charging_point', 'p2', 'active', '${now}', '${later}', '4321')`);
+    expect((await selfStart(env, "p2")).status).toBe(200);
+    expect(db.prepare("select status, charging_point_id from reservations where id = 'r-kofi'").get()).toEqual({ status: "completed", charging_point_id: "p2" });
+    expect((await selfStart(env, "p2", "admin")).data.error).toBe("charge_busy");
+
+    // A socket that stopped reporting is offline.
+    db.exec(`update charging_points set last_seen_at = '2020-01-01T00:00:00.000Z' where id = 'p1'`);
+    expect((await info(env, "p1", "admin")).data.state).toBe("offline");
+    expect((await selfStart(env, "p1", "admin")).data.error).toBe("device_offline");
+  });
+
+  it("needs the station's charging service", async () => {
+    const { db, env } = await setup();
+    await allow(env, "p1", true);
+    db.exec("update station_services set unlocked = 0 where station_id = 'st' and service = 'charging'");
+    expect((await selfStart(env, "p1")).data.error).toBe("service_not_offered");
+  });
+});

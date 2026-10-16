@@ -56,6 +56,7 @@ import {
   DEFAULT_CHARGE_TARIFF,
   validTariff,
   type AdminCharging,
+  type ChargePointInfo,
   type ChargeSession,
   type ChargeTariff,
   type ChargeTariffInput,
@@ -2767,6 +2768,15 @@ export class DemoBackend implements Backend {
         { table: "charging_points", action: "delete", rowId: externalId, stationId: before.stationId, changes: { device: externalId } },
       ),
     );
+  }
+
+  async setQrStart(pointId: string, enabled: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const all = state.devices ?? seedDevices();
+    if (!all.some((d) => d.points.some((p) => p.id === pointId))) throw new BackendError("unknown", "not_found");
+    const devices = all.map((d) => ({ ...d, points: d.points.map((p) => (p.id === pointId ? { ...p, qrStart: enabled } : p)) }));
+    this.save({ ...state, devices });
   }
 
   async switchOutlet(externalId: string, outlet: number, on: boolean) {
@@ -6925,7 +6935,8 @@ export class DemoBackend implements Backend {
 
   /** A running demo charge gains energy with time; the price follows. */
   private chargeView(c: DemoCharge, now = Date.now()): ChargeSession {
-    const { userId: _userId, pointId: _pointId, startedBy: _startedBy, ...view } = c;
+    const { userId: _userId, pointId: _pointId, startedBy: _startedBy, ...rest } = c;
+    const view: ChargeSession = c.userId && c.startedBy === c.userId ? { ...rest, selfStarted: true } : rest;
     if (c.status !== "charging") return view;
     const energyWh = Math.round(((now - new Date(c.startedAt).getTime()) / 3_600_000) * DEMO_CHARGE_WATTS);
     return { ...view, energyWh, powerWatts: DEMO_CHARGE_WATTS, amountXof: chargePrice(energyWh, c.tariff) };
@@ -7091,6 +7102,76 @@ export class DemoBackend implements Backend {
         const open = c.status === "stopped" && own;
         return { ...this.chargeView(c), payOptions: { wallet: open && walletOn, mobile: open }, pendingPaymentId: null };
       });
+  }
+
+  /** As chargePointInfo() in worker/charging.ts; demo sockets are always online. */
+  async chargePoint(pointId: string): Promise<ChargePointInfo> {
+    const state = this.load();
+    const point = (state.devices ?? seedDevices()).flatMap((d) => d.points).find((p) => p.id === pointId);
+    const station = point && state.stations.find((s) => s.id === point.stationId);
+    if (!point || !station) throw new BackendError("unknown", "not_found");
+    const busy = point.status === "charging" || (state.charges ?? []).some((c) => c.pointId === point.id && c.status === "charging");
+    return {
+      pointId: point.id,
+      label: point.label,
+      stationId: station.id,
+      stationName: station.name,
+      state: !point.qrStart ? "disabled" : point.status === "fault" ? "fault" : busy ? "busy" : "free",
+      tariff: this.chargeTariffOf(state, station.id),
+    };
+  }
+
+  /** As startSelfCharge() in worker/charging.ts. */
+  async startSelfCharge(pointId: string): Promise<ChargeSession> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const info = await this.chargePoint(pointId);
+    if (!serviceActive(state, info.stationId, "charging")) throw new BackendError("service_not_offered");
+    if ((state.charges ?? []).some((c) => c.userId === profile.id && (c.status === "charging" || c.status === "stopped"))) {
+      throw new BackendError("charge_unpaid");
+    }
+    if (info.state === "disabled") throw new BackendError("charge_qr_disabled");
+    if (info.state !== "free") throw new BackendError("charge_busy");
+    const used = state.reservations
+      .filter((r) => r.userId === profile.id && r.stationId === info.stationId && r.status === "active" && reservationKind(r) === "charging_point" && r.targetKind !== "ev")
+      .sort((a, b) => Number(b.target === pointId) - Number(a.target === pointId) || a.createdAt.localeCompare(b.createdAt))[0];
+    const reservations = used ? state.reservations.map((r) => (r.id === used.id ? { ...r, status: "completed" as const } : r)) : state.reservations;
+    const charge: DemoCharge = {
+      id: crypto.randomUUID(),
+      stationId: info.stationId,
+      stationName: info.stationName,
+      pointLabel: info.label,
+      pointId,
+      startedBy: profile.id,
+      status: "charging",
+      userId: profile.id,
+      customer: personLabel(profile),
+      powerWatts: 0,
+      energyWh: 0,
+      tariff: info.tariff,
+      amountXof: 0,
+      startedAt: new Date().toISOString(),
+      stoppedAt: null,
+      endedByDevice: false,
+      paymentMethod: null,
+      paidAt: null,
+      greenpoints: 0,
+    };
+    this.save({ ...state, reservations, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
+    return this.chargeView(charge);
+  }
+
+  async stopSelfCharge(id: string): Promise<ChargeSession> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const c = (state.charges ?? []).find((x) => x.id === id && x.userId === profile.id);
+    if (!c) throw new BackendError("unknown", "not_found");
+    if (c.startedBy !== profile.id) throw new BackendError("forbidden");
+    return this.updateCharge(state, id, (x) => {
+      if (x.status !== "charging") return x;
+      const live = this.chargeView(x);
+      return { ...x, status: "stopped", energyWh: live.energyWh, amountXof: live.amountXof, powerWatts: 0, stoppedAt: new Date().toISOString() };
+    });
   }
 
   async payChargeWallet(id: string, input: { pin: string; idempotencyKey: string }): Promise<ChargeSession> {
