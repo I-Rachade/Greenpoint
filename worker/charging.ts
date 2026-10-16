@@ -172,6 +172,38 @@ export function chargeReadingStatement(db: D1Database, pointId: string, status: 
     .bind(pointId, energyWh ?? null, status ?? null, now);
 }
 
+/**
+ * The socket refused to switch outlet `outlet` on (an OCPP charge point answered our
+ * RemoteStartTransaction with Rejected or an error): the charge waiting for it took no
+ * energy, so it is cancelled and the reservation it used holds again, as in openCharge.
+ * `order` is the start's idTag; the charge may not have it yet if the answer came first.
+ */
+export async function cancelRefusedStart(db: D1Database, externalId: string, outlet: number, order: string) {
+  const s = await db
+    .prepare(
+      `select id, station_id, charging_point_id, user_id, started_at from charging_sessions
+       where device_id = ? and outlet = ? and status = 'charging' and seen_charging = 0 and energy_wh = 0 and (order_no is null or order_no = ?)`,
+    )
+    .bind(externalId, outlet, order)
+    .first<{ id: string; station_id: string; charging_point_id: string | null; user_id: string | null; started_at: string }>();
+  if (!s) return;
+  const now = nowIso();
+  await db.batch([
+    db.prepare("update charging_sessions set status = 'cancelled', stopped_at = ? where id = ? and status = 'charging' and seen_charging = 0").bind(now, s.id),
+    auditIfChanged(db, null, s, { status: ["charging", "cancelled"], reason: "start_refused" }),
+    // The reservation this charge completed (openCharge links it to the outlet), if still valid.
+    db
+      .prepare(
+        `update reservations set status = 'active', charging_point_id = null
+         where id = (select id from reservations where user_id = ?1 and charging_point_id = ?2 and status = 'completed' and kind = 'charging_point'
+                       and created_at <= ?3 and expires_at > ?4 order by created_at desc limit 1)
+           and not exists (select 1 from reservations where user_id = ?1 and status = 'active')
+           and exists (select 1 from charging_sessions where id = ?5 and status = 'cancelled')`,
+      )
+      .bind(s.user_id, s.charging_point_id, s.started_at, now, s.id),
+  ]);
+}
+
 /** Whether a charge runs on this charging point (devices.ts then leaves reservations alone). */
 export async function hasOpenCharge(db: D1Database, pointId: string): Promise<boolean> {
   return !!(await db.prepare("select 1 from charging_sessions where charging_point_id = ? and status = 'charging'").bind(pointId).first());
