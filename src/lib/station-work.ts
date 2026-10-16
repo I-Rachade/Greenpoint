@@ -150,7 +150,7 @@ export interface SwapInput {
   requestId: string;
   batteryTypeId?: CounterKey | null;
   customerType: SwapCustomerType;
-  /** Battery numbers (scan or type), optional. */
+  /** Battery numbers (scan or type); required at a station with battery types (battery register, src/lib/batteries.ts). */
   batteryIn?: string | null;
   batteryOut?: string | null;
   /** app (and optionally first purchase): the customer's phone, e-mail or app QR. */

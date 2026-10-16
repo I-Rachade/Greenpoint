@@ -115,7 +115,7 @@ describe("swap reservations name an available battery type", () => {
     expect(be.reservedBatteries).toBe(2);
     expect(be.batteryTypes?.find((t) => t.id === "ov")).toMatchObject({ fullBatteries: 2, reserved: 2 });
     // A swap without reservation cannot take a held battery.
-    expect((await swap(env, "afi", "be", { customerType: "cash", batteryTypeId: "ov" })).body).toEqual({ error: "battery_reserved" });
+    expect((await swap(env, "afi", "be", { customerType: "cash", batteryTypeId: "ov", batteryIn: "OV-1", batteryOut: "OV-2" })).body).toEqual({ error: "battery_reserved" });
     expect(typeFull(db, "ov")).toBe(2);
   });
 
@@ -216,7 +216,7 @@ describe("staff jump from the reservation into the flow", () => {
     const { env, db } = await setup();
     const r = (await reserve(env, "ama", { stationId: "be", kind: "swap", target: "ov" })).body;
     expect((await call(env, "afi", "POST", `/api/reservations/${r.id}/complete`, { pickupCode: r.pickupCode })).body).toEqual({ error: "swap_required" });
-    const base = { customerType: "app", reservationId: r.id, pickupCode: r.pickupCode, pin: PIN };
+    const base = { customerType: "app", reservationId: r.id, pickupCode: r.pickupCode, pin: PIN, batteryIn: "OV-1", batteryOut: "OV-2" };
     expect((await swap(env, "afi", "be", { ...base, batteryTypeId: "spiro" })).body).toEqual({ error: "battery_type_mismatch" });
     expect((await swap(env, "afi", "solo", base)).status).toBe(403);
     const requestId = rid();

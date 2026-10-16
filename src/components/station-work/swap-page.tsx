@@ -1,8 +1,9 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { isHolding } from "@/lib/availability";
+import { batteryNumbersRequired, type BatteryLookup } from "@/lib/batteries";
 import { reservationKind } from "@/lib/reservations";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
@@ -42,7 +43,24 @@ function Chips<T extends string>({ value, options, label, onChange }: { value: T
 }
 
 /** A text field with a "scan" button when the phone can read QR codes. */
-function ScanField({ label, hint, value, onChange, required, inputMode }: { label: string; hint?: string; value: string; onChange: (v: string) => void; required?: boolean; inputMode?: "tel" | "text" }) {
+function ScanField({
+  label,
+  hint,
+  value,
+  onChange,
+  required,
+  inputMode,
+  note,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (v: string) => void;
+  required?: boolean;
+  inputMode?: "tel" | "text";
+  /** Shown under the hint, e.g. whether the battery is known. */
+  note?: ReactNode;
+}) {
   const [scanning, setScanning] = useState(false);
   return (
     <label className="block space-y-1">
@@ -56,6 +74,7 @@ function ScanField({ label, hint, value, onChange, required, inputMode }: { labe
         )}
       </div>
       {hint && <span className="block text-xs text-gp-muted">{hint}</span>}
+      {note}
       {scanning && (
         <QrScanner
           onResult={(text) => {
@@ -66,6 +85,48 @@ function ScanField({ label, hint, value, onChange, required, inputMode }: { labe
         />
       )}
     </label>
+  );
+}
+
+/** Under a battery number: known (with its brand), new (added at the swap), or registered under another brand. */
+function BatteryNote({ stationId, serial, typeId }: { stationId: string; serial: string; typeId: string }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const s = t.work.swap;
+  const [found, setFound] = useState<{ key: string; lookup: BatteryLookup } | null>(null);
+  const key = `${serial.trim().toUpperCase()}|${typeId}`;
+  useEffect(() => {
+    if (!serial.trim()) return;
+    let live = true;
+    // Asks once the staff stop typing.
+    const timer = setTimeout(() => {
+      backend
+        .lookupBattery(stationId, serial, typeId || null)
+        .then((lookup) => live && setFound({ key, lookup }))
+        .catch(() => live && setFound(null));
+    }, 350);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [backend, stationId, serial, typeId, key]);
+  if (!serial.trim() || found?.key !== key) return null;
+  const l = found.lookup;
+  const flag = l.status && l.status !== "in_service" ? format(s.batteryFlag, { status: t.batteries.statuses[l.status] }) : null;
+  const tone = l.state === "wrong_brand" ? "text-red-600" : l.state === "new" ? "text-blue-700 dark:text-blue-300" : "text-gp-green-dark dark:text-gp-green";
+  const text =
+    l.state === "wrong_brand"
+      ? format(s.batteryWrongBrand, { brand: l.brand || t.batteries.unknownBrand })
+      : l.state === "new"
+        ? s.batteryNew
+        : l.brand
+          ? format(s.batteryKnown, { brand: l.brand })
+          : s.batteryKnownNoBrand;
+  return (
+    <span role="status" className={`block text-xs font-semibold ${tone}`}>
+      {text}
+      {flag && <span className="block text-amber-700 dark:text-amber-300">{flag}</span>}
+    </span>
   );
 }
 
@@ -116,6 +177,8 @@ function SwapForm({
   const [error, setError] = useState<string | null>(null);
 
   const row = rows.find((r) => r.batteryTypeId === typeId);
+  // Battery register: a station with battery types records every battery it swaps.
+  const numbersRequired = batteryNumbersRequired(rows.some((r) => r.batteryTypeId !== ""));
   const typeLabel = row?.label ?? s.noType;
   const wallet = customerType === "app" && payment === "wallet" && !features.lite;
   const takesCash = customerType === "cash" || customerType === "first_purchase" || (customerType === "app" && !wallet);
@@ -239,8 +302,24 @@ function SwapForm({
       {customerType === "first_purchase" && <ScanField label={s.contactOptional} value={contact} onChange={setContact} inputMode="tel" />}
       {customerType === "fleet" && <ScanField label={s.driverCode} hint={s.fleetHint} value={driverCode} onChange={setDriverCode} required />}
 
-      {takesBatteryIn(customerType) && <ScanField label={s.batteryIn} hint={s.batteryHint} value={batteryIn} onChange={setBatteryIn} />}
-      <ScanField label={s.batteryOut} hint={s.batteryHint} value={batteryOut} onChange={setBatteryOut} />
+      {takesBatteryIn(customerType) && (
+        <ScanField
+          label={s.batteryIn}
+          hint={numbersRequired ? s.batteryHintRequired : s.batteryHint}
+          value={batteryIn}
+          onChange={setBatteryIn}
+          required={numbersRequired}
+          note={<BatteryNote stationId={station.id} serial={batteryIn} typeId={typeId} />}
+        />
+      )}
+      <ScanField
+        label={s.batteryOut}
+        hint={numbersRequired ? s.batteryHintRequired : s.batteryHint}
+        value={batteryOut}
+        onChange={setBatteryOut}
+        required={numbersRequired}
+        note={<BatteryNote stationId={station.id} serial={batteryOut} typeId={typeId} />}
+      />
 
       {customerType !== "fleet" && (
         <fieldset className="space-y-2">

@@ -241,7 +241,9 @@ describe("battery counter (W9, R3, R4, R5)", () => {
     expect((await event(env, "afi", "be", { type: "issue" })).body).toEqual({ error: "battery_type_required" });
     expect((await event(env, "afi", "be", { type: "issue", batteryTypeId: "nope" })).status).toBe(400);
     await event(env, "afi", "be", { type: "issue", batteryTypeId: "sp72" });
-    await swap(env, "afi", "be", { customerType: "cash", batteryTypeId: "ov72" });
+    await swap(env, "afi", "be", { customerType: "cash", batteryTypeId: "ov72", batteryIn: "OV-1", batteryOut: "OV-2" });
+    // A station with battery types registers every battery it swaps (0041).
+    expect((await swap(env, "afi", "be", { customerType: "cash", batteryTypeId: "ov72" })).body).toEqual({ error: "battery_number_required" });
     expect((await counter(env, "be")).rows).toEqual([
       { batteryTypeId: "ov72", label: "Omnivoltaic 72 V", full: 1, empty: 1 },
       { batteryTypeId: "sp72", label: "Spiro 72 V", full: 0, empty: 0 },

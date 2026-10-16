@@ -6,6 +6,8 @@ import type { BatteryTypeInput } from "../src/lib/battery-types";
 import type { EvChargerInput } from "../src/lib/ev-chargers";
 import { deleteEvCharger, evChargersByStation, listEvChargers, saveEvCharger } from "./ev-chargers";
 import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements } from "./battery-types";
+import { batteryDetail, listBatteries, lookupBattery, registerBatteries, setBatteryStatus } from "./batteries";
+import type { BatteryStatusInput, RegisterBatteriesInput } from "../src/lib/batteries";
 import { capacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
 import type { StationRole } from "../src/lib/station-work";
 import {
@@ -1811,6 +1813,21 @@ const ROUTES: [string, RegExp, Handler][] = [
       return saveBatteryType(c, admin.id, id ?? null, input);
     },
   ],
+  // Battery register (worker/batteries.ts): admins, owners read-only.
+  [
+    "GET",
+    /^\/api\/batteries$/,
+    (c) =>
+      listBatteries(c, {
+        brand: c.url.searchParams.has("brand") ? c.url.searchParams.get("brand") : null,
+        q: c.url.searchParams.get("q"),
+        status: c.url.searchParams.get("status") as BatteryStatusInput["status"] | null,
+        stationId: c.url.searchParams.get("stationId"),
+      }),
+  ],
+  ["GET", /^\/api\/batteries\/([\w-]+)$/, (c, [id]) => batteryDetail(c, id)],
+  ["POST", /^\/api\/admin\/batteries$/, async (c) => registerBatteries(c, await readJson<RegisterBatteriesInput>(c.request))],
+  ["PATCH", /^\/api\/admin\/batteries\/([\w-]+)$/, async (c, [id]) => setBatteryStatus(c, id, await readJson<BatteryStatusInput>(c.request))],
   ["GET", /^\/api\/admin\/ev-chargers$/, async (c) => (await c.requireAdmin(), listEvChargers(c.db))],
   [
     "POST",
@@ -1865,6 +1882,11 @@ const ROUTES: [string, RegExp, Handler][] = [
         customerType: (c.url.searchParams.get("customerType") as SwapFilter["customerType"]) ?? null,
         days: Number(c.url.searchParams.get("days")) || null,
       }),
+  ],
+  [
+    "GET",
+    /^\/api\/stations\/([\w-]+)\/batteries\/lookup$/,
+    (c, [id]) => lookupBattery(c, id, c.url.searchParams.get("serial"), c.url.searchParams.get("batteryTypeId")),
   ],
   ["GET", /^\/api\/stations\/([\w-]+)\/battery-events$/, (c, [id]) => stationBatteryEvents(c, id, c.url.searchParams.get("days"))],
   // Owner backoffice (worker/owner.ts): live queue and handovers, settlement and statistics.

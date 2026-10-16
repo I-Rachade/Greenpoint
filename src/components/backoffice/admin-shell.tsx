@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import type { ComponentType, ReactNode, SVGProps } from "react";
 import { useI18n } from "@/components/i18n-provider";
 import {
+  BatteryIcon,
   BoltIcon,
   BoxIcon,
   CarIcon,
@@ -38,6 +39,7 @@ export const ADMIN_NAV: { group: GroupKey; links: { href: string; key: NavKey }[
     links: [
       { href: "/admin", key: "overview" },
       { href: "/admin/stations", key: "stations" },
+      { href: "/admin/batteries", key: "batteries" },
       // Live queue, settlement and statistics of every station (the owners' backoffice; admin all).
       { href: "/exploitant", key: "stationBackoffice" },
       { href: "/admin/activity", key: "activity" },
@@ -85,6 +87,7 @@ export const ADMIN_NAV: { group: GroupKey; links: { href: string; key: NavKey }[
 const NAV_ICON: Record<NavKey, ComponentType<SVGProps<SVGSVGElement> & { size?: number }>> = {
   overview: GridIcon,
   stations: BoltIcon,
+  batteries: BatteryIcon,
   stationBackoffice: StoreIcon,
   activity: HistoryIcon,
   reservations: TicketIcon,

@@ -44,7 +44,7 @@ describe("DemoBackend reservations", () => {
     const r = await reserveAny(backend, STATION, "battery");
     const before = (await backend.listStations()).find((s) => s.id === STATION)!.status.fullBatteries;
     const swap = (requestId: string, pickupCode: string, batteryTypeId?: string | null) =>
-      backend.recordSwap(STATION, { requestId, customerType: "app", reservationId: r.id, pickupCode, batteryTypeId, payment: "cash" });
+      backend.recordSwap(STATION, { requestId, customerType: "app", reservationId: r.id, pickupCode, batteryTypeId, payment: "cash", batteryIn: `IN-${requestId}`, batteryOut: `OUT-${requestId}` });
 
     // Only station staff complete, at their active station (as in the Worker).
     await expect(swap("req-0000001", r.pickupCode!)).rejects.toMatchObject({ code: "forbidden" });
@@ -259,7 +259,7 @@ describe("DemoBackend driver accounts (phase 5, as in the Worker)", () => {
     await backend.signIn("+22890123456", "2580", "operator");
     setActiveStation(STATION);
     const batteryTypeId = (await backend.listStations()).find((s) => s.id === STATION)!.batteryTypes?.[0]?.id ?? null;
-    const swap = (requestId: string, driverCode: string) => backend.recordSwap(STATION, { requestId, customerType: "fleet", driverCode, batteryTypeId });
+    const swap = (requestId: string, driverCode: string) => backend.recordSwap(STATION, { requestId, customerType: "fleet", driverCode, batteryTypeId, batteryIn: `IN-${requestId}`, batteryOut: `OUT-${requestId}` });
     await expect(swap("req-fleet-01", `POINDERECHARGE-CHAUFFEUR:${code}`)).rejects.toMatchObject({ code: "driver_pass_invalid" });
     await expect(swap("req-fleet-01", pass.payload.replace(/.$/, (c) => (c === "0" ? "1" : "0")))).rejects.toMatchObject({ code: "driver_pass_invalid" });
     vi.setSystemTime(new Date("2026-10-12T12:11:00Z"));

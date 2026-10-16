@@ -112,7 +112,7 @@ describe("DemoBackend station work", () => {
     const swap = await backend.recordSwap(STATION, { requestId: rid(), customerType: "cash", batteryIn: "sp-1", batteryOut: "sp-2", amountXof: 400 });
     expect(swap).toMatchObject({ customerType: "cash", batteryIn: "SP-1", batteryOut: "SP-2", payment: "cash", amountXof: 400, role: "admin" });
     expect((await backend.stationCounter(STATION)).rows[0]).toMatchObject({ batteryTypeId: TYPE, full: start - 1, empty: 1 });
-    await backend.recordSwap(STATION, { requestId: rid(), customerType: "first_purchase" });
+    await backend.recordSwap(STATION, { requestId: rid(), customerType: "first_purchase", batteryOut: "SP-3" });
     expect((await backend.stationCounter(STATION)).rows[0]).toMatchObject({ full: start - 2, empty: 1 });
     expect((await backend.stationSwaps(STATION, { customerType: "cash" })).length).toBe(1);
 
@@ -125,9 +125,9 @@ describe("DemoBackend station work", () => {
     await staffAt(backend, STATION);
     await as(backend, "operator", "+22890000002");
     setActiveStation(STATION);
-    const swap = await backend.recordSwap(STATION, { requestId: rid(), customerType: "app", contact: "90123456", pin: "2580" });
+    const swap = await backend.recordSwap(STATION, { requestId: rid(), customerType: "app", contact: "90123456", pin: "2580", batteryIn: "SP-1", batteryOut: "SP-2" });
     expect(swap).toMatchObject({ customerType: "app", payment: "wallet", amountXof: 500 });
-    await expect(backend.recordSwap(STATION, { requestId: rid(), customerType: "app", contact: "90000002", pin: "2580" })).rejects.toMatchObject({ code: "own_reservation" });
+    await expect(backend.recordSwap(STATION, { requestId: rid(), customerType: "app", contact: "90000002", pin: "2580", batteryIn: "SP-3", batteryOut: "SP-4" })).rejects.toMatchObject({ code: "own_reservation" });
   });
 });
 
