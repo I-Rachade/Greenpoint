@@ -8,6 +8,9 @@
 //   fleet by poinderecharge. Settled outside the app.
 // - Parcel prices taken in cash and the cash drivers hand in at the station belong to
 //   poinderecharge: shown apart ("for poinderecharge"), never in the owner's revenue.
+// - Charging sockets belong to poinderecharge or a point partner, never to the station that
+//   hosts them (migration 0039): at a partner's station the charges are not its revenue, and
+//   the cash it took for them is owed to poinderecharge too.
 
 import type { Reservation } from "./types";
 
@@ -117,10 +120,12 @@ export interface OwnerReport {
     cashXof: number;
     totalXof: number;
   };
-  /** W12: cash taken for poinderecharge (parcels, drivers' cash), not in the revenue. */
+  /** W12: cash taken for poinderecharge (parcels, drivers' cash, charges at a partner's station), not in the revenue. */
   poinderecharge: {
     parcelsXof: number;
     driversXof: number;
+    /** Charges paid in cash at a partner's station: the sockets are not the station's (0039). */
+    chargesXof: number;
     totalXof: number;
     /** Whether a station of the report belongs to a partner (the cash is owed to poinderecharge). */
     thirdParty: boolean;

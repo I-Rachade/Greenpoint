@@ -60,6 +60,7 @@ function ReportContent({ report }: { report: OwnerReport }) {
         <dl className="divide-y divide-black/5 text-sm dark:divide-white/10">
           <Amount label={r.parcels} value={pdr.parcelsXof} />
           <Amount label={r.drivers} value={pdr.driversXof} />
+          {pdr.thirdParty && <Amount label={r.chargesHosted} value={pdr.chargesXof} />}
           <Amount label={r.total} value={pdr.totalXof} strong />
         </dl>
         <p className="text-xs text-amber-900 dark:text-amber-100">{pdr.thirdParty ? r.forNoteThirdParty : r.forNote}</p>

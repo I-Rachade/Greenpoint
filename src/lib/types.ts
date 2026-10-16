@@ -128,6 +128,8 @@ export interface Profile {
   ownerOf?: string[];
   /** Merchant accounts: the shop and whether this is its merchant (src/lib/merchants.ts). */
   merchant?: { id: string; name: string; status: "pending" | "approved" | "rejected" | "suspended"; isOwner: boolean } | null;
+  /** Accounts of a point partner, who owns charging sockets (src/lib/point-partners.ts). */
+  pointPartner?: { id: string; name: string; status: "active" | "suspended" } | null;
 }
 
 export interface StationInput {

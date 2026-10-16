@@ -282,12 +282,21 @@ describe("paying in the app", () => {
     expect(db.prepare("select balance_xof from wallets where user_id = 'kofi'").get()).toEqual({ balance_xof: 100 });
   });
 
-  it("is not offered at a partner's station, where only cash is taken", async () => {
+  it("is offered for our socket at a partner's station: the money follows the socket (0039)", async () => {
     const { db, env } = await setup();
     db.exec(`insert into wallets (user_id, balance_xof, created_at, updated_at) values ('kofi', 1000, 'x', 'x')`);
     // Staff work at one station (W2): this one now.
     db.exec("update station_staff set station_id = 'other' where user_id = 'staff'");
-    const id = await stoppedCharge(env, 1000, "q1", "other");
+    await stoppedCharge(env, 1000, "q1", "other");
+    expect((await myCharges(env, KOFI))[0].payOptions).toEqual({ wallet: true, mobile: false });
+  });
+
+  it("is not offered for a point partner's socket, paid at the counter only", async () => {
+    const { db, env } = await setup();
+    db.exec(`insert into wallets (user_id, balance_xof, created_at, updated_at) values ('kofi', 1000, 'x', 'x')`);
+    db.exec(`insert into point_partners (id, name, created_at) values ('pp', 'Solaire Togo', 'x'); update devices set partner_id = 'pp' where external_id = '123456'`);
+    const id = await stoppedCharge(env);
+    expect(db.prepare("select partner_id from charging_sessions where id = ?").get(id)).toEqual({ partner_id: "pp" });
     expect((await myCharges(env, KOFI))[0].payOptions).toEqual({ wallet: false, mobile: false });
     expect(await code(payWithWallet(env, KOFI, id, walletReq({ pin: PIN, idempotencyKey: "key-00000001" })))).toBe("payment_not_offered");
   });

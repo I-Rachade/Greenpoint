@@ -8,6 +8,7 @@ import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
 import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
+import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "../point-partners";
 import type { Promotion, PromotionInput } from "../promo";
 import type {
   AdminGreenpoint,
@@ -620,6 +621,41 @@ export class CloudflareBackend implements Backend {
   async setQrStart(pointId: string, enabled: boolean) {
     await this.call("POST", `/api/admin/charging-points/${encodeURIComponent(pointId)}/qr`, { enabled });
     this.changed();
+  }
+
+  async setDevicePartner(externalId: string, partnerId: string | null) {
+    await this.call("POST", `/api/admin/devices/${encodeURIComponent(externalId)}/partner`, { partnerId });
+    this.changed();
+  }
+
+  // Point partners -------------------------------------------------------------------
+
+  adminPointPartners() {
+    return this.call<AdminPointPartner[]>("GET", "/api/admin/point-partners");
+  }
+
+  async savePointPartner(id: string | null, input: PointPartnerInput) {
+    await this.call("POST", "/api/admin/point-partners", { id, input });
+    this.changed();
+  }
+
+  async setPointPartnerActive(id: string, active: boolean) {
+    await this.call("POST", `/api/admin/point-partners/${encodeURIComponent(id)}/status`, { active });
+    this.changed();
+  }
+
+  async addPointPartnerAccount(partnerId: string, contact: string) {
+    await this.call("POST", `/api/admin/point-partners/${encodeURIComponent(partnerId)}/accounts`, { contact });
+    this.changed();
+  }
+
+  async removePointPartnerAccount(partnerId: string, userId: string) {
+    await this.call("DELETE", `/api/admin/point-partners/${encodeURIComponent(partnerId)}/accounts/${encodeURIComponent(userId)}`);
+    this.changed();
+  }
+
+  pointPartnerDashboard(days: ReportPeriod) {
+    return this.call<PointPartnerDashboard>("GET", `/api/point-partner?days=${days}`);
   }
 
   async switchOutlet(externalId: string, outlet: number, on: boolean) {

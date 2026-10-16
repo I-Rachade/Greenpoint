@@ -297,6 +297,7 @@ interface DeviceRow {
   ocpp_key_hash: string | null;
   last_seen_at: string | null;
   created_at: string;
+  partner_id: string | null;
 }
 
 /** All sockets with their outlets, newest first. */
@@ -317,6 +318,7 @@ export async function listDevices(db: D1Database): Promise<Device[]> {
     ocppOpen: d.protocol === "ocpp1.6" && !d.ocpp_key_hash,
     lastSeenAt: d.last_seen_at,
     createdAt: d.created_at,
+    partnerId: d.partner_id ?? null,
     points: all.filter((p) => p.deviceId === d.external_id).sort((a, b) => (a.outlet ?? 0) - (b.outlet ?? 0)),
   }));
 }

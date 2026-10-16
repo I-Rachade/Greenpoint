@@ -557,3 +557,26 @@ describe("outlet QR codes", () => {
     expect(pointIdFromCode("https://example.com/station?p=x")).toBeNull();
   });
 });
+
+describe("DemoBackend point partners", () => {
+  it("gives a socket to a partner, whose linked customer account then sees it", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890123456", DEMO_CODE, "2580", "customer");
+    await expect(backend.pointPartnerDashboard(30)).rejects.toMatchObject({ code: "forbidden" });
+    // Another number for the admin: the demo finds an account by its number.
+    await backend.register("+22890999999", DEMO_CODE, "2580", "admin");
+    const [partner] = await backend.adminPointPartners();
+    await backend.addPointPartnerAccount(partner.id, "+22890123456");
+    await backend.setDevicePartner("DEMO-UL01", partner.id);
+    expect((await backend.adminPointPartners())[0].devices).toEqual([{ externalId: "DEMO-UL01", stationId: "st-universite", outlets: 8 }]);
+    await backend.signIn("+22890123456", "2580", "customer");
+    expect((await backend.getProfile())?.pointPartner).toMatchObject({ id: partner.id, status: "active" });
+    const dash = await backend.pointPartnerDashboard(30);
+    expect(dash.points).toHaveLength(8);
+    expect(new Set(dash.points.map((p) => p.stationId))).toEqual(new Set(["st-universite"]));
+    await backend.signIn("+22890999999", "2580", "admin");
+    await backend.setPointPartnerActive(partner.id, false);
+    await backend.signIn("+22890123456", "2580", "customer");
+    await expect(backend.pointPartnerDashboard(30)).rejects.toMatchObject({ code: "partner_suspended" });
+  });
+});

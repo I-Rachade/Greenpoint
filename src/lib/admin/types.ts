@@ -68,6 +68,8 @@ export type AuditTable =
   | "station_status"
   | "station_staff"
   | "operator_owners"
+  | "point_partners"
+  | "point_partner_accounts"
   | "reservations"
   | "charging_points"
   | "promotions"
@@ -107,6 +109,8 @@ export const AUDIT_TABLES: AuditTable[] = [
   "station_services",
   "station_staff",
   "operator_owners",
+  "point_partners",
+  "point_partner_accounts",
   "profiles",
   "charging_points",
   "charging_sessions",

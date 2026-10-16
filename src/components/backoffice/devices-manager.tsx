@@ -23,6 +23,8 @@ export function DevicesManager() {
   const relativeTime = useRelativeTime();
   const now = useNow(30_000);
   const { data: devices, error, reload } = useLiveQuery(() => backend.listDevices());
+  // Who owns each socket (src/lib/point-partners.ts): poinderecharge unless a partner is chosen.
+  const { data: partners } = useLiveQuery(() => backend.adminPointPartners());
   const { data: snap, error: snapError, reload: reloadSnap } = useAdminSnapshot();
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -108,6 +110,24 @@ export function DevicesManager() {
                       {d.protocol === "ocpp1.6" && ` · OCPP 1.6J ${d.ocppOpen ? b.ocppOpen : b.ocppKeyed}`} ·{" "}
                       {b.lastSeen}: {d.lastSeenAt ? relativeTime(d.lastSeenAt, now) : b.never}
                     </div>
+                    <label className="mt-2 flex items-center gap-2 text-xs">
+                      <span className="text-zinc-500">{t.pointPartners.owner}</span>
+                      <select
+                        value={d.partnerId ?? ""}
+                        disabled={!partners}
+                        onChange={(e) =>
+                          run(() => backend.setDevicePartner(d.externalId, e.target.value || null), format(t.pointPartners.ownerSaved, { id: d.externalId }))
+                        }
+                        className={`${field} py-1 text-xs`}
+                      >
+                        <option value="">{t.pointPartners.ours}</option>
+                        {(partners ?? []).map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   </div>
                   <button
                     type="button"

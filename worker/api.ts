@@ -84,6 +84,16 @@ import {
   stopOutlet,
 } from "./devices";
 import type { DeviceInput } from "../src/lib/iot/devices";
+import type { PointPartnerInput } from "../src/lib/point-partners";
+import {
+  addPointPartnerAccount,
+  adminPointPartners,
+  pointPartnerDashboard,
+  removePointPartnerAccount,
+  savePointPartner,
+  setDevicePartner,
+  setPointPartnerStatus,
+} from "./point-partners";
 import { handleXingkeCallback } from "./xingke";
 import type { ParcelDepotInput, ParcelInput, ParcelMeasures } from "../src/lib/parcels";
 import {
@@ -2275,6 +2285,29 @@ const ROUTES: [string, RegExp, Handler][] = [
       return startOutlet(c.env, device, Number(outlet), admin.id, minutes);
     },
   ],
+  // Point partners, who own sockets (worker/point-partners.ts)
+  [
+    "POST",
+    /^\/api\/admin\/devices\/([\w:%-]+)\/partner$/,
+    async (c, [device]) => setDevicePartner(c, decodeURIComponent(device), (await readJson<{ partnerId?: string | null }>(c.request)).partnerId),
+  ],
+  ["GET", /^\/api\/admin\/point-partners$/, (c) => adminPointPartners(c)],
+  [
+    "POST",
+    /^\/api\/admin\/point-partners$/,
+    async (c) => {
+      const { id, input } = await readJson<{ id: string | null; input: PointPartnerInput }>(c.request);
+      return savePointPartner(c, id, input);
+    },
+  ],
+  ["POST", /^\/api\/admin\/point-partners\/([\w-]+)\/status$/, async (c, [id]) => setPointPartnerStatus(c, id, (await readJson<{ active?: boolean }>(c.request)).active)],
+  [
+    "POST",
+    /^\/api\/admin\/point-partners\/([\w-]+)\/accounts$/,
+    async (c, [id]) => addPointPartnerAccount(c, id, (await readJson<{ contact?: string }>(c.request)).contact),
+  ],
+  ["DELETE", /^\/api\/admin\/point-partners\/([\w-]+)\/accounts\/([\w-]+)$/, (c, [id, userId]) => removePointPartnerAccount(c, id, userId)],
+  ["GET", /^\/api\/point-partner$/, (c) => pointPartnerDashboard(c, reportPeriod(c.url.searchParams.get("days")))],
 ];
 
 /**
