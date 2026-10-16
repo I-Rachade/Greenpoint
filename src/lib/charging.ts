@@ -69,6 +69,41 @@ export interface ChargeSession {
   payOptions?: { wallet: boolean; mobile: boolean };
   /** For the customer: a Flooz/T-Money payment waiting for confirmation on the phone. */
   pendingPaymentId?: string | null;
+  /** The customer started it by scanning the outlet's QR code, and may stop it in the app. */
+  selfStarted?: boolean;
+}
+
+// Charging by QR code: a sticker on each outlet links to /recharge?p=<charging point id>; the
+// customer starts the charge in the app where an admin allowed it (charging_points.qr_start).
+
+/** What the outlet's page shows: "free" can be started now, the rest say why not. */
+export type ChargePointState = "free" | "busy" | "reserved" | "offline" | "fault" | "disabled";
+
+export interface ChargePointInfo {
+  pointId: string;
+  label: string;
+  stationId: string;
+  stationName: string;
+  state: ChargePointState;
+  tariff: ChargeTariff;
+}
+
+const POINT_PATH = "/recharge";
+
+/** The link printed as the outlet's QR code. */
+export function pointQrUrl(origin: string, pointId: string): string {
+  return `${origin.replace(/\/$/, "")}${POINT_PATH}?p=${encodeURIComponent(pointId)}`;
+}
+
+/** The charging point id in a scanned outlet code (our link), or null for any other text. */
+export function pointIdFromCode(text: string): string | null {
+  try {
+    const url = new URL(text.trim());
+    const id = url.pathname.replace(/\/$/, "") === POINT_PATH ? url.searchParams.get("p") : null;
+    return id && /^[\w:.-]{1,80}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Staff view of a station: the charges running or waiting for payment, and today's takings. */

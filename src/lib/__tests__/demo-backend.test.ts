@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
 import { reservableOutlets, reservableTypes } from "../reservations";
+import { pointIdFromCode, pointQrUrl } from "../charging";
 
 // Runs without a browser: the demo falls back to in-memory storage.
 const STATION = "st-grand-marche"; // open around the clock in the demo data
@@ -181,6 +182,23 @@ describe("DemoBackend connected sockets", () => {
     const backend = new DemoBackend();
     await asRole(backend, "customer");
     await expect(backend.listDevices()).rejects.toMatchObject({ code: "forbidden" });
+  });
+  it("starts and stops a charge by QR code where the admin allowed it", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890123456", DEMO_CODE, "2580", "admin");
+    const point = (await backend.listDevices()).find((d) => d.stationId === STATION)!.points.find((p) => p.status === "free")!;
+    expect((await backend.chargePoint(point.id)).state).toBe("disabled");
+    await expect(backend.startSelfCharge(point.id)).rejects.toMatchObject({ code: "charge_qr_disabled" });
+
+    await backend.setQrStart(point.id, true);
+    expect((await backend.listStations()).find((s) => s.id === STATION)!.chargingPoints!.find((p) => p.id === point.id)!.qrStart).toBe(true);
+    expect((await backend.chargePoint(point.id)).state).toBe("free");
+    const charge = await backend.startSelfCharge(point.id);
+    expect(charge).toMatchObject({ status: "charging", selfStarted: true });
+    expect((await backend.chargePoint(point.id)).state).toBe("busy");
+    // One charge at a time until it is paid.
+    await expect(backend.startSelfCharge(point.id)).rejects.toMatchObject({ code: "charge_unpaid" });
+    expect((await backend.stopSelfCharge(charge.id)).status).toBe("stopped");
   });
 });
 
@@ -526,5 +544,16 @@ describe("DemoBackend driver phase 2 (as in the Worker)", () => {
       [second.id, "assigned"],
       [first.id, "accepted"],
     ]);
+  });
+});
+
+describe("outlet QR codes", () => {
+  it("link to the outlet's page and are read back", () => {
+    const url = pointQrUrl("https://app.poinderecharge.com/", "1f0c-ab");
+    expect(url).toBe("https://app.poinderecharge.com/recharge?p=1f0c-ab");
+    expect(pointIdFromCode(` ${url} `)).toBe("1f0c-ab");
+    expect(pointIdFromCode("https://app.poinderecharge.com/recharge/?p=cp-DEMO:01-2")).toBe("cp-DEMO:01-2");
+    expect(pointIdFromCode("poinderecharge:id:+22890123456")).toBeNull();
+    expect(pointIdFromCode("https://example.com/station?p=x")).toBeNull();
   });
 });

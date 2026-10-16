@@ -442,6 +442,52 @@ function PayInApp({ charge, onDone }: { charge: ChargeSession; onDone: () => voi
   );
 }
 
+/** The customer stops a charge they started by QR code, after confirming. */
+function StopMine({ charge, onDone }: { charge: ChargeSession; onDone: () => void }) {
+  const { t, locale } = useI18n();
+  const { backend } = useApp();
+  const errorMessage = useErrorMessage();
+  const ch = t.charging;
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (charge.status !== "charging" || !charge.selfStarted) return null;
+
+  async function stop() {
+    setBusy(true);
+    setError(null);
+    try {
+      await backend.stopSelfCharge(charge.id);
+      setAsking(false);
+      onDone();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <button type="button" onClick={() => setAsking(true)} className={`${ghost} w-full border-red-300 text-red-700 dark:text-red-400`}>
+        {ch.stop}
+      </button>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <ConfirmSheet
+        open={asking}
+        title={ch.qr.stopTitle}
+        confirmLabel={ch.stopConfirm}
+        danger
+        busy={busy}
+        onConfirm={() => void stop()}
+        onCancel={() => setAsking(false)}
+      >
+        {format(ch.qr.stopBody, { energy: formatKwh(charge.energyWh, locale), price: formatXof(charge.amountXof, locale) })}
+      </ConfirmSheet>
+    </div>
+  );
+}
+
 /** The customer's charges: live while charging, the price and the ways to pay once stopped. */
 export function MyCharges() {
   const { t } = useI18n();
@@ -456,6 +502,7 @@ export function MyCharges() {
       <h2 className="text-lg font-semibold">⚡ {t.charging.mine}</h2>
       {open.map((c) => (
         <ChargeCard key={c.id} charge={c} showStation>
+          <StopMine charge={c} onDone={reload} />
           <PayInApp charge={c} onDone={reload} />
         </ChargeCard>
       ))}

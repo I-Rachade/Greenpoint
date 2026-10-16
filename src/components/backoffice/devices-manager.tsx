@@ -3,10 +3,12 @@
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
+import { pointQrUrl } from "@/lib/charging";
 import { displayStatus } from "@/lib/iot/charging-points";
 import { canSwitch, DEVICE_LINKS, MAX_OUTLETS, type DeviceInput } from "@/lib/iot/devices";
 import { useErrorMessage, useLiveQuery, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
+import { QrImage } from "../parcels/qr-image";
 import { card, field, indexSnapshot, Loading, Pill, StaleNotice, useAdminSnapshot } from "./shared";
 
 const EMPTY: DeviceInput = { externalId: "", stationId: "", outlets: 2, link: "lorawan", vendor: "", model: "", protocol: null };
@@ -24,6 +26,7 @@ export function DevicesManager() {
   const { data: snap, error: snapError, reload: reloadSnap } = useAdminSnapshot();
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [qrShown, setQrShown] = useState<string | null>(null);
   const retry = () => {
     reload();
     reloadSnap();
@@ -122,34 +125,67 @@ export function DevicesManager() {
                   {d.points.map((p) => {
                     const status = displayStatus(p, now);
                     return (
-                      <li
-                        key={p.id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-black/10 px-3 py-2 text-sm dark:border-white/10"
-                      >
-                        <span className="font-medium">
-                          {b.outlet} {p.outlet} · {p.label}
-                        </span>
-                        <span className="flex items-center gap-2">
-                          <Pill tone={TONE[status]}>{b.status[status]}</Pill>
-                          {switchable && p.outlet !== null && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => run(() => backend.switchOutlet(d.externalId, p.outlet!, true), format(b.sent, { label: p.label }))}
-                                className="text-gp-green-dark hover:underline"
-                              >
-                                {b.on}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => run(() => backend.switchOutlet(d.externalId, p.outlet!, false), format(b.sent, { label: p.label }))}
-                                className="text-zinc-600 hover:underline dark:text-zinc-300"
-                              >
-                                {b.off}
-                              </button>
-                            </>
+                      <li key={p.id} className="space-y-2 rounded-lg border border-black/10 px-3 py-2 text-sm dark:border-white/10">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-medium">
+                            {b.outlet} {p.outlet} · {p.label}
+                          </span>
+                          <span className="flex items-center gap-2">
+                            <Pill tone={TONE[status]}>{b.status[status]}</Pill>
+                            {switchable && p.outlet !== null && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => run(() => backend.switchOutlet(d.externalId, p.outlet!, true), format(b.sent, { label: p.label }))}
+                                  className="text-gp-green-dark hover:underline"
+                                >
+                                  {b.on}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => run(() => backend.switchOutlet(d.externalId, p.outlet!, false), format(b.sent, { label: p.label }))}
+                                  className="text-zinc-600 hover:underline dark:text-zinc-300"
+                                >
+                                  {b.off}
+                                </button>
+                              </>
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label className="flex items-center gap-2" title={b.qrStartHint}>
+                            <input
+                              type="checkbox"
+                              checked={!!p.qrStart}
+                              // A socket we cannot switch on never starts by QR; switching it off stays possible.
+                              disabled={!switchable && !p.qrStart}
+                              onChange={(e) => {
+                                const on = e.target.checked;
+                                run(() => backend.setQrStart(p.id, on), format(on ? b.qrOn : b.qrOff, { label: p.label }));
+                              }}
+                              className="h-4 w-4 accent-gp-green-dark"
+                            />
+                            {b.qrStart}
+                          </label>
+                          {p.qrStart && (
+                            <button
+                              type="button"
+                              onClick={() => setQrShown(qrShown === p.id ? null : p.id)}
+                              aria-expanded={qrShown === p.id}
+                              className="text-gp-green-dark hover:underline"
+                            >
+                              {qrShown === p.id ? b.qrHide : b.qrShow}
+                            </button>
                           )}
-                        </span>
+                        </div>
+                        {!switchable && <p className="text-xs text-zinc-500">{b.qrNotSwitchable}</p>}
+                        {p.qrStart && qrShown === p.id && (
+                          <div className="flex flex-col items-center gap-1 pt-1">
+                            <QrImage text={pointQrUrl(qrOrigin(), p.id)} label={`${b.qrStart} ${p.label}`} size={200} />
+                            <div className="font-mono font-semibold">{p.label}</div>
+                            <p className="text-center text-xs text-zinc-500">{format(b.qrPrint, { label: p.label })}</p>
+                          </div>
+                        )}
                       </li>
                     );
                   })}
@@ -161,6 +197,11 @@ export function DevicesManager() {
       )}
     </div>
   );
+}
+
+/** The site the outlet's QR code opens: this one in a browser, the public app inside the native app. */
+function qrOrigin(): string {
+  return window.location.protocol.startsWith("http") ? window.location.origin : "https://app.poinderecharge.com";
 }
 
 function DeviceForm({
@@ -252,11 +293,7 @@ function DeviceForm({
           <select
             value={input.protocol !== "ocpp1.6" ? "" : input.ocppNoPassword ? "ocpp-open" : "ocpp-key"}
             onChange={(e) =>
-              set(
-                e.target.value === ""
-                  ? { protocol: null, ocppNoPassword: false }
-                  : { protocol: "ocpp1.6", ocppNoPassword: e.target.value === "ocpp-open" },
-              )
+              set(e.target.value === "" ? { protocol: null, ocppNoPassword: false } : { protocol: "ocpp1.6", ocppNoPassword: e.target.value === "ocpp-open" })
             }
             className={field}
           >

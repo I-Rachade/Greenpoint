@@ -400,6 +400,13 @@ export function StationDetail({ station, distance, onChanged }: Props) {
               </div>
             )}
 
+            {points.some((p) => p.qrStart) && (
+              <Link href="/recharge" className={`${secondary} flex-none`}>
+                <BoltIcon size={16} />
+                {t.charging.qr.scan}
+              </Link>
+            )}
+
             {points.length > 0 && !connected && (
               <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm dark:border-white/10">
                 <h3 className="text-sm font-semibold">{t.station.outlets}</h3>

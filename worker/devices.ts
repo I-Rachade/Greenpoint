@@ -60,12 +60,13 @@ interface PointRow {
   outlet: number | null;
   power_watts: number | null;
   last_seen_at: string | null;
+  qr_start: number;
 }
 
 /** Charging points per station, for the station list. */
 export async function chargingPointsByStation(db: D1Database): Promise<Map<string, ChargingPoint[]>> {
   const { results } = await db
-    .prepare("select id, station_id, label, status, device_id, outlet, power_watts, last_seen_at from charging_points order by label")
+    .prepare("select id, station_id, label, status, device_id, outlet, power_watts, last_seen_at, qr_start from charging_points order by label")
     .all<PointRow>();
   const byStation = new Map<string, ChargingPoint[]>();
   for (const p of results) {
@@ -79,6 +80,7 @@ export async function chargingPointsByStation(db: D1Database): Promise<Map<strin
       outlet: p.outlet,
       powerWatts: p.power_watts,
       lastSeenAt: p.last_seen_at,
+      ...(p.qr_start ? { qrStart: true } : {}),
     });
     byStation.set(p.station_id, list);
   }

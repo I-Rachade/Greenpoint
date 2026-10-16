@@ -7,10 +7,10 @@ import { useI18n } from "./i18n-provider";
 
 /**
  * Pages that open without the introduction (legal pages, links from the stores, staff,
- * and shared station and login links). Each entry also covers the pages below it,
+ * shared station and login links, and the outlet QR codes). Each entry also covers the pages below it,
  * but "/station" does not cover "/stations".
  */
-const SKIP_PREFIXES = ["/admin", "/operator", "/cgu", "/confidentialite", "/mentions-legales", "/developpeurs", "/compte", "/station", "/login"];
+const SKIP_PREFIXES = ["/admin", "/operator", "/cgu", "/confidentialite", "/mentions-legales", "/developpeurs", "/compte", "/station", "/login", "/recharge"];
 const skipsIntro = (path: string) => SKIP_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
 
 /**

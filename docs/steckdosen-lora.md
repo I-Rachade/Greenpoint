@@ -43,6 +43,16 @@ Steckdose --LoRa--> Gateway --4G--> Netzwerkserver (TTN / ChirpStack)
    - URL: `https://app.poinderecharge.com/api/devices/events?format=ttn` (oder `chirpstack`, `generic`)
    - Header: `X-Device-Key: <DEVICE_WEBHOOK_SECRET>`
 
+## Laden per QR-Code (Selbstbedienung)
+
+Der Kunde kann eine Ladung selbst starten, ohne Personal: Er scannt den QR-Code auf dem Ausgang, die App zeigt Station, Ausgang, Preis pro kWh und ob der Ausgang frei ist, und „Démarrer la recharge“ schaltet ihn ein. Er sieht Leistung, Energie und Preis live unter **Mes recharges**, beendet die Ladung mit „Arrêter“ (oder die Steckdose beendet sie, wenn der Akku voll ist) und bezahlt in der App (Portefeuille, Flooz, T-Money). An Partnerstationen bietet die App keine Zahlung an; dort zahlt er bar beim Personal. Das Personal sieht die Ladung wie jede andere auf seinem Bildschirm.
+
+- **Einschalten:** im Backoffice unter **Prises connectées** pro Ausgang „Recharge par QR-Code“ anhaken (Standard: aus). Geht nur bei Steckdosen, die sich fernschalten lassen (Xingke, OCPP). Danach zeigt „QR-Code“ den Code zum Ausdrucken und Aufkleben.
+- **Der QR-Code** ist ein Link `https://app.poinderecharge.com/recharge?p=<charging_points.id>`. Er öffnet sich mit der Handy-Kamera im Browser; in der App gibt es „Scanner le QR-Code d'une prise“ auf der Stationsseite und auf `/recharge`.
+- **Der Server prüft** (`startSelfCharge` in `worker/charging.ts`): Option an, Dienst „charging“ der Station frei, Ausgang meldet sich in den letzten 15 Minuten, ist frei, nicht von jemand anderem reserviert (auch nicht als letzter freier Platz für eine Reservierung ohne Ausgang), und der Kunde hat keine andere Ladung, die läuft oder noch bezahlt werden muss. Hat der Kunde selbst eine Reservierung an der Station, wird sie eingelöst.
+- **Stoppen** darf der Kunde nur Ladungen, die er selbst per QR-Code gestartet hat.
+- Migration `0038_charge_qr.sql` (Spalte `charging_points.qr_start`), API: `GET /api/charging/points/:id` (ohne Anmeldung lesbar), `POST /api/charging/points/:id/start`, `POST /api/charging/:id/stop`, `POST /api/admin/charging-points/:id/qr {"enabled":true}`.
+
 ## Formate
 
 Alle Formate liefern am Ende dieselbe Liste `outlets`:
