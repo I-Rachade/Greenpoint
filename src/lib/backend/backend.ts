@@ -62,6 +62,8 @@ import type {
   AdminMerchant,
   DriverShops,
   MerchantActivity,
+  MerchantAddress,
+  MerchantAddressInput,
   MerchantAssignmentRequest,
   MerchantBookingsQuery,
   MerchantDecision,
@@ -71,6 +73,8 @@ import type {
   MerchantJob,
   MerchantPayMode,
   MerchantShopInput,
+  MerchantStats,
+  MerchantStatsQuery,
   MerchantTier,
   MerchantView,
   MyMerchantInvite,
@@ -234,6 +238,8 @@ export type BackendErrorCode =
   | "assignment_not_found"
   | "merchant_driver_exists"
   | "driver_checked_in_here"
+  | "merchant_locked"
+  | "address_limit"
   | "unknown";
 
 export class BackendError extends Error {
@@ -541,6 +547,13 @@ export interface Backend {
   merchantBookings(query: MerchantBookingsQuery): Promise<MerchantJob[]>;
   /** The shop's activity log (merchant only). */
   merchantActivity(): Promise<MerchantActivity[]>;
+  /** The shop's statistics (merchant of an unlocked shop only). */
+  merchantStats(query: MerchantStatsQuery): Promise<MerchantStats>;
+  /** The merchant saves a pickup address, or removes one. */
+  addMerchantAddress(input: MerchantAddressInput): Promise<MerchantAddress>;
+  removeMerchantAddress(addressId: string): Promise<void>;
+  /** A member confirms a courier whose recipient was absent is back at the shop. */
+  confirmShopReturn(jobId: string): Promise<void>;
   updateMerchantShop(input: MerchantShopInput): Promise<void>;
   inviteMerchantEmployee(phone: string): Promise<MerchantInvite>;
   revokeMerchantInvite(inviteId: string): Promise<void>;

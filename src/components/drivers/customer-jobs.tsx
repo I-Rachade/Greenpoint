@@ -469,7 +469,7 @@ export function JobDetails({ job: j, stations, showRoute = true }: { job: Delive
     <div className="space-y-1">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">{t.drivers.kind[j.kind]}</span>
-        <JobStatusPill status={j.status} kind={j.kind} noDriver={j.noDriver} />
+        <JobStatusPill status={j.status} kind={j.kind} noDriver={j.noDriver} forShop={j.forShop} />
         {j.trackingNo && <span className="font-mono text-xs">{j.trackingNo}</span>}
         <span className="ml-auto text-xs text-gp-muted">{when(j.createdAt)}</span>
       </div>

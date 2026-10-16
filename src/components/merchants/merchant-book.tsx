@@ -5,7 +5,7 @@ import { useState, type FormEvent } from "react";
 import { fareFor, inServiceArea, MAX_PASSENGERS, type DeliveryJob, type DropoffPoint, type HomePoint } from "@/lib/drivers";
 import { distanceMeters, type LatLng } from "@/lib/geo";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
-import type { MerchantInfo, MerchantJob } from "@/lib/merchants";
+import type { MerchantAddress, MerchantInfo, MerchantJob } from "@/lib/merchants";
 import type { ParcelInfo } from "@/lib/parcels";
 import { format } from "@/lib/i18n/format";
 import { useApp } from "../app-provider";
@@ -14,8 +14,9 @@ import { input, Notice, useFcfa } from "../drivers/shared";
 import { useI18n } from "../i18n-provider";
 import { BoxFastIcon, BoxInIcon, CarIcon } from "../icons";
 import { LoadFailed, StaleNotice } from "../load-state";
+import { ConfirmSheet } from "../confirm-sheet";
 import { Button, CountUp, EmptyState, SkeletonCard, useToast } from "../ui";
-import { field } from "./shared";
+import { field, useAction } from "./shared";
 
 const HomePicker = dynamic(() => import("../drivers/home-picker").then((m) => m.HomePicker), { ssr: false });
 
@@ -24,7 +25,7 @@ type BookKind = (typeof KINDS)[number];
 const KIND_ICON = { courier: BoxFastIcon, pickup: BoxInIcon, ride: CarIcon } as const;
 
 /** The shop as the start of a booking: its pin, address and phone (changeable per booking). */
-export function shopStart(shop: MerchantInfo): HomePoint {
+export function shopStart(shop: MerchantInfo | MerchantAddress): HomePoint {
   return { lat: shop.lat, lng: shop.lng, note: shop.address, phone: shop.phone };
 }
 
@@ -38,13 +39,24 @@ function useBookingData() {
  * "Réserver": every member books for the shop. Courier (shop → customer's door) first,
  * a pickup to a station, or a ride for someone else. The shop pays at the start.
  */
-export function MerchantBook({ shop, onBooked }: { shop: MerchantInfo; onBooked: (job: DeliveryJob) => void }) {
+export function MerchantBook({
+  shop,
+  addresses,
+  onBooked,
+}: {
+  shop: MerchantInfo;
+  addresses: MerchantAddress[];
+  onBooked: (job: DeliveryJob) => void;
+}) {
   const { t } = useI18n();
   const m = t.merchant.book;
   const { features } = useApp();
   const { data, error, reload } = useBookingData();
   const [kind, setKind] = useState<BookKind>("courier");
-  const start = shopStart(shop);
+  // The shop, or one of its saved addresses (phase 2), as the start of the booking.
+  const [from, setFrom] = useState("");
+  const saved = addresses.find((a) => a.id === from);
+  const start = shopStart(saved ?? shop);
 
   if (!features.drivers) return <EmptyState text={t.errors.drivers_soon} />;
   if (!data) {
@@ -85,10 +97,23 @@ export function MerchantBook({ shop, onBooked }: { shop: MerchantInfo; onBooked:
         })}
       </div>
       <p className="text-sm text-gp-muted">{hints[kind]}</p>
-      {/* A new form per kind: each keeps the shop as its start. */}
-      {kind === "courier" && <BookCourier key="courier" info={info} start={start} onBooked={onBooked} />}
-      {kind === "pickup" && <BookPickup key="pickup" info={info} stations={stations} start={start} onBooked={onBooked} />}
-      {kind === "ride" && <RideForm key="ride" info={info} start={start} onBooked={onBooked} />}
+      {addresses.length > 0 && (
+        <label className="block space-y-1 text-sm">
+          <span className="font-medium">{m.startFrom}</span>
+          <select className={field} value={saved ? saved.id : ""} onChange={(e) => setFrom(e.target.value)}>
+            <option value="">{format(m.startShop, { address: shop.address })}</option>
+            {addresses.map((a) => (
+              <option key={a.id} value={a.id}>
+                {`${a.label} (${a.address})`}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {/* A new form per kind and start: each keeps the chosen start. */}
+      {kind === "courier" && <BookCourier key={`courier-${from}`} info={info} start={start} onBooked={onBooked} />}
+      {kind === "pickup" && <BookPickup key={`pickup-${from}`} info={info} stations={stations} start={start} onBooked={onBooked} />}
+      {kind === "ride" && <RideForm key={`ride-${from}`} info={info} start={start} onBooked={onBooked} />}
       <p className="text-xs text-gp-muted">{m.payHint}</p>
     </div>
   );
@@ -223,6 +248,41 @@ export function BookedByLine({ job }: { job: MerchantJob | DeliveryJob }) {
   return <p className="text-xs text-gp-muted">{parts.join(" · ")}</p>;
 }
 
+/**
+ * A shop's courier whose recipient was absent comes back (planung/marchand.md): any member
+ * confirms once the parcel is in hand, which ends the trip.
+ */
+export function ShopReturn({ job }: { job: DeliveryJob }) {
+  const { t } = useI18n();
+  const m = t.merchant.trips;
+  const { backend } = useApp();
+  const { busy, run } = useAction();
+  const [open, setOpen] = useState(false);
+  if (job.kind !== "courier" || job.status !== "returning") return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+      <span className="min-w-0 flex-1">{m.returning}</span>
+      <Button size="md" onClick={() => setOpen(true)}>
+        {m.confirmReturn}
+      </Button>
+      <ConfirmSheet
+        open={open}
+        title={m.confirmReturnTitle}
+        confirmLabel={m.confirmReturn}
+        busy={busy}
+        onCancel={() => setOpen(false)}
+        onConfirm={() =>
+          void run(() => backend.confirmShopReturn(job.id), m.returned).then((ok) => {
+            if (ok) setOpen(false);
+          })
+        }
+      >
+        <p className="text-sm">{m.confirmReturnText}</p>
+      </ConfirmSheet>
+    </div>
+  );
+}
+
 /** "Nos courses": the shop's trips (every member sees all of them, decision 4), with cancel. */
 export function MerchantTrips({ live, focus }: { live: MerchantJob[]; focus: string | null }) {
   const { t } = useI18n();
@@ -257,6 +317,7 @@ export function MerchantTrips({ live, focus }: { live: MerchantJob[]; focus: str
             >
               <JobDetails job={j} stations={stations} />
               <BookedByLine job={byId.get(j.id) ?? j} />
+              <ShopReturn job={j} />
             </li>
           ))}
         </ul>

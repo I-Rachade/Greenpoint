@@ -191,6 +191,8 @@ export interface MerchantView {
   checkins: MerchantCheckin[];
   /** Hourly check-ins the driver has not confirmed as paid yet. */
   unpaid: MerchantCheckin[];
+  /** Saved pickup addresses (every member, to book). */
+  addresses: MerchantAddress[];
   settings: DriverSettings;
 }
 
@@ -274,4 +276,183 @@ export function endOfDay(at: string): string {
 /** Whether a driver at `position` is close enough to the shop to check in. */
 export function nearShop(position: LatLng, shop: LatLng, radius = CHECKIN_RADIUS_M): boolean {
   return distanceMeters(position, shop) <= radius;
+}
+
+// Phase 2 ---------------------------------------------------------------------------
+
+/** Saved pickup addresses of a shop, besides its own address (0036_merchant_addresses.sql). */
+export const MAX_MERCHANT_ADDRESSES = 10;
+export const ADDRESS_LABEL_MIN = 2;
+export const ADDRESS_LABEL_MAX = 40;
+
+export interface MerchantAddressInput {
+  /** A short name, such as "Entrepôt" or "Marché de Bè". */
+  label: string;
+  address: string;
+  /** The number the driver calls there (Togo). */
+  phone: string;
+  lat: number;
+  lng: number;
+}
+
+export interface MerchantAddress extends MerchantAddressInput {
+  id: string;
+  createdAt: string;
+}
+
+/** The label as stored, or null when it is too short or too long. */
+export function cleanAddressLabel(input: unknown): string | null {
+  const label = String(input ?? "").trim().replace(/\s+/g, " ");
+  return label.length >= ADDRESS_LABEL_MIN && label.length <= ADDRESS_LABEL_MAX ? label : null;
+}
+
+/** Statistics are for unlocked shops only (decision 5). */
+export function hasStatistics(tier: MerchantTier): boolean {
+  return tier === "unlocked";
+}
+
+export type StatsGroup = "day" | "week" | "month";
+export const STATS_GROUPS: StatsGroup[] = ["day", "week", "month"];
+/** The longest period the statistics cover, in days. */
+export const STATS_MAX_DAYS = 366;
+
+export interface MerchantStatsQuery {
+  /** YYYY-MM-DD, both included. */
+  from: string;
+  to: string;
+  group: StatsGroup;
+}
+
+/** What the statistics need of one trip of the shop. */
+export interface StatsTrip {
+  status: JobStatus;
+  fareFcfa: number;
+  createdAt: string;
+  pickedUpAt: string | null;
+  doneAt: string | null;
+  bookedBy: { userId: string; name: string | null } | null;
+  driverId: string | null;
+}
+
+/** What the statistics need of one ended check-in at the shop. */
+export interface StatsCheckin {
+  driverId: string;
+  driverName: string;
+  payMode: MerchantPayMode;
+  inAt: string;
+  outAt: string;
+  amountFcfa: number | null;
+}
+
+export interface StatsCounts {
+  booked: number;
+  done: number;
+  failed: number;
+  cancelled: number;
+  /** Fares of the trips the shop paid: done, or failed after the driver took the parcel. */
+  spendFcfa: number;
+}
+
+export interface MerchantStats {
+  from: string;
+  to: string;
+  group: StatsGroup;
+  totals: StatsCounts & {
+    /** Done out of done and failed, 0 to 1; null without either. */
+    successRate: number | null;
+    /** Average minutes from booking to done; null without a done trip. */
+    avgMinutes: number | null;
+    /** Hourly pay of the assigned drivers, for the check-ins that ended in the period. */
+    hourlyFcfa: number;
+  };
+  /** One entry per day, week (from Monday) or month of the period, oldest first. */
+  periods: (StatsCounts & { key: string })[];
+  /** Per member who booked, most bookings first. */
+  employees: (StatsCounts & { userId: string; name: string | null })[];
+  /** Per assigned driver who checked in during the period. */
+  drivers: { driverId: string; name: string; checkins: number; hours: number; hourlyFcfa: number; trips: number }[];
+}
+
+/** The day, week (its Monday) or month an ISO time falls in. */
+export function periodKey(at: string, group: StatsGroup): string {
+  const day = at.slice(0, 10);
+  if (group === "day") return day;
+  if (group === "month") return day.slice(0, 7);
+  const d = new Date(`${day}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+
+/** Whether a query is valid: dates in order and at most STATS_MAX_DAYS days. */
+export function validStatsQuery(q: Partial<MerchantStatsQuery> | null | undefined): q is MerchantStatsQuery {
+  const date = /^\d{4}-\d{2}-\d{2}$/;
+  if (!q || !date.test(String(q.from)) || !date.test(String(q.to)) || !STATS_GROUPS.includes(q.group as StatsGroup)) return false;
+  const days = (Date.parse(`${q.to}T00:00:00Z`) - Date.parse(`${q.from}T00:00:00Z`)) / 86_400_000;
+  return Number.isFinite(days) && days >= 0 && days < STATS_MAX_DAYS;
+}
+
+function emptyCounts(): StatsCounts {
+  return { booked: 0, done: 0, failed: 0, cancelled: 0, spendFcfa: 0 };
+}
+
+function count(c: StatsCounts, t: StatsTrip) {
+  c.booked += 1;
+  if (t.status === "done") c.done += 1;
+  else if (t.status === "failed") c.failed += 1;
+  else if (t.status === "cancelled") c.cancelled += 1;
+  if (t.status === "done" || (t.status === "failed" && t.pickedUpAt)) c.spendFcfa += t.fareFcfa;
+}
+
+/** The shop's statistics for trips booked in the period and check-ins that ended in it. */
+export function merchantStats(q: MerchantStatsQuery, trips: StatsTrip[], checkins: StatsCheckin[]): MerchantStats {
+  const totals = emptyCounts();
+  const periods = new Map<string, StatsCounts>();
+  // Every period of the range, also those without a trip.
+  for (let d = new Date(`${q.from}T00:00:00.000Z`); d.toISOString().slice(0, 10) <= q.to; d.setUTCDate(d.getUTCDate() + 1)) {
+    const key = periodKey(d.toISOString(), q.group);
+    if (!periods.has(key)) periods.set(key, emptyCounts());
+  }
+  const employees = new Map<string, StatsCounts & { userId: string; name: string | null }>();
+  const tripsByDriver = new Map<string, number>();
+  let minutes = 0;
+  for (const t of trips) {
+    count(totals, t);
+    const key = periodKey(t.createdAt, q.group);
+    if (!periods.has(key)) periods.set(key, emptyCounts());
+    count(periods.get(key)!, t);
+    if (t.bookedBy) {
+      const e = employees.get(t.bookedBy.userId) ?? { userId: t.bookedBy.userId, name: t.bookedBy.name, ...emptyCounts() };
+      count(e, t);
+      employees.set(t.bookedBy.userId, e);
+    }
+    if (t.status === "done" && t.doneAt) {
+      minutes += Math.max(0, Date.parse(t.doneAt) - Date.parse(t.createdAt)) / 60_000;
+      if (t.driverId) tripsByDriver.set(t.driverId, (tripsByDriver.get(t.driverId) ?? 0) + 1);
+    }
+  }
+  const drivers = new Map<string, MerchantStats["drivers"][number]>();
+  let hourlyFcfa = 0;
+  for (const k of checkins) {
+    const d = drivers.get(k.driverId) ?? { driverId: k.driverId, name: k.driverName, checkins: 0, hours: 0, hourlyFcfa: 0, trips: tripsByDriver.get(k.driverId) ?? 0 };
+    d.checkins += 1;
+    d.hours += Math.max(0, Date.parse(k.outAt) - Date.parse(k.inAt)) / 3_600_000;
+    if (k.payMode === "hourly") d.hourlyFcfa += k.amountFcfa ?? 0;
+    hourlyFcfa += k.payMode === "hourly" ? (k.amountFcfa ?? 0) : 0;
+    drivers.set(k.driverId, d);
+  }
+  const ended = totals.done + totals.failed;
+  return {
+    from: q.from,
+    to: q.to,
+    group: q.group,
+    totals: {
+      ...totals,
+      successRate: ended ? totals.done / ended : null,
+      avgMinutes: totals.done ? Math.round(minutes / totals.done) : null,
+      hourlyFcfa,
+    },
+    periods: [...periods.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, c]) => ({ key, ...c })),
+    employees: [...employees.values()].sort((a, b) => b.booked - a.booked),
+    drivers: [...drivers.values()].map((d) => ({ ...d, hours: Math.round(d.hours * 10) / 10 })).sort((a, b) => b.hours - a.hours),
+  };
 }

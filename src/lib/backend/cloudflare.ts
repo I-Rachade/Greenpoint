@@ -53,6 +53,8 @@ import type {
   AdminMerchant,
   DriverShops,
   MerchantActivity,
+  MerchantAddress,
+  MerchantAddressInput,
   MerchantAssignmentRequest,
   MerchantBookingsQuery,
   MerchantDecision,
@@ -62,6 +64,8 @@ import type {
   MerchantJob,
   MerchantPayMode,
   MerchantShopInput,
+  MerchantStats,
+  MerchantStatsQuery,
   MerchantTier,
   MerchantView,
   MyMerchantInvite,
@@ -939,6 +943,24 @@ export class CloudflareBackend implements Backend {
 
   merchantActivity() {
     return this.call<MerchantActivity[]>("GET", "/api/merchant/activity");
+  }
+
+  merchantStats(query: MerchantStatsQuery) {
+    return this.call<MerchantStats>("POST", "/api/merchant/stats", query);
+  }
+
+  async addMerchantAddress(input: MerchantAddressInput) {
+    const address = await this.call<MerchantAddress>("POST", "/api/merchant/addresses", input);
+    this.changed();
+    return address;
+  }
+
+  removeMerchantAddress(addressId: string) {
+    return this.act("DELETE", `/api/merchant/addresses/${encodeURIComponent(addressId)}`);
+  }
+
+  confirmShopReturn(jobId: string) {
+    return this.act("POST", `/api/merchant/jobs/${encodeURIComponent(jobId)}/returned`);
   }
 
   async updateMerchantShop(input: MerchantShopInput) {

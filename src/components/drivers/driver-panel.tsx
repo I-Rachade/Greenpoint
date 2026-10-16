@@ -500,8 +500,14 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
     step = job.status === "picked_up" ? format(t.drivers.page.stepRideDrive, { n: job.collectFcfa }) : t.drivers.page.stepRideGo;
     target = job.status === "picked_up" ? job.dropoff : job.home;
   } else if (job.kind === "courier") {
-    step = job.status === "picked_up" ? t.drivers.page.stepCourierDrive : format(t.drivers.page.stepCourierGo, { n: job.collectFcfa });
-    target = job.status === "picked_up" ? job.dropoff : job.home;
+    // A shop's courier: when the recipient is absent, back to where the driver took it.
+    step =
+      job.status === "returning"
+        ? format(t.drivers.page.stepShopReturn, { shop: job.customerName ?? "" })
+        : job.status === "picked_up" || job.status === "at_door"
+          ? t.drivers.page.stepCourierDrive
+          : format(t.drivers.page.stepCourierGo, { n: job.collectFcfa });
+    target = job.status === "picked_up" || job.status === "at_door" ? job.dropoff : job.home;
   } else if (job.kind === "pickup") {
     step = job.status === "picked_up" ? format(t.drivers.page.stepPickupBring, { no: job.trackingNo ?? "", to: name(job.toStationId) }) : t.drivers.page.stepPickupGo;
     target = job.status === "picked_up" ? (station(job.toStationId) ?? null) : job.home;
@@ -537,7 +543,7 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
   return (
     <Card title={t.drivers.page.jobTitle}>
       <div className="flex flex-wrap items-center gap-2">
-        <JobStatusPill status={job.status} kind={job.kind} />
+        <JobStatusPill status={job.status} kind={job.kind} forShop={job.forShop} />
         {job.trackingNo && <span className="font-mono text-sm">{job.trackingNo}</span>}
       </div>
       <JobFacts job={job} route={route(job, name)} />
@@ -548,18 +554,18 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
             🧭 {t.drivers.page.directions}
           </a>
         )}
-        {job.home?.phone && job.status !== "returning" && !(job.kind === "courier" && job.status === "picked_up") && (
+        {job.home?.phone && (job.status !== "returning" || job.kind === "courier") && !(job.kind === "courier" && (job.status === "picked_up" || job.status === "at_door")) && (
           <a className={secondary} href={`tel:${job.home.phone}`}>
             📞 {t.drivers.page.call} {job.customerName ?? ""}
           </a>
         )}
-        {job.kind === "courier" && job.status === "picked_up" && job.recipient && (
+        {job.kind === "courier" && (job.status === "picked_up" || job.status === "at_door") && job.recipient && (
           <a className={secondary} href={`tel:${job.recipient.phone}`}>
             📞 {t.drivers.page.call} {job.recipient.name ?? job.recipient.phone}
           </a>
         )}
       </div>
-      {job.collectFcfa > 0 && !(job.kind === "courier" && job.status === "picked_up") && <p className="text-sm font-semibold">{format(t.drivers.page.collect, { n: job.collectFcfa })}</p>}
+      {job.collectFcfa > 0 && !(job.kind === "courier" && job.status !== "accepted") && <p className="text-sm font-semibold">{format(t.drivers.page.collect, { n: job.collectFcfa })}</p>}
       <p className="text-xs text-zinc-500">{format(t.drivers.page.earning, { n: driverEarning(job.fareFcfa, home.settings) })}</p>
       {job.kind === "pickup" && job.status === "accepted" && <PickupCollect job={job} info={info} onDone={(no) => setCollected(format(t.drivers.page.collected, { no }))} />}
       {job.kind === "delivery" && (job.status === "picked_up" || job.status === "at_door") && <DoorActions job={job} home={home} />}
@@ -578,7 +584,9 @@ function CurrentJob({ job, home, stations, info }: { job: DeliveryJob; home: Dri
           {format(t.drivers.page.courierPickButton, { n: job.collectFcfa })}
         </button>
       )}
-      {job.kind === "courier" && job.status === "picked_up" && <CourierFinish job={job} />}
+      {job.kind === "courier" && (job.status === "picked_up" || job.status === "at_door") && <CourierFinish job={job} />}
+      {job.kind === "courier" && job.forShop && (job.status === "picked_up" || job.status === "at_door") && <ShopDoorActions job={job} home={home} />}
+      {job.kind === "courier" && job.status === "returning" && <p className="text-xs text-zinc-500">{t.drivers.page.shopReturnWait}</p>}
       {job.status === "accepted" && <AbandonButton job={job} />}
       <Notice error="" notice={collected} />
       {status}
@@ -627,6 +635,43 @@ function CourierFinish({ job }: { job: DeliveryJob }) {
           onPhoto={(file) => run(async () => backend.uploadDeliveryPhoto(job.id, await shrinkImage(file)), t.drivers.page.photoSaved)}
         />
       </div>
+      {status}
+    </div>
+  );
+}
+
+/**
+ * A shop's courier at the door (planung/marchand.md): "at the door" starts the waiting time;
+ * after it, "recipient absent" sends the driver back to the shop with the parcel.
+ */
+function ShopDoorActions({ job, home }: { job: DeliveryJob; home: DriverHome }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const when = useDateTime();
+  const now = useNow(15_000);
+  const { run, busy, status } = useAction();
+  const absentAt = job.atDoorAt ? new Date(new Date(job.atDoorAt).getTime() + home.settings.waitMinutes * 60_000) : null;
+  if (job.status === "picked_up") {
+    return (
+      <div className="space-y-2">
+        <button type="button" className={secondary} disabled={busy} onClick={() => void run(() => backend.arriveAtDoor(job.id))}>
+          {t.drivers.page.atDoor}
+        </button>
+        {status}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        className={secondary}
+        disabled={busy || !absentAt || now < absentAt}
+        onClick={() => window.confirm(t.drivers.page.confirmAbsentShop) && void run(() => backend.failDelivery(job.id))}
+      >
+        {t.drivers.page.absent}
+      </button>
+      {absentAt && now < absentAt && <p className="text-xs text-zinc-500">{format(t.drivers.page.absentWait, { time: when(absentAt.toISOString()) })}</p>}
       {status}
     </div>
   );
@@ -767,7 +812,7 @@ function History({ jobs, stations }: { jobs: DeliveryJob[]; stations: StationVie
           <li key={j.id} className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-zinc-500">{when(j.createdAt)}</span>
             <span className="flex-1">{route(j, name)}</span>
-            <JobStatusPill status={j.status} kind={j.kind} />
+            <JobStatusPill status={j.status} kind={j.kind} forShop={j.forShop} />
             <span className="font-mono text-xs">{fcfa(j.fareFcfa)}</span>
           </li>
         ))}

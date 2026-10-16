@@ -194,6 +194,10 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/merchant": MERCHANT,
   "POST /api/merchant/bookings": MERCHANT,
   "GET /api/merchant/activity": MERCHANT,
+  "POST /api/merchant/stats": MERCHANT,
+  "POST /api/merchant/addresses": MERCHANT,
+  "DELETE /api/merchant/addresses/:id": MERCHANT,
+  "POST /api/merchant/jobs/:id/returned": MERCHANT,
   "POST /api/merchant/shop": MERCHANT,
   "POST /api/merchant/invites": MERCHANT,
   "POST /api/merchant/invites/:id/revoke": MERCHANT,
@@ -276,7 +280,7 @@ beforeAll(async () => {
     insert into drivers (user_id, status, full_name, id_number, license_number, wanted_type, code, created_at) values ('yawa', 'active', 'Yawa', 'ID1', 'LIC1', 'moto', 'ABCDEFGH', '${now}');
     insert into fleets (manager_id, name, status, tier, created_at) values ('edem', 'Flotte Edem', 'approved', 'unlocked', '${now}');
     insert into app_settings (key, value, updated_at) values ('drivers_enabled', '1', '${now}');
-    insert into merchants (id, owner_id, name, phone, address, lat, lng, status, tier, created_at) values ('shop', 'kofi', 'Boutique Kofi', '+22890000011', 'Bè', 6.13, 1.22, 'approved', 'standard', '${now}');
+    insert into merchants (id, owner_id, name, phone, address, lat, lng, status, tier, created_at) values ('shop', 'kofi', 'Boutique Kofi', '+22890000011', 'Bè', 6.13, 1.22, 'approved', 'unlocked', '${now}');
     insert into merchant_members (user_id, merchant_id, is_owner, created_at) values ('kofi', 'shop', 1, '${now}');
     -- Rows named "be", the id every path segment gets below: the rider's reservation at Bè.
     insert into reservations (id, user_id, station_id, type, status, pickup_code, created_at, expires_at) values ('be', 'ama', 'be', 'battery', 'active', '1234', '${now}', '${later}');

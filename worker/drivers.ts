@@ -214,6 +214,7 @@ export function toJob(r: JobRow): DeliveryJob {
     doneAt: r.done_at,
     proofKey: r.proof_key,
     ...(r.status === "cancelled" && r.cancelled_by === NO_DRIVER ? { noDriver: true } : {}),
+    ...(r.merchant_id ? { forShop: true as const } : {}),
   };
 }
 
@@ -951,9 +952,22 @@ export async function collectPickup(c: ParcelCtx, jobId: string, rawMeasures: Pa
   return toJob(await loadJob(c.db, job.id));
 }
 
+/**
+ * A shop's courier comes back to the shop when the recipient is absent (planung/marchand.md),
+ * so like a home delivery it has a door step: at the door, then delivered or back.
+ */
+function shopCourier(job: Pick<JobRow, "kind" | "merchant_id">): boolean {
+  return job.kind === "courier" && !!job.merchant_id;
+}
+
+/** Trips with a door step: home deliveries and shop couriers. */
+function hasDoorStep(job: Pick<JobRow, "kind" | "merchant_id">): boolean {
+  return job.kind === "delivery" || shopCourier(job);
+}
+
 export async function arriveAtDoor(c: ParcelCtx, jobId: string) {
   const { user, job } = await myJob(c, jobId);
-  if (job.kind !== "delivery" || !(await moveJob(c.db, job.id, ["picked_up"], "status = 'at_door', at_door_at = ?", nowIso()))) {
+  if (!hasDoorStep(job) || !(await moveJob(c.db, job.id, ["picked_up"], "status = 'at_door', at_door_at = ?", nowIso()))) {
     throw new ApiError("job_wrong_status");
   }
   await jobAudit(c, user.id, job, { status: ["picked_up", "at_door"] }).run();
@@ -963,7 +977,7 @@ export async function arriveAtDoor(c: ParcelCtx, jobId: string) {
 export async function uploadProof(c: ParcelCtx, jobId: string, request: Request) {
   const { job } = await myJob(c, jobId);
   // Home deliveries and couriers: the photo of the handover at the door.
-  const atDoor = job.kind === "delivery" ? ["picked_up", "at_door"] : job.kind === "courier" ? ["picked_up"] : [];
+  const atDoor = hasDoorStep(job) ? ["picked_up", "at_door"] : job.kind === "courier" ? ["picked_up"] : [];
   if (!atDoor.includes(job.status)) throw new ApiError("job_wrong_status");
   const image = await readImage(c, request);
   const key = `proofs/${job.id}-${uuid()}.${image.ext}`;
@@ -1018,15 +1032,23 @@ export async function deliverJob(c: ParcelCtx, jobId: string, rawCode: unknown) 
   });
 }
 
-/** Nobody at the door after the waiting time: the parcel goes back to its station. */
+/**
+ * Nobody at the door after the waiting time: the parcel goes back to its station, or for a
+ * shop's courier back to where the driver took it (the shop is the sender).
+ */
 export async function failDelivery(c: ParcelCtx, jobId: string) {
   const { user, job } = await myJob(c, jobId);
-  if (job.kind !== "delivery" || job.status !== "at_door" || !job.at_door_at) throw new ApiError("job_wrong_status");
+  if (!hasDoorStep(job) || job.status !== "at_door" || !job.at_door_at) throw new ApiError("job_wrong_status");
   const s = await driverSettings(c.db);
   if (Date.now() - new Date(job.at_door_at).getTime() < s.waitMinutes * 60_000) throw new ApiError("wait_longer");
   if (!(await moveJob(c.db, job.id, ["at_door"], "status = 'returning'"))) throw new ApiError("job_wrong_status");
-  await jobAudit(c, user.id, job, { status: ["at_door", "returning"] }).run();
-  if (job.parcel_id) {
+  await jobAudit(c, user.id, job, { status: ["at_door", "returning"], ...(job.merchant_id ? { merchant_id: job.merchant_id } : {}) }).run();
+  if (shopCourier(job)) {
+    await tellUser(c.env, job.customer_user_id, null, "courier_returning", {
+      subject: "Destinataire absent",
+      text: `poinderecharge : ${party(job.recipient_name, job.recipient_phone ?? "")} n'était pas là. Le chauffeur ramène le colis${job.content ? ` (${job.content})` : ""} à ${job.home_note || "votre boutique"}. Confirmez sa réception dans l'app : ${APP_URL}/marchand`,
+    });
+  } else if (job.parcel_id) {
     const from = await station(c.db, job.from_station_id!);
     await notifyPerson(c.env, job.parcel_id, "delivery_failed", job.customer_user_id, {
       subject: `Livraison du colis ${job.tracking_no} manquée`,
@@ -1097,13 +1119,14 @@ export async function finishRide(c: ParcelCtx, jobId: string, rawCode?: unknown)
   if (!POINT_TO_POINT.includes(job.kind)) throw new ApiError("job_wrong_status");
   if (job.kind === "courier") await checkCourierHandover(c, job, rawCode);
   const s = await driverSettings(c.db);
-  if (!(await moveJob(c.db, job.id, ["picked_up"], "status = 'done', done_at = ?", nowIso()))) throw new ApiError("job_wrong_status");
+  const from: JobStatus[] = shopCourier(job) ? ["picked_up", "at_door"] : ["picked_up"];
+  if (!(await moveJob(c.db, job.id, from, "status = 'done', done_at = ?", nowIso()))) throw new ApiError("job_wrong_status");
   const trip = await tripStatement(c.db, { driverId: user.id, jobId: job.id, distanceMeters: job.distance_m, stationId: job.driver_station_id, createdBy: user.id });
   await c.db.batch([
     ...(trip ? [trip] : []),
     ...(collectsAtStart(job) ? [] : [ledger(c, user.id, "collected", job.collect_fcfa, job.id, null, user.id)]),
     ...(await earning(c, job, user.id, s, null, user.id)),
-    jobAudit(c, user.id, job, { status: ["picked_up", "done"], collect_fcfa: job.collect_fcfa }),
+    jobAudit(c, user.id, job, { status: [job.status, "done"], collect_fcfa: job.collect_fcfa }),
   ]);
   if (job.kind === "courier") {
     const delivered: Message = {
@@ -1139,6 +1162,26 @@ async function checkCourierHandover(c: ParcelCtx, job: JobRow, rawCode: unknown)
     await c.db.prepare("insert into parcel_code_failures (station_id, at) values (?, ?)").bind(lockKey, nowIso()).run();
     throw new ApiError("wrong_pickup_code");
   }
+}
+
+/**
+ * A member of the shop confirms the parcel of a courier whose recipient was absent is back
+ * at the shop. The trip ends as failed; the shop paid the fare at the start, so the driver
+ * keeps their share (none when checked in there at an hourly rate: decision A). The caller
+ * checked that `actorId` belongs to the shop of the trip.
+ */
+export async function receiveShopReturn(c: ParcelCtx, job: JobRow, actorId: string) {
+  if (!shopCourier(job) || job.status !== "returning" || !job.driver_id) throw new ApiError("job_wrong_status");
+  const s = await driverSettings(c.db);
+  if (!(await moveJob(c.db, job.id, ["returning"], "status = 'failed', done_at = ?", nowIso()))) throw new ApiError("job_wrong_status");
+  await c.db.batch([
+    ...(await earning(c, job, job.driver_id, s, null, actorId)),
+    jobAudit(c, actorId, job, { status: ["returning", "failed"], merchant_id: job.merchant_id, reason: "returned_to_shop" }),
+  ]);
+  await tellUser(c.env, job.driver_id, null, "courier_returned", {
+    subject: "Retour confirmé",
+    text: `poinderecharge : la boutique a confirmé le retour du colis. La course est terminée : ${DRIVER_URL}`,
+  });
 }
 
 // Station staff --------------------------------------------------------------------
@@ -1604,7 +1647,7 @@ export async function myJobs(c: ParcelCtx): Promise<DeliveryJob[]> {
     .bind(shop ? shop.id : user.id)
     .all<JobRow>();
   // The sender of a courier sees the code the recipient gives at the door, to pass it on.
-  return results.map((r) => ({ ...toJob(r), ...(r.kind === "courier" && r.handover_code && r.status === "picked_up" ? { handoverCode: r.handover_code } : {}) }));
+  return results.map((r) => ({ ...toJob(r), ...(r.kind === "courier" && r.handover_code && (r.status === "picked_up" || r.status === "at_door") ? { handoverCode: r.handover_code } : {}) }));
 }
 
 const CANCELLABLE: JobStatus[] = ["open", "assigned", "accepted"];

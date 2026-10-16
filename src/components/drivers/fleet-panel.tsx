@@ -92,7 +92,7 @@ function DriverCard({ d, stations, canRemove }: { d: FleetDriver; stations: Stat
       </div>
       {d.job && (
         <div className="flex flex-wrap items-center gap-2">
-          <JobStatusPill status={d.job.status} kind={d.job.kind} />
+          <JobStatusPill status={d.job.status} kind={d.job.kind} forShop={d.job.forShop} />
           <span>
             {d.job.trackingNo ? `${d.job.trackingNo} · ` : ""}
             {route(d.job, name)}

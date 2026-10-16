@@ -14,7 +14,17 @@ import {
   MERCHANT_TIERS,
   nearShop,
   STANDARD_EMPLOYEE_LIMIT,
+  cleanAddressLabel,
+  hasStatistics,
+  MAX_MERCHANT_ADDRESSES,
+  merchantStats as computeStats,
+  validStatsQuery,
   type AdminMerchant,
+  type MerchantAddress,
+  type MerchantAddressInput,
+  type MerchantStats,
+  type MerchantStatsQuery,
+  type StatsCheckin,
   type DriverShops,
   type MerchantActivity,
   type MerchantApprover,
@@ -52,6 +62,8 @@ import {
   driverRow,
   driverSettings,
   JOB_SELECT,
+  loadJob,
+  receiveShopReturn,
   toJob,
   type DriverRow,
   type JobRow,
@@ -126,6 +138,21 @@ const CHECKIN_SELECT = `select k.*, m.name as merchant_name, d.full_name as driv
   from merchant_checkins k join merchants m on m.id = k.merchant_id left join drivers d on d.user_id = k.driver_id`;
 
 type CheckinView = CheckinRow & { merchant_name: string; driver_name: string | null };
+
+interface AddressRow {
+  id: string;
+  merchant_id: string;
+  label: string;
+  address: string;
+  phone: string;
+  lat: number;
+  lng: number;
+  created_at: string;
+}
+
+function toAddress(r: AddressRow): MerchantAddress {
+  return { id: r.id, label: r.label, address: r.address, phone: r.phone, lat: r.lat, lng: r.lng, createdAt: r.created_at };
+}
 
 const MEMBER_SELECT = `select mm.*, u.full_name, u.phone, u.email from merchant_members mm join users u on u.id = mm.user_id`;
 
@@ -204,7 +231,7 @@ async function toMerchantJobs(db: D1Database, rows: JobRow[]): Promise<MerchantJ
   }
   return rows.map((r) => ({
     ...toJob(r),
-    ...(r.kind === "courier" && r.handover_code && r.status === "picked_up" ? { handoverCode: r.handover_code } : {}),
+    ...(r.kind === "courier" && r.handover_code && (r.status === "picked_up" || r.status === "at_door") ? { handoverCode: r.handover_code } : {}),
     bookedBy: r.booked_by ? { userId: r.booked_by, name: names.get(r.booked_by) ?? null } : null,
   }));
 }
@@ -272,11 +299,11 @@ export async function merchantView(c: ParcelCtx): Promise<MerchantView> {
   const { shop, isOwner } = await requireMember(c);
   const settings = await driverSettings(c.db);
   const today: MerchantToday = { booked: 0, running: 0, done: 0, failed: 0, cancelled: 0 };
-  const empty = { live: [], members: [], invites: [], drivers: [], checkins: [], unpaid: [] };
+  const empty = { live: [], members: [], invites: [], drivers: [], checkins: [], unpaid: [], addresses: [] };
   if (shop.status !== "approved") return { merchant: toInfo(shop, 0), isOwner, today, settings, ...empty };
   await expireInvites(c.db);
   await dispatch(c);
-  const [live, counts, used] = await Promise.all([
+  const [live, counts, used, addresses] = await Promise.all([
     c.db
       .prepare(`${JOB_SELECT} where j.merchant_id = ? and j.status in (${RUNNING.map(() => "?").join(", ")}) order by j.created_at desc limit 100`)
       .bind(shop.id, ...RUNNING)
@@ -286,6 +313,7 @@ export async function merchantView(c: ParcelCtx): Promise<MerchantView> {
       .bind(shop.id, todayStart())
       .all<{ status: JobStatus; n: number }>(),
     usedPlaces(c.db, shop.id),
+    c.db.prepare("select * from merchant_addresses where merchant_id = ? order by created_at").bind(shop.id).all<AddressRow>(),
   ]);
   for (const r of counts.results) {
     today.booked += r.n;
@@ -294,7 +322,14 @@ export async function merchantView(c: ParcelCtx): Promise<MerchantView> {
     else if (r.status === "cancelled") today.cancelled += r.n;
     else today.running += r.n;
   }
-  const base = { merchant: toInfo(shop, used), isOwner, today, settings, live: await toMerchantJobs(c.db, live.results) };
+  const base = {
+    merchant: toInfo(shop, used),
+    isOwner,
+    today,
+    settings,
+    live: await toMerchantJobs(c.db, live.results),
+    addresses: addresses.results.map(toAddress),
+  };
   if (!isOwner) return { ...base, members: [], invites: [], drivers: [], checkins: [], unpaid: [] };
   const [members, invites, drivers, checkins, unpaid] = await Promise.all([
     c.db.prepare(`${MEMBER_SELECT} where mm.merchant_id = ? order by mm.is_owner desc, mm.created_at`).bind(shop.id).all<MemberRow>(),
@@ -319,6 +354,9 @@ export async function merchantView(c: ParcelCtx): Promise<MerchantView> {
   };
 }
 
+/** Most lines of the bookings log (and its CSV export) for one period. */
+const BOOKINGS_MAX = 2000;
+
 /** The shop's bookings in a period (every member: decision 4), newest first. */
 export async function merchantBookings(c: ParcelCtx, query: MerchantBookingsQuery): Promise<MerchantJob[]> {
   const { shop } = await requireApprovedMember(c);
@@ -338,10 +376,96 @@ export async function merchantBookings(c: ParcelCtx, query: MerchantBookingsQuer
     params.push(query.bookedBy);
   }
   const { results } = await c.db
-    .prepare(`${JOB_SELECT} where ${where.join(" and ")} order by j.created_at desc limit 500`)
+    .prepare(`${JOB_SELECT} where ${where.join(" and ")} order by j.created_at desc limit ${BOOKINGS_MAX}`)
     .bind(...params)
     .all<JobRow>();
   return toMerchantJobs(c.db, results);
+}
+
+/**
+ * The shop's statistics (merchant of an unlocked shop only, decision 5): trips booked in the
+ * period, and the check-ins of its assigned drivers that ended in it.
+ */
+export async function merchantStatistics(c: ParcelCtx, query: Partial<MerchantStatsQuery>): Promise<MerchantStats> {
+  const { shop } = await requireOwner(c);
+  if (!hasStatistics(shop.tier)) throw new ApiError("merchant_locked", 403);
+  if (!validStatsQuery(query)) throw new ApiError("bad_request");
+  const start = `${query.from}T00:00:00.000Z`;
+  const end = new Date(`${query.to}T00:00:00.000Z`);
+  end.setUTCDate(end.getUTCDate() + 1);
+  const [trips, checkins] = await Promise.all([
+    c.db
+      .prepare(
+        `select j.status, j.fare_fcfa, j.created_at, j.picked_up_at, j.done_at, j.booked_by, j.driver_id, coalesce(u.full_name, u.phone, u.email) as booker
+         from delivery_jobs j left join users u on u.id = j.booked_by
+         where j.merchant_id = ? and j.created_at >= ? and j.created_at < ?`,
+      )
+      .bind(shop.id, start, end.toISOString())
+      .all<{ status: JobStatus; fare_fcfa: number; created_at: string; picked_up_at: string | null; done_at: string | null; booked_by: string | null; driver_id: string | null; booker: string | null }>(),
+    c.db
+      .prepare(`${CHECKIN_SELECT} where k.merchant_id = ? and k.out_at >= ? and k.out_at < ?`)
+      .bind(shop.id, start, end.toISOString())
+      .all<CheckinView>(),
+  ]);
+  return computeStats(
+    query,
+    trips.results.map((t) => ({
+      status: t.status,
+      fareFcfa: t.fare_fcfa,
+      createdAt: t.created_at,
+      pickedUpAt: t.picked_up_at,
+      doneAt: t.done_at,
+      bookedBy: t.booked_by ? { userId: t.booked_by, name: t.booker } : null,
+      driverId: t.driver_id,
+    })),
+    checkins.results.map(
+      (k): StatsCheckin => ({ driverId: k.driver_id, driverName: k.driver_name ?? "", payMode: k.pay_mode, inAt: k.in_at, outAt: k.out_at!, amountFcfa: k.amount_fcfa }),
+    ),
+  );
+}
+
+/**
+ * Any member confirms a courier whose recipient was absent is back at the shop. Also while
+ * the shop is suspended, so the driver is not left waiting.
+ */
+export async function confirmShopReturn(c: ParcelCtx, jobId: string) {
+  const { user, shop } = await requireMember(c);
+  const job = await loadJob(c.db, jobId);
+  if (job.merchant_id !== shop.id) throw new ApiError("job_not_found", 404);
+  await receiveShopReturn(c, job, user.id);
+}
+
+// Saved addresses -------------------------------------------------------------------
+
+/** The merchant saves a pickup address (at most MAX_MERCHANT_ADDRESSES). */
+export async function addMerchantAddress(c: ParcelCtx, input: Partial<MerchantAddressInput>): Promise<MerchantAddress> {
+  const { user, shop } = await requireOwner(c);
+  const label = cleanAddressLabel(input?.label);
+  if (!label) throw new ApiError("bad_request");
+  const place = cleanShop({ ...input, name: label });
+  const id = uuid();
+  const now = nowIso();
+  // The limit in the insert itself, so two saves at once cannot pass it.
+  const res = await c.db
+    .prepare(
+      `insert into merchant_addresses (id, merchant_id, label, address, phone, lat, lng, created_at, created_by)
+       select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9 where (select count(*) from merchant_addresses where merchant_id = ?2) < ?10`,
+    )
+    .bind(id, shop.id, label, place.address, place.phone, place.lat, place.lng, now, user.id, MAX_MERCHANT_ADDRESSES)
+    .run();
+  if (!res.meta.changes) throw new ApiError("address_limit");
+  await shopAudit(c, user.id, "merchant_addresses", "insert", id, shop.id, { label, address: place.address }).run();
+  return { id, label, address: place.address, phone: place.phone, lat: place.lat, lng: place.lng, createdAt: now };
+}
+
+export async function removeMerchantAddress(c: ParcelCtx, addressId: string) {
+  const { user, shop } = await requireOwner(c);
+  const row = await c.db.prepare("select * from merchant_addresses where id = ? and merchant_id = ?").bind(addressId, shop.id).first<AddressRow>();
+  if (!row) throw new ApiError("not_found", 404);
+  await c.db.batch([
+    c.db.prepare("delete from merchant_addresses where id = ?").bind(row.id),
+    shopAudit(c, user.id, "merchant_addresses", "delete", row.id, shop.id, { label: row.label, address: row.address }),
+  ]);
 }
 
 /** The shop's activity log (merchant only): team, drivers, check-ins, bookings and cancellations. */

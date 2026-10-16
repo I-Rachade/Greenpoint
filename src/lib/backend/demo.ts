@@ -260,6 +260,11 @@ import {
   endOfDay,
   FAVORITE_ROUND_MINUTES,
   hourlyAmount,
+  cleanAddressLabel,
+  hasStatistics,
+  MAX_MERCHANT_ADDRESSES,
+  merchantStats,
+  validStatsQuery,
   MERCHANT_ADDRESS_MAX,
   MERCHANT_INVITE_DAYS,
   MERCHANT_PAY_MODES,
@@ -270,6 +275,8 @@ import {
   type CheckoutBy,
   type DriverShops,
   type MerchantActivity,
+  type MerchantAddress,
+  type MerchantAddressInput,
   type MerchantApprover,
   type MerchantAssignmentRequest,
   type MerchantBookingsQuery,
@@ -285,6 +292,8 @@ import {
   type MerchantMember,
   type MerchantPayMode,
   type MerchantShopInput,
+  type MerchantStats,
+  type MerchantStatsQuery,
   type MerchantStatus,
   type MerchantTier,
   type MerchantToday,
@@ -408,6 +417,8 @@ interface DemoState {
   merchantDrivers?: DemoMerchantDriver[];
   /** Check-ins of assigned drivers, newest first (merchant_checkins). */
   merchantCheckins?: DemoCheckin[];
+  /** Saved pickup addresses of the shops (merchant_addresses, 0036). */
+  merchantAddresses?: (MerchantAddress & { merchantId: string })[];
 }
 
 interface DemoMerchant {
@@ -462,6 +473,11 @@ interface DemoCheckin {
   outBy: CheckoutBy | null;
   amountFcfa: number | null;
   receivedAt: string | null;
+}
+
+/** Trips with a door step (as hasDoorStep in worker/drivers.ts): home deliveries and shop couriers. */
+function hasDoorStep(job: { kind: DemoJob["kind"]; merchantId?: string | null }): boolean {
+  return job.kind === "delivery" || (job.kind === "courier" && !!job.merchantId);
 }
 
 /** The demo shop: approved, near the Bè station, run by the demo merchant login. */
@@ -3314,6 +3330,7 @@ export class DemoBackend implements Backend {
       atDoorAt: j.atDoorAt,
       doneAt: j.doneAt,
       proofKey: j.proofKey,
+      ...(j.merchantId ? { forShop: true as const } : {}),
     };
   }
 
@@ -3757,7 +3774,7 @@ export class DemoBackend implements Backend {
   async arriveAtDoor(id: string) {
     const state = this.load();
     const { job } = this.myDemoJob(state, id);
-    if (job.kind !== "delivery") throw new BackendError("job_wrong_status");
+    if (!hasDoorStep(job)) throw new BackendError("job_wrong_status");
     this.saveJobs(state, this.updateJob(state, job.id, ["picked_up"], { status: "at_door", atDoorAt: new Date().toISOString() }));
   }
 
@@ -3765,7 +3782,7 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const { job } = this.myDemoJob(state, id);
     // Home deliveries and couriers: the photo of the handover at the door.
-    const atDoor: JobStatus[] = job.kind === "delivery" ? ["picked_up", "at_door"] : job.kind === "courier" ? ["picked_up"] : [];
+    const atDoor: JobStatus[] = hasDoorStep(job) ? ["picked_up", "at_door"] : job.kind === "courier" ? ["picked_up"] : [];
     if (!atDoor.includes(job.status)) throw new BackendError("job_wrong_status");
     if (image.size > MAX_PROMO_IMAGE_BYTES / 4) throw new BackendError("image_too_large");
     const key = `proofs/${job.id}-${Date.now().toString(36)}.jpg`;
@@ -3815,9 +3832,15 @@ export class DemoBackend implements Backend {
   async failDelivery(id: string) {
     const state = this.load();
     const { job } = this.myDemoJob(state, id);
-    if (job.kind !== "delivery" || job.status !== "at_door" || !job.atDoorAt) throw new BackendError("job_wrong_status");
+    if (!hasDoorStep(job) || job.status !== "at_door" || !job.atDoorAt) throw new BackendError("job_wrong_status");
     if (Date.now() - new Date(job.atDoorAt).getTime() < this.settingsOf(state).waitMinutes * 60_000) throw new BackendError("wait_longer");
-    this.saveJobs(state, this.updateJob(state, job.id, ["at_door"], { status: "returning" }));
+    this.saveJobs(state, this.updateJob(state, job.id, ["at_door"], { status: "returning" }), {
+      table: "delivery_jobs",
+      action: "update",
+      rowId: job.id,
+      userId: job.driverId,
+      changes: { status: ["at_door", "returning"], ...(job.merchantId ? { merchant_id: job.merchantId } : {}) },
+    });
   }
 
   /** Ride: the customer got on. Courier: the driver took the parcel and the fare in cash. */
@@ -3840,11 +3863,12 @@ export class DemoBackend implements Backend {
     const { driver, job } = this.myDemoJob(state, id);
     if (job.kind !== "ride" && job.kind !== "courier") throw new BackendError("job_wrong_status");
     if (job.kind === "courier") this.checkCourierHandover(state, job, code);
-    const jobs = this.updateJob(state, job.id, ["picked_up"], { status: "done", doneAt: new Date().toISOString() });
+    const from: JobStatus[] = hasDoorStep(job) ? ["picked_up", "at_door"] : ["picked_up"];
+    const jobs = this.updateJob(state, job.id, from, { status: "done", doneAt: new Date().toISOString() });
     this.saveJobs(
       state,
       jobs,
-      { table: "delivery_jobs", action: "update", rowId: job.id, userId: driver.userId, changes: { status: ["picked_up", "done"], collect_fcfa: job.collectFcfa } },
+      { table: "delivery_jobs", action: "update", rowId: job.id, userId: driver.userId, changes: { status: [job.status, "done"], collect_fcfa: job.collectFcfa } },
       {
         greenpoint: this.tripGreenpoint(state, driver.userId, job, job.driverStationId),
         ledger: [
@@ -5124,7 +5148,7 @@ export class DemoBackend implements Backend {
     const u = j.bookedBy ? (state.users ?? demoUsers(new Date())).find((x) => x.id === j.bookedBy) : null;
     return {
       ...this.viewJob(state, j),
-      ...(j.kind === "courier" && j.handoverCode && j.status === "picked_up" ? { handoverCode: j.handoverCode } : {}),
+      ...(j.kind === "courier" && j.handoverCode && (j.status === "picked_up" || j.status === "at_door") ? { handoverCode: j.handoverCode } : {}),
       bookedBy: j.bookedBy ? { userId: j.bookedBy, name: u?.fullName ?? u?.phone ?? u?.email ?? null } : null,
     };
   }
@@ -5212,7 +5236,7 @@ export class DemoBackend implements Backend {
     const { shop, isOwner } = this.requireMember(state);
     const settings = this.settingsOf(state);
     const today: MerchantToday = { booked: 0, running: 0, done: 0, failed: 0, cancelled: 0 };
-    const empty = { live: [], members: [], invites: [], drivers: [], checkins: [], unpaid: [] };
+    const empty = { live: [], members: [], invites: [], drivers: [], checkins: [], unpaid: [], addresses: [] };
     if (shop.status !== "approved") return { merchant: this.merchantInfo(state, shop, 0), isOwner, today, settings, ...empty };
     const jobs = (state.jobs ?? []).filter((j) => j.merchantId === shop.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const running: JobStatus[] = ["open", ...BUSY_JOB_STATUSES];
@@ -5230,6 +5254,9 @@ export class DemoBackend implements Backend {
       today,
       settings,
       live: jobs.filter((j) => running.includes(j.status)).slice(0, 100).map((j) => this.viewMerchantJob(state, j)),
+      addresses: (state.merchantAddresses ?? [])
+        .filter((a) => a.merchantId === shop.id)
+        .map((a) => ({ id: a.id, label: a.label, address: a.address, phone: a.phone, lat: a.lat, lng: a.lng, createdAt: a.createdAt })),
     };
     if (!isOwner) return { ...base, members: [], invites: [], drivers: [], checkins: [], unpaid: [] };
     const monthAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
@@ -5276,8 +5303,99 @@ export class DemoBackend implements Backend {
           (!query.bookedBy || j.bookedBy === query.bookedBy),
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, 500)
+      .slice(0, 2000)
       .map((j) => this.viewMerchantJob(state, j));
+  }
+
+  async merchantStats(query: MerchantStatsQuery): Promise<MerchantStats> {
+    const state = this.load();
+    const { shop } = this.requireOwner(state);
+    if (!hasStatistics(shop.tier)) throw new BackendError("merchant_locked");
+    if (!validStatsQuery(query)) throw new BackendError("unknown", "bad_request");
+    const start = `${query.from}T00:00:00.000Z`;
+    const end = new Date(`${query.to}T00:00:00.000Z`);
+    end.setUTCDate(end.getUTCDate() + 1);
+    const users = state.users ?? demoUsers(new Date());
+    const trips = (state.jobs ?? [])
+      .filter((j) => j.merchantId === shop.id && j.createdAt >= start && j.createdAt < end.toISOString())
+      .map((j) => {
+        const u = j.bookedBy ? users.find((x) => x.id === j.bookedBy) : null;
+        return {
+          status: j.status,
+          fareFcfa: j.fareFcfa,
+          createdAt: j.createdAt,
+          pickedUpAt: j.pickedUpAt,
+          doneAt: j.doneAt,
+          bookedBy: j.bookedBy ? { userId: j.bookedBy, name: u?.fullName ?? u?.phone ?? u?.email ?? null } : null,
+          driverId: j.driverId,
+        };
+      });
+    const checkins = this.checkinsOf(state)
+      .filter((k) => k.merchantId === shop.id && k.outAt && k.outAt >= start && k.outAt < end.toISOString())
+      .map((k) => ({
+        driverId: k.driverId,
+        driverName: (state.drivers ?? []).find((d) => d.userId === k.driverId)?.fullName ?? "",
+        payMode: k.payMode,
+        inAt: k.inAt,
+        outAt: k.outAt!,
+        amountFcfa: k.amountFcfa,
+      }));
+    return merchantStats(query, trips, checkins);
+  }
+
+  async addMerchantAddress(input: MerchantAddressInput): Promise<MerchantAddress> {
+    const state = this.load();
+    const { shop } = this.requireOwner(state);
+    const label = cleanAddressLabel(input?.label);
+    if (!label) throw new BackendError("unknown", "bad_request");
+    const place = this.cleanShop({ ...input, name: label });
+    const mine = (state.merchantAddresses ?? []).filter((a) => a.merchantId === shop.id);
+    if (mine.length >= MAX_MERCHANT_ADDRESSES) throw new BackendError("address_limit");
+    const address: MerchantAddress = {
+      id: `address-${Date.now().toString(36)}`,
+      label,
+      address: place.address,
+      phone: place.phone,
+      lat: place.lat,
+      lng: place.lng,
+      createdAt: new Date().toISOString(),
+    };
+    this.save(
+      withAudit(
+        { ...state, merchantAddresses: [...(state.merchantAddresses ?? []), { ...address, merchantId: shop.id }] },
+        { table: "merchant_addresses", action: "insert", rowId: address.id, changes: { merchant_id: shop.id, label, address: place.address } },
+      ),
+    );
+    return address;
+  }
+
+  async removeMerchantAddress(addressId: string) {
+    const state = this.load();
+    const { shop } = this.requireOwner(state);
+    const row = (state.merchantAddresses ?? []).find((a) => a.id === addressId && a.merchantId === shop.id);
+    if (!row) throw new BackendError("unknown", "not_found");
+    this.save(
+      withAudit(
+        { ...state, merchantAddresses: (state.merchantAddresses ?? []).filter((a) => a.id !== row.id) },
+        { table: "merchant_addresses", action: "delete", rowId: row.id, changes: { merchant_id: shop.id, label: row.label, address: row.address } },
+      ),
+    );
+  }
+
+  /** As receiveShopReturn() in worker/drivers.ts: back at the shop, failed, the driver keeps their share. */
+  async confirmShopReturn(jobId: string) {
+    const state = this.load();
+    const { shop } = this.requireMember(state);
+    const job = (state.jobs ?? []).find((j) => j.id === jobId && j.merchantId === shop.id);
+    if (!job) throw new BackendError("job_not_found");
+    if (job.kind !== "courier" || job.status !== "returning" || !job.driverId) throw new BackendError("job_wrong_status");
+    const jobs = this.updateJob(state, job.id, ["returning"], { status: "failed", doneAt: new Date().toISOString() });
+    this.saveJobs(
+      state,
+      jobs,
+      { table: "delivery_jobs", action: "update", rowId: job.id, userId: job.driverId, changes: { status: ["returning", "failed"], merchant_id: shop.id, reason: "returned_to_shop" } },
+      { ledger: [...this.earning(state, job, job.driverId, null), ...(state.ledger ?? [])] },
+    );
   }
 
   async merchantActivity(): Promise<MerchantActivity[]> {

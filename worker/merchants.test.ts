@@ -7,7 +7,7 @@ import { runDispatch } from "./drivers";
 import { sha256 } from "./http";
 import { fakeD1 } from "./test-d1";
 import type { DeliveryJob } from "../src/lib/drivers";
-import type { DriverShops, MerchantDriver, MerchantInvite, MerchantView } from "../src/lib/merchants";
+import type { DriverShops, MerchantAddress, MerchantDriver, MerchantInvite, MerchantStats, MerchantView } from "../src/lib/merchants";
 import type { Profile } from "../src/lib/types";
 
 // Merchants (planung/marchand.md): registration and approval, the team with its limit, shop
@@ -344,5 +344,100 @@ describe("deleting the merchant's account", () => {
     expect((await call(env, null, "POST", "/api/auth/delete-account", { pin: PIN }, token)).status).toBe(200);
     expect(db.prepare("select count(*) as n from merchants").get()).toEqual({ n: 0 });
     expect(role(db, "esi")).toBe("rider");
+  });
+});
+
+describe("merchants phase 2", () => {
+  it("brings a courier back to the shop when the recipient is absent; the shop confirms", async () => {
+    const { env, db } = await setup();
+    const { token, profile } = await approvedShop(env, db);
+    await call(env, "kofi", "POST", "/api/driver/queue", { stationId: "st", position: SHOP });
+    const trip = await call<DeliveryJob>(env, null, "POST", "/api/jobs/courier", COURIER, token);
+    await call(env, "kofi", "POST", `/api/driver/jobs/${trip.body.id}/accept`);
+    await call(env, "kofi", "POST", `/api/driver/jobs/${trip.body.id}/board`);
+    expect((await call(env, "kofi", "POST", `/api/driver/jobs/${trip.body.id}/door`)).status).toBe(200);
+    // The shop still sees the code to pass on while the driver waits at the door.
+    const live = await call<MerchantView>(env, null, "GET", "/api/merchant", undefined, token);
+    expect(live.body.live[0]).toMatchObject({ status: "at_door", handoverCode: expect.stringMatching(/^\d{6}$/) });
+    expect((await call(env, "kofi", "POST", `/api/driver/jobs/${trip.body.id}/absent`)).body).toEqual({ error: "wait_longer" });
+    db.prepare("update delivery_jobs set at_door_at = '2020-01-01T00:00:00.000Z' where id = ?").run(trip.body.id);
+    expect((await call(env, "kofi", "POST", `/api/driver/jobs/${trip.body.id}/absent`)).status).toBe(200);
+    expect(db.prepare("select status from delivery_jobs where id = ?").get(trip.body.id)).toEqual({ status: "returning" });
+    // Nobody else confirms the return: not the driver, not a customer, not another shop.
+    expect((await call(env, "kofi", "POST", `/api/merchant/jobs/${trip.body.id}/returned`)).status).toBe(403);
+    expect((await call(env, "ama", "POST", `/api/merchant/jobs/${trip.body.id}/returned`)).status).toBe(403);
+    expect((await call(env, null, "POST", `/api/merchant/jobs/${trip.body.id}/returned`, undefined, token)).status).toBe(200);
+    expect(db.prepare("select status, done_at is not null as done from delivery_jobs where id = ?").get(trip.body.id)).toEqual({ status: "failed", done: 1 });
+    // Paid at the start; the driver keeps their share of the fare.
+    const ledger = db.prepare("select kind from driver_ledger where driver_id = 'kofi' and job_id = ?").all(trip.body.id) as { kind: string }[];
+    expect(ledger.map((l) => l.kind).sort()).toEqual(["collected", "earning"]);
+    expect((await call(env, null, "POST", `/api/merchant/jobs/${trip.body.id}/returned`, undefined, token)).body).toEqual({ error: "job_wrong_status" });
+    const log = db.prepare("select actor from audit_log where table_name = 'delivery_jobs' and row_id = ? and changes like '%returned_to_shop%'").get(trip.body.id);
+    expect(log).toEqual({ actor: profile.id });
+  });
+
+  it("delivers a shop courier from the door with the recipient's code", async () => {
+    const { env, db } = await setup();
+    const { token } = await approvedShop(env, db);
+    await call(env, "kofi", "POST", "/api/driver/queue", { stationId: "st", position: SHOP });
+    const trip = await call<DeliveryJob>(env, null, "POST", "/api/jobs/courier", COURIER, token);
+    await call(env, "kofi", "POST", `/api/driver/jobs/${trip.body.id}/accept`);
+    await call(env, "kofi", "POST", `/api/driver/jobs/${trip.body.id}/board`);
+    await call(env, "kofi", "POST", `/api/driver/jobs/${trip.body.id}/door`);
+    const { handover_code } = db.prepare("select handover_code from delivery_jobs where id = ?").get(trip.body.id) as { handover_code: string };
+    expect((await call(env, "kofi", "POST", `/api/driver/jobs/${trip.body.id}/finish`, { code: handover_code })).status).toBe(200);
+    expect(db.prepare("select status from delivery_jobs where id = ?").get(trip.body.id)).toEqual({ status: "done" });
+    // A customer's courier has no door step (unchanged).
+    await call(env, "kofi", "POST", "/api/driver/queue", { stationId: "st", position: SHOP });
+    const other = await call<DeliveryJob>(env, "yao", "POST", "/api/jobs/courier", COURIER);
+    await call(env, "kofi", "POST", `/api/driver/jobs/${other.body.id}/accept`);
+    await call(env, "kofi", "POST", `/api/driver/jobs/${other.body.id}/board`);
+    expect((await call(env, "kofi", "POST", `/api/driver/jobs/${other.body.id}/door`)).body).toEqual({ error: "job_wrong_status" });
+  });
+
+  it("saves pickup addresses for every member, up to the limit; only the merchant changes them", async () => {
+    const { env, db } = await setup();
+    const { token } = await approvedShop(env, db);
+    const place = { label: " Entrepôt ", address: "Zone portuaire", phone: "90 11 22 44", ...SHOP };
+    const saved = await call<MerchantAddress>(env, null, "POST", "/api/merchant/addresses", place, token);
+    expect(saved.body).toMatchObject({ label: "Entrepôt", phone: "+22890112244" });
+    expect((await call(env, null, "POST", "/api/merchant/addresses", { ...place, label: "x" }, token)).body).toEqual({ error: "bad_request" });
+    expect((await call(env, null, "POST", "/api/merchant/addresses", { ...place, lat: 48.1, lng: 11.5 }, token)).body).toEqual({ error: "outside_area" });
+    for (let i = 1; i < 10; i++) await call(env, null, "POST", "/api/merchant/addresses", { ...place, label: `Dépôt ${i}` }, token);
+    expect((await call(env, null, "POST", "/api/merchant/addresses", place, token)).body).toEqual({ error: "address_limit" });
+    // An employee sees them, cannot change them.
+    const invite = await call<MerchantInvite>(env, null, "POST", "/api/merchant/invites", { phone: "91000001" }, token);
+    await call(env, "esi", "POST", `/api/merchant-invites/${invite.body.token}/accept`);
+    const view = await call<MerchantView>(env, "esi", "GET", "/api/merchant");
+    expect(view.body.addresses).toHaveLength(10);
+    expect((await call(env, "esi", "DELETE", `/api/merchant/addresses/${saved.body.id}`)).status).toBe(403);
+    expect((await call(env, null, "DELETE", `/api/merchant/addresses/${saved.body.id}`, undefined, token)).status).toBe(200);
+    expect((await call<MerchantView>(env, null, "GET", "/api/merchant", undefined, token)).body.addresses).toHaveLength(9);
+  });
+
+  it("shows statistics to the merchant of an unlocked shop only", async () => {
+    const { env, db } = await setup();
+    const { token, shopId, profile } = await approvedShop(env, db);
+    const day = new Date().toISOString().slice(0, 10);
+    const query = { from: day, to: day, group: "day" };
+    expect((await call(env, null, "POST", "/api/merchant/stats", query, token)).body).toEqual({ error: "merchant_locked" });
+    await call(env, "admin", "POST", `/api/admin/merchants/${shopId}/tier`, { tier: "unlocked" });
+    expect((await call(env, null, "POST", "/api/merchant/stats", { ...query, group: "year" }, token)).body).toEqual({ error: "bad_request" });
+    await call(env, "kofi", "POST", "/api/driver/queue", { stationId: "st", position: SHOP });
+    const done = await call<DeliveryJob>(env, null, "POST", "/api/jobs/ride", { pickup: COURIER.pickup, dropoff: COURIER.dropoff, passengers: 1 }, token);
+    await call(env, "kofi", "POST", `/api/driver/jobs/${done.body.id}/accept`);
+    await call(env, "kofi", "POST", `/api/driver/jobs/${done.body.id}/board`);
+    await call(env, "kofi", "POST", `/api/driver/jobs/${done.body.id}/finish`);
+    const cancelled = await call<DeliveryJob>(env, null, "POST", "/api/jobs/courier", COURIER, token);
+    await call(env, null, "POST", `/api/jobs/${cancelled.body.id}/cancel`, undefined, token);
+    const stats = await call<MerchantStats>(env, null, "POST", "/api/merchant/stats", query, token);
+    expect(stats.status).toBe(200);
+    expect(stats.body.totals).toMatchObject({ booked: 2, done: 1, cancelled: 1, failed: 0, spendFcfa: done.body.fareFcfa, successRate: 1 });
+    expect(stats.body.periods).toEqual([{ key: day, booked: 2, done: 1, failed: 0, cancelled: 1, spendFcfa: done.body.fareFcfa }]);
+    expect(stats.body.employees).toEqual([{ userId: profile.id, name: expect.any(String), booked: 2, done: 1, failed: 0, cancelled: 1, spendFcfa: done.body.fareFcfa }]);
+    // Employees have no backoffice.
+    const invite = await call<MerchantInvite>(env, null, "POST", "/api/merchant/invites", { phone: "91000001" }, token);
+    await call(env, "esi", "POST", `/api/merchant-invites/${invite.body.token}/accept`);
+    expect((await call(env, "esi", "POST", "/api/merchant/stats", query)).status).toBe(403);
   });
 });

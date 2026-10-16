@@ -7,10 +7,10 @@ import { format } from "@/lib/i18n/format";
 import { isMerchantAccount, type MerchantStatus, type MerchantView } from "@/lib/merchants";
 import { useApp } from "../app-provider";
 import { useI18n } from "../i18n-provider";
-import { BoxPlusIcon, GridIcon, HistoryIcon, ListIcon, PulseIcon, ScooterIcon, StoreIcon, TicketIcon, UsersIcon } from "../icons";
+import { BoxPlusIcon, ChartIcon, GridIcon, HistoryIcon, ListIcon, PulseIcon, ScooterIcon, StoreIcon, TicketIcon, UsersIcon } from "../icons";
 import { LoadFailed, StaleNotice } from "../load-state";
 import { Badge, SkeletonCard, type BadgeTone } from "../ui";
-import { MerchantActivityLog, MerchantBookings, MerchantLive, MerchantOverview } from "./merchant-backoffice";
+import { MerchantActivityLog, MerchantBookings, MerchantLive, MerchantOverview, MerchantStatistics } from "./merchant-backoffice";
 import { MerchantBook, MerchantTrips } from "./merchant-book";
 import { MerchantDrivers } from "./merchant-drivers";
 import { NotAMerchant } from "./merchant-invites";
@@ -20,7 +20,7 @@ import { MerchantTeam } from "./merchant-team";
 /** Every member books and follows the shop's trips. */
 const MEMBER_TABS = ["book", "trips"] as const;
 /** The merchant (owner) also has the backoffice. */
-const OWNER_TABS = ["overview", "book", "trips", "live", "bookings", "activity", "team", "drivers", "shop"] as const;
+const OWNER_TABS = ["overview", "book", "trips", "live", "bookings", "stats", "activity", "team", "drivers", "shop"] as const;
 type Tab = (typeof OWNER_TABS)[number];
 
 const TAB_ICON: Record<Tab, ComponentType<SVGProps<SVGSVGElement> & { size?: number }>> = {
@@ -29,6 +29,7 @@ const TAB_ICON: Record<Tab, ComponentType<SVGProps<SVGSVGElement> & { size?: num
   trips: ListIcon,
   live: PulseIcon,
   bookings: TicketIcon,
+  stats: ChartIcon,
   activity: HistoryIcon,
   team: UsersIcon,
   drivers: ScooterIcon,
@@ -40,7 +41,7 @@ const STATUS_TONE: Record<MerchantStatus, BadgeTone> = { pending: "amber", appro
 /**
  * /marchand (planung/marchand.md): a shop account. Every member books courier, pickup and
  * ride trips for the shop and follows all of its trips; the merchant also has the
- * backoffice (overview, live, bookings log, activity, team, drivers, shop). Anyone else
+ * backoffice (overview, live, bookings log, statistics, activity, team, drivers, shop). Anyone else
  * sees their shop invites (customers) or nothing.
  */
 export function MerchantPanel() {
@@ -168,7 +169,7 @@ function MerchantHome() {
 function TabContent({ tab, view, focus, onBooked }: { tab: Tab; view: MerchantView; focus: string | null; onBooked: (job: DeliveryJob) => void }) {
   switch (tab) {
     case "book":
-      return <MerchantBook shop={view.merchant} onBooked={onBooked} />;
+      return <MerchantBook shop={view.merchant} addresses={view.addresses} onBooked={onBooked} />;
     case "trips":
       return <MerchantTrips live={view.live} focus={focus} />;
     case "overview":
@@ -177,6 +178,8 @@ function TabContent({ tab, view, focus, onBooked }: { tab: Tab; view: MerchantVi
       return <MerchantLive view={view} />;
     case "bookings":
       return <MerchantBookings view={view} />;
+    case "stats":
+      return <MerchantStatistics view={view} />;
     case "activity":
       return <MerchantActivityLog />;
     case "team":
@@ -184,7 +187,7 @@ function TabContent({ tab, view, focus, onBooked }: { tab: Tab; view: MerchantVi
     case "drivers":
       return <MerchantDrivers view={view} />;
     case "shop":
-      return <MerchantShop shop={view.merchant} />;
+      return <MerchantShop shop={view.merchant} addresses={view.addresses} />;
   }
 }
 

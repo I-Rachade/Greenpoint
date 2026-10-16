@@ -423,6 +423,11 @@ export interface DeliveryJob {
   /** Called off because no driver took it in time (OPEN_JOB_EXPIRY_MINUTES). */
   noDriver?: boolean;
   /**
+   * Booked by a shop (planung/marchand.md). A shop's courier has a door step like a home
+   * delivery: when the recipient is absent the driver brings it back to the start.
+   */
+  forShop?: true;
+  /**
    * Couriers, for the sender only: the code the recipient gives the driver at the door
    * (made when the driver takes the parcel). The driver hands over for this code or a photo.
    */

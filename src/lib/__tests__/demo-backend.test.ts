@@ -408,6 +408,46 @@ describe("DemoBackend merchants", () => {
     });
   });
 
+  it("phase 2: saved addresses, statistics once unlocked, a courier back at the shop", async () => {
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    await backend.setDriversEnabled(true);
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.joinDriverQueue("st-be", SHOP);
+
+    await backend.register("+22890000006", DEMO_CODE, "2580", "merchant");
+    const saved = await backend.addMerchantAddress({ label: "Entrepôt", address: "Zone portuaire", phone: "90 11 22 44", ...SHOP });
+    expect((await backend.merchantView()).addresses.map((a) => a.label)).toEqual(["Entrepôt"]);
+    await expect(backend.merchantStats({ from: "2026-10-12", to: "2026-10-12", group: "day" })).rejects.toMatchObject({ code: "merchant_locked" });
+    const job = await backend.bookCourier({
+      pickup: { lat: saved.lat, lng: saved.lng, note: saved.address, phone: saved.phone },
+      dropoff: { lat: 6.13, lng: 1.22, note: "Porte bleue" },
+      recipientPhone: "+22897200001",
+      content: "Pagne",
+      size: "S",
+    });
+
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.acceptJob(job.id);
+    await backend.boardRide(job.id);
+    await backend.arriveAtDoor(job.id);
+    await expect(backend.failDelivery(job.id)).rejects.toMatchObject({ code: "wait_longer" });
+    vi.setSystemTime(new Date("2026-10-12T10:00:00Z"));
+    await backend.failDelivery(job.id);
+
+    await backend.register("+22890000006", DEMO_CODE, "2580", "merchant");
+    expect((await backend.merchantView()).live.find((j) => j.id === job.id)).toMatchObject({ status: "returning", forShop: true });
+    await backend.confirmShopReturn(job.id);
+    await expect(backend.confirmShopReturn(job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    await backend.setMerchantTier("merchant-akwaba", "unlocked");
+    await backend.register("+22890000006", DEMO_CODE, "2580", "merchant");
+    const stats = await backend.merchantStats({ from: "2026-10-12", to: "2026-10-12", group: "day" });
+    expect(stats.totals).toMatchObject({ booked: 1, failed: 1, spendFcfa: job.fareFcfa });
+    await backend.removeMerchantAddress(saved.id);
+    expect((await backend.merchantView()).addresses).toEqual([]);
+  });
+
   it("registers a merchant with a pending shop", async () => {
     const profile = await backend.registerMerchant("+22897300001", DEMO_CODE, "2580", { name: "Chez Ama", phone: "+22897300002", address: "Tokoin", lat: 6.15, lng: 1.22 });
     expect(profile.merchant).toMatchObject({ name: "Chez Ama", status: "pending", isOwner: true });

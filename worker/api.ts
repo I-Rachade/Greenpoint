@@ -172,8 +172,12 @@ import {
   driverShops,
   endMerchantDriver,
   inviteEmployee,
+  addMerchantAddress,
+  confirmShopReturn,
   merchantActivity,
   merchantBookings,
+  merchantStatistics,
+  removeMerchantAddress,
   merchantCheckout,
   merchantView,
   myMerchantInvites,
@@ -184,7 +188,15 @@ import {
   setMerchantTier,
   updateShop,
 } from "./merchants";
-import type { MerchantBookingsQuery, MerchantDecision, MerchantDriverInput, MerchantShopInput, MerchantTier } from "../src/lib/merchants";
+import type {
+  MerchantAddressInput,
+  MerchantBookingsQuery,
+  MerchantDecision,
+  MerchantDriverInput,
+  MerchantShopInput,
+  MerchantStatsQuery,
+  MerchantTier,
+} from "../src/lib/merchants";
 import type { PartnerInput } from "../src/lib/partners";
 import { PARTNER_API_BASE } from "../src/lib/partners";
 import {
@@ -2036,6 +2048,10 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/merchant$/, (c) => merchantView(c)],
   ["POST", /^\/api\/merchant\/bookings$/, async (c) => merchantBookings(c, await readJson<MerchantBookingsQuery>(c.request))],
   ["GET", /^\/api\/merchant\/activity$/, (c) => merchantActivity(c)],
+  ["POST", /^\/api\/merchant\/stats$/, async (c) => merchantStatistics(c, await readJson<MerchantStatsQuery>(c.request))],
+  ["POST", /^\/api\/merchant\/addresses$/, async (c) => addMerchantAddress(c, await readJson<MerchantAddressInput>(c.request))],
+  ["DELETE", /^\/api\/merchant\/addresses\/([\w-]+)$/, (c, [id]) => removeMerchantAddress(c, id)],
+  ["POST", /^\/api\/merchant\/jobs\/([\w-]+)\/returned$/, (c, [id]) => confirmShopReturn(c, id)],
   ["POST", /^\/api\/merchant\/shop$/, async (c) => updateShop(c, await readJson<MerchantShopInput>(c.request))],
   ["POST", /^\/api\/merchant\/invites$/, async (c) => inviteEmployee(c, (await readJson<{ phone: string }>(c.request)).phone)],
   ["POST", /^\/api\/merchant\/invites\/([\w-]+)\/revoke$/, (c, [id]) => revokeEmployeeInvite(c, id)],

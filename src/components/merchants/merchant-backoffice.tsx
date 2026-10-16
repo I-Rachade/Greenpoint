@@ -4,7 +4,22 @@ import { useState, type ComponentType, type SVGProps } from "react";
 import type { DeliveryJob, JobStatus } from "@/lib/drivers";
 import { useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { CheckoutBy, MerchantActivity, MerchantBookingsQuery, MerchantCheckin, MerchantJob, MerchantPayMode, MerchantView } from "@/lib/merchants";
+import { downloadText, toCsv } from "@/lib/csv";
+import {
+  hasStatistics,
+  STATS_GROUPS,
+  validStatsQuery,
+  type CheckoutBy,
+  type MerchantActivity,
+  type MerchantBookingsQuery,
+  type MerchantCheckin,
+  type MerchantJob,
+  type MerchantPayMode,
+  type MerchantStats,
+  type MerchantStatsQuery,
+  type MerchantView,
+  type StatsGroup,
+} from "@/lib/merchants";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { JobStatusPill, useFcfa, useJobRoute } from "../drivers/shared";
@@ -13,8 +28,8 @@ import { CheckCircleIcon, ClockIcon, ScooterIcon, TicketIcon, UsersIcon, WalletI
 import { Loaded, ResponsiveRows } from "../owner/shared";
 import { Button, EmptyState } from "../ui";
 import { useDateTime } from "../backoffice/shared";
-import { BookedByLine } from "./merchant-book";
-import { Block, field, JOB_STATUSES, useAction, useClock, useDuration } from "./shared";
+import { BookedByLine, ShopReturn } from "./merchant-book";
+import { Block, field, JOB_STATUSES, useAction, useClock, useDuration, useLongDate } from "./shared";
 import { JobDetails } from "../drivers/customer-jobs";
 
 type Icon = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
@@ -85,6 +100,7 @@ export function MerchantLive({ view }: { view: MerchantView }) {
               <li key={j.id} className="space-y-1 rounded-xl border border-black/10 p-3 text-sm dark:border-white/10">
                 <JobDetails job={j} stations={stations ?? []} />
                 <BookedByLine job={j} />
+                <ShopReturn job={j} />
               </li>
             ))}
           </ul>
@@ -230,11 +246,43 @@ function BookingsTable({ jobs, stationName }: { jobs: MerchantJob[]; stationName
   const fcfa = useFcfa();
   if (jobs.length === 0) return <EmptyState text={b.none} />;
   const total = jobs.filter(isPaid).reduce((n, j) => n + j.fareFcfa, 0);
-  const status = (j: MerchantJob) => <JobStatusPill status={j.status as JobStatus} kind={j.kind} noDriver={j.noDriver} />;
+  const status = (j: MerchantJob) => <JobStatusPill status={j.status as JobStatus} kind={j.kind} noDriver={j.noDriver} forShop={j.forShop} />;
   const driver = (j: MerchantJob) => (j.driver ? `${j.driver.name}${j.driver.plate ? ` · ${j.driver.plate}` : ""}` : "–");
+  const statusText = (j: MerchantJob) =>
+    j.noDriver && j.status === "cancelled"
+      ? t.drivers.noDriver
+      : j.forShop && j.kind === "courier" && j.status === "returning"
+        ? t.drivers.shopReturning
+        : j.forShop && j.kind === "courier" && j.status === "failed"
+          ? t.drivers.shopReturned
+          : t.drivers.status[j.status];
+  // The lines as shown (all of the period and filters), for a spreadsheet. Lomé is on UTC.
+  const exportCsv = () =>
+    downloadText(
+      `${b.fileName}-${jobs[jobs.length - 1].createdAt.slice(0, 10)}-${jobs[0].createdAt.slice(0, 10)}.csv`,
+      toCsv([
+        [b.date, b.bookedBy, b.kind, b.route, b.driver, b.plate, b.status, `${b.price} (FCFA)`, b.paid],
+        ...jobs.map((j) => [
+          j.createdAt.slice(0, 16).replace("T", " "),
+          j.bookedBy?.name ?? "",
+          t.drivers.kind[j.kind],
+          route(j, stationName),
+          j.driver?.name ?? "",
+          j.driver?.plate ?? "",
+          statusText(j),
+          j.fareFcfa,
+          isPaid(j) ? b.yes : "",
+        ]),
+      ]),
+    );
   return (
     <div className="space-y-3">
-      <p className="text-sm text-gp-muted">{format(b.total, { n: jobs.length, amount: fcfa(total) })}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="flex-1 text-sm text-gp-muted">{format(b.total, { n: jobs.length, amount: fcfa(total) })}</p>
+        <Button variant="secondary" size="md" onClick={() => void exportCsv()}>
+          {b.exportCsv}
+        </Button>
+      </div>
       <ResponsiveRows
         rows={jobs}
         rowKey={(j) => j.id}
@@ -263,6 +311,214 @@ function BookingsTable({ jobs, stationName }: { jobs: MerchantJob[]; stationName
           </div>
         )}
       />
+    </div>
+  );
+}
+
+/** "16 octobre", "Semaine du 12 octobre" or "octobre 2026" for a period of the statistics. */
+function usePeriodLabel() {
+  const { t, locale } = useI18n();
+  const long = useLongDate();
+  const month = new Intl.DateTimeFormat(locale === "fr" ? "fr-TG" : "en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+  return (key: string, group: StatsGroup) =>
+    group === "month"
+      ? month.format(new Date(`${key}-01T00:00:00.000Z`))
+      : group === "week"
+        ? format(t.merchant.stats.week, { date: long(`${key}T12:00:00.000Z`) })
+        : long(`${key}T12:00:00.000Z`);
+}
+
+function Figure({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 sm:p-4">
+      <div className="font-heading text-xl font-semibold tabular-nums">{value}</div>
+      <div className="mt-1 text-xs leading-tight text-gp-muted">{label}</div>
+      {hint && <div className="text-[11px] text-gp-muted">{hint}</div>}
+    </div>
+  );
+}
+
+/**
+ * Statistics (phase 2, unlocked shops only, decision 5): trips per day, week or month,
+ * spend, success rate, average time, per team member, and hours and pay per assigned driver.
+ */
+export function MerchantStatistics({ view }: { view: MerchantView }) {
+  const { t } = useI18n();
+  const s = t.merchant.stats;
+  if (!hasStatistics(view.merchant.tier)) {
+    return (
+      <Block title={s.lockedTitle}>
+        <p className="text-sm">{s.lockedText}</p>
+      </Block>
+    );
+  }
+  return <StatsBody />;
+}
+
+function StatsBody() {
+  const { t } = useI18n();
+  const s = t.merchant.stats;
+  const { backend } = useApp();
+  const [query, setQuery] = useState<MerchantStatsQuery>(() => {
+    const to = new Date();
+    return { from: isoDay(new Date(to.getTime() - 29 * 86_400_000)), to: isoDay(to), group: "day" };
+  });
+  const valid = validStatsQuery(query);
+  const { data, error, reload } = useLiveQuery(
+    () => (valid ? backend.merchantStats(query) : Promise.resolve(null)),
+    JSON.stringify(query),
+  );
+  const set = (key: keyof MerchantStatsQuery) => (e: { target: { value: string } }) => {
+    const value = e.target.value;
+    if (!value) return;
+    setQuery((q) => ({ ...q, [key]: value }));
+  };
+  const label = "space-y-1 text-sm";
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <label className={label}>
+          <span className="block">{s.from}</span>
+          <input type="date" className={field} value={query.from} max={query.to} onChange={set("from")} />
+        </label>
+        <label className={label}>
+          <span className="block">{s.to}</span>
+          <input type="date" className={field} value={query.to} min={query.from} onChange={set("to")} />
+        </label>
+        <label className={label}>
+          <span className="block">{s.group}</span>
+          <select className={field} value={query.group} onChange={set("group")}>
+            {STATS_GROUPS.map((g) => (
+              <option key={g} value={g}>
+                {s.groups[g]}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {!valid ? (
+        <p className="text-sm text-red-600">{s.tooLong}</p>
+      ) : (
+        <Loaded data={data} error={error} reload={reload}>
+          {(stats) => (stats ? <StatsView stats={stats} /> : null)}
+        </Loaded>
+      )}
+    </div>
+  );
+}
+
+function StatsView({ stats }: { stats: MerchantStats }) {
+  const { t } = useI18n();
+  const s = t.merchant.stats;
+  const fcfa = useFcfa();
+  const period = usePeriodLabel();
+  const x = stats.totals;
+  const max = Math.max(1, ...stats.periods.map((p) => p.booked));
+  const percent = (v: number | null) => (v === null ? "–" : `${Math.round(v * 100)} %`);
+  const exportCsv = () =>
+    downloadText(
+      `${s.fileName}-${stats.from}-${stats.to}.csv`,
+      toCsv([
+        [s.group, s.booked, s.done, s.failed, s.cancelled, `${s.spend} (FCFA)`],
+        ...stats.periods.map((p) => [period(p.key, stats.group), p.booked, p.done, p.failed, p.cancelled, p.spendFcfa]),
+        [],
+        [s.member, s.booked, s.done, s.failed, s.cancelled, `${s.spend} (FCFA)`],
+        ...stats.employees.map((e) => [e.name ?? "", e.booked, e.done, e.failed, e.cancelled, e.spendFcfa]),
+        [],
+        [s.driver, s.checkins, s.hours, s.trips, `${s.pay} (FCFA)`],
+        ...stats.drivers.map((d) => [d.name, d.checkins, d.hours, d.trips, d.hourlyFcfa]),
+      ]),
+    );
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Figure label={s.booked} value={String(x.booked)} />
+        <Figure label={s.done} value={String(x.done)} />
+        <Figure label={s.failed} value={String(x.failed)} />
+        <Figure label={s.cancelled} value={String(x.cancelled)} />
+        <Figure label={s.spend} value={fcfa(x.spendFcfa)} />
+        <Figure label={s.success} value={percent(x.successRate)} />
+        <Figure label={s.avgTime} value={x.avgMinutes === null ? "–" : format(s.minutes, { n: x.avgMinutes })} hint={s.avgTimeHint} />
+        <Figure label={s.hourly} value={fcfa(x.hourlyFcfa)} />
+      </div>
+      <Block
+        title={s.perPeriod}
+        action={
+          <Button variant="secondary" size="md" onClick={() => void exportCsv()}>
+            {s.exportCsv}
+          </Button>
+        }
+      >
+        {x.booked === 0 ? (
+          <p className="text-sm text-gp-muted">{s.noTrips}</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {stats.periods.map((p) => (
+              <li key={p.key} className="grid grid-cols-[7.5rem_1fr_auto] items-center gap-2 text-sm sm:grid-cols-[10rem_1fr_auto]">
+                <span className="truncate text-gp-muted">{period(p.key, stats.group)}</span>
+                <span className="flex h-3 overflow-hidden rounded-full bg-black/5 dark:bg-white/10" aria-hidden>
+                  <span className="h-full bg-gp-green" style={{ width: `${(p.done / max) * 100}%` }} />
+                  <span className="h-full bg-amber-400" style={{ width: `${((p.booked - p.done) / max) * 100}%` }} />
+                </span>
+                <span className="whitespace-nowrap text-right tabular-nums">
+                  {p.done}/{p.booked} · {fcfa(p.spendFcfa)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Block>
+      <Block title={s.perEmployee}>
+        {stats.employees.length === 0 ? (
+          <p className="text-sm text-gp-muted">{s.noTrips}</p>
+        ) : (
+          <ResponsiveRows
+            rows={stats.employees}
+            rowKey={(e) => e.userId}
+            columns={[
+              { label: s.member, cell: (e) => e.name ?? "–" },
+              { label: s.booked, cell: (e) => e.booked, className: "text-right tabular-nums" },
+              { label: s.done, cell: (e) => e.done, className: "text-right tabular-nums" },
+              { label: s.failed, cell: (e) => e.failed, className: "text-right tabular-nums" },
+              { label: s.cancelled, cell: (e) => e.cancelled, className: "text-right tabular-nums" },
+              { label: s.spend, cell: (e) => fcfa(e.spendFcfa), className: "whitespace-nowrap text-right" },
+            ]}
+            card={(e) => (
+              <div className="space-y-0.5">
+                <p className="font-medium">{e.name ?? "–"}</p>
+                <p className="text-xs text-gp-muted">
+                  {s.booked} {e.booked} · {s.done} {e.done} · {fcfa(e.spendFcfa)}
+                </p>
+              </div>
+            )}
+          />
+        )}
+      </Block>
+      <Block title={s.perDriver}>
+        {stats.drivers.length === 0 ? (
+          <p className="text-sm text-gp-muted">{s.noDrivers}</p>
+        ) : (
+          <ResponsiveRows
+            rows={stats.drivers}
+            rowKey={(d) => d.driverId}
+            columns={[
+              { label: s.driver, cell: (d) => d.name || "–" },
+              { label: s.checkins, cell: (d) => d.checkins, className: "text-right tabular-nums" },
+              { label: s.hours, cell: (d) => d.hours, className: "text-right tabular-nums" },
+              { label: s.trips, cell: (d) => d.trips, className: "text-right tabular-nums" },
+              { label: s.pay, cell: (d) => fcfa(d.hourlyFcfa), className: "whitespace-nowrap text-right" },
+            ]}
+            card={(d) => (
+              <div className="space-y-0.5">
+                <p className="font-medium">{d.name || "–"}</p>
+                <p className="text-xs text-gp-muted">
+                  {s.checkins} {d.checkins} · {s.hours} {d.hours} · {s.trips} {d.trips} · {fcfa(d.hourlyFcfa)}
+                </p>
+              </div>
+            )}
+          />
+        )}
+      </Block>
     </div>
   );
 }
@@ -318,8 +574,13 @@ function useActivityText() {
           const fare = typeof c.fare_fcfa === "number" ? ` · ${fcfa(c.fare_fcfa)}` : "";
           return `${format(a.booked, { kind: kind ? t.drivers.kind[kind] : "" })}${fare}`;
         }
+        // Only a shop's courier comes back (to the shop, not a station).
+        if (status === "returning") return format(a.jobStatus, { status: t.drivers.shopReturning });
+        if (status === "failed" && c.reason === "returned_to_shop") return format(a.jobStatus, { status: t.drivers.shopReturned });
         if (status && status in t.drivers.status) return format(a.jobStatus, { status: t.drivers.status[status as JobStatus] });
         return a.jobChanged;
+      case "merchant_addresses":
+        return format(e.action === "delete" ? a.addressRemoved : a.addressAdded, { label: String(c.label ?? "") });
       default:
         return `${e.table} · ${e.action}`;
     }

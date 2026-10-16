@@ -475,3 +475,10 @@ export const PulseIcon = (p: IconProps) => (
     <path d="M3 12h4l2.5-6 5 12 2.5-6h4" />
   </Svg>
 );
+
+export const ChartIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 20h16" />
+    <path d="M7 16v-5M12 16V6M17 16v-8" />
+  </Svg>
+);
