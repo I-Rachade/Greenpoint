@@ -109,7 +109,7 @@ function Details({ station, prices, onChanged }: { station: StationView; prices:
   async function save(e: FormEvent) {
     e.preventDefault();
     const values = { swapXof: read(swap), chargeKwhXof: read(kwh), chargeMinXof: read(minute) };
-    if (!hours.days.length) return setProblem(t.errors.opening_hours_invalid);
+    if (!openingHoursLine(hours)) return setProblem(t.errors.opening_hours_invalid);
     // Multiples of 5 FCFA, never 0 for a swap or per kWh (as the server checks).
     if (!Object.values(values).every(validPrice) || values.swapXof === 0 || values.chargeKwhXof === 0) return setProblem(o.prices.invalid);
     setProblem(null);

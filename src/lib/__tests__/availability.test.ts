@@ -128,6 +128,11 @@ describe("opening hours and stale reports", () => {
     expect(withinOpeningHours("18:00-02:00", at("01:30"))).toBe(true);
     expect(withinOpeningHours("18:00-02:00", at("12:00"))).toBe(false);
     expect(withinOpeningHours("00:00-24:00", at("03:00"))).toBe(true);
+    // Saturday 2026-10-17: shorter hours than on weekdays.
+    expect(withinOpeningHours("Mo-Fr 08:00-19:00; Sa 08:00-15:00", new Date("2026-10-17T14:00:00Z"))).toBe(true);
+    expect(withinOpeningHours("Mo-Fr 08:00-19:00; Sa 08:00-15:00", new Date("2026-10-17T16:00:00Z"))).toBe(false);
+    expect(withinOpeningHours("Mo-Fr 08:00-19:00; Sa 08:00-15:00", new Date("2026-10-16T18:00:00Z"))).toBe(true);
+    expect(withinOpeningHours("Mo-Fr 08:00-19:00; Sa 08:00-15:00", new Date("2026-10-18T10:00:00Z"))).toBe(false);
   });
 
   it("ignores opening hours it cannot read", () => {

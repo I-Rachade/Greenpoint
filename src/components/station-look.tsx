@@ -18,7 +18,7 @@ import {
   UmbrellaIcon,
   WifiIcon,
 } from "./icons";
-import { parseOpeningHours, type Weekday } from "@/lib/opening-hours";
+import { parseOpeningSchedule, type Weekday } from "@/lib/opening-hours";
 import { useI18n } from "./i18n-provider";
 
 // Pieces shared by the station cards and the station screen: photos, stars, amenities.
@@ -37,21 +37,25 @@ export const AMENITY_ICONS: Record<Amenity, typeof StarIcon> = {
 };
 
 /**
- * Opening hours as people read them: "24h/24", "lun–sam 07:00 – 21:00", "lun, mer, ven 08:00 – 18:00"
- * (src/lib/opening-hours.ts). Older free text is shown as it is.
+ * Opening hours as people read them: "24h/24", "lun–sam 07:00 – 21:00", "lun, mer, ven 08:00 – 18:00",
+ * "lun–ven 08:00 – 19:00 · sam 08:00 – 15:00" (src/lib/opening-hours.ts). Older free text is shown as it is.
  */
 export function useHoursLabel() {
   const { t } = useI18n();
   return (hours: string) => {
     const h = (hours ?? "").trim();
     if (!h) return "–";
-    const parsed = parseOpeningHours(h);
-    if (!parsed) return h;
-    const allWeek = parsed.days.length === 7;
-    const allDay = (parsed.open === "00:00" && parsed.close === "24:00") || parsed.open === parsed.close;
-    if (allWeek && allDay) return t.stationLook.allDay;
-    const days = allWeek ? "" : `${dayRanges(parsed.days, t.stationLook.weekdays)} `;
-    return `${days}${allDay ? t.stationLook.allDay : `${parsed.open} – ${parsed.close}`}`;
+    const schedule = parseOpeningSchedule(h);
+    if (!schedule) return h;
+    return schedule
+      .map((parsed) => {
+        const allWeek = parsed.days.length === 7;
+        const allDay = (parsed.open === "00:00" && parsed.close === "24:00") || parsed.open === parsed.close;
+        if (allWeek && allDay) return t.stationLook.allDay;
+        const days = allWeek ? "" : `${dayRanges(parsed.days, t.stationLook.weekdays)} `;
+        return `${days}${allDay ? t.stationLook.allDay : `${parsed.open} – ${parsed.close}`}`;
+      })
+      .join(" · ");
   };
 }
 
