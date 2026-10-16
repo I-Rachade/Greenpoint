@@ -77,10 +77,11 @@ function ChargeCard({ charge: c, showStation = false, children }: { charge: Char
         </span>
       </div>
       {c.endedByDevice && c.status === "stopped" && <p className="text-xs text-zinc-600 dark:text-zinc-400">{ch.endedByDevice}</p>}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className={`grid grid-cols-2 gap-3 ${c.status === "charging" ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
         {c.status === "charging" && <Figure label={ch.power} value={`${c.powerWatts} W`} />}
         <Figure label={ch.energy} value={formatKwh(c.energyWh, locale)} />
         <Figure label={ch.duration} value={formatDuration(chargeSeconds(c, now))} />
+        <Figure label={ch.kwhPrice} value={`${xof(c.tariff.kwhXof)}/kWh`} />
         <Figure
           label={c.status === "charging" ? ch.priceSoFar : c.status === "paid" ? ch.amountPaid : ch.priceFinal}
           value={xof(c.amountXof)}

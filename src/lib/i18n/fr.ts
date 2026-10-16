@@ -1709,6 +1709,7 @@ export const fr = {
     power: "Puissance",
     energy: "Énergie chargée",
     duration: "Durée",
+    kwhPrice: "Prix du kWh",
     priceSoFar: "Prix actuel",
     priceFinal: "À payer",
     amountPaid: "Payé",
