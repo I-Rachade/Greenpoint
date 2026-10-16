@@ -33,8 +33,8 @@ export function Header() {
     { href: "/", label: t.nav.map, show: true },
     { href: "/stations", label: t.ui.tabs.stations, show: true },
     { href: "/favoris", label: t.ui.tabs.favorites, show: true },
-    // Charging by QR code; on phones it is the raised button in the tab bar (bottom-nav.tsx).
-    { href: "/recharge?scan=1", label: t.ui.tabs.scan, show: !profile || (customer && !isStationStaff(profile)) },
+    // Scan a socket or show my QR code (staff: scan the customer's); on phones it is the raised button in the tab bar.
+    { href: "/scanner", label: t.ui.tabs.scan, show: !profile || customer },
     { href: "/reservations", label: t.nav.reservations, show: customer },
     { href: "/colis", label: t.nav.parcels, show: customer && features.parcels },
     { href: "/courses", label: t.ui.tabs.trips, show: customer && features.parcels },

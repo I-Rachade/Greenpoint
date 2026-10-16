@@ -130,3 +130,20 @@ describe("DemoBackend station work", () => {
     await expect(backend.recordSwap(STATION, { requestId: rid(), customerType: "app", contact: "90000002", pin: "2580" })).rejects.toMatchObject({ code: "own_reservation" });
   });
 });
+
+describe("scanner codes", () => {
+  it("reads back a reservation QR code and nothing else", async () => {
+    const { reservationQrPayload, parseReservationQr } = await import("../reservations");
+    expect(parseReservationQr(reservationQrPayload("res-42", "4821"))).toEqual({ id: "res-42", code: "4821" });
+    expect(parseReservationQr("4821")).toBeNull();
+    expect(parseReservationQr("poinderecharge:resa:res-42:48")).toBeNull();
+  });
+
+  it("tells a customer's own code from other text", async () => {
+    const { customerCode, isCustomerCode, contactFromCode } = await import("../charging");
+    expect(isCustomerCode(customerCode("+22890551234"))).toBe(true);
+    expect(contactFromCode(customerCode("+22890551234"))).toBe("+22890551234");
+    expect(isCustomerCode("+22890551234")).toBe(false);
+    expect(isCustomerCode("poinderecharge:id:")).toBe(false);
+  });
+});

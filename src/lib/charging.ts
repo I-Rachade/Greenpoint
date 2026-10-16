@@ -146,6 +146,12 @@ export function customerCode(contact: string): string {
   return `${ID_PREFIX}${contact}`;
 }
 
+/** Whether a scanned text is a customer's own code ("Mon code" or the wallet's receive code). */
+export function isCustomerCode(text: string): boolean {
+  const t = text.trim();
+  return [ID_PREFIX, PAY_PREFIX].some((prefix) => t.startsWith(prefix) && t.length > prefix.length);
+}
+
 /** The phone number or e-mail in a scanned code, or the text itself when typed. */
 export function contactFromCode(text: string): string {
   const t = text.trim();

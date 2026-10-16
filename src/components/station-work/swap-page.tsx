@@ -74,7 +74,22 @@ function ScanField({ label, hint, value, onChange, required, inputMode }: { labe
  * the reservation's customer and battery type, the customer's code first; the swap then
  * completes the reservation (worker/station-work.ts recordSwap).
  */
-function SwapForm({ station, counter, reservation, onReservationDone }: { station: StationView; counter: StationCounter; reservation?: Reservation; onReservationDone?: () => void }) {
+function SwapForm({
+  station,
+  counter,
+  reservation,
+  onReservationDone,
+  initialCode = "",
+  initialContact = "",
+}: {
+  station: StationView;
+  counter: StationCounter;
+  reservation?: Reservation;
+  onReservationDone?: () => void;
+  /** Filled in from a scan (src/components/station-work/staff-scan.tsx): the reservation's code, or the customer's account. */
+  initialCode?: string;
+  initialContact?: string;
+}) {
   const { t, locale } = useI18n();
   const { backend, features } = useApp();
   const toast = useToast();
@@ -84,9 +99,9 @@ function SwapForm({ station, counter, reservation, onReservationDone }: { statio
   const rows = counter.rows;
   const heldOf = (id: string) => (station.batteryTypes ?? []).find((bt) => bt.id === id)?.reserved ?? 0;
   const [typeId, setTypeId] = useState(reservation?.target ?? (rows.length === 1 ? rows[0].batteryTypeId : ""));
-  const [customerType, setCustomerType] = useState<SwapCustomerType>(reservation ? "app" : "cash");
-  const [code, setCode] = useState("");
-  const [contact, setContact] = useState("");
+  const [customerType, setCustomerType] = useState<SwapCustomerType>(reservation || initialContact ? "app" : "cash");
+  const [code, setCode] = useState(initialCode);
+  const [contact, setContact] = useState(initialContact);
   const [driverCode, setDriverCode] = useState("");
   const [payment, setPayment] = useState<"wallet" | "cash">(features.lite ? "cash" : "wallet");
   const [pin, setPin] = useState("");
@@ -281,7 +296,8 @@ function SwapForm({ station, counter, reservation, onReservationDone }: { statio
 function SwapView({ station }: { station: StationView }) {
   const { t } = useI18n();
   const { backend } = useApp();
-  const reservationId = useSearchParams().get("reservation");
+  const params = useSearchParams();
+  const reservationId = params.get("reservation");
   // Kept once the swap completed the reservation, while the list reloads without it.
   const [finished, setFinished] = useState(false);
   const { data, error, reload } = useLiveQuery(
@@ -307,7 +323,15 @@ function SwapView({ station }: { station: StationView }) {
   }
   return (
     <>
-      <SwapForm key={reservation?.id ?? "walk-in"} station={station} counter={counter} reservation={reservation} onReservationDone={() => setFinished(true)} />
+      <SwapForm
+        key={reservation?.id ?? "walk-in"}
+        station={station}
+        counter={counter}
+        reservation={reservation}
+        onReservationDone={() => setFinished(true)}
+        initialCode={reservation ? (params.get("code") ?? "") : ""}
+        initialContact={reservation ? "" : (params.get("client") ?? "")}
+      />
       <Button variant="ghost" href="/operator/journal">
         {t.work.swap.log}
       </Button>

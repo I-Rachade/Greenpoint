@@ -97,13 +97,13 @@ function ChargeCard({ charge: c, showStation = false, children }: { charge: Char
 
 // Station staff --------------------------------------------------------------------------
 
-function StartForm({ station, pointId, onDone }: { station: StationView; pointId: string; onDone: (error?: string) => void }) {
+function StartForm({ station, pointId, onDone, customer }: { station: StationView; pointId: string; onDone: (error?: string) => void; customer?: string }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
   const ch = t.charging;
-  const [app, setApp] = useState(false);
-  const [contact, setContact] = useState("");
+  const [app, setApp] = useState(!!customer);
+  const [contact, setContact] = useState(customer ?? "");
   const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -176,7 +176,8 @@ function StartForm({ station, pointId, onDone }: { station: StationView; pointId
 }
 
 /** Station staff: the connected outlets, starting and stopping a charge, collecting the cash, today's takings. */
-export function StaffCharging({ station }: { station: StationView }) {
+/** `customer`: an app customer's phone or e-mail, scanned on the scanner page; each start form comes filled in with it. */
+export function StaffCharging({ station, customer }: { station: StationView; customer?: string }) {
   const { t, locale } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
@@ -264,6 +265,7 @@ export function StaffCharging({ station }: { station: StationView }) {
                 <StartForm
                   station={station}
                   pointId={p.id}
+                  customer={customer}
                   onDone={(message) => {
                     setError(message ?? null);
                     if (!message) setStarting(null);
