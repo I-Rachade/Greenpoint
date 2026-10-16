@@ -24,6 +24,8 @@ describe("opening hours", () => {
     expect(cleanOpeningHours("toujours")).toBeNull();
     expect(cleanOpeningHours("25:00-26:00")).toBeNull();
     expect(cleanOpeningHours("mo-fr 7:00-19:30")).toBe("Mo-Fr 07:00-19:30");
+    expect(cleanOpeningHours("Mo-Fr 8:00-19:00;sa 08:00-15:00")).toBe("Mo-Fr 08:00-19:00; Sa 08:00-15:00");
+    expect(cleanOpeningHours("Mo-Fr 08:00-19:00; le samedi matin")).toBeNull();
   });
 
   it("knows open and closed, also past midnight", () => {

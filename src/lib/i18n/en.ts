@@ -472,6 +472,8 @@ export const en: Dictionary = {
     allDay: "Open 24/7",
     noDay: "Choose at least one day.",
     overnight: "Closes after midnight, the next day.",
+    add: "Add other hours",
+    remove: "Remove these hours",
   },
   services: {
     names: {

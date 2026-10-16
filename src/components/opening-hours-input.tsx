@@ -1,22 +1,50 @@
 "use client";
 
 import { useId } from "react";
-import { ALL_DAY, formatOpeningHours, parseOpeningHours, WEEKDAYS, type OpeningHours, type Weekday } from "@/lib/opening-hours";
+import { ALL_DAY, formatOpeningSchedule, parseOpeningSchedule, WEEKDAYS, type OpeningHours, type Weekday } from "@/lib/opening-hours";
 import { useI18n } from "./i18n-provider";
 
 const DEFAULT_HOURS: OpeningHours = { days: WEEKDAYS, open: "07:00", close: "21:00" };
 
 /** The hours a stored line holds; older free text and empty lines start from 07:00–21:00 every day. */
-export function hoursOf(text: string | null | undefined): OpeningHours {
-  return parseOpeningHours(text) ?? DEFAULT_HOURS;
+export function hoursOf(text: string | null | undefined): OpeningHours[] {
+  return parseOpeningSchedule(text) ?? [DEFAULT_HOURS];
 }
 
 /**
- * Opening hours as day toggles and two times (plan phase 8): never free text, never empty.
- * `onChange` gets the canonical line (src/lib/opening-hours.ts), or "" while no day is chosen,
- * which the server refuses (opening_hours_invalid).
+ * Opening hours as one or more rows of day toggles and two times (plan phase 8): never free text,
+ * never empty. A second row gives some days other times ("Mo-Fr 08:00-19:00; Sa 08:00-15:00").
  */
-export function OpeningHoursInput({ value, onChange, disabled = false }: { value: OpeningHours; onChange: (hours: OpeningHours) => void; disabled?: boolean }) {
+export function OpeningHoursInput({ value, onChange, disabled = false }: { value: OpeningHours[]; onChange: (hours: OpeningHours[]) => void; disabled?: boolean }) {
+  const { t } = useI18n();
+  const h = t.hoursInput;
+  const set = (i: number, hours: OpeningHours) => onChange(value.map((v, j) => (j === i ? hours : v)));
+  return (
+    <fieldset className="space-y-3" disabled={disabled}>
+      <legend className="text-sm font-medium">{h.legend}</legend>
+      {value.map((hours, i) => (
+        <div key={i} className={value.length > 1 ? "space-y-2 rounded-xl border border-gp-border p-3" : undefined}>
+          <HoursRow value={hours} onChange={(next) => set(i, next)} />
+          {value.length > 1 && (
+            <button type="button" className="min-h-11 text-sm font-semibold text-red-600" onClick={() => onChange(value.filter((_, j) => j !== i))}>
+              {h.remove}
+            </button>
+          )}
+        </div>
+      ))}
+      <button
+        type="button"
+        className="min-h-11 text-sm font-semibold text-gp-green-dark dark:text-gp-green"
+        onClick={() => onChange([...value, { days: [], open: DEFAULT_HOURS.open, close: DEFAULT_HOURS.close }])}
+      >
+        {h.add}
+      </button>
+    </fieldset>
+  );
+}
+
+/** One row: day toggles and two times. */
+function HoursRow({ value, onChange }: { value: OpeningHours; onChange: (hours: OpeningHours) => void }) {
   const { t } = useI18n();
   const id = useId();
   const h = t.hoursInput;
@@ -29,8 +57,7 @@ export function OpeningHoursInput({ value, onChange, disabled = false }: { value
   };
 
   return (
-    <fieldset className="space-y-2" disabled={disabled}>
-      <legend className="text-sm font-medium">{h.legend}</legend>
+    <div className="space-y-2">
       <div role="group" aria-label={h.days} className="flex flex-wrap gap-1.5">
         {WEEKDAYS.map((d) => {
           const on = value.days.includes(d);
@@ -91,11 +118,11 @@ export function OpeningHoursInput({ value, onChange, disabled = false }: { value
         </div>
       )}
       {overnight && <p className="text-xs text-zinc-500">{h.overnight}</p>}
-    </fieldset>
+    </div>
   );
 }
 
-/** The line to save: canonical, or "" without a day (refused by the server). */
-export function openingHoursLine(hours: OpeningHours): string {
-  return hours.days.length ? formatOpeningHours(hours) : "";
+/** The line to save: canonical, or "" while a row has no day (refused by the server). */
+export function openingHoursLine(hours: OpeningHours[]): string {
+  return hours.length && hours.every((x) => x.days.length) ? formatOpeningSchedule(hours) : "";
 }

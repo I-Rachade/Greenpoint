@@ -3,6 +3,7 @@
 //   "07:00-21:00"            every day
 //   "Mo-Sa 07:00-21:00"      Monday to Saturday
 //   "Mo,We,Fr 08:00-18:00"   some days
+//   "Mo-Fr 08:00-19:00; Sa 08:00-15:00"   several times, joined by "; "
 // Times are Lomé time (UTC). A closing time before the opening time runs past midnight;
 // "00:00-24:00" is all day. Older free text keeps working as "open" (withinOpeningHours).
 
@@ -81,10 +82,27 @@ export function formatOpeningHours(h: OpeningHours): string {
   return days.length === 7 ? times : `${daySpec(days)} ${times}`;
 }
 
+/** Every part of `text` ("; " between them), or null when any part is free text (and for empty text). */
+export function parseOpeningSchedule(text: string | null | undefined): OpeningHours[] | null {
+  const parts = (text ?? "").split(";").map((p) => p.trim());
+  const out: OpeningHours[] = [];
+  for (const part of parts) {
+    const h = parseOpeningHours(part);
+    if (!h) return null;
+    out.push(h);
+  }
+  return out;
+}
+
+/** The canonical line of several times. */
+export function formatOpeningSchedule(schedule: OpeningHours[]): string {
+  return schedule.map(formatOpeningHours).join("; ");
+}
+
 /** What a save sends, made canonical; null when it is not days and times (empty included). */
 export function cleanOpeningHours(text: unknown): string | null {
-  const h = parseOpeningHours(String(text ?? ""));
-  return h && h.days.length ? formatOpeningHours(h) : null;
+  const schedule = parseOpeningSchedule(String(text ?? ""));
+  return schedule && schedule.every((h) => h.days.length) ? formatOpeningSchedule(schedule) : null;
 }
 
 const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));

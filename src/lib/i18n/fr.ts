@@ -472,6 +472,8 @@ export const fr = {
     allDay: "Ouvert 24 h/24",
     noDay: "Choisissez au moins un jour.",
     overnight: "Ferme après minuit, le lendemain.",
+    add: "Ajouter d'autres horaires",
+    remove: "Retirer ces horaires",
   },
   services: {
     names: {

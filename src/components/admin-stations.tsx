@@ -154,7 +154,7 @@ function StationForm({
       setProblem(t.errors.station_without_point);
       return;
     }
-    if (!hours.days.length) {
+    if (!openingHoursLine(hours)) {
       setProblem(t.errors.opening_hours_invalid);
       return;
     }
