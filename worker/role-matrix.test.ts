@@ -80,6 +80,10 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/admin/operators": ADMIN,
   "GET /api/admin/battery-types": ADMIN,
   "POST /api/admin/battery-types": ADMIN,
+  "GET /api/batteries": OWNER, // battery register: owners read their stations' batteries
+  "GET /api/batteries/:id": OWNER,
+  "POST /api/admin/batteries": ADMIN,
+  "PATCH /api/admin/batteries/:id": ADMIN,
   "GET /api/admin/ev-chargers": ADMIN,
   "POST /api/admin/ev-chargers": ADMIN,
   "DELETE /api/admin/ev-chargers/:id": ADMIN,
@@ -93,6 +97,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/stations/:id/swaps": STATION,
   "GET /api/stations/:id/swaps": STATION,
   "GET /api/stations/:id/battery-events": OWNER, // counter history: backoffice
+  "GET /api/stations/:id/batteries/lookup": STATION, // the swap form: is this battery known?
   "GET /api/admin/reservations": ADMIN,
   "GET /api/promotions/current": ALL,
   "GET /api/features": ALL,

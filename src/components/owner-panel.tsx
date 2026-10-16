@@ -7,8 +7,9 @@ import { format } from "@/lib/i18n/format";
 import type { ReportPeriod } from "@/lib/owner-backoffice";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
-import { CheckCircleIcon, HistoryIcon, PulseIcon, StoreIcon, UsersIcon, WalletIcon } from "./icons";
+import { BatteryIcon, CheckCircleIcon, HistoryIcon, PulseIcon, StoreIcon, UsersIcon, WalletIcon } from "./icons";
 import { LoadFailed, StaleNotice } from "./load-state";
+import { BatteryRegistry } from "./batteries/battery-registry";
 import { HistoryView } from "./owner/history";
 import { LiveView } from "./owner/live";
 import { ReportView } from "./owner/report";
@@ -19,13 +20,14 @@ import { EmptyState, SkeletonCard } from "./ui";
 
 export { SERVICE_TONE } from "./owner/stations";
 
-const TABS = ["live", "report", "history", "staff", "stations"] as const;
+const TABS = ["live", "report", "history", "batteries", "staff", "stations"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_ICON: Record<Tab, ComponentType<SVGProps<SVGSVGElement> & { size?: number }>> = {
   live: PulseIcon,
   report: WalletIcon,
   history: HistoryIcon,
+  batteries: BatteryIcon,
   staff: UsersIcon,
   stations: StoreIcon,
 };
@@ -197,6 +199,7 @@ export function OwnerPanel() {
                 {tab === "live" && <LiveView stationId={selected?.id ?? null} stationName={stationName} />}
                 {tab === "report" && <ReportView stationId={selected?.id ?? null} days={days} />}
                 {tab === "history" && <HistoryView stationId={selected?.id ?? null} days={days} />}
+                {tab === "batteries" && <BatteryRegistry stationId={selected?.id ?? null} />}
                 {tab === "staff" && <StaffView view={data} stations={shown} onChanged={changed} />}
                 {tab === "stations" && <StationsView stations={shown} prices={data.prices} services={services ?? []} onChanged={changed} />}
               </div>

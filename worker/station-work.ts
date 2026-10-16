@@ -46,6 +46,8 @@ import { DB_CUSTOMER, DB_DRIVER } from "./roles";
 import { requireService } from "./services";
 import { walletAccess } from "./wallet";
 import { checkPickupCode, heldBatteriesSql, stillActive, type ReservationRow } from "./reservations";
+import { resolveSwapBattery, swapBatteryStatements, swapType } from "./batteries";
+import { batteryNumbersRequired } from "../src/lib/batteries";
 
 export interface WorkCtx {
   env: Env;
@@ -574,6 +576,13 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
   }
 
   const key = await counterKey(db, stationId, input.batteryTypeId);
+  // Battery register (0041): at a station with battery types every swap names its batteries.
+  const batteryType = await swapType(db, key);
+  if (batteryNumbersRequired(key !== "") && (!batteryOut || (takesBatteryIn(type) && !batteryIn))) throw new ApiError("battery_number_required");
+  const batteriesOf = {
+    out: batteryOut ? await resolveSwapBattery(db, batteryOut, batteryType) : null,
+    in: batteryIn ? await resolveSwapBattery(db, batteryIn, batteryType) : null,
+  };
   // How it is paid (Lite: cash only).
   let payment: SwapPayment;
   let amount: number;
@@ -658,6 +667,23 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
   const swapExists = { sql: "exists (select 1 from swap_log where request_id = ?12)", value: input.requestId };
   if (takesBatteryIn(type)) {
     statements.push(...eventStatements(db, { stationId, key, type: "empty_in", delta: 1, reason: null, requestId: inRequest, swapId, actor, now, onlyIf: swapExists }));
+  }
+  for (const direction of ["out", "in"] as const) {
+    const battery = batteriesOf[direction];
+    if (!battery) continue;
+    statements.push(
+      ...swapBatteryStatements(db, {
+        battery,
+        direction,
+        type: batteryType,
+        stationId,
+        swapId,
+        requestId: input.requestId,
+        holderId: customer?.id ?? driver?.driverId ?? null,
+        actor,
+        now,
+      }),
+    );
   }
   if (reservation) {
     statements.push(

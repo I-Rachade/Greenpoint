@@ -16,6 +16,24 @@ import {
   type VehicleType,
 } from "../types";
 import { BackendError, type Backend, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
+import { applyDemoSwapBattery, resolveDemoBattery, seedDemoBatteries, type DemoBattery, type DemoBatteryEvent, type DemoSwapBattery } from "./demo-batteries";
+import {
+  BATTERY_LIST_MAX,
+  batteryNumbersRequired,
+  cleanStatusReason,
+  isBatteryStatus,
+  REGISTER_MAX,
+  sortBrands,
+  type BatteryDetail,
+  type BatteryFilter,
+  type BatteryHistoryEntry,
+  type BatteryList,
+  type BatteryLookup,
+  type BatteryStatusInput,
+  type BatteryView,
+  type RegisterBatteriesInput,
+  type RegisterBatteriesResult,
+} from "../batteries";
 import {
   freeOfType,
   heldTargets,
@@ -418,6 +436,9 @@ interface DemoState {
   batteryEvents?: (BatteryEventView & { requestId: string; stationId: string; personId: string })[];
   /** Empty batteries charging at the station, by station id then counter key (battery_counter.empty). */
   batteryEmpty?: Record<string, Record<string, number>>;
+  /** Battery register (migration 0041): batteries and their history (default: seedDemoBatteries). */
+  batteries?: DemoBattery[];
+  batteryHistory?: DemoBatteryEvent[];
   /** Swap price per station in FCFA (stations.price_battery_xof); missing = DEMO_SWAP_PRICE at own stations. */
   swapPrices?: Record<string, number | null>;
   /** Swap log, newest first (as table swap_log). */
@@ -1718,6 +1739,14 @@ export class DemoBackend implements Backend {
     }
 
     const key = this.counterKey(state, stationId, input.batteryTypeId);
+    // Battery register: at a station with battery types every swap names its batteries.
+    if (batteryNumbersRequired(key !== "") && (!batteryOut || (takesBatteryIn(type) && !batteryIn))) throw new BackendError("battery_number_required");
+    const batteryType = key ? ((state.batteryTypes ?? DEMO_BATTERY_TYPES).find((t) => t.id === key) ?? null) : null;
+    const register = this.batteryRegister(state);
+    const batteriesOf: { out: DemoSwapBattery | null; in: DemoSwapBattery | null } = {
+      out: batteryOut ? resolveDemoBattery(register.batteries, batteryOut, batteryType) : null,
+      in: batteryIn ? resolveDemoBattery(register.batteries, batteryIn, batteryType) : null,
+    };
     let payment: SwapPayment;
     let amount: number;
     const price = swapPrice(state, station);
@@ -1796,6 +1825,25 @@ export class DemoBackend implements Backend {
       role: actor.role,
       createdAt: new Date().toISOString(),
     };
+    let reg = register;
+    for (const direction of ["out", "in"] as const) {
+      const battery = batteriesOf[direction];
+      if (!battery) continue;
+      reg = applyDemoSwapBattery(reg, {
+        battery,
+        direction,
+        typeId: batteryType?.id ?? null,
+        stationId,
+        swapId,
+        holderId: customer?.id ?? driver?.driverId ?? null,
+        personId: actor.profile.id,
+        role: actor.role,
+        payment,
+        amountXof: amount,
+        now: entry.createdAt,
+      });
+    }
+    next = { ...next, batteries: reg.batteries, batteryHistory: reg.history };
     next = { ...next, swaps: [{ ...entry, requestId: input.requestId, staffId: actor.profile.id, customerId: customer?.id ?? null, driverId: driver?.driverId ?? null, fleetManagerId: driver?.managerId ?? null }, ...(next.swaps ?? [])].slice(0, 1000) };
     if (reservation) {
       const done = reservation.id;
@@ -1941,6 +1989,183 @@ export class DemoBackend implements Backend {
     const state = this.load();
     this.requireAdmin(state);
     return [...(state.batteryTypes ?? DEMO_BATTERY_TYPES)].sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name));
+  }
+
+  // Battery register (worker/batteries.ts) ------------------------------------------
+
+  private batteryRegister(state: DemoState): { batteries: DemoBattery[]; history: DemoBatteryEvent[] } {
+    if (state.batteries) return { batteries: state.batteries, history: state.batteryHistory ?? [] };
+    return seedDemoBatteries(new Date(), state.batteryTypes ?? DEMO_BATTERY_TYPES);
+  }
+
+  /** Admins see all; an owner the stations of their operators (null = all). */
+  private batteryViewer(state: DemoState): { admin: boolean; own: Set<string> | null } {
+    const profile = this.requireProfile(state);
+    if (profile.role === "admin") return { admin: true, own: null };
+    const owned = profile.role === "operator" ? ownedOperators(state, profile.id) : [];
+    if (!owned.length) throw new BackendError("forbidden");
+    return { admin: false, own: new Set(state.stations.filter((s) => owned.includes(s.operatorId)).map((s) => s.id)) };
+  }
+
+  private batteryView(state: DemoState, b: DemoBattery, history: DemoBatteryEvent[], own: Set<string> | null): BatteryView {
+    const users = state.users ?? demoUsers(new Date());
+    const type = (state.batteryTypes ?? DEMO_BATTERY_TYPES).find((t) => t.id === b.batteryTypeId);
+    const mine = history.filter((h) => h.batteryId === b.id);
+    const lastOut = mine.filter((h) => h.type === "out").sort((x, y) => y.createdAt.localeCompare(x.createdAt))[0];
+    const holder = users.find((u) => u.id === b.holderId);
+    const holderShown = b.location === "customer" && (!own || (lastOut?.stationId != null && own.has(lastOut.stationId)));
+    return {
+      id: b.id,
+      serial: b.serial,
+      brand: b.brand,
+      batteryTypeId: b.batteryTypeId,
+      typeLabel: type ? `${type.brand} ${type.name}` : null,
+      status: b.status,
+      source: b.source,
+      location: b.location,
+      stationId: b.stationId,
+      stationName: state.stations.find((s) => s.id === b.stationId)?.name ?? null,
+      holder: holderShown && holder ? personLabel(holder) : null,
+      swaps: mine.filter((h) => h.type === "out" || h.type === "in").length,
+      lastSwapAt: b.lastSwapAt,
+      createdAt: b.createdAt,
+    };
+  }
+
+  async listBatteries(filter: BatteryFilter = {}): Promise<BatteryList> {
+    const state = this.load();
+    const { admin, own } = this.batteryViewer(state);
+    if (filter.stationId && own && !own.has(filter.stationId)) throw new BackendError("forbidden");
+    const { batteries, history } = this.batteryRegister(state);
+    const passed = (b: DemoBattery, stations: (id: string) => boolean) => history.some((h) => h.batteryId === b.id && h.stationId !== null && stations(h.stationId));
+    const scoped = own ? batteries.filter((b) => passed(b, (id) => own.has(id))) : batteries;
+    const q = String(filter.q ?? "").trim().toUpperCase();
+    const shown = scoped
+      .filter(
+        (b) =>
+          (filter.brand === undefined || filter.brand === null || b.brand === filter.brand) &&
+          (!q || b.serial.includes(q)) &&
+          (!isBatteryStatus(filter.status) || b.status === filter.status) &&
+          (!filter.stationId || passed(b, (id) => id === filter.stationId)),
+      )
+      .sort((x, y) => (y.lastSwapAt ?? y.createdAt).localeCompare(x.lastSwapAt ?? x.createdAt) || x.serial.localeCompare(y.serial))
+      .slice(0, BATTERY_LIST_MAX);
+    const counts = new Map<string, number>((state.batteryTypes ?? DEMO_BATTERY_TYPES).map((t) => [t.brand, 0]));
+    for (const b of scoped) counts.set(b.brand, (counts.get(b.brand) ?? 0) + 1);
+    return {
+      brands: sortBrands([...counts].map(([brand, count]) => ({ brand, count }))),
+      batteries: shown.map((b) => this.batteryView(state, b, history, own)),
+      canEdit: admin,
+    };
+  }
+
+  async batteryDetail(id: string): Promise<BatteryDetail> {
+    const state = this.load();
+    const { own } = this.batteryViewer(state);
+    const { batteries, history } = this.batteryRegister(state);
+    const battery = batteries.find((b) => b.id === id);
+    const mine = history.filter((h) => h.batteryId === id).map((h, i) => ({ h, i })).sort((x, y) => y.h.createdAt.localeCompare(x.h.createdAt) || y.i - x.i).map((x) => x.h);
+    if (!battery || (own && !mine.some((h) => h.stationId && own.has(h.stationId)))) throw new BackendError("unknown", "not_found");
+    const users = state.users ?? demoUsers(new Date());
+    const who = (userId: string | null) => {
+      const u = users.find((x) => x.id === userId);
+      return u ? personLabel(u) : null;
+    };
+    const entries: BatteryHistoryEntry[] = mine.map((h) => {
+      const hidden = own !== null && h.stationId !== null && !own.has(h.stationId);
+      return {
+        id: h.id,
+        type: h.type,
+        stationId: h.stationId,
+        stationName: state.stations.find((s) => s.id === h.stationId)?.name ?? null,
+        swapId: h.swapId,
+        holder: hidden ? null : who(h.holderId),
+        payment: hidden ? null : h.payment,
+        amountXof: hidden ? null : h.amountXof,
+        status: h.status,
+        reason: h.reason,
+        person: hidden ? "" : (who(h.personId) ?? ""),
+        role: h.role,
+        createdAt: h.createdAt,
+      };
+    });
+    return { ...this.batteryView(state, battery, history, own), history: entries };
+  }
+
+  async registerBatteries(input: RegisterBatteriesInput): Promise<RegisterBatteriesResult> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const profile = this.requireProfile(state);
+    const type = (state.batteryTypes ?? DEMO_BATTERY_TYPES).find((t) => t.id === input?.batteryTypeId);
+    if (!type || !Array.isArray(input?.serials)) throw new BackendError("unknown", "bad_request");
+    const serials: string[] = [];
+    const invalid: string[] = [];
+    for (const raw of input.serials) {
+      const clean = cleanBatteryLabel(raw);
+      if (!clean) invalid.push(String(raw ?? ""));
+      else if (!serials.includes(clean)) serials.push(clean);
+    }
+    if (serials.length > REGISTER_MAX) throw new BackendError("unknown", "bad_request");
+    let { batteries, history } = this.batteryRegister(state);
+    const existing: string[] = [];
+    const now = new Date().toISOString();
+    for (const serial of serials) {
+      if (batteries.some((b) => b.serial === serial && b.brand === type.brand)) {
+        existing.push(serial);
+        continue;
+      }
+      const loose = batteries.find((b) => b.serial === serial && b.brand === "");
+      let id = loose?.id;
+      if (loose) {
+        batteries = batteries.map((b) => (b.id === loose.id ? { ...b, brand: type.brand, batteryTypeId: type.id } : b));
+      } else {
+        id = crypto.randomUUID();
+        batteries = [
+          ...batteries,
+          { id, serial, brand: type.brand, batteryTypeId: type.id, status: "in_service", source: "registered", location: "unknown", stationId: null, holderId: null, lastSwapAt: null, createdAt: now },
+        ];
+      }
+      history = [
+        ...history,
+        { id: crypto.randomUUID(), batteryId: id!, type: "registered", stationId: null, swapId: null, holderId: null, status: null, reason: null, personId: profile.id, role: "admin", createdAt: now, payment: null, amountXof: null },
+      ];
+    }
+    this.save({ ...state, batteries, batteryHistory: history });
+    return { added: serials.length - existing.length, existing, invalid };
+  }
+
+  async setBatteryStatus(id: string, input: BatteryStatusInput): Promise<void> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const profile = this.requireProfile(state);
+    const reason = cleanStatusReason(input?.reason);
+    if (!isBatteryStatus(input?.status) || reason === undefined) throw new BackendError("unknown", "bad_request");
+    const { batteries, history } = this.batteryRegister(state);
+    if (!batteries.some((b) => b.id === id)) throw new BackendError("unknown", "not_found");
+    this.save({
+      ...state,
+      batteries: batteries.map((b) => (b.id === id ? { ...b, status: input.status } : b)),
+      batteryHistory: [
+        ...history,
+        { id: crypto.randomUUID(), batteryId: id, type: "status", stationId: null, swapId: null, holderId: null, status: input.status, reason, personId: profile.id, role: "admin", createdAt: new Date().toISOString(), payment: null, amountXof: null },
+      ],
+    });
+  }
+
+  async lookupBattery(stationId: string, serial: string, batteryTypeId: string | null): Promise<BatteryLookup> {
+    const state = this.load();
+    this.stationReader(state, stationId);
+    const clean = cleanBatteryLabel(serial);
+    if (!clean) throw new BackendError("unknown", "bad_request");
+    const type = batteryTypeId ? ((state.batteryTypes ?? DEMO_BATTERY_TYPES).find((t) => t.id === batteryTypeId) ?? null) : null;
+    const { batteries } = this.batteryRegister(state);
+    try {
+      const found = resolveDemoBattery(batteries, clean, type);
+      return found.id ? { state: "known", brand: found.adopt ? "" : found.brand, status: found.status } : { state: "new", brand: null, status: null };
+    } catch {
+      const other = batteries.filter((b) => b.serial === clean).sort((x, y) => x.brand.localeCompare(y.brand))[0];
+      return { state: "wrong_brand", brand: other?.brand ?? null, status: other?.status ?? null };
+    }
   }
 
   async saveBatteryType(id: string | null, input: BatteryTypeInput) {

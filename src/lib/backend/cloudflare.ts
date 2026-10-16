@@ -1,3 +1,4 @@
+import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "../batteries";
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
 import type { AdminCharging, ChargePointInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
 import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
@@ -185,6 +186,8 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "counter_full",
   "swap_price_missing",
   "same_battery",
+  "battery_number_required",
+  "battery_wrong_brand",
   "battery_type_required",
   "cash_only",
   "wrong_fleet",
@@ -527,6 +530,37 @@ export class CloudflareBackend implements Backend {
   async saveBatteryType(id: string | null, input: BatteryTypeInput) {
     await this.call("POST", "/api/admin/battery-types", { id, input });
     this.changed();
+  }
+
+  listBatteries(filter: BatteryFilter = {}) {
+    const q = new URLSearchParams();
+    if (filter.brand !== undefined && filter.brand !== null) q.set("brand", filter.brand);
+    if (filter.q) q.set("q", filter.q);
+    if (filter.status) q.set("status", filter.status);
+    if (filter.stationId) q.set("stationId", filter.stationId);
+    const qs = q.toString();
+    return this.call<BatteryList>("GET", `/api/batteries${qs ? `?${qs}` : ""}`);
+  }
+
+  batteryDetail(id: string) {
+    return this.call<BatteryDetail>("GET", `/api/batteries/${encodeURIComponent(id)}`);
+  }
+
+  async registerBatteries(input: RegisterBatteriesInput) {
+    const result = await this.call<RegisterBatteriesResult>("POST", "/api/admin/batteries", input);
+    this.changed();
+    return result;
+  }
+
+  async setBatteryStatus(id: string, input: BatteryStatusInput) {
+    await this.call("PATCH", `/api/admin/batteries/${encodeURIComponent(id)}`, input);
+    this.changed();
+  }
+
+  lookupBattery(stationId: string, serial: string, batteryTypeId: string | null) {
+    const q = new URLSearchParams({ serial });
+    if (batteryTypeId) q.set("batteryTypeId", batteryTypeId);
+    return this.call<BatteryLookup>("GET", `/api/stations/${encodeURIComponent(stationId)}/batteries/lookup?${q}`);
   }
 
   listEvChargers() {

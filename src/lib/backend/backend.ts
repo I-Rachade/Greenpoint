@@ -1,3 +1,4 @@
+import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "../batteries";
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
 import type { AdminCharging, ChargePointInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
 import type {
@@ -204,6 +205,8 @@ export type BackendErrorCode =
   | "counter_full"
   | "swap_price_missing"
   | "same_battery"
+  | "battery_number_required"
+  | "battery_wrong_brand"
   | "battery_type_required"
   | "cash_only"
   | "wrong_fleet"
@@ -371,6 +374,17 @@ export interface Backend {
   /** Battery types of the motorbike brands, including switched-off ones (admins only). */
   listBatteryTypes(): Promise<BatteryType[]>;
   saveBatteryType(id: string | null, input: BatteryTypeInput): Promise<void>;
+  // Battery register (src/lib/batteries.ts): admins; owners read the batteries of their stations.
+  /** Batteries per brand, last swapped first, with the brands and their counts. */
+  listBatteries(filter?: BatteryFilter): Promise<BatteryList>;
+  /** One battery with its history, newest first. */
+  batteryDetail(id: string): Promise<BatteryDetail>;
+  /** Registers numbers for a battery type in advance (admins); known ones stay as they are. */
+  registerBatteries(input: RegisterBatteriesInput): Promise<RegisterBatteriesResult>;
+  /** In service, repair, lost or retired, with an optional reason (admins). */
+  setBatteryStatus(id: string, input: BatteryStatusInput): Promise<void>;
+  /** The swap form: is this number known at this battery type, new, or of another brand? */
+  lookupBattery(stationId: string, serial: string, batteryTypeId: string | null): Promise<BatteryLookup>;
   /** Electric car chargers, assigned or not, including switched-off ones (admins only). */
   listEvChargers(): Promise<EvCharger[]>;
   /** Adds a charger (`id` null) or changes one, including the station it is assigned to. */
