@@ -19,11 +19,12 @@ export function roleToDb(role: UserRole): string {
 }
 
 /**
- * Accounts that are never customers (W5, R11, plan phase 8 R2): drivers, fleet managers and
- * station staff and owners (role 'operator'). An admin keeps the customer pages, to test.
+ * Accounts that are never customers (W5, R11, plan phase 8 R2): drivers, fleet managers,
+ * station staff and owners (role 'operator') and merchants with their employees. An admin
+ * keeps the customer pages, to test.
  */
 export function notCustomerRole(role: string): boolean {
-  return role === "driver" || role === "fleet_manager" || role === "operator";
+  return role === "driver" || role === "fleet_manager" || role === "operator" || role === "merchant";
 }
 
 /** Only customers (and admins, to test) use the wallet, greenpoints, payments, reservations and bookings: others 403. */

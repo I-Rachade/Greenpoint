@@ -17,6 +17,11 @@ import {
   validPoint,
   validSettings,
   vehicleFits,
+  freshPosition,
+  POSITION_FRESH_MINUTES,
+  TOUR_KINDS,
+  TRACKED_JOB_STATUSES,
+  type DriverPosition,
   MAX_PASSENGERS,
   OPEN_JOB_EXPIRY_MINUTES,
   signDriverPass,
@@ -67,8 +72,12 @@ import { requireService, unlockedStations, unlockedSql } from "./services";
 import { tripStatement } from "./greenpoint";
 import { formerAccountOf } from "./former-accounts";
 import { DB_CUSTOMER, DB_DRIVER, refuseNonCustomer } from "./roles";
+import { autoCheckouts, bookingShop, hourlyTrip, membershipOf, openCheckin, type MerchantRow } from "./merchant-rules";
+import { FAVORITE_ROUND_MINUTES } from "../src/lib/merchants";
 import { ApiError, nowIso, randomDigits, uuid } from "./http";
 import { EMAIL_FROM, notifyPerson, type Message } from "./notify";
+import { noticeOf, sendPush } from "./push";
+import { cashDue, cleanPayWith, hasOpenPayout, payoutOf, refundStatements, requestPayout, walletFailure, walletPayment } from "./trip-payments";
 import {
   accountFor,
   APP_URL,
@@ -156,22 +165,41 @@ export interface JobRow {
   passengers: number | null;
   vehicle_type: FleetVehicleType | null;
   handover_code?: string | null;
+  /** Which of the driver's trips this is on a tour (0037); 1 outside tours. */
+  tour_slot?: number;
+  /** Paid online from the wallet (0037), and when that went back. */
+  prepaid_fcfa?: number | null;
+  prepaid_refunded_at?: string | null;
+  /** The shop that booked the trip and who of it (0035_merchants.sql). */
+  merchant_id?: string | null;
+  booked_by?: string | null;
   tracking_no: string | null;
   driver_name: string | null;
   driver_phone: string | null;
   driver_plate: string | null;
   driver_vehicle: FleetVehicleType | null;
+  /** The driver's last reported position (driver_positions, 0037). */
+  driver_lat?: number | null;
+  driver_lng?: number | null;
+  driver_pos_at?: string | null;
 }
 
 export const JOB_SELECT = `select j.*, p.tracking_no, d.full_name as driver_name, u.phone as driver_phone,
-    v.plate as driver_plate, v.type as driver_vehicle
+    v.plate as driver_plate, v.type as driver_vehicle, dp.lat as driver_lat, dp.lng as driver_lng, dp.at as driver_pos_at
   from delivery_jobs j
   left join parcels p on p.id = j.parcel_id
   left join drivers d on d.user_id = j.driver_id
   left join users u on u.id = j.driver_id
-  left join fleet_vehicles v on v.id = d.vehicle_id`;
+  left join fleet_vehicles v on v.id = d.vehicle_id
+  left join driver_positions dp on dp.driver_id = j.driver_id`;
 
 export const BUSY_SQL = `(${BUSY_JOB_STATUSES.map((s) => `'${s}'`).join(", ")})`;
+
+/** Where the driver of a trip is, while the customer may see it (TRACKED_JOB_STATUSES) and it is fresh. */
+function jobPosition(r: JobRow): DriverPosition | null {
+  if (!TRACKED_JOB_STATUSES.includes(r.status) || r.driver_lat == null || r.driver_lng == null || !r.driver_pos_at) return null;
+  return freshPosition({ lat: r.driver_lat, lng: r.driver_lng, at: r.driver_pos_at });
+}
 
 export function toJob(r: JobRow): DeliveryJob {
   return {
@@ -194,11 +222,18 @@ export function toJob(r: JobRow): DeliveryJob {
     content: r.content,
     distanceM: r.distance_m,
     fareFcfa: r.fare_fcfa,
-    collectFcfa: r.collect_fcfa,
+    collectFcfa: cashDue(r),
+    ...(r.prepaid_fcfa ? { prepaidFcfa: r.prepaid_fcfa, ...(r.prepaid_refunded_at ? { refunded: true as const } : {}) } : {}),
     recipient: r.recipient_phone ? { phone: r.recipient_phone, name: r.recipient_name } : null,
     declaredValue: r.declared_value,
     driver: r.driver_id
-      ? { name: r.driver_name ?? "", phone: r.driver_phone ?? null, plate: r.driver_plate ?? null, vehicleType: r.driver_vehicle ?? null }
+      ? {
+          name: r.driver_name ?? "",
+          phone: r.driver_phone ?? null,
+          plate: r.driver_plate ?? null,
+          vehicleType: r.driver_vehicle ?? null,
+          position: jobPosition(r),
+        }
       : null,
     customerName: r.customer_name,
     createdAt: r.created_at,
@@ -209,6 +244,7 @@ export function toJob(r: JobRow): DeliveryJob {
     doneAt: r.done_at,
     proofKey: r.proof_key,
     ...(r.status === "cancelled" && r.cancelled_by === NO_DRIVER ? { noDriver: true } : {}),
+    ...(r.merchant_id ? { forShop: true as const } : {}),
   };
 }
 
@@ -248,6 +284,8 @@ export async function saveDriverSettings(c: ParcelCtx, input: unknown) {
     waitMinutes: next.waitMinutes,
     acceptMinutes: next.acceptMinutes,
     queueRadiusM: next.queueRadiusM,
+    tourMax: next.tourMax,
+    tourRadiusM: next.tourRadiusM,
     vehicles: FLEET_VEHICLE_TYPES.map((type) => {
       const v = next.vehicles.find((x) => x.type === type)!;
       return { type, maxSize: v.maxSize, maxWeightKg: v.maxWeightKg };
@@ -365,7 +403,16 @@ export async function loadJob(db: D1Database, id: string): Promise<JobRow> {
 }
 
 export async function currentJob(db: D1Database, driverId: string): Promise<JobRow | null> {
-  return db.prepare(`${JOB_SELECT} where j.driver_id = ? and j.status in ${BUSY_SQL}`).bind(driverId).first<JobRow>();
+  return (await busyJobs(db, driverId))[0] ?? null;
+}
+
+/** Every trip a driver has under way (several on a tour, phase 2): an open offer first, then by slot. */
+export async function busyJobs(db: D1Database, driverId: string): Promise<JobRow[]> {
+  const { results } = await db
+    .prepare(`${JOB_SELECT} where j.driver_id = ? and j.status in ${BUSY_SQL} order by j.status = 'assigned' desc, j.tour_slot, j.assigned_at`)
+    .bind(driverId)
+    .all<JobRow>();
+  return results;
 }
 
 /** jobFits (src/lib/drivers.ts) for a row. */
@@ -403,6 +450,8 @@ function ledger(c: ParcelCtx, driverId: string, kind: LedgerEntry["kind"], amoun
  */
 async function requeue(db: D1Database, driverId: string, stationId: string | null, s: DriverSettings): Promise<D1PreparedStatement[]> {
   if (!stationId) return [];
+  // Still carrying other trips of a tour: back in line only once they are done.
+  if (await currentJob(db, driverId)) return [];
   const row = await driverRow(db, driverId);
   if (!drives(row) || !row.vehicle_id || !row.v_active) return [];
   if ((await balance(db, driverId)).balance >= s.cashLimitFcfa) return [];
@@ -416,6 +465,8 @@ async function requeue(db: D1Database, driverId: string, stationId: string | nul
  */
 async function tellUser(env: Env | undefined, userId: string | null, parcelId: string | null, kind: string, message: Message) {
   if (!env || !userId) return;
+  // Phase 2: a push notice reaches the phone even with the app closed.
+  await sendPush(env, userId, noticeOf(message));
   if (parcelId) return notifyPerson(env, parcelId, kind, userId, message);
   if (!env.EMAIL) return;
   try {
@@ -463,23 +514,56 @@ export async function dispatch(c: Pick<ParcelCtx, "db" | "audit"> & { env?: Env 
   }
 
   await expireOpenJobs(c);
+  await autoCheckouts(c);
 
   const { results: open } = await c.db
     .prepare("select * from delivery_jobs where status = 'open' order by created_at limit 50")
     .all<JobRow>();
   if (!open.length) return;
+  // Drivers checked in at a shop (planung/marchand.md): free, with an active vehicle; they
+  // only get that shop's trips, the one who checked in first first.
+  const shopIds = [...new Set(open.map((j) => j.merchant_id).filter((id): id is string => !!id))];
+  let checkedIn: { driverId: string; merchantId: string; inAt: string; vehicleType: FleetVehicleType }[] = [];
+  const favorites = new Map<string, Set<string>>();
+  if (shopIds.length) {
+    const marks = shopIds.map(() => "?").join(", ");
+    const [ins, favs] = await Promise.all([
+      c.db
+        .prepare(
+          `select k.driver_id, k.merchant_id, k.in_at, v.type from merchant_checkins k
+           join drivers d on d.user_id = k.driver_id join users u on u.id = d.user_id join fleet_vehicles v on v.id = d.vehicle_id
+           where k.out_at is null and k.merchant_id in (${marks}) and d.status = 'active' and u.role = '${DB_DRIVER}' and v.is_active = 1
+             and not exists (select 1 from delivery_jobs b where b.driver_id = k.driver_id and b.status in ${BUSY_SQL})
+           order by k.in_at`,
+        )
+        .bind(...shopIds)
+        .all<{ driver_id: string; merchant_id: string; in_at: string; type: FleetVehicleType }>(),
+      c.db
+        .prepare(`select merchant_id, driver_id from merchant_drivers where kind = 'favorite' and status = 'active' and merchant_id in (${marks})`)
+        .bind(...shopIds)
+        .all<{ merchant_id: string; driver_id: string }>(),
+    ]);
+    checkedIn = ins.results.map((r) => ({ driverId: r.driver_id, merchantId: r.merchant_id, inAt: r.in_at, vehicleType: r.type }));
+    for (const f of favs.results) favorites.set(f.merchant_id, (favorites.get(f.merchant_id) ?? new Set()).add(f.driver_id));
+  }
   const { results: queueRows } = await c.db
     .prepare(
       `select q.driver_id, q.station_id, q.since, v.type from driver_queue q
        join drivers d on d.user_id = q.driver_id join users u on u.id = d.user_id join fleet_vehicles v on v.id = d.vehicle_id
-       where d.status = 'active' and u.role = '${DB_DRIVER}' and v.is_active = 1 and ${unlockedSql("q.station_id", "drivers")}`,
+       where d.status = 'active' and u.role = '${DB_DRIVER}' and v.is_active = 1 and ${unlockedSql("q.station_id", "drivers")}
+         and not exists (select 1 from delivery_jobs b where b.driver_id = q.driver_id and b.status in ${BUSY_SQL})`,
     )
     .all<{ driver_id: string; station_id: string; since: string; type: FleetVehicleType }>();
   let queue: QueueEntry[] = queueRows.map((q) => ({ driverId: q.driver_id, stationId: q.station_id, since: q.since, vehicleType: q.type }));
-  if (!queue.length) return;
+  const taken = new Set<string>();
+  if (!queue.length && !checkedIn.length) {
+    await offerTours(c, open, taken, s);
+    return;
+  }
   const stations = await depotStations(c.db);
   const points = new Map(stations.map((st) => [st.id, st]));
   const offers: Promise<void>[] = [];
+  const favoriteSince = new Date(Date.now() - FAVORITE_ROUND_MINUTES * 60_000).toISOString();
 
   for (const job of open) {
     const fromHome = job.kind === "pickup" || job.kind === "ride" || job.kind === "courier";
@@ -488,24 +572,106 @@ export async function dispatch(c: Pick<ParcelCtx, "db" | "audit"> & { env?: Env 
     const declined = new Set(job.declined.split(",").filter(Boolean));
     const weight = job.weight_kg ?? (await maxWeight(c.db, job.size));
     const fits = (type: FleetVehicleType) => rowFits(job, type, weight, s);
-    const pick = pickDriver(start, queue.filter((q) => !declined.has(q.driverId)), stations, fits);
+    // A shop trip: its checked-in drivers first, then for a few minutes its favorites in the queue, then everyone.
+    let pick: { driverId: string; stationId: string | null } | null = null;
+    if (job.merchant_id) {
+      for (const k of checkedIn) {
+        if (k.merchantId !== job.merchant_id || declined.has(k.driverId) || !fits(k.vehicleType)) continue;
+        if ((await balance(c.db, k.driverId)).balance >= s.cashLimitFcfa) continue;
+        pick = { driverId: k.driverId, stationId: null };
+        break;
+      }
+      const favs = favorites.get(job.merchant_id);
+      if (!pick && favs && job.created_at > favoriteSince) {
+        pick = pickDriver(start, queue.filter((q) => favs.has(q.driverId) && !declined.has(q.driverId)), stations, fits);
+      }
+    }
+    pick ??= pickDriver(start, queue.filter((q) => !declined.has(q.driverId)), stations, fits);
     if (!pick) continue;
-    queue = queue.filter((q) => q.driverId !== pick.driverId);
+    const picked = pick.driverId;
+    queue = queue.filter((q) => q.driverId !== picked);
+    checkedIn = checkedIn.filter((k) => k.driverId !== picked);
     const now = nowIso();
     try {
       if (
-        await moveJob(c.db, job.id, ["open"], "status = 'assigned', driver_id = ?, driver_station_id = ?, assigned_at = ?", pick.driverId, pick.stationId, now)
+        await moveJob(c.db, job.id, ["open"], "status = 'assigned', driver_id = ?, driver_station_id = ?, assigned_at = ?, tour_slot = 1", pick.driverId, pick.stationId, now)
       ) {
         await c.db.batch([
           c.db.prepare("delete from driver_queue where driver_id = ?").bind(pick.driverId),
           jobAudit(c as ParcelCtx, null, { ...job, driver_id: pick.driverId }, { status: ["open", "assigned"], station: pick.stationId }),
         ]);
         offers.push(tellOffer(c.env, pick.driverId, job, s));
+        taken.add(job.id);
       }
     } catch (err) {
       // The driver got another trip in the meantime (one trip per driver).
       if (!/UNIQUE/i.test(String(err))) throw err;
     }
+  }
+  await Promise.all(offers);
+  await offerTours(c, open, taken, s);
+}
+
+/**
+ * Tours (planung/fahrer.md phase 2): a parcel trip nobody in line took goes to a driver already
+ * carrying parcels whose last position is within tourRadiusM of its start, nearest first, while
+ * they have fewer than tourMax trips, no passenger and no offer waiting. Drivers checked in at a
+ * shop keep to that shop's trips. The driver confirms it like any offer.
+ */
+async function offerTours(c: Pick<ParcelCtx, "db" | "audit"> & { env?: Env }, open: JobRow[], taken: Set<string>, s: DriverSettings) {
+  if (s.tourMax < 2) return;
+  const jobs = open.filter((j) => !taken.has(j.id) && TOUR_KINDS.includes(j.kind));
+  if (!jobs.length) return;
+  const fresh = new Date(Date.now() - POSITION_FRESH_MINUTES * 60_000).toISOString();
+  const { results } = await c.db
+    .prepare(
+      `select d.user_id as driver_id, v.type, p.lat, p.lng,
+              (select count(*) from delivery_jobs b where b.driver_id = d.user_id and b.status in ${BUSY_SQL}) as busy,
+              (select group_concat(b.tour_slot) from delivery_jobs b where b.driver_id = d.user_id and b.status in ${BUSY_SQL}) as slots
+         from drivers d join users u on u.id = d.user_id join fleet_vehicles v on v.id = d.vehicle_id
+         join driver_positions p on p.driver_id = d.user_id
+        where d.status = 'active' and u.role = '${DB_DRIVER}' and v.is_active = 1 and p.at >= ?
+          and exists (select 1 from delivery_jobs b where b.driver_id = d.user_id and b.status in ${BUSY_SQL})
+          and not exists (select 1 from delivery_jobs b where b.driver_id = d.user_id and b.status in ${BUSY_SQL}
+                            and (b.status = 'assigned' or b.kind not in (${TOUR_KINDS.map((k) => `'${k}'`).join(", ")})))
+          and not exists (select 1 from merchant_checkins k where k.driver_id = d.user_id and k.out_at is null)`,
+    )
+    .bind(fresh)
+    .all<{ driver_id: string; type: FleetVehicleType; lat: number; lng: number; busy: number; slots: string | null }>();
+  let drivers = results.filter((r) => r.busy < s.tourMax);
+  if (!drivers.length) return;
+  const stations = await depotStations(c.db);
+  const offers: Promise<void>[] = [];
+  for (const job of jobs) {
+    const start =
+      job.kind === "express" ? (stations.find((st) => st.id === job.from_station_id) ?? null) : job.home_lat != null ? { lat: job.home_lat, lng: job.home_lng! } : null;
+    if (!start) continue;
+    const declined = new Set(job.declined.split(",").filter(Boolean));
+    const weight = job.weight_kg ?? (await maxWeight(c.db, job.size));
+    const near = drivers
+      .filter((d) => !declined.has(d.driver_id) && rowFits(job, d.type, weight, s))
+      .map((d) => ({ d, m: distanceMeters(start, d) }))
+      .filter((x) => x.m <= s.tourRadiusM)
+      .sort((a, b) => a.m - b.m);
+    for (const { d } of near) {
+      if ((await balance(c.db, d.driver_id)).balance >= s.cashLimitFcfa) continue;
+      const used = new Set((d.slots ?? "").split(",").map(Number));
+      const slot = Array.from({ length: s.tourMax }, (_, i) => i + 1).find((n) => !used.has(n));
+      if (!slot) continue;
+      try {
+        if (!(await moveJob(c.db, job.id, ["open"], "status = 'assigned', driver_id = ?, driver_station_id = null, assigned_at = ?, tour_slot = ?", d.driver_id, nowIso(), slot))) break;
+      } catch (err) {
+        // Another dispatch filled that slot at the same moment.
+        if (!/UNIQUE/i.test(String(err))) throw err;
+        continue;
+      }
+      await jobAudit(c as ParcelCtx, null, { ...job, driver_id: d.driver_id }, { status: ["open", "assigned"], tour_slot: slot }).run();
+      offers.push(tellOffer(c.env, d.driver_id, job, s));
+      // One offer at a time per driver: the next trip waits until they answer this one.
+      drivers = drivers.filter((x) => x.driver_id !== d.driver_id);
+      break;
+    }
+    if (!drivers.length) break;
   }
   await Promise.all(offers);
 }
@@ -560,9 +726,9 @@ export async function driverHome(c: ParcelCtx): Promise<DriverHome> {
     user.role === "driver" ? formerAccountOf(c.db, user.id) : Promise.resolve(null),
   ]);
   if (!row) return { driver: null, job: null, history: [], ledger: [], settings: s, lastExpiredAt: null, formerAccount };
-  const [driver, job, history, entries, expired] = await Promise.all([
+  const [driver, jobs, history, entries, expired, payout] = await Promise.all([
     toDriver(c.db, row, true),
-    currentJob(c.db, user.id),
+    busyJobs(c.db, user.id),
     c.db
       .prepare(`${JOB_SELECT} where j.driver_id = ? and j.status not in ${BUSY_SQL} order by j.created_at desc limit 30`)
       .bind(user.id)
@@ -578,10 +744,13 @@ export async function driverHome(c: ParcelCtx): Promise<DriverHome> {
       )
       .bind(user.id)
       .first<{ at: string | null }>(),
+    payoutOf(c.db, user.id),
   ]);
   return {
+    payout,
     driver,
-    job: job ? toJob(job) : null,
+    job: jobs[0] ? toJob(jobs[0]) : null,
+    jobs: jobs.map(toJob),
     history: history.results.map(toJob),
     ledger: entries.results.map((e) => ({ id: e.id, at: e.at, kind: e.kind, amountFcfa: e.amount_fcfa, jobId: e.job_id, stationId: e.station_id })),
     settings: s,
@@ -715,6 +884,8 @@ export async function joinQueue(c: ParcelCtx, stationId: string, position: unkno
   await requireDrivers(c.db);
   if (!row.vehicle_id || !row.v_active) throw new ApiError("no_vehicle");
   if (await currentJob(c.db, user.id)) throw new ApiError("driver_busy");
+  // Checked in at a shop: only its trips until the driver checks out.
+  if (await openCheckin(c.db, user.id)) throw new ApiError("checked_in_at_shop");
   const s = await driverSettings(c.db);
   if ((await balance(c.db, user.id)).balance >= s.cashLimitFcfa) throw new ApiError("cash_limit");
   await requireDepot(c.db, stationId);
@@ -734,6 +905,40 @@ export async function joinQueue(c: ParcelCtx, stationId: string, position: unkno
       .run();
   }
   await dispatch(c);
+}
+
+/**
+ * The driver app reports where the driver is (driver phase 2), every POSITION_REPORT_SECONDS
+ * while on duty: in a queue, checked in at a shop or on a trip. Off duty nothing is kept.
+ * Returns whether the position was kept.
+ */
+export async function reportPosition(c: ParcelCtx, input: unknown): Promise<{ kept: boolean }> {
+  const { user, row } = await requireDriver(c);
+  const p = input as { lat?: unknown; lng?: unknown; accuracyM?: unknown } | null;
+  const point = { lat: Number(p?.lat), lng: Number(p?.lng) };
+  if (!validPoint(point)) throw new ApiError("bad_request");
+  const accuracy = Number(p?.accuracyM);
+  if (row.status !== "active") return { kept: false };
+  const onDuty = await c.db
+    .prepare(
+      `select (exists (select 1 from driver_queue where driver_id = ?1)
+            or exists (select 1 from merchant_checkins where driver_id = ?1 and out_at is null)
+            or exists (select 1 from delivery_jobs where driver_id = ?1 and status in ${BUSY_SQL})) as on_duty`,
+    )
+    .bind(user.id)
+    .first<{ on_duty: number }>();
+  if (!onDuty?.on_duty) {
+    await c.db.prepare("delete from driver_positions where driver_id = ?").bind(user.id).run();
+    return { kept: false };
+  }
+  await c.db
+    .prepare(
+      `insert into driver_positions (driver_id, lat, lng, accuracy_m, at) values (?, ?, ?, ?, ?)
+       on conflict (driver_id) do update set lat = excluded.lat, lng = excluded.lng, accuracy_m = excluded.accuracy_m, at = excluded.at`,
+    )
+    .bind(user.id, point.lat, point.lng, Number.isFinite(accuracy) && accuracy >= 0 ? Math.min(accuracy, 100_000) : null, nowIso())
+    .run();
+  return { kept: true };
 }
 
 export async function leaveQueue(c: ParcelCtx) {
@@ -761,7 +966,7 @@ export async function declineJob(c: ParcelCtx, jobId: string) {
     throw new ApiError("job_wrong_status");
   }
   const batch = [jobAudit(c, user.id, job, { status: ["assigned", "open"], reason: "declined" })];
-  if (job.driver_station_id) {
+  if (job.driver_station_id && !(await currentJob(c.db, user.id))) {
     batch.push(
       c.db
         .prepare("insert or replace into driver_queue (driver_id, station_id, since) values (?, ?, ?)")
@@ -900,9 +1105,22 @@ export async function collectPickup(c: ParcelCtx, jobId: string, rawMeasures: Pa
   return toJob(await loadJob(c.db, job.id));
 }
 
+/**
+ * A shop's courier comes back to the shop when the recipient is absent (planung/marchand.md),
+ * so like a home delivery it has a door step: at the door, then delivered or back.
+ */
+function shopCourier(job: Pick<JobRow, "kind" | "merchant_id">): boolean {
+  return job.kind === "courier" && !!job.merchant_id;
+}
+
+/** Trips with a door step: home deliveries and shop couriers. */
+function hasDoorStep(job: Pick<JobRow, "kind" | "merchant_id">): boolean {
+  return job.kind === "delivery" || shopCourier(job);
+}
+
 export async function arriveAtDoor(c: ParcelCtx, jobId: string) {
   const { user, job } = await myJob(c, jobId);
-  if (job.kind !== "delivery" || !(await moveJob(c.db, job.id, ["picked_up"], "status = 'at_door', at_door_at = ?", nowIso()))) {
+  if (!hasDoorStep(job) || !(await moveJob(c.db, job.id, ["picked_up"], "status = 'at_door', at_door_at = ?", nowIso()))) {
     throw new ApiError("job_wrong_status");
   }
   await jobAudit(c, user.id, job, { status: ["picked_up", "at_door"] }).run();
@@ -912,7 +1130,7 @@ export async function arriveAtDoor(c: ParcelCtx, jobId: string) {
 export async function uploadProof(c: ParcelCtx, jobId: string, request: Request) {
   const { job } = await myJob(c, jobId);
   // Home deliveries and couriers: the photo of the handover at the door.
-  const atDoor = job.kind === "delivery" ? ["picked_up", "at_door"] : job.kind === "courier" ? ["picked_up"] : [];
+  const atDoor = hasDoorStep(job) ? ["picked_up", "at_door"] : job.kind === "courier" ? ["picked_up"] : [];
   if (!atDoor.includes(job.status)) throw new ApiError("job_wrong_status");
   const image = await readImage(c, request);
   const key = `proofs/${job.id}-${uuid()}.${image.ext}`;
@@ -957,8 +1175,8 @@ export async function deliverJob(c: ParcelCtx, jobId: string, rawCode: unknown) 
     // The recipient's code at the door is the scan of this handover.
     scanStatement(c.db, { parcelId: parcel.id, runId: job.id, kind: "delivered", driverId: user.id, stationId: null, by: user.id, role: "driver" }),
     c.audit(user.id, "parcels", "update", parcel.id, { status: ["arrived", "picked_up"], delivery_status: ["out_for_delivery", "delivered"] }, { userId: parcel.recipient_user_id }),
-    ...(job.collect_fcfa ? [ledger(c, user.id, "collected", job.collect_fcfa, job.id, null, user.id)] : []),
-    ledger(c, user.id, "earning", driverEarning(job.fare_fcfa, s), job.id, null, user.id),
+    ...(cashDue(job) ? [ledger(c, user.id, "collected", cashDue(job), job.id, null, user.id)] : []),
+    ...(await earning(c, job, user.id, s, null, user.id)),
     jobAudit(c, user.id, job, { status: [job.status, "done"] }),
   ]);
   await notifyPerson(c.env, parcel.id, "picked_up", parcel.sender_user_id, {
@@ -967,21 +1185,46 @@ export async function deliverJob(c: ParcelCtx, jobId: string, rawCode: unknown) 
   });
 }
 
-/** Nobody at the door after the waiting time: the parcel goes back to its station. */
+/**
+ * Nobody at the door after the waiting time: the parcel goes back to its station, or for a
+ * shop's courier back to where the driver took it (the shop is the sender).
+ */
 export async function failDelivery(c: ParcelCtx, jobId: string) {
   const { user, job } = await myJob(c, jobId);
-  if (job.kind !== "delivery" || job.status !== "at_door" || !job.at_door_at) throw new ApiError("job_wrong_status");
+  if (!hasDoorStep(job) || job.status !== "at_door" || !job.at_door_at) throw new ApiError("job_wrong_status");
   const s = await driverSettings(c.db);
   if (Date.now() - new Date(job.at_door_at).getTime() < s.waitMinutes * 60_000) throw new ApiError("wait_longer");
   if (!(await moveJob(c.db, job.id, ["at_door"], "status = 'returning'"))) throw new ApiError("job_wrong_status");
-  await jobAudit(c, user.id, job, { status: ["at_door", "returning"] }).run();
-  if (job.parcel_id) {
+  await jobAudit(c, user.id, job, { status: ["at_door", "returning"], ...(job.merchant_id ? { merchant_id: job.merchant_id } : {}) }).run();
+  if (shopCourier(job)) {
+    await tellUser(c.env, job.customer_user_id, null, "courier_returning", {
+      subject: "Destinataire absent",
+      text: `poinderecharge : ${party(job.recipient_name, job.recipient_phone ?? "")} n'était pas là. Le chauffeur ramène le colis${job.content ? ` (${job.content})` : ""} à ${job.home_note || "votre boutique"}. Confirmez sa réception dans l'app : ${APP_URL}/marchand`,
+    });
+  } else if (job.parcel_id) {
     const from = await station(c.db, job.from_station_id!);
     await notifyPerson(c.env, job.parcel_id, "delivery_failed", job.customer_user_id, {
       subject: `Livraison du colis ${job.tracking_no} manquée`,
       text: `poinderecharge : notre chauffeur ne vous a pas trouvé. Votre colis ${job.tracking_no} retourne à ${from?.name}. Vous pouvez l'y retirer avec votre code ou demander une nouvelle livraison dans l'app : ${APP_URL}`,
     });
   }
+}
+
+/**
+ * Who pays when: couriers pay the fare at the start, and so do shops for every trip
+ * (planung/marchand.md); a customer's ride pays at the end.
+ */
+function collectsAtStart(job: Pick<JobRow, "kind" | "merchant_id">): boolean {
+  return job.kind === "courier" || (job.kind === "ride" && !!job.merchant_id);
+}
+
+/**
+ * The driver's share of a finished trip, except for a shop trip driven while checked in
+ * there at an hourly rate: the shop pays the hours, the whole fare is ours (decision A).
+ */
+async function earning(c: ParcelCtx, job: JobRow, driverId: string, s: DriverSettings, stationId: string | null, actor: string): Promise<D1PreparedStatement[]> {
+  if (await hourlyTrip(c.db, { ...job, driver_id: driverId })) return [];
+  return [ledger(c, driverId, "earning", driverEarning(job.fare_fcfa, s), job.id, stationId, actor)];
 }
 
 /** Trips that go from point A to point B without a station: rides and couriers. */
@@ -1002,7 +1245,7 @@ export async function boardRide(c: ParcelCtx, jobId: string) {
     throw new ApiError("job_wrong_status");
   }
   await c.db.batch([
-    ...(job.kind === "courier" ? [ledger(c, user.id, "collected", job.collect_fcfa, job.id, null, user.id)] : []),
+    ...(collectsAtStart(job) && cashDue(job) ? [ledger(c, user.id, "collected", cashDue(job), job.id, null, user.id)] : []),
     jobAudit(c, user.id, job, { status: ["accepted", "picked_up"] }),
   ]);
   if (job.kind === "courier") {
@@ -1029,13 +1272,14 @@ export async function finishRide(c: ParcelCtx, jobId: string, rawCode?: unknown)
   if (!POINT_TO_POINT.includes(job.kind)) throw new ApiError("job_wrong_status");
   if (job.kind === "courier") await checkCourierHandover(c, job, rawCode);
   const s = await driverSettings(c.db);
-  if (!(await moveJob(c.db, job.id, ["picked_up"], "status = 'done', done_at = ?", nowIso()))) throw new ApiError("job_wrong_status");
+  const from: JobStatus[] = shopCourier(job) ? ["picked_up", "at_door"] : ["picked_up"];
+  if (!(await moveJob(c.db, job.id, from, "status = 'done', done_at = ?", nowIso()))) throw new ApiError("job_wrong_status");
   const trip = await tripStatement(c.db, { driverId: user.id, jobId: job.id, distanceMeters: job.distance_m, stationId: job.driver_station_id, createdBy: user.id });
   await c.db.batch([
     ...(trip ? [trip] : []),
-    ...(job.kind === "ride" ? [ledger(c, user.id, "collected", job.collect_fcfa, job.id, null, user.id)] : []),
-    ledger(c, user.id, "earning", driverEarning(job.fare_fcfa, s), job.id, null, user.id),
-    jobAudit(c, user.id, job, { status: ["picked_up", "done"], collect_fcfa: job.collect_fcfa }),
+    ...(collectsAtStart(job) || !cashDue(job) ? [] : [ledger(c, user.id, "collected", cashDue(job), job.id, null, user.id)]),
+    ...(await earning(c, job, user.id, s, null, user.id)),
+    jobAudit(c, user.id, job, { status: [job.status, "done"], collect_fcfa: job.collect_fcfa }),
   ]);
   if (job.kind === "courier") {
     const delivered: Message = {
@@ -1071,6 +1315,26 @@ async function checkCourierHandover(c: ParcelCtx, job: JobRow, rawCode: unknown)
     await c.db.prepare("insert into parcel_code_failures (station_id, at) values (?, ?)").bind(lockKey, nowIso()).run();
     throw new ApiError("wrong_pickup_code");
   }
+}
+
+/**
+ * A member of the shop confirms the parcel of a courier whose recipient was absent is back
+ * at the shop. The trip ends as failed; the shop paid the fare at the start, so the driver
+ * keeps their share (none when checked in there at an hourly rate: decision A). The caller
+ * checked that `actorId` belongs to the shop of the trip.
+ */
+export async function receiveShopReturn(c: ParcelCtx, job: JobRow, actorId: string) {
+  if (!shopCourier(job) || job.status !== "returning" || !job.driver_id) throw new ApiError("job_wrong_status");
+  const s = await driverSettings(c.db);
+  if (!(await moveJob(c.db, job.id, ["returning"], "status = 'failed', done_at = ?", nowIso()))) throw new ApiError("job_wrong_status");
+  await c.db.batch([
+    ...(await earning(c, job, job.driver_id, s, null, actorId)),
+    jobAudit(c, actorId, job, { status: ["returning", "failed"], merchant_id: job.merchant_id, reason: "returned_to_shop" }),
+  ]);
+  await tellUser(c.env, job.driver_id, null, "courier_returned", {
+    subject: "Retour confirmé",
+    text: `poinderecharge : la boutique a confirmé le retour du colis. La course est terminée : ${DRIVER_URL}`,
+  });
 }
 
 // Station staff --------------------------------------------------------------------
@@ -1130,9 +1394,10 @@ function receiveJob(job: JobRow | null, stationId: string): JobRow | null {
 export async function driverAtStation(c: ParcelCtx, stationId: string, badge: unknown): Promise<DriverAtStation> {
   await requireStaff(c, stationId);
   const row = await driverByBadge(c, badge);
-  const job = await currentJob(c.db, row.user_id);
-  const handOver = handOverJob(job, stationId);
-  const receive = receiveJob(job, stationId);
+  // On a tour the driver may take one parcel here and bring another.
+  const jobs = await busyJobs(c.db, row.user_id);
+  const handOver = jobs.map((j) => handOverJob(j, stationId)).find(Boolean) ?? null;
+  const receive = jobs.map((j) => receiveJob(j, stationId)).find(Boolean) ?? null;
   return {
     driver: { userId: row.user_id, name: row.full_name, phone: row.phone, plate: row.v_plate, vehicleType: row.v_type },
     balanceFcfa: (await balance(c.db, row.user_id)).balance,
@@ -1155,8 +1420,8 @@ async function tripParcel(c: ParcelCtx, job: JobRow, code: unknown): Promise<Par
 export async function handToDriver(c: ParcelCtx, stationId: string, badge: unknown, jobId: string, parcelCode: unknown) {
   const { user: staff, role } = await parcelStationActor(c, stationId);
   const row = await driverByBadge(c, badge);
-  const job = handOverJob(await currentJob(c.db, row.user_id), stationId);
-  if (!job || job.id !== jobId || !job.parcel_id) throw new ApiError("job_wrong_status");
+  const job = handOverJob((await busyJobs(c.db, row.user_id)).find((j) => j.id === jobId) ?? null, stationId);
+  if (!job || !job.parcel_id) throw new ApiError("job_wrong_status");
   const parcel = await tripParcel(c, job, parcelCode);
   const now = nowIso();
   if (job.kind === "express") {
@@ -1186,7 +1451,7 @@ export async function handToDriver(c: ParcelCtx, stationId: string, badge: unkno
   if (job.kind === "delivery") {
     await notifyPerson(c.env, parcel.id, "out_for_delivery", parcel.recipient_user_id, {
       subject: `Votre colis ${parcel.tracking_no} est en route`,
-      text: `poinderecharge : ${row.full_name}${row.phone ? ` (${row.phone})` : ""}${row.v_plate ? `, ${row.v_plate}` : ""} vous apporte votre colis ${parcel.tracking_no}. Préparez votre code de retrait et ${job.collect_fcfa} FCFA. Suivi : ${APP_URL}`,
+      text: `poinderecharge : ${row.full_name}${row.phone ? ` (${row.phone})` : ""}${row.v_plate ? `, ${row.v_plate}` : ""} vous apporte votre colis ${parcel.tracking_no}. Préparez votre code de retrait${cashDue(job) ? ` et ${cashDue(job)} FCFA` : " (course déjà payée)"}. Suivi : ${APP_URL}`,
     });
   }
 }
@@ -1198,8 +1463,8 @@ export async function handToDriver(c: ParcelCtx, stationId: string, badge: unkno
 export async function receiveFromDriver(c: ParcelCtx, stationId: string, badge: unknown, jobId: string, parcelCode: unknown) {
   const { user: staff, role } = await parcelStationActor(c, stationId);
   const row = await driverByBadge(c, badge);
-  const job = receiveJob(await currentJob(c.db, row.user_id), stationId);
-  if (!job || job.id !== jobId || !job.parcel_id) throw new ApiError("job_wrong_status");
+  const job = receiveJob((await busyJobs(c.db, row.user_id)).find((j) => j.id === jobId) ?? null, stationId);
+  if (!job || !job.parcel_id) throw new ApiError("job_wrong_status");
   const parcel = await tripParcel(c, job, parcelCode);
   const now = nowIso();
   const scan = scanStatement(c.db, { parcelId: parcel.id, runId: job.id, kind: "received_at_station", driverId: row.user_id, stationId, by: staff.id, role });
@@ -1210,6 +1475,8 @@ export async function receiveFromDriver(c: ParcelCtx, stationId: string, badge: 
       c.db.prepare("update parcels set delivery_status = 'failed' where id = ? and delivery_status = 'out_for_delivery'").bind(parcel.id),
       c.audit(staff.id, "parcels", "update", parcel.id, { delivery_status: ["out_for_delivery", "failed"] }, { stationId }),
       jobAudit(c, staff.id, job, { status: ["returning", "failed"] }),
+      // Nobody was home: the recipient pays nothing (planung/fahrer.md), an online payment goes back.
+      ...refundStatements(c.db, job, refundLabel(job)),
     ]);
     return;
   }
@@ -1219,7 +1486,7 @@ export async function receiveFromDriver(c: ParcelCtx, stationId: string, badge: 
   const trip = await tripStatement(c.db, { driverId: row.user_id, jobId: job.id, distanceMeters: job.distance_m, stationId, createdBy: staff.id });
   await c.db.batch([
     ...(trip ? [trip] : []),
-    ledger(c, row.user_id, "earning", driverEarning(job.fare_fcfa, s), job.id, stationId, staff.id),
+    ...(await earning(c, job, row.user_id, s, stationId, staff.id)),
     jobAudit(c, staff.id, job, { status: ["picked_up", "done"], role }),
   ]);
   await arriveParcel(c, parcel, staff.id, stationId, await station(c.db, stationId));
@@ -1236,11 +1503,19 @@ export async function settleDriver(c: ParcelCtx, stationId: string, badge: unkno
   const row = await driverByBadge(c, badge);
   const current = (await balance(c.db, row.user_id)).balance;
   if (Number(amount) !== current) throw new ApiError("balance_changed");
+  // Phase 2: a payout to the phone is on its way; paying here too would pay twice.
+  if (current < 0 && (await hasOpenPayout(c.db, row.user_id))) throw new ApiError("payout_pending");
   if (current === 0) return;
   await c.db.batch([
     ledger(c, row.user_id, "settlement", current, null, stationId, staff.id),
     c.audit(staff.id, "driver_ledger", "insert", row.user_id, { settlement: current }, { stationId, userId: row.user_id }),
   ]);
+}
+
+/** Phase 2: the driver asks for what we owe them on Flooz or T-Money (trip-payments.ts). */
+export async function askPayout(c: ParcelCtx, input: unknown) {
+  const { user } = await requireDriver(c);
+  return requestPayout(c, user.id, (await balance(c.db, user.id)).balance, input);
 }
 
 // Customers ------------------------------------------------------------------------
@@ -1254,10 +1529,20 @@ function cleanHome(input: unknown): HomePoint {
   return { lat: h.lat, lng: h.lng, note: String(h.note ?? "").trim().slice(0, 300), phone };
 }
 
-/** A customer asks a driver to fetch a parcel at home and bring it to station B. */
+/** merchant_id and booked_by of a new trip: set when a shop's member books it. */
+function shopColumns(shop: MerchantRow | null, user: Profile): [string | null, string | null] {
+  return shop ? [shop.id, user.id] : [null, null];
+}
+
+/** The shop in the audit entry of a new trip, so it shows in the shop's activity log. */
+function shopAudit(shop: MerchantRow | null): Record<string, unknown> {
+  return shop ? { merchant_id: shop.id } : {};
+}
+
+/** A customer (or a shop) asks a driver to fetch a parcel at home and bring it to station B. */
 export async function bookPickup(c: ParcelCtx, input: PickupBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
-  refuseNonCustomer(user);
+  const shop = await bookingShop(c.db, user);
   await requireDrivers(c.db);
   const home = cleanHome(input?.home);
   const toStationId = String(input?.toStationId ?? "");
@@ -1283,13 +1568,13 @@ export async function bookPickup(c: ParcelCtx, input: PickupBooking): Promise<De
     c.db
       .prepare(
         `insert into delivery_jobs (id, kind, status, customer_user_id, customer_name, to_station_id, home_lat, home_lng, home_note, home_phone,
-         size, weight_kg, content, declared_value, recipient_phone, recipient_name, distance_m, fare_fcfa, collect_fcfa, created_at)
-         values (?, 'pickup', 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         size, weight_kg, content, declared_value, recipient_phone, recipient_name, distance_m, fare_fcfa, collect_fcfa, created_at, merchant_id, booked_by)
+         values (?, 'pickup', 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         id,
         user.id,
-        user.fullName,
+        shop?.name ?? user.fullName,
         toStationId,
         home.lat,
         home.lng,
@@ -1305,8 +1590,9 @@ export async function bookPickup(c: ParcelCtx, input: PickupBooking): Promise<De
         fare,
         tier.priceFcfa + fare,
         nowIso(),
+        ...shopColumns(shop, user),
       ),
-    c.audit(user.id, "delivery_jobs", "insert", id, { kind: "pickup", to_station_id: toStationId, fare_fcfa: fare }, { stationId: toStationId, userId: user.id }),
+    c.audit(user.id, "delivery_jobs", "insert", id, { kind: "pickup", to_station_id: toStationId, fare_fcfa: fare, ...shopAudit(shop) }, { stationId: toStationId, userId: user.id }),
   ]);
   await dispatch(c);
   return toJob(await loadJob(c.db, id));
@@ -1323,32 +1609,38 @@ function cleanDropoff(input: unknown): { lat: number; lng: number; note: string 
 /** A customer books a driver to take them (and others, as seats allow) from A to B. Not offered in the app at the moment. */
 export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
-  refuseNonCustomer(user);
+  const shop = await bookingShop(c.db, user);
   await requireDrivers(c.db);
   const pickup = cleanHome(input?.pickup);
   const d = cleanDropoff(input?.dropoff);
   const passengers = Number(input?.passengers);
   if (!Number.isInteger(passengers) || passengers < 1 || passengers > MAX_PASSENGERS) throw new ApiError("bad_request");
-  const open = await c.db
-    .prepare(`select 1 from delivery_jobs where customer_user_id = ? and kind = 'ride' and status not in ('done', 'failed', 'cancelled')`)
-    .bind(user.id)
-    .first();
+  // A customer rides once at a time; a shop books rides for several people.
+  const open = shop
+    ? null
+    : await c.db
+        .prepare(`select 1 from delivery_jobs where customer_user_id = ? and kind = 'ride' and status not in ('done', 'failed', 'cancelled')`)
+        .bind(user.id)
+        .first();
   if (open) throw new ApiError("ride_open");
+  const passenger = shop ? cleanName(input.passengerName) : null;
+  const payWith = shop ? "cash" : cleanPayWith(input?.payWith);
   const s = await driverSettings(c.db);
   const distance = Math.round(distanceMeters(pickup, d));
   const fare = fareFor(distance, false, s);
   const id = uuid();
+  const pay = payWith === "wallet" ? await walletPayment(c, user, id, fare, tripLabel("ride", null)) : [];
   await c.db.batch([
     c.db
       .prepare(
         `insert into delivery_jobs (id, kind, status, customer_user_id, customer_name, home_lat, home_lng, home_note, home_phone,
-         dropoff_lat, dropoff_lng, dropoff_note, passengers, size, distance_m, fare_fcfa, collect_fcfa, created_at)
-         values (?, 'ride', 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'S', ?, ?, ?, ?)`,
+         dropoff_lat, dropoff_lng, dropoff_note, passengers, size, distance_m, fare_fcfa, collect_fcfa, created_at, merchant_id, booked_by)
+         values (?, 'ride', 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'S', ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         id,
         user.id,
-        user.fullName,
+        shop ? (passenger ?? shop.name) : user.fullName,
         pickup.lat,
         pickup.lng,
         pickup.note,
@@ -1361,9 +1653,11 @@ export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<Delive
         fare,
         fare,
         nowIso(),
+        ...shopColumns(shop, user),
       ),
-    c.audit(user.id, "delivery_jobs", "insert", id, { kind: "ride", passengers, fare_fcfa: fare }, { userId: user.id }),
-  ]);
+    ...pay,
+    c.audit(user.id, "delivery_jobs", "insert", id, { kind: "ride", passengers, fare_fcfa: fare, ...shopAudit(shop), ...(pay.length ? { prepaid_fcfa: fare } : {}) }, { userId: user.id }),
+  ]).catch(walletFailure);
   await dispatch(c);
   return toJob(await loadJob(c.db, id));
 }
@@ -1374,7 +1668,7 @@ export async function bookRide(c: ParcelCtx, input: RideBooking): Promise<Delive
  */
 export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<DeliveryJob> {
   const user = await c.requireUser();
-  refuseNonCustomer(user);
+  const shop = await bookingShop(c.db, user);
   await requireDrivers(c.db);
   const pickup = cleanHome(input?.pickup);
   const d = cleanDropoff(input?.dropoff);
@@ -1393,20 +1687,23 @@ export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<
     if (!(await bookableVehicles(c.db)).includes(vehicleType)) throw new ApiError("vehicle_soon");
     if (!vehicleFits(vehicleType, input.size, weight, s)) throw new ApiError("parcel_too_large");
   }
+  const payWith = shop ? "cash" : cleanPayWith(input?.payWith);
   const distance = Math.round(distanceMeters(pickup, d));
   const fare = fareFor(distance, false, s);
   const id = uuid();
+  const pay = payWith === "wallet" ? await walletPayment(c, user, id, fare, tripLabel("courier", null)) : [];
   await c.db.batch([
     c.db
       .prepare(
         `insert into delivery_jobs (id, kind, status, customer_user_id, customer_name, home_lat, home_lng, home_note, home_phone,
-         dropoff_lat, dropoff_lng, dropoff_note, size, weight_kg, content, recipient_phone, recipient_name, vehicle_type, distance_m, fare_fcfa, collect_fcfa, created_at)
-         values (?, 'courier', 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         dropoff_lat, dropoff_lng, dropoff_note, size, weight_kg, content, recipient_phone, recipient_name, vehicle_type, distance_m, fare_fcfa, collect_fcfa, created_at,
+         merchant_id, booked_by)
+         values (?, 'courier', 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         id,
         user.id,
-        user.fullName,
+        shop?.name ?? user.fullName,
         pickup.lat,
         pickup.lng,
         pickup.note,
@@ -1424,19 +1721,29 @@ export async function bookCourier(c: ParcelCtx, input: CourierBooking): Promise<
         fare,
         fare,
         nowIso(),
+        ...shopColumns(shop, user),
       ),
-    c.audit(user.id, "delivery_jobs", "insert", id, { kind: "courier", size: input.size, vehicle_type: vehicleType, fare_fcfa: fare }, { userId: user.id }),
-  ]);
+    c.audit(
+      user.id,
+      "delivery_jobs",
+      "insert",
+      id,
+      { kind: "courier", size: input.size, vehicle_type: vehicleType, fare_fcfa: fare, ...shopAudit(shop), ...(pay.length ? { prepaid_fcfa: fare } : {}) },
+      { userId: user.id },
+    ),
+    ...pay,
+  ]).catch(walletFailure);
   await dispatch(c);
   return toJob(await loadJob(c.db, id));
 }
 
 /** The recipient of a parcel waiting at a station has it brought home; this hands the pickup right to the driver. */
-export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unknown): Promise<DeliveryJob> {
+export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unknown, rawPayWith?: unknown): Promise<DeliveryJob> {
   const user = await c.requireUser();
   refuseNonCustomer(user);
   await requireDrivers(c.db);
   const home = cleanHome(rawHome);
+  const payWith = cleanPayWith(rawPayWith);
   const parcel = await c.db.prepare("select * from parcels where id = ?").bind(parcelId).first<ParcelRow>();
   if (!parcel) throw new ApiError("parcel_not_found", 404);
   const isRecipient = parcel.recipient_user_id === user.id || (!!user.phone && parcel.recipient_phone === user.phone);
@@ -1448,6 +1755,7 @@ export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unkn
   const distance = Math.round(distanceMeters(from, home));
   const fare = fareFor(distance, false, s);
   const id = uuid();
+  const pay = payWith === "wallet" ? await walletPayment(c, user, id, fare, tripLabel("delivery", parcel.tracking_no)) : [];
   // Claim the parcel first, checking its delivery status as it is saved: of two bookings
   // at the same time only one gets it (Atlas finding: a home delivery booked twice).
   const claimed = await c.db
@@ -1485,6 +1793,7 @@ export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unkn
           nowIso(),
         ),
       c.audit(user.id, "parcels", "update", parcel.id, { delivery_status: [parcel.delivery_status, "booked"] }, { stationId: parcel.to_station_id, userId: user.id }),
+      ...pay,
     ]);
   } catch (err) {
     // The trip could not be saved: the parcel is free again.
@@ -1493,7 +1802,7 @@ export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unkn
       .bind(parcel.delivery_status, parcel.job_id, parcel.id, id)
       .run();
     if (/UNIQUE/i.test(String(err))) throw new ApiError("parcel_wrong_status");
-    throw err;
+    walletFailure(err);
   }
   await dispatch(c);
   return toJob(await loadJob(c.db, id));
@@ -1503,12 +1812,15 @@ export async function bookDelivery(c: ParcelCtx, parcelId: string, rawHome: unkn
 export async function myJobs(c: ParcelCtx): Promise<DeliveryJob[]> {
   const user = await c.user();
   if (!user) return [];
+  // A shop's members all see the shop's trips (planung/marchand.md, decision 4).
+  const shop = user.role === "merchant" ? (await membershipOf(c.db, user.id))?.shop : null;
+  if (user.role === "merchant" && !shop) return [];
   const { results } = await c.db
-    .prepare(`${JOB_SELECT} where j.customer_user_id = ? order by j.created_at desc limit 50`)
-    .bind(user.id)
+    .prepare(`${JOB_SELECT} where ${shop ? "j.merchant_id" : "j.customer_user_id"} = ? order by j.created_at desc limit 50`)
+    .bind(shop ? shop.id : user.id)
     .all<JobRow>();
   // The sender of a courier sees the code the recipient gives at the door, to pass it on.
-  return results.map((r) => ({ ...toJob(r), ...(r.kind === "courier" && r.handover_code && r.status === "picked_up" ? { handoverCode: r.handover_code } : {}) }));
+  return results.map((r) => ({ ...toJob(r), ...(r.kind === "courier" && r.handover_code && (r.status === "picked_up" || r.status === "at_door") ? { handoverCode: r.handover_code } : {}) }));
 }
 
 const CANCELLABLE: JobStatus[] = ["open", "assigned", "accepted"];
@@ -1516,8 +1828,18 @@ const CANCELLABLE: JobStatus[] = ["open", "assigned", "accepted"];
 /** cancelled_by of trips called off because no driver took them in time (expireOpenJobs). */
 const NO_DRIVER = "no_driver";
 
+/** What the customer's wallet shows for a trip's payment and refund. */
+function refundLabel(job: Pick<JobRow, "kind" | "tracking_no">): string {
+  return tripLabel(job.kind, job.tracking_no);
+}
+
+function tripLabel(kind: JobKind, trackingNo: string | null): string {
+  const what = kind === "ride" ? "trajet" : kind === "delivery" ? "livraison" : "coursier";
+  return trackingNo ? `${what} ${trackingNo}` : what;
+}
+
 /** Calls a trip off while it is still in `from`; false when it moved on in the meantime. */
-async function closeJob(c: Pick<ParcelCtx, "db" | "audit">, job: JobRow, from: JobStatus[], actor: string): Promise<boolean> {
+export async function closeJob(c: Pick<ParcelCtx, "db" | "audit">, job: JobRow, from: JobStatus[], actor: string): Promise<boolean> {
   if (!(await moveJob(c.db, job.id, from, "status = 'cancelled', done_at = ?, cancelled_by = ?", nowIso(), actor))) return false;
   const batch = [
     actor === NO_DRIVER
@@ -1527,6 +1849,8 @@ async function closeJob(c: Pick<ParcelCtx, "db" | "audit">, job: JobRow, from: J
   if (job.parcel_id && job.kind === "delivery") {
     batch.push(c.db.prepare("update parcels set delivery_status = null where id = ? and delivery_status = 'booked'").bind(job.parcel_id));
   }
+  // Paid online: the fare goes back to the wallet.
+  batch.push(...refundStatements(c.db, job, refundLabel(job)));
   // An express parcel whose trip is called off goes on the next collection run.
   if (job.parcel_id && job.kind === "express") {
     batch.push(c.db.prepare("update parcels set express = 0 where id = ? and status = 'deposited'").bind(job.parcel_id));
@@ -1534,7 +1858,12 @@ async function closeJob(c: Pick<ParcelCtx, "db" | "audit">, job: JobRow, from: J
   // A driver who was offered the trip goes back into line where they were.
   if (job.driver_id && job.driver_station_id) {
     batch.push(
-      c.db.prepare("insert or ignore into driver_queue (driver_id, station_id, since) values (?, ?, ?)").bind(job.driver_id, job.driver_station_id, nowIso()),
+      c.db
+        .prepare(
+          `insert or ignore into driver_queue (driver_id, station_id, since) select ?1, ?2, ?3
+            where not exists (select 1 from delivery_jobs where driver_id = ?1 and status in ${BUSY_SQL} and id <> ?4)`,
+        )
+        .bind(job.driver_id, job.driver_station_id, nowIso(), job.id),
     );
   }
   await c.db.batch(batch);
@@ -1548,14 +1877,16 @@ async function cancelJobRow(c: ParcelCtx, job: JobRow, actor: string) {
 /** The customer (before the driver has the parcel) or an admin calls a trip off; the driver it was offered to is told. */
 export async function cancelJob(c: ParcelCtx, jobId: string) {
   const user = await c.requireUser();
-  refuseNonCustomer(user);
+  const shop = user.role === "merchant" ? (await membershipOf(c.db, user.id))?.shop : null;
+  if (!shop) refuseNonCustomer(user);
   const job = await loadJob(c.db, jobId);
-  if (user.role !== "admin" && job.customer_user_id !== user.id) throw new ApiError("forbidden", 403);
+  const mine = shop ? job.merchant_id === shop.id : job.customer_user_id === user.id;
+  if (user.role !== "admin" && !mine) throw new ApiError("forbidden", 403);
   await cancelJobRow(c, job, user.id);
   if (job.driver_id) {
     await tellUser(c.env, job.driver_id, job.parcel_id, "job_cancelled", {
       subject: "Course annulée",
-      text: `poinderecharge : la course qui vous était confiée${job.tracking_no ? ` (colis ${job.tracking_no})` : ""} a été annulée par ${job.customer_user_id === user.id ? "le client" : "l'équipe"}. Vous reprenez votre place dans la file : ${DRIVER_URL}`,
+      text: `poinderecharge : la course qui vous était confiée${job.tracking_no ? ` (colis ${job.tracking_no})` : ""} a été annulée par ${mine ? "le client" : "l'équipe"}. Vous reprenez votre place dans la file : ${DRIVER_URL}`,
     });
   }
 }
@@ -1777,11 +2108,14 @@ export async function handJob(c: ParcelCtx, actorId: string, job: JobRow, driver
   const row = await driverRow(c.db, driverId);
   if (!drives(row) || !row.v_type || !row.v_active) throw new ApiError("driver_not_found");
   if (await currentJob(c.db, driverId)) throw new ApiError("driver_busy");
+  // A driver checked in at a shop takes only that shop's trips (planung/marchand.md).
+  const checkin = await openCheckin(c.db, driverId);
+  if (checkin && checkin.merchant_id !== job.merchant_id) throw new ApiError("driver_checked_in");
   const s = await driverSettings(c.db);
   if (!rowFits(job, row.v_type, job.weight_kg ?? (await maxWeight(c.db, job.size)), s)) throw new ApiError("vehicle_too_small");
   if (job.status !== "open") await cancelOffer(c, job, actorId);
-  const queued = await queueOf(c.db, driverId);
-  if (!(await moveJob(c.db, job.id, ["open"], "status = 'assigned', driver_id = ?, driver_station_id = ?, assigned_at = ?", driverId, queued?.stationId ?? null, nowIso()))) {
+  const queued = checkin ? null : await queueOf(c.db, driverId);
+  if (!(await moveJob(c.db, job.id, ["open"], "status = 'assigned', driver_id = ?, driver_station_id = ?, assigned_at = ?, tour_slot = 1", driverId, queued?.stationId ?? null, nowIso()))) {
     throw new ApiError("job_wrong_status");
   }
   await c.db.batch([

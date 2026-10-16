@@ -26,7 +26,8 @@ import {
 } from "@/components/icons";
 import type { Dictionary } from "@/lib/i18n/fr";
 
-type NavKey = keyof Dictionary["backoffice"]["nav"];
+/** The merchants page takes its label from merchantDrivers.admin (its own i18n section). */
+type NavKey = keyof Dictionary["backoffice"]["nav"] | "merchants";
 type GroupKey = keyof Dictionary["backoffice"]["navGroups"];
 
 /** The backoffice pages in five groups (plan phase 8): operations, customers, parcels and drivers, money, settings. */
@@ -56,6 +57,7 @@ export const ADMIN_NAV: { group: GroupKey; links: { href: string; key: NavKey }[
       { href: "/admin/parcels", key: "parcels" },
       { href: "/admin/drivers", key: "drivers" },
       { href: "/admin/fleets", key: "fleets" },
+      { href: "/admin/merchants", key: "merchants" },
     ],
   },
   {
@@ -90,6 +92,7 @@ const NAV_ICON: Record<NavKey, ComponentType<SVGProps<SVGSVGElement> & { size?: 
   parcels: BoxIcon,
   drivers: ScooterIcon,
   fleets: TruckIcon,
+  merchants: StoreIcon,
   wallet: WalletIcon,
   charging: PhoneBoltIcon,
   services: GearIcon,
@@ -110,6 +113,7 @@ const pill = (active: boolean) =>
  */
 export function AdminShell({ children }: { children: ReactNode }) {
   const { t } = useI18n();
+  const label = (key: NavKey) => (key === "merchants" ? t.merchantDrivers.admin.nav : t.backoffice.nav[key]);
   const pathname = usePathname().replace(/\/$/, "") || "/";
   const current = ADMIN_NAV.find((g) => g.links.some((l) => l.href === pathname)) ?? ADMIN_NAV[0];
   return (
@@ -133,7 +137,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                         }`}
                       >
                         <Icon size={18} />
-                        {t.backoffice.nav[l.key]}
+                        {label(l.key)}
                       </Link>
                     </li>
                   );
@@ -165,7 +169,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                       pathname === l.href ? "bg-gp-green/15 font-semibold text-gp-green-dark dark:text-gp-green" : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
                     }`}
                   >
-                    {t.backoffice.nav[l.key]}
+                    {label(l.key)}
                   </Link>
                 </li>
               ))}

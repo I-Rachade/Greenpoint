@@ -5,6 +5,8 @@ import { validPinFormat, weakPin } from "../src/lib/pin";
 import type { Profile, UserRole } from "../src/lib/types";
 import type { Env } from "./env";
 import { ApiError, nowIso, randomDigits, sha256, uuid } from "./http";
+import type { MerchantShopInput } from "../src/lib/merchants";
+import { cleanShop } from "./merchant-rules";
 import { roleFromDb, roleToDb } from "./roles";
 
 const CODE_MINUTES = 10;
@@ -30,6 +32,14 @@ interface UserRow {
   /** Comma-separated operators this person runs (operator_owners). */
   owner_of?: string | null;
   driver_status?: Profile["driverStatus"];
+  /** Merchant accounts: "id|status|is_owner|name" of the shop (merchantOf). */
+  merchant?: string | null;
+}
+
+function toMerchant(value: string | null | undefined): Profile["merchant"] {
+  if (!value) return null;
+  const [id, status, owner, ...name] = value.split("|");
+  return { id, status: status as NonNullable<Profile["merchant"]>["status"], isOwner: owner === "1", name: name.join("|") };
 }
 
 export function toProfile(u: UserRow): Profile {
@@ -41,11 +51,16 @@ export function toProfile(u: UserRow): Profile {
     role: roleFromDb(u.role),
     ownerOf: u.owner_of ? u.owner_of.split(",") : [],
     driverStatus: u.driver_status ?? null,
+    ...(u.role === "merchant" ? { merchant: toMerchant(u.merchant) } : {}),
   };
 }
 
 const ownerOf = (alias: string) =>
   `(select group_concat(operator_id) from operator_owners where user_id = ${alias}.id) as owner_of`;
+
+const merchantOf = (alias: string) =>
+  `(select m.id || '|' || m.status || '|' || mm.is_owner || '|' || m.name from merchant_members mm join merchants m on m.id = mm.merchant_id
+    where mm.user_id = ${alias}.id) as merchant`;
 
 function listSetting(value: string | undefined): string[] {
   return (value ?? "")
@@ -259,7 +274,7 @@ export function checkPinFormat(pin: string) {
   if (weakPin(pin)) throw new ApiError("weak_pin");
 }
 
-const USER_COLUMNS = `id, phone, email, full_name, role, ${ownerOf("users")}, (select status from drivers where drivers.user_id = users.id) as driver_status`;
+const USER_COLUMNS = `id, phone, email, full_name, role, ${ownerOf("users")}, ${merchantOf("users")}, (select status from drivers where drivers.user_id = users.id) as driver_status`;
 /** Column of users that holds this kind of contact. Fixed names only, never user input. */
 export const contactColumn = (contact: Contact) => (contact.kind === "phone" ? "phone" : "email");
 
@@ -363,6 +378,53 @@ export async function registerFleetManager(env: Env, rawContact: string, rawCode
   return openSession(env, user);
 }
 
+/**
+ * Merchant registration (planung/marchand.md, M1): like fleets, its own path, never through a
+ * customer account (W5). A new account with the role merchant, its shop (status pending) and
+ * the membership as the shop's merchant are made together, and a session opens. Until an
+ * admin approves the shop, its members only see the map and the stations (merchant_not_approved).
+ */
+export async function registerMerchant(env: Env, rawContact: string, rawCode: string, rawPin: string, rawShop: unknown) {
+  const contact = contactOrThrow(rawContact);
+  const column = contactColumn(contact);
+  const pin = String(rawPin ?? "").trim();
+  const shop = cleanShop(rawShop as Partial<MerchantShopInput>);
+  checkPinFormat(pin);
+  const findUser = () => env.DB.prepare(`select ${USER_COLUMNS} from users where ${column} = ?`).bind(contact.value).first<UserRow>();
+  if (await findUser()) throw new ApiError("account_exists", 409);
+  await checkCode(env, contact.value, String(rawCode ?? "").trim());
+  const now = nowIso();
+  const id = uuid();
+  const shopId = uuid();
+  const log = (table: string, rowId: string, changes: Record<string, unknown>) =>
+    env.DB.prepare(
+      "insert into audit_log (at, actor, table_name, action, row_id, user_id, changes) values (?, ?, ?, 'insert', ?, ?, ?)",
+    ).bind(now, id, table, rowId, id, JSON.stringify(changes));
+  try {
+    await env.DB.batch([
+      env.DB.prepare(`insert into users (id, ${column}, full_name, role, created_at, pin_hash) values (?, ?, ?, 'merchant', ?, ?)`).bind(
+        id,
+        contact.value,
+        shop.name,
+        now,
+        await hashPin(pin),
+      ),
+      env.DB.prepare(
+        "insert into merchants (id, owner_id, name, phone, address, lat, lng, status, tier, created_at) values (?, ?, ?, ?, ?, ?, ?, 'pending', 'standard', ?)",
+      ).bind(shopId, id, shop.name, shop.phone, shop.address, shop.lat, shop.lng, now),
+      env.DB.prepare("insert into merchant_members (user_id, merchant_id, is_owner, created_at, added_by) values (?, ?, 1, ?, ?)").bind(id, shopId, now, id),
+      log("profiles", id, { [column]: contact.value, role: "merchant" }),
+      log("merchants", shopId, { merchant_id: shopId, name: shop.name, status: "pending", tier: "standard" }),
+    ]);
+  } catch (err) {
+    if (/UNIQUE/i.test(String(err))) throw new ApiError("account_exists", 409);
+    throw err;
+  }
+  const user = await findUser();
+  if (!user) throw new ApiError("unknown", 500);
+  return openSession(env, user);
+}
+
 /** Everyday login with phone number or e-mail address, and PIN. A few wrong PINs lock the account for a while. */
 export async function signIn(env: Env, rawContact: string, rawPin: string) {
   const contact = contactOrThrow(rawContact);
@@ -446,7 +508,7 @@ export async function currentUser(env: Env, request: Request): Promise<Profile |
   const token = bearer(request);
   if (!token) return null;
   const row = await env.DB.prepare(
-    `select u.id, u.phone, u.email, u.full_name, u.role, ${ownerOf("u")}, d.status as driver_status from sessions s
+    `select u.id, u.phone, u.email, u.full_name, u.role, ${ownerOf("u")}, ${merchantOf("u")}, d.status as driver_status from sessions s
      join users u on u.id = s.user_id left join drivers d on d.user_id = u.id
      where s.token_hash = ? and s.expires_at > ?`,
   )
@@ -565,6 +627,11 @@ export async function deleteAccount(
     env.DB.prepare("update wallet_topups set phone = null where user_id = ?").bind(profile.id),
     // Other people's history keeps the booking but no longer names this person.
     env.DB.prepare("update wallet_transactions set counterparty_label = null where counterparty_user_id = ?").bind(profile.id),
+    // A merchant's shop goes with the account (cascade): its employees become customers again (R15).
+    env.DB.prepare(
+      `update users set role = 'rider' where role = 'merchant' and id <> ?1
+         and id in (select mm.user_id from merchant_members mm join merchants m on m.id = mm.merchant_id where m.owner_id = ?1)`,
+    ).bind(profile.id),
     env.DB.prepare("delete from users where id = ?").bind(profile.id),
   ]);
 }

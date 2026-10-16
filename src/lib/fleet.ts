@@ -1,4 +1,4 @@
-import type { DeliveryJob, DriverApplication, DriverSettings, DriverStatus, FleetVehicle } from "./drivers";
+import type { DeliveryJob, DriverApplication, DriverPosition, DriverSettings, DriverStatus, FleetVehicle } from "./drivers";
 
 /**
  * Fleet managers (plan phase 6): an account of its own that registers itself
@@ -140,6 +140,10 @@ export interface FleetDriver {
   queue: { stationId: string; since: string; position: number } | null;
   /** The trip the driver is on or was offered. */
   job: DeliveryJob | null;
+  /** Checked in at a shop (planung/marchand.md): which and since when. */
+  shop?: { name: string; since: string } | null;
+  /** Where the driver is while on duty, when reported recently (driver phase 2). */
+  position?: DriverPosition | null;
 }
 
 export interface FleetView {

@@ -25,6 +25,7 @@ import { VEHICLE_TYPES, type Profile, type ReservationType, type VehicleType } f
 import { personLabel } from "../src/lib/wallet";
 import type { Env } from "./env";
 import { ApiError, nowIso, randomDigits, readJson, uuid } from "./http";
+import { notCustomerRole } from "./roles";
 
 // greenpoint: CO2 saved and points for rewards. Every movement is a row in
 // greenpoint_ledger; the balance and the CO2 total are sums over it. Rules:
@@ -151,15 +152,15 @@ async function isStationStaff(db: D1Database, userId: string): Promise<boolean> 
   return !!row;
 }
 
-/** Drivers and fleet managers are not customers either (W5, W10, R11): no greenpoints for swaps or charges. */
+/** Drivers, fleet managers and merchants are not customers either (W5, W10, R11): no greenpoints for swaps or charges. */
 async function isDriverAccount(db: D1Database, userId: string): Promise<boolean> {
-  const row = await db.prepare("select 1 from users where id = ? and role in ('driver', 'fleet_manager')").bind(userId).first();
+  const row = await db.prepare("select 1 from users where id = ? and role in ('driver', 'fleet_manager', 'merchant')").bind(userId).first();
   return !!row;
 }
 
-/** Station staff, drivers and fleet managers have no greenpoint page (R11). */
+/** Station staff, drivers, fleet managers and merchants have no greenpoint page (R11). */
 function refuseStationStaff(user: Profile) {
-  if (user.role === "operator" || user.role === "driver" || user.role === "fleet_manager") throw new ApiError("forbidden", 403);
+  if (notCustomerRole(user.role)) throw new ApiError("forbidden", 403);
 }
 
 /**

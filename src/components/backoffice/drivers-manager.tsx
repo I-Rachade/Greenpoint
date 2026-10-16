@@ -270,7 +270,7 @@ function SettingsForm({ settings, onReport }: { settings: DriverSettings; onRepo
   const { backend } = useApp();
   const run = useRun(onReport);
   const [s, setS] = useState(settings);
-  const keys = ["baseFcfa", "perKmFcfa", "expressFcfa", "driverSharePct", "cashLimitFcfa", "waitMinutes", "acceptMinutes", "queueRadiusM"] as const;
+  const keys = ["baseFcfa", "perKmFcfa", "expressFcfa", "driverSharePct", "cashLimitFcfa", "waitMinutes", "acceptMinutes", "queueRadiusM", "tourMax", "tourRadiusM"] as const;
   return (
     <div className={`${card} space-y-3`}>
       <div className="grid gap-3 sm:grid-cols-4">
@@ -345,7 +345,7 @@ function JobRow({ job, drivers, stationName, onReport }: { job: DeliveryJob; dri
         {job.collectFcfa > 0 && <div className="text-xs text-zinc-500">{job.collectFcfa}</div>}
       </td>
       <td className={td}>
-        <JobStatusPill status={job.status} kind={job.kind} noDriver={job.noDriver} />
+        <JobStatusPill status={job.status} kind={job.kind} noDriver={job.noDriver} forShop={job.forShop} />
         {job.driver && <div className="mt-1 text-xs">{job.driver.name}</div>}
         {job.proofKey && <DocLink fileKey={job.proofKey} label="📷" />}
       </td>
@@ -419,6 +419,81 @@ function DriversModuleSwitch() {
   );
 }
 
+/** Phase 2: drivers asking to be paid on Flooz/T-Money; an admin sends the money and marks it paid. */
+function Payouts({ onReport }: { onReport: Report }) {
+  const { t } = useI18n();
+  const p = t.drivers.pay;
+  const { backend } = useApp();
+  const when = useDateTime();
+  const { data, error, reload } = useLiveQuery(() => backend.adminDriverPayouts());
+  const run = useRun((msg, ok) => {
+    onReport(msg, ok);
+    reload();
+  });
+  const [refs, setRefs] = useState<Record<string, string>>({});
+  if (!data) return <Loading error={error} />;
+  const tone = { requested: "amber", paid: "green", rejected: "gray" } as const;
+  return (
+    <section className="space-y-2">
+      <h2 className="text-lg font-semibold">{p.adminTitle}</h2>
+      <p className="text-sm text-zinc-600 dark:text-zinc-400">{p.adminHint}</p>
+      {data.length === 0 ? (
+        <p className="text-sm text-zinc-500">{p.adminNone}</p>
+      ) : (
+        <Table
+          head={
+            <>
+              <th className={th}>{t.parcels.admin.created}</th>
+              <th className={th}>{t.drivers.admin.driver}</th>
+              <th className={th}>FCFA</th>
+              <th className={th}>{p.payoutNetwork}</th>
+              <th className={th} />
+              <th className={th} />
+            </>
+          }
+        >
+          {data.map((x) => (
+            <tr key={`${x.id}:${x.status}`}>
+              <td className={td}>{when(x.requestedAt)}</td>
+              <td className={td}>
+                <div className="font-medium">{x.driverName}</div>
+                <div className="text-xs text-zinc-500">{format(p.adminBalance, { amount: x.balanceFcfa })}</div>
+              </td>
+              <td className={`${td} font-mono`}>{x.amountFcfa}</td>
+              <td className={td}>
+                {x.network === "flooz" ? "Flooz" : "T-Money"} · {x.phone}
+              </td>
+              <td className={td}>
+                <Pill tone={tone[x.status]}>{p.status[x.status]}</Pill>
+                {x.reference && <div className="text-xs text-zinc-500">{x.reference}</div>}
+              </td>
+              <td className={td}>
+                {x.status === "requested" && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    <input
+                      className={`${field} w-36`}
+                      placeholder={p.adminReference}
+                      aria-label={p.adminReference}
+                      value={refs[x.id] ?? ""}
+                      onChange={(e) => setRefs((r) => ({ ...r, [x.id]: e.target.value }))}
+                    />
+                    <button type="button" className={saveBtn} onClick={() => void run(() => backend.decideDriverPayout(x.id, "paid", refs[x.id]))}>
+                      {p.adminPaid}
+                    </button>
+                    <button type="button" className={smallBtn} onClick={() => void run(() => backend.decideDriverPayout(x.id, "rejected"))}>
+                      {p.adminReject}
+                    </button>
+                  </div>
+                )}
+              </td>
+            </tr>
+          ))}
+        </Table>
+      )}
+    </section>
+  );
+}
+
 export function DriversManager() {
   const { t } = useI18n();
   const { backend } = useApp();
@@ -475,6 +550,8 @@ export function DriversManager() {
           </Table>
         )}
       </section>
+
+      <Payouts onReport={onReport} />
 
       <section className="space-y-2">
         <div className="flex flex-wrap items-center gap-3">

@@ -9,6 +9,7 @@ import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
 import { isStationStaff } from "@/lib/operators";
 import { isDriverAccount } from "@/lib/drivers";
+import { isMerchantAccount } from "@/lib/merchants";
 
 /** Screens without the tab bar: sign-in, and the staff and admin tools. */
 const HIDDEN_PREFIXES = ["/login", "/admin", "/operator"];
@@ -27,7 +28,9 @@ export function BottomNav() {
   const driver = isDriverAccount(profile);
   // Fleet managers get the map, the stations, their fleet and their account (plan phase 7).
   const fleet = profile?.role === "fleet_manager";
-  const customer = !staff && !driver && !fleet;
+  // Merchants and their employees get the map, the stations, their shop and their account (planung/marchand.md).
+  const merchant = isMerchantAccount(profile);
+  const customer = !staff && !driver && !fleet && !merchant;
   const hidden = (staff ? STAFF_HIDDEN_PREFIXES : HIDDEN_PREFIXES).some((p) => pathname.startsWith(p));
 
   useEffect(() => {
@@ -44,6 +47,7 @@ export function BottomNav() {
     { href: "/operator", label: t.ui.tabs.myStation, icon: StoreIcon, active: pathname.startsWith("/operator"), show: staff },
     { href: "/chauffeur", label: t.nav.driver, icon: ScooterIcon, active: pathname.startsWith("/chauffeur"), show: driver },
     { href: "/flotte", label: t.nav.fleet, icon: TruckIcon, active: pathname.startsWith("/flotte"), show: fleet && features.parcels },
+    { href: "/marchand", label: t.merchant.nav, icon: StoreIcon, active: pathname.startsWith("/marchand"), show: merchant },
     { href: "/colis", label: t.ui.tabs.parcels, icon: BoxIcon, active: pathname.startsWith("/colis"), show: features.parcels && customer },
     { href: "/courses", label: t.ui.tabs.trips, icon: ScooterIcon, active: pathname.startsWith("/courses"), show: features.parcels && customer },
     {

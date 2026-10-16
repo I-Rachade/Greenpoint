@@ -46,6 +46,10 @@ import type {
   RideBooking,
   CourierBooking,
   StationDrivers,
+  TripPayment,
+  PayoutNetwork,
+  DriverPayout,
+  AdminDriverPayout,
 } from "../drivers";
 import type {
   AdminFleet,
@@ -58,6 +62,27 @@ import type {
   FleetView,
   MyFleetInvite,
 } from "../fleet";
+import type {
+  AdminMerchant,
+  DriverShops,
+  MerchantActivity,
+  MerchantAddress,
+  MerchantAddressInput,
+  MerchantAssignmentRequest,
+  MerchantBookingsQuery,
+  MerchantDecision,
+  MerchantDriver,
+  MerchantDriverInput,
+  MerchantInvite,
+  MerchantJob,
+  MerchantPayMode,
+  MerchantShopInput,
+  MerchantStats,
+  MerchantStatsQuery,
+  MerchantTier,
+  MerchantView,
+  MyMerchantInvite,
+} from "../merchants";
 import type { StationService, StationServiceInfo } from "../station-services";
 import type { ReservationKind } from "../reservations";
 import type { BatteryEventInput, BatteryEventView, StationCounter, SwapEntry, SwapFilter, SwapInput } from "../station-work";
@@ -146,6 +171,9 @@ export type BackendErrorCode =
   | "wallet_disabled"
   | "wallet_frozen"
   | "insufficient_balance"
+  | "nothing_owed"
+  | "payout_pending"
+  | "payout_not_open"
   | "recipient_not_found"
   | "account_not_found"
   | "self_transfer"
@@ -204,6 +232,17 @@ export type BackendErrorCode =
   | "staff_other_station"
   | "opening_hours_invalid"
   | "proof_required"
+  | "merchant_not_approved"
+  | "merchant_limit"
+  | "already_in_merchant"
+  | "checked_in_at_shop"
+  | "driver_checked_in"
+  | "not_assigned"
+  | "assignment_not_found"
+  | "merchant_driver_exists"
+  | "driver_checked_in_here"
+  | "merchant_locked"
+  | "address_limit"
   | "unknown";
 
 export class BackendError extends Error {
@@ -421,6 +460,10 @@ export interface Backend {
   /** Joins the line at a station; the position proves the driver is there. */
   joinDriverQueue(stationId: string, position: LatLng | null): Promise<void>;
   leaveDriverQueue(): Promise<void>;
+  /** The driver app's position while on duty (driver phase 2); kept: false when off duty. */
+  /** Signs this phone up for push notices of the signed-in account (planung/fahrer.md phase 2). */
+  registerPushToken(token: string, platform: "android" | "ios"): Promise<void>;
+  reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }): Promise<{ kept: boolean }>;
   acceptJob(id: string): Promise<void>;
   /** The trip goes to the next in line; the driver goes to the back. */
   declineJob(id: string): Promise<void>;
@@ -446,7 +489,7 @@ export interface Backend {
   /** Express parcel: a driver takes it at the sender's door straight to the recipient's door. */
   bookCourier(input: CourierBooking): Promise<DeliveryJob>;
   /** The recipient has a waiting parcel brought home; the driver gets the pickup right. */
-  bookDelivery(parcelId: string, home: HomePoint): Promise<DeliveryJob>;
+  bookDelivery(parcelId: string, home: HomePoint, payWith?: TripPayment): Promise<DeliveryJob>;
   /** Customer (before the driver has the parcel) or admin. */
   cancelJob(id: string): Promise<void>;
   /** Station staff: drivers in line and parcels drivers take or bring. */
@@ -459,6 +502,12 @@ export interface Backend {
   receiveFromDriver(stationId: string, badge: string, jobId: string, parcelCode: string): Promise<void>;
   /** Daily settlement for the balance staff saw. */
   settleDriver(stationId: string, badge: string, amountFcfa: number): Promise<void>;
+  /** Phase 2: the driver asks for what we owe them on Flooz or T-Money. */
+  requestDriverPayout(network: PayoutNetwork, phone: string): Promise<DriverPayout>;
+  /** Backoffice: payout requests of drivers, open ones first. */
+  adminDriverPayouts(): Promise<AdminDriverPayout[]>;
+  /** Backoffice: the money was sent (with the provider's reference), or the request is refused. */
+  decideDriverPayout(id: string, status: "paid" | "rejected", reference?: string): Promise<void>;
   /** Backoffice: drivers, vehicles, trips and prices (admins only). */
   adminDrivers(): Promise<AdminDrivers>;
   reviewDriver(userId: string, decision: DriverDecision): Promise<void>;
@@ -498,6 +547,60 @@ export interface Backend {
   adminFleets(): Promise<AdminFleet[]>;
   reviewFleet(managerId: string, action: FleetDecision): Promise<void>;
   setFleetTier(managerId: string, tier: FleetTier): Promise<void>;
+
+  // Merchants (see src/lib/merchants.ts, planung/marchand.md)
+  /**
+   * Merchant registration: its own path, never a customer account (W5). Makes the account,
+   * its shop (pending until an admin approves it) and the membership as its merchant, and signs in.
+   */
+  registerMerchant(contact: string, code: string, pin: string, shop: MerchantShopInput): Promise<Profile>;
+  /** The signed-in member's shop: live trips, today's counts; the merchant also team and drivers. */
+  merchantView(): Promise<MerchantView>;
+  /** The shop's bookings in a period (YYYY-MM-DD, both days included), newest first. */
+  merchantBookings(query: MerchantBookingsQuery): Promise<MerchantJob[]>;
+  /** The shop's activity log (merchant only). */
+  merchantActivity(): Promise<MerchantActivity[]>;
+  /** The shop's statistics (merchant of an unlocked shop only). */
+  merchantStats(query: MerchantStatsQuery): Promise<MerchantStats>;
+  /** The merchant saves a pickup address, or removes one. */
+  addMerchantAddress(input: MerchantAddressInput): Promise<MerchantAddress>;
+  removeMerchantAddress(addressId: string): Promise<void>;
+  /** A member confirms a courier whose recipient was absent is back at the shop. */
+  confirmShopReturn(jobId: string): Promise<void>;
+  updateMerchantShop(input: MerchantShopInput): Promise<void>;
+  inviteMerchantEmployee(phone: string): Promise<MerchantInvite>;
+  revokeMerchantInvite(inviteId: string): Promise<void>;
+  /** Takes an employee out of the shop: back to a customer account (R15). */
+  removeMerchantEmployee(userId: string): Promise<void>;
+  /** A favorite (told only) or an assigned driver with a pay option (to approve). */
+  addMerchantDriver(input: MerchantDriverInput): Promise<MerchantDriver>;
+  /** A new pay option for an assigned driver: approved again. */
+  changeMerchantPay(assignmentId: string, payMode: MerchantPayMode, ratePerHourFcfa: number | null): Promise<void>;
+  /** Ends a favorite or an assignment (the merchant, the driver or an admin). */
+  endMerchantDriver(assignmentId: string): Promise<void>;
+  /** The merchant checks a driver out of the shop. */
+  merchantCheckout(driverId: string): Promise<void>;
+  /** Open shop invites for the signed-in customer's phone number. */
+  myMerchantInvites(): Promise<MyMerchantInvite[]>;
+  /** Accepts a shop invite: the account becomes an employee account of the shop. */
+  acceptMerchantInvite(token: string): Promise<void>;
+  declineMerchantInvite(token: string): Promise<void>;
+  /** Assignments waiting for the signed-in driver, fleet manager (their drivers) or admin. */
+  merchantAssignmentRequests(): Promise<MerchantAssignmentRequest[]>;
+  decideMerchantAssignment(assignmentId: string, approve: boolean): Promise<void>;
+  /** The driver's shops: assignments, favorites, the check-in and hours to confirm. */
+  driverShops(): Promise<DriverShops>;
+  /** "Je suis chez <shop>": within 500 m of the shop. */
+  checkInAtShop(merchantId: string, position: LatLng): Promise<void>;
+  checkOutOfShop(): Promise<void>;
+  /** The driver confirms the shop paid the hours of a check-in. */
+  confirmShopHoursReceived(checkinId: string): Promise<void>;
+  /** Backoffice: every shop, pending ones first (admins only). */
+  adminMerchants(): Promise<AdminMerchant[]>;
+  reviewMerchant(merchantId: string, action: MerchantDecision): Promise<void>;
+  setMerchantTier(merchantId: string, tier: MerchantTier): Promise<void>;
+  setMerchantOwner(merchantId: string, userId: string): Promise<void>;
+  adminRemoveMerchantEmployee(merchantId: string, userId: string): Promise<void>;
 
   // Partner API (see src/lib/partners.ts)
   /** Parcels other apps booked for drop-off at this station (its staff). */

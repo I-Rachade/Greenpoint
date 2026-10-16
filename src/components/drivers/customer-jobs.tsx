@@ -13,6 +13,7 @@ import {
   type DropoffPoint,
   type HomePoint,
   type BookableVehicleType,
+  type TripPayment,
 } from "@/lib/drivers";
 import { distanceMeters, type LatLng } from "@/lib/geo";
 import { useErrorMessage, useNow } from "@/lib/hooks";
@@ -24,12 +25,14 @@ import { useApp } from "../app-provider";
 import { SizePicker } from "../parcels/size-picker";
 import { useI18n } from "../i18n-provider";
 import { Button, CountUp, formatRemaining, useReducedMotion, useToast } from "../ui";
+import { DriverTracking } from "./driver-tracking";
+import { TripPaymentChoice } from "./trip-payment";
 import { input, JobStatusPill, Notice, primary, secondary, small, useFcfa, useJobRoute } from "./shared";
 
 const HomePicker = dynamic(() => import("./home-picker").then((m) => m.HomePicker), { ssr: false });
 
 /** Map pin, "my position", directions and phone: where the driver should go. */
-function HomeFields({ value, onChange, title }: { value: HomePoint; onChange: (h: HomePoint) => void; title?: string }) {
+export function HomeFields({ value, onChange, title }: { value: HomePoint; onChange: (h: HomePoint) => void; title?: string }) {
   const { t } = useI18n();
   const { profile } = useApp();
   const { position } = usePosition();
@@ -80,14 +83,28 @@ function useEmptyHome(): HomePoint {
   return { lat: 0, lng: 0, note: "", phone: profile?.phone ?? "" };
 }
 
-/** The customer books a driver to fetch a parcel at home and bring it to a station. How it works is on its own page. */
-export function BookPickup({ info, stations }: { info: ParcelInfo; stations: StationView[] }) {
+/**
+ * The customer books a driver to fetch a parcel at home and bring it to a station. How it works is on its own page.
+ * A shop (planung/marchand.md) passes its address as `start` and stays on its page with `onBooked`.
+ */
+export function BookPickup({
+  info,
+  stations,
+  start,
+  onBooked,
+}: {
+  info: ParcelInfo;
+  stations: StationView[];
+  start?: HomePoint;
+  onBooked?: (job: DeliveryJob) => void;
+}) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
   const router = useRouter();
   const toast = useToast();
-  const emptyHome = useEmptyHome();
+  const blankHome = useEmptyHome();
+  const emptyHome = start ?? blankHome;
   const [home, setHome] = useState(emptyHome);
   const emptyForm = { toStationId: "", recipientPhone: "", content: "", size: "S" as ParcelSize };
   const [form, setForm] = useState(emptyForm);
@@ -119,7 +136,10 @@ export function BookPickup({ info, stations }: { info: ParcelInfo; stations: Sta
       setForm(emptyForm);
       setHome(emptyHome);
       toast(t.drivers.customer.booked);
-      router.push(`/colis${jobAnchor(job.id)}`);
+      if (onBooked) {
+        setBusy(false);
+        onBooked(job);
+      } else router.push(`/colis${jobAnchor(job.id)}`);
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
@@ -167,7 +187,7 @@ export function BookPickup({ info, stations }: { info: ParcelInfo; stations: Sta
 }
 
 /** Where a ride or courier ends: a pin on the map and directions. */
-function DropoffFields({ value, onChange, title, hint, noteLabel }: { value: DropoffPoint; onChange: (d: DropoffPoint) => void; title: string; hint: string; noteLabel: string }) {
+export function DropoffFields({ value, onChange, title, hint, noteLabel }: { value: DropoffPoint; onChange: (d: DropoffPoint) => void; title: string; hint: string; noteLabel: string }) {
   const { t } = useI18n();
   const pinned = value.lat !== 0 || value.lng !== 0;
   const outside = pinned && !inServiceArea(value);
@@ -190,8 +210,19 @@ const pinned = (p: { lat: number; lng: number }) => p.lat !== 0 || p.lng !== 0;
  * A driver takes a parcel at one place and brings it straight to its destination.
  * Without `vehicle`: "Envoi express" on the Colis tab, any vehicle that fits.
  * With `vehicle`: the "Courses" tab, only that kind of vehicle and the sizes it carries.
+ * A shop (planung/marchand.md) passes its address as `start` and stays on its page with `onBooked`.
  */
-export function BookCourier({ info, vehicle }: { info: ParcelInfo; vehicle?: BookableVehicleType }) {
+export function BookCourier({
+  info,
+  vehicle,
+  start,
+  onBooked,
+}: {
+  info: ParcelInfo;
+  vehicle?: BookableVehicleType;
+  start?: HomePoint;
+  onBooked?: (job: DeliveryJob) => void;
+}) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
@@ -199,12 +230,14 @@ export function BookCourier({ info, vehicle }: { info: ParcelInfo; vehicle?: Boo
   const toast = useToast();
   const fcfa = useFcfa();
   const reduced = useReducedMotion();
-  const emptyHome = useEmptyHome();
+  const blankHome = useEmptyHome();
+  const emptyHome = start ?? blankHome;
   const emptyDropoff: DropoffPoint = { lat: 0, lng: 0, note: "" };
   const emptyForm = { recipientPhone: "", content: "", size: "S" as ParcelSize };
   const [pickup, setPickup] = useState(emptyHome);
   const [dropoff, setDropoff] = useState<DropoffPoint>(emptyDropoff);
   const [form, setForm] = useState(emptyForm);
+  const [payWith, setPayWith] = useState<TripPayment>("cash");
   // Three steps: where to collect, where to deliver, then the parcel and the price.
   const [step, setStep] = useState(0);
   // +1 going forward, -1 going back: which side the next step slides in from.
@@ -247,6 +280,7 @@ export function BookCourier({ info, vehicle }: { info: ParcelInfo; vehicle?: Boo
         recipientPhone: form.recipientPhone,
         content: form.content,
         size: form.size,
+        payWith,
       });
       // Straight to the tracking, with an empty form behind: no second booking by accident.
       setPickup(emptyHome);
@@ -254,7 +288,10 @@ export function BookCourier({ info, vehicle }: { info: ParcelInfo; vehicle?: Boo
       setForm(emptyForm);
       setStep(0);
       toast(t.drivers.customer.courierBooked);
-      router.push(`${vehicle ? "/courses" : "/colis"}${jobAnchor(job.id)}`);
+      if (onBooked) {
+        setBusy(false);
+        onBooked(job);
+      } else router.push(`${vehicle ? "/courses" : "/colis"}${jobAnchor(job.id)}`);
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
@@ -307,29 +344,32 @@ export function BookCourier({ info, vehicle }: { info: ParcelInfo; vehicle?: Boo
                 label={t.drivers.customer.size}
                 hidePrice
               />
-              <p className="text-xs text-gp-muted">{t.phase1b.courier.priceHint}</p>
+              {payWith === "cash" && <p className="text-xs text-gp-muted">{t.phase1b.courier.priceHint}</p>}
+              <TripPaymentChoice fare={fare} value={payWith} onChange={setPayWith} />
             </>
           )}
           <Notice error={error} notice="" />
         </div>
         {/* The price stays in sight while the pins move; it is the exact fare the driver collects. */}
-        <div className="sticky bottom-0 flex items-center gap-3 rounded-b-xl border-t border-black/10 bg-gp-surface/95 p-3 backdrop-blur dark:border-white/10">
-          <div className="min-w-0 flex-1" aria-live="polite">
-            <div className="text-xs text-gp-muted">{t.phase1b.courier.price}</div>
+        <div className="sticky bottom-0 space-y-2 rounded-b-xl border-t border-black/10 bg-gp-surface/95 p-3 backdrop-blur dark:border-white/10">
+          <div className="flex items-baseline justify-between gap-3" aria-live="polite">
+            <span className="text-sm text-gp-muted">{t.phase1b.courier.price}</span>
             {fare !== null ? (
-              <CountUp value={fare} format={fcfa} className="text-lg font-semibold" />
+              <CountUp value={fare} format={fcfa} className="whitespace-nowrap text-lg font-semibold" />
             ) : (
               <span className="text-xs text-gp-muted">{t.phase1b.courier.pricePending}</span>
             )}
           </div>
-          {step > 0 && (
-            <Button variant="secondary" disabled={busy} onClick={() => go(step - 1)}>
-              {t.phase1b.courier.back}
+          <div className="flex gap-3">
+            {step > 0 && (
+              <Button variant="secondary" disabled={busy} onClick={() => go(step - 1)}>
+                {t.phase1b.courier.back}
+              </Button>
+            )}
+            <Button type="submit" busy={busy} disabled={!canGoOn} className="flex-1">
+              {step < 2 ? t.phase1b.courier.next : t.drivers.customer.courierBook}
             </Button>
-          )}
-          <Button type="submit" busy={busy} disabled={!canGoOn}>
-            {step < 2 ? t.phase1b.courier.next : t.drivers.customer.courierBook}
-          </Button>
+          </div>
         </div>
       </form>
     </section>
@@ -343,6 +383,7 @@ export function BookDelivery({ parcel, station, info }: { parcel: Parcel; statio
   const errorMessage = useErrorMessage();
   const [open, setOpen] = useState(false);
   const [home, setHome] = useState(useEmptyHome());
+  const [payWith, setPayWith] = useState<TripPayment>("cash");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const pinned = home.lat !== 0 || home.lng !== 0;
@@ -361,7 +402,7 @@ export function BookDelivery({ parcel, station, info }: { parcel: Parcel; statio
     setError("");
     setBusy(true);
     try {
-      await backend.bookDelivery(parcel.id, home);
+      await backend.bookDelivery(parcel.id, home, payWith);
       setOpen(false);
     } catch (err) {
       setError(errorMessage(err));
@@ -376,6 +417,7 @@ export function BookDelivery({ parcel, station, info }: { parcel: Parcel; statio
       <p className="text-gp-muted">{t.drivers.customer.deliverIntro}</p>
       <HomeFields value={home} onChange={setHome} />
       {fare !== null && <p className="font-semibold">{format(t.drivers.customer.deliverFare, { n: fare })}</p>}
+      <TripPaymentChoice fare={fare} value={payWith} onChange={setPayWith} />
       <p className="text-xs text-gp-muted">{t.drivers.customer.deliverHint}</p>
       <div className="flex flex-wrap gap-2">
         <button type="submit" className={primary} disabled={busy || !pinned || !inServiceArea(home)}>
@@ -437,7 +479,7 @@ export function JobDetails({ job: j, stations, showRoute = true }: { job: Delive
     <div className="space-y-1">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">{t.drivers.kind[j.kind]}</span>
-        <JobStatusPill status={j.status} kind={j.kind} noDriver={j.noDriver} />
+        <JobStatusPill status={j.status} kind={j.kind} noDriver={j.noDriver} forShop={j.forShop} />
         {j.trackingNo && <span className="font-mono text-xs">{j.trackingNo}</span>}
         <span className="ml-auto text-xs text-gp-muted">{when(j.createdAt)}</span>
       </div>
@@ -457,6 +499,7 @@ export function JobDetails({ job: j, stations, showRoute = true }: { job: Delive
           )}
         </div>
       )}
+      <DriverTracking job={j} stations={stations} />
       {j.handoverCode && (
         <div className="rounded-lg bg-gp-green/10 p-3">
           <p className="font-mono text-lg font-semibold tracking-widest">{format(t.runs.handoverCode, { code: j.handoverCode })}</p>
@@ -465,6 +508,11 @@ export function JobDetails({ job: j, stations, showRoute = true }: { job: Delive
       )}
       <div className="flex flex-wrap items-center gap-2">
         {j.collectFcfa > 0 && <span className="font-semibold">{fcfa(j.collectFcfa)}</span>}
+        {!!j.prepaidFcfa && (
+          <span className="rounded-full bg-gp-green/10 px-2 py-0.5 text-xs font-medium text-gp-green-dark dark:text-gp-green">
+            {fcfa(j.prepaidFcfa)} · {j.refunded ? t.drivers.pay.refunded : t.drivers.pay.paidOnline}
+          </span>
+        )}
         <span className="flex-1" />
         {["open", "assigned", "accepted"].includes(j.status) && (
           <button

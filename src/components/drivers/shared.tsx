@@ -24,9 +24,20 @@ const TONE: Record<JobStatus, "green" | "amber" | "red" | "gray" | "blue"> = {
 };
 
 /** noDriver: a trip the server called off because no driver took it in time. */
-export function JobStatusPill({ status, kind, noDriver = false }: { status: JobStatus; kind?: JobKind; noDriver?: boolean }) {
+export function JobStatusPill({ status, kind, noDriver = false, forShop = false }: { status: JobStatus; kind?: JobKind; noDriver?: boolean; forShop?: boolean }) {
   const { t } = useI18n();
-  const label = noDriver && status === "cancelled" ? t.drivers.noDriver : kind === "ride" && status === "picked_up" ? t.drivers.rideOnBoard : t.drivers.status[status];
+  // A shop's courier goes back to the shop, not to a station.
+  const shopCourier = forShop && kind === "courier";
+  const label =
+    noDriver && status === "cancelled"
+      ? t.drivers.noDriver
+      : kind === "ride" && status === "picked_up"
+        ? t.drivers.rideOnBoard
+        : shopCourier && status === "returning"
+          ? t.drivers.shopReturning
+          : shopCourier && status === "failed"
+            ? t.drivers.shopReturned
+            : t.drivers.status[status];
   return <Pill tone={TONE[status]}>{label}</Pill>;
 }
 

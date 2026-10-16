@@ -37,6 +37,7 @@ Unter **Workers & Pages > pointderecharge-app > Settings > Variables and secrets
 | `PAYMENT_CALLBACK_SECRET` | Secret | langer Zufallswert für die Rückruf-Adresse des Zahlungsanbieters (siehe [ZAHLUNGEN.md](ZAHLUNGEN.md)) |
 | `PAYMENTS_PROVIDER`, `PAYGATE_AUTH_TOKEN` | Text, Secret | erst setzen, wenn das PayGate-Konto freigeschaltet ist; ohne beide läuft die Bezahlung als Simulation |
 | `EMAIL_HOURLY_LIMIT` | Text, optional | höchstens so viele Code-E-Mails pro Stunde insgesamt (Standard 100) |
+| `FCM_SERVICE_ACCOUNT` | Secret, optional | Push-Benachrichtigungen (Fahrer phase 2): der ganze JSON-Schlüssel eines Firebase-Dienstkontos, siehe Abschnitt 7a. Ohne ihn wird kein Push verschickt, E-Mails gehen weiter. |
 
 Didit: Konto auf https://business.didit.me anlegen, Guthaben aufladen (Telefon-Verifizierung ist erst nach der ersten Aufladung aktiv), unter der Anwendung den API-Schlüssel kopieren. Kosten: 0,04 $ pro verschickten Code plus Gebühr des Netzes je nach Land und Kanal (https://docs.didit.me/getting-started/phone-verification-pricing); die Prüfung des Codes ist kostenlos. Die App nimmt nur +228-Nummern an, damit keine teuren Codes ins Ausland gehen. Didit lehnt Wegwerf- und Internet-Nummern bei der Registrierung ab. SMS kosten nur bei Registrierung und vergessener PIN; der tägliche Login mit PIN ist kostenlos.
 
@@ -106,6 +107,14 @@ NEXT_PUBLIC_BACKEND=cloudflare NEXT_PUBLIC_API_URL=https://app.poinderecharge.co
 ```
 
 Der Worker erlaubt Anfragen aus der App (`https://localhost`, `capacitor://localhost`), siehe `worker/http.ts`.
+
+## 7a. Push-Benachrichtigungen (Migration 0037)
+
+Fahrer sehen neue Angebote auch bei geschlossener App; Kunden und Händler bekommen dieselben Hinweise wie per E-Mail.
+
+1. In der Firebase-Konsole ein Projekt anlegen und eine Android-App mit der Paket-ID aus `capacitor.config.ts` hinzufügen. `google-services.json` herunterladen und nach `android/app/google-services.json` legen.
+2. Unter **Projekteinstellungen > Dienstkonten** einen neuen privaten Schlüssel erzeugen und den ganzen JSON-Inhalt als Worker-Secret `FCM_SERVICE_ACCOUNT` speichern.
+3. Die App mit `NEXT_PUBLIC_PUSH=1` bauen (zusätzlich zu den Werten oben). Ohne diesen Wert fragt die App nicht nach Push, denn ohne `google-services.json` würde Android beim Registrieren abstürzen.
 
 ## Rechtliche Seiten
 

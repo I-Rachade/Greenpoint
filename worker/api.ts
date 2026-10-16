@@ -64,6 +64,7 @@ import {
   deleteAccount,
   register,
   registerFleetManager,
+  registerMerchant,
   sendCode,
   sendContactCode,
   sendDeleteCode,
@@ -108,6 +109,8 @@ import {
   arriveAtDoor,
   assignJob,
   boardRide,
+  reportPosition,
+  askPayout,
   bookDelivery,
   bookPickup,
   bookRide,
@@ -156,6 +159,46 @@ import {
   setFleetTier,
 } from "./fleet";
 import type { FleetDecision, FleetInviteAnswer, FleetTier } from "../src/lib/fleet";
+import {
+  acceptMerchantInvite,
+  addMerchantDriver,
+  adminMerchants,
+  adminRemoveEmployee,
+  assignmentRequests,
+  changeMerchantPay,
+  checkIn,
+  checkOut,
+  confirmHoursReceived,
+  declineMerchantInvite,
+  decideAssignment,
+  driverShops,
+  endMerchantDriver,
+  inviteEmployee,
+  addMerchantAddress,
+  confirmShopReturn,
+  merchantActivity,
+  merchantBookings,
+  merchantStatistics,
+  removeMerchantAddress,
+  merchantCheckout,
+  merchantView,
+  myMerchantInvites,
+  removeEmployee,
+  reviewMerchant,
+  revokeEmployeeInvite,
+  setMerchantOwner,
+  setMerchantTier,
+  updateShop,
+} from "./merchants";
+import type {
+  MerchantAddressInput,
+  MerchantBookingsQuery,
+  MerchantDecision,
+  MerchantDriverInput,
+  MerchantShopInput,
+  MerchantStatsQuery,
+  MerchantTier,
+} from "../src/lib/merchants";
 import type { PartnerInput } from "../src/lib/partners";
 import { PARTNER_API_BASE } from "../src/lib/partners";
 import {
@@ -173,6 +216,8 @@ import type { Env } from "./env";
 import { notifyUser } from "./notify";
 import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setDriversEnabled, setLiteEnabled, setParcelsEnabled } from "./features";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
+import { registerPushToken, removePushToken } from "./push";
+import { adminPayouts, decidePayout } from "./trip-payments";
 import { activeServices, decideService, listStationServices, requestService, requireService, setService } from "./services";
 import { customerStation } from "../src/lib/station-services";
 import { DB_CUSTOMER, refuseNonCustomer, roleFromDb, roleToDb } from "./roles";
@@ -1033,8 +1078,9 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
   if (!row) throw new ApiError("forbidden", 403);
   const before = roleFromDb(row.role);
   if (before === role) return;
-  // Driver accounts come and go through the driver backoffice only (approve, release; R15).
-  if (before === "driver") throw new ApiError("has_other_role");
+  // Driver accounts come and go through the driver backoffice only (approve, release; R15),
+  // merchant accounts through their shop (register, invite, remove: worker/merchants.ts).
+  if (before === "driver" || before === "merchant") throw new ApiError("has_other_role");
   // R15: staff become something else only once removed from their station (no silent removal).
   if (role !== "operator" && (await c.db.prepare("select 1 from station_staff where user_id = ?").bind(userId).first())) {
     throw new ApiError("role_change_blocked", 409);
@@ -1075,7 +1121,7 @@ const promoteToOperator = (c: Ctx, userId: string) =>
 /** One role per person: a fleet manager would lose their drivers (worker/fleet.ts), a driver is a driver only. */
 async function refuseOtherRole(c: Ctx, userId: string) {
   const row = await c.db.prepare("select role from users where id = ?").bind(userId).first<{ role: string }>();
-  if (row?.role === "fleet_manager" || row?.role === "driver") throw new ApiError("has_other_role");
+  if (row?.role === "fleet_manager" || row?.role === "driver" || row?.role === "merchant") throw new ApiError("has_other_role");
 }
 
 /** Whoever has no station and runs no operator any more goes back to customer. */
@@ -1617,6 +1663,14 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
   [
     "POST",
+    /^\/api\/auth\/register-merchant$/,
+    async (c) => {
+      const body = await readJson<{ contact?: string; code: string; pin: string; shop: MerchantShopInput }>(c.request);
+      return registerMerchant(c.env, body.contact ?? "", body.code, body.pin, body.shop);
+    },
+  ],
+  [
+    "POST",
     /^\/api\/auth\/login$/,
     async (c) => {
       const body = await readJson<{ contact?: string; phone?: string; pin: string }>(c.request);
@@ -1988,6 +2042,43 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/admin\/fleets$/, (c) => adminFleets(c)],
   ["POST", /^\/api\/admin\/fleets\/([\w-]+)\/review$/, async (c, [id]) => reviewFleet(c, id, (await readJson<{ action: FleetDecision }>(c.request)).action)],
   ["POST", /^\/api\/admin\/fleets\/([\w-]+)\/tier$/, async (c, [id]) => setFleetTier(c, id, (await readJson<{ tier: FleetTier }>(c.request)).tier)],
+  // Merchants (worker/merchants.ts; registration in worker/auth.ts, bookings in worker/drivers.ts)
+  ["GET", /^\/api\/merchant$/, (c) => merchantView(c)],
+  ["POST", /^\/api\/merchant\/bookings$/, async (c) => merchantBookings(c, await readJson<MerchantBookingsQuery>(c.request))],
+  ["GET", /^\/api\/merchant\/activity$/, (c) => merchantActivity(c)],
+  ["POST", /^\/api\/merchant\/stats$/, async (c) => merchantStatistics(c, await readJson<MerchantStatsQuery>(c.request))],
+  ["POST", /^\/api\/merchant\/addresses$/, async (c) => addMerchantAddress(c, await readJson<MerchantAddressInput>(c.request))],
+  ["DELETE", /^\/api\/merchant\/addresses\/([\w-]+)$/, (c, [id]) => removeMerchantAddress(c, id)],
+  ["POST", /^\/api\/merchant\/jobs\/([\w-]+)\/returned$/, (c, [id]) => confirmShopReturn(c, id)],
+  ["POST", /^\/api\/merchant\/shop$/, async (c) => updateShop(c, await readJson<MerchantShopInput>(c.request))],
+  ["POST", /^\/api\/merchant\/invites$/, async (c) => inviteEmployee(c, (await readJson<{ phone: string }>(c.request)).phone)],
+  ["POST", /^\/api\/merchant\/invites\/([\w-]+)\/revoke$/, (c, [id]) => revokeEmployeeInvite(c, id)],
+  ["POST", /^\/api\/merchant\/members\/([\w-]+)\/remove$/, (c, [id]) => removeEmployee(c, id)],
+  ["POST", /^\/api\/merchant\/drivers$/, async (c) => addMerchantDriver(c, await readJson<MerchantDriverInput>(c.request))],
+  [
+    "POST",
+    /^\/api\/merchant\/drivers\/([\w-]+)\/pay$/,
+    async (c, [id]) => changeMerchantPay(c, id, await readJson<{ payMode: unknown; ratePerHourFcfa: unknown }>(c.request)),
+  ],
+  ["POST", /^\/api\/merchant\/drivers\/([\w-]+)\/end$/, (c, [id]) => endMerchantDriver(c, id)],
+  ["POST", /^\/api\/merchant\/drivers\/([\w-]+)\/checkout$/, (c, [id]) => merchantCheckout(c, id)],
+  // The invited employee: open invites for their number, accept or decline by code.
+  ["GET", /^\/api\/merchant-invites$/, (c) => myMerchantInvites(c)],
+  ["POST", /^\/api\/merchant-invites\/(\w+)\/accept$/, (c, [token]) => acceptMerchantInvite(c, token)],
+  ["POST", /^\/api\/merchant-invites\/(\w+)\/decline$/, (c, [token]) => declineMerchantInvite(c, token)],
+  // Assignments to approve: by the driver, their fleet manager or an admin (decision 9).
+  ["GET", /^\/api\/merchant-assignments$/, (c) => assignmentRequests(c)],
+  ["POST", /^\/api\/merchant-assignments\/([\w-]+)\/(approve|decline)$/, (c, [id, action]) => decideAssignment(c, id, action === "approve")],
+  // The driver at a shop.
+  ["GET", /^\/api\/driver\/shops$/, (c) => driverShops(c)],
+  ["POST", /^\/api\/driver\/shops\/([\w-]+)\/checkin$/, async (c, [id]) => checkIn(c, id, (await readJson<{ position: unknown }>(c.request)).position)],
+  ["POST", /^\/api\/driver\/shops\/checkout$/, (c) => checkOut(c)],
+  ["POST", /^\/api\/driver\/shops\/hours\/([\w-]+)\/received$/, (c, [id]) => confirmHoursReceived(c, id)],
+  ["GET", /^\/api\/admin\/merchants$/, (c) => adminMerchants(c)],
+  ["POST", /^\/api\/admin\/merchants\/([\w-]+)\/review$/, async (c, [id]) => reviewMerchant(c, id, (await readJson<{ action: MerchantDecision }>(c.request)).action)],
+  ["POST", /^\/api\/admin\/merchants\/([\w-]+)\/tier$/, async (c, [id]) => setMerchantTier(c, id, (await readJson<{ tier: MerchantTier }>(c.request)).tier)],
+  ["POST", /^\/api\/admin\/merchants\/([\w-]+)\/owner$/, async (c, [id]) => setMerchantOwner(c, id, String((await readJson<{ userId: string }>(c.request)).userId))],
+  ["POST", /^\/api\/admin\/merchants\/([\w-]+)\/members\/([\w-]+)\/remove$/, (c, [id, member]) => adminRemoveEmployee(c, id, member)],
   ["POST", /^\/api\/admin\/drivers\/([\w-]+)\/manager$/, async (c, [id]) => setDriverManager(c, id, (await readJson<{ contact: string | null }>(c.request)).contact)],
   [
     "GET",
@@ -1995,7 +2086,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     async (c) => {
       // Customers see how to apply, drivers their work; staff, owners and fleet managers have no driver page.
       const user = await c.requireUser();
-      if (user.role === "operator" || user.role === "fleet_manager") throw new ApiError("forbidden", 403);
+      if (user.role === "operator" || user.role === "fleet_manager" || user.role === "merchant") throw new ApiError("forbidden", 403);
       return driverHome(c);
     },
   ],
@@ -2025,6 +2116,12 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/photo$/, (c, [id]) => uploadProof(c, id, c.request)],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/deliver$/, async (c, [id]) => deliverJob(c, id, (await readJson<{ code: string }>(c.request)).code)],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/absent$/, (c, [id]) => failDelivery(c, id)],
+  ["POST", /^\/api\/driver\/position$/, async (c) => reportPosition(c, await readJson<unknown>(c.request))],
+  ["POST", /^\/api\/driver\/payouts$/, async (c) => askPayout(c, await readJson<unknown>(c.request))],
+  ["GET", /^\/api\/admin\/driver-payouts$/, (c) => adminPayouts(c)],
+  ["POST", /^\/api\/admin\/driver-payouts\/([\w-]+)$/, async (c, [id]) => decidePayout(c, id, await readJson<unknown>(c.request))],
+  ["POST", /^\/api\/push\/token$/, async (c) => registerPushToken(c, await readJson<unknown>(c.request))],
+  ["POST", /^\/api\/push\/token\/remove$/, async (c) => removePushToken(c, await readJson<unknown>(c.request))],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/board$/, (c, [id]) => boardRide(c, id)],
   [
     "POST",
@@ -2036,7 +2133,14 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/jobs\/pickup$/, async (c) => bookPickup(c, await readJson<PickupBooking>(c.request))],
   ["POST", /^\/api\/jobs\/ride$/, async (c) => bookRide(c, await readJson<RideBooking>(c.request))],
   ["POST", /^\/api\/jobs\/courier$/, async (c) => bookCourier(c, await readJson<CourierBooking>(c.request))],
-  ["POST", /^\/api\/parcels\/([\w-]+)\/delivery$/, async (c, [id]) => bookDelivery(c, id, (await readJson<{ home: unknown }>(c.request)).home)],
+  [
+    "POST",
+    /^\/api\/parcels\/([\w-]+)\/delivery$/,
+    async (c, [id]) => {
+      const body = await readJson<{ home: unknown; payWith?: unknown }>(c.request);
+      return bookDelivery(c, id, body.home, body.payWith);
+    },
+  ],
   ["POST", /^\/api\/jobs\/([\w-]+)\/cancel$/, (c, [id]) => cancelJob(c, id)],
   ["GET", /^\/api\/stations\/([\w-]+)\/drivers$/, (c, [id]) => stationDrivers(c, id)],
   [
@@ -2193,6 +2297,7 @@ export const OPEN_ROUTES: ReadonlySet<string> = new Set([
   "POST /api/auth/send",
   "POST /api/auth/register",
   "POST /api/auth/register-fleet",
+  "POST /api/auth/register-merchant",
   "POST /api/auth/login",
   "POST /api/auth/logout",
   "GET /api/reservations/mine",
@@ -2202,6 +2307,7 @@ export const OPEN_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/parcels/info",
   "GET /api/parcels/mine",
   "GET /api/fleet-invites",
+  "GET /api/merchant-invites",
   "GET /api/jobs/mine",
 ]);
 

@@ -12,7 +12,7 @@ import { field, indexSnapshot, Loading, StaleNotice, Table, td, th, useAdminSnap
 
 const ROLES: UserRole[] = ["customer", "operator", "fleet_manager", "admin"];
 /** Driver accounts come and go through the driver backoffice (approve, release), not this list. */
-const FILTER_ROLES: UserRole[] = [...ROLES, "driver"];
+const FILTER_ROLES: UserRole[] = [...ROLES, "driver", "merchant"];
 
 /** Users with their role, assigned stations, last login and reservation behaviour. */
 export function UsersTable() {

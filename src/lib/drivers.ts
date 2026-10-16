@@ -70,6 +70,10 @@ export interface DriverSettings {
   acceptMinutes: number;
   /** How close to a station a driver must be to queue there, in metres; 0 = no check. */
   queueRadiusM: number;
+  /** Phase 2, tours: most parcel trips one driver carries at once; 1 = one trip at a time. */
+  tourMax: number;
+  /** Tours: how near the driver must be to a trip's start to have it added, in metres. */
+  tourRadiusM: number;
   vehicles: VehicleLimit[];
 }
 
@@ -83,6 +87,8 @@ export const DEFAULT_DRIVER_SETTINGS: DriverSettings = {
   waitMinutes: 10,
   acceptMinutes: 5,
   queueRadiusM: 500,
+  tourMax: 3,
+  tourRadiusM: 2000,
   vehicles: [
     { type: "moto", maxSize: "M", maxWeightKg: 20 },
     { type: "tricycle", maxSize: "L", maxWeightKg: 50 },
@@ -160,9 +166,16 @@ export function jobFits(
  */
 export function withAllVehicles(s: DriverSettings): DriverSettings {
   if (!s || !Array.isArray(s.vehicles)) return s;
+  // Settings saved before tours (phase 2) get the default tour values.
+  const tours = s.tourMax === undefined || s.tourRadiusM === undefined ? { tourMax: s.tourMax ?? DEFAULT_DRIVER_SETTINGS.tourMax, tourRadiusM: s.tourRadiusM ?? DEFAULT_DRIVER_SETTINGS.tourRadiusM } : null;
   const missing = DEFAULT_DRIVER_SETTINGS.vehicles.filter((d) => !s.vehicles.some((v) => v?.type === d.type));
-  return missing.length ? { ...s, vehicles: [...s.vehicles, ...missing] } : s;
+  return missing.length || tours ? { ...s, ...tours, vehicles: [...s.vehicles, ...missing] } : s;
 }
+
+/** Trips that can share a tour: parcels, never a passenger. */
+export const TOUR_KINDS: JobKind[] = ["courier", "pickup", "delivery", "express"];
+/** Highest tourMax the settings accept (delivery_jobs.tour_slot). */
+export const TOUR_MAX_LIMIT = 5;
 
 export function validSettings(s: DriverSettings): boolean {
   const int = (v: unknown, min: number, max: number) => Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
@@ -176,6 +189,8 @@ export function validSettings(s: DriverSettings): boolean {
     int(s.waitMinutes, 0, 120) &&
     int(s.acceptMinutes, 1, 120) &&
     int(s.queueRadiusM, 0, 50_000) &&
+    int(s.tourMax, 1, TOUR_MAX_LIMIT) &&
+    int(s.tourRadiusM, 0, 20_000) &&
     Array.isArray(s.vehicles) &&
     FLEET_VEHICLE_TYPES.every((type) => {
       const v = s.vehicles.find((x) => x.type === type);
@@ -377,6 +392,32 @@ export interface JobDriver {
   phone: string | null;
   plate: string | null;
   vehicleType: FleetVehicleType | null;
+  /**
+   * Where the driver is (driver phase 2, planung/fahrer.md): only while on the way to the
+   * start or carrying the parcel or passenger, and only when reported in the last
+   * POSITION_FRESH_MINUTES.
+   */
+  position?: DriverPosition | null;
+}
+
+/** A driver's last reported position (driver phase 2). */
+export interface DriverPosition {
+  lat: number;
+  lng: number;
+  /** When the driver's phone reported it. */
+  at: string;
+}
+
+/** The driver app reports its position at most this often while on duty. */
+export const POSITION_REPORT_SECONDS = 20;
+/** Older positions are not shown: the driver closed the app or lost the network. */
+export const POSITION_FRESH_MINUTES = 10;
+/** Trip statuses in which the customer sees where the driver is. */
+export const TRACKED_JOB_STATUSES: JobStatus[] = ["accepted", "picked_up", "at_door", "returning"];
+
+/** The position if it is fresh enough to show, else null. */
+export function freshPosition(p: DriverPosition | null | undefined, now = Date.now()): DriverPosition | null {
+  return p && now - new Date(p.at).getTime() <= POSITION_FRESH_MINUTES * 60_000 ? p : null;
 }
 
 export interface DeliveryJob {
@@ -404,8 +445,12 @@ export interface DeliveryJob {
   content: string;
   distanceM: number;
   fareFcfa: number;
-  /** Cash the driver collects from the customer (0 for express). */
+  /** Cash the driver collects from the customer (0 for express, and when paid online). */
   collectFcfa: number;
+  /** Phase 2: the fare the customer paid online from the wallet (Flooz/T-Money); absent for cash. */
+  prepaidFcfa?: number;
+  /** The online payment went back to the wallet (the trip did not happen). */
+  refunded?: true;
   /** Pickup bookings: who gets the parcel at station B. Couriers: who gets it at the door. */
   recipient: { phone: string; name: string | null } | null;
   declaredValue: number | null;
@@ -423,6 +468,11 @@ export interface DeliveryJob {
   /** Called off because no driver took it in time (OPEN_JOB_EXPIRY_MINUTES). */
   noDriver?: boolean;
   /**
+   * Booked by a shop (planung/marchand.md). A shop's courier has a door step like a home
+   * delivery: when the recipient is absent the driver brings it back to the start.
+   */
+  forShop?: true;
+  /**
    * Couriers, for the sender only: the code the recipient gives the driver at the door
    * (made when the driver takes the parcel). The driver hands over for this code or a photo.
    */
@@ -439,11 +489,21 @@ export interface PickupBooking {
   declaredValue?: number | null;
 }
 
+/**
+ * How a customer pays a trip (planung/fahrer.md phase 2): cash to the driver, or online from
+ * the wallet, which they top up with Flooz or T-Money. Shops always pay cash.
+ */
+export type TripPayment = "cash" | "wallet";
+export const TRIP_PAYMENTS: TripPayment[] = ["cash", "wallet"];
+
 /** A customer books a driver to take them from A to B. */
 export interface RideBooking {
   pickup: HomePoint;
   dropoff: DropoffPoint;
   passengers: number;
+  /** A shop booking a ride for someone else (planung/marchand.md): the passenger's name, shown to the driver. */
+  passengerName?: string;
+  payWith?: TripPayment;
 }
 
 /**
@@ -458,6 +518,7 @@ export interface CourierBooking {
   content: string;
   size: ParcelSize;
   vehicleType?: BookableVehicleType;
+  payWith?: TripPayment;
 }
 
 export type LedgerKind = "collected" | "earning" | "settlement";
@@ -480,7 +541,10 @@ export function balanceOf(entries: Pick<LedgerEntry, "kind" | "amountFcfa">[]): 
 export interface DriverHome {
   /** Null when the user never applied. */
   driver: Driver | null;
+  /** The first of the driver's trips under way (an offer first); see jobs for a tour. */
   job: DeliveryJob | null;
+  /** Phase 2: every trip under way, an open offer first, then in the order they were taken. */
+  jobs?: DeliveryJob[];
   history: DeliveryJob[];
   ledger: LedgerEntry[];
   settings: DriverSettings;
@@ -491,6 +555,39 @@ export interface DriverHome {
   lastExpiredAt: string | null;
   /** Converted drivers: the customer account that took over their wallet and greenpoints (0031). */
   formerAccount?: FormerAccount | null;
+  /** Phase 2: the open request to be paid out on Flooz/T-Money, else the last one decided. */
+  payout?: DriverPayout | null;
+}
+
+export type PayoutNetwork = "flooz" | "tmoney";
+export const PAYOUT_NETWORKS: PayoutNetwork[] = ["flooz", "tmoney"];
+
+/**
+ * Payout to the phone (phase 2): a driver we owe money asks for it on Flooz or T-Money; an
+ * admin sends it and marks it paid, which settles that amount like a payout at a station.
+ */
+export interface DriverPayout {
+  id: string;
+  amountFcfa: number;
+  network: PayoutNetwork;
+  phone: string;
+  status: "requested" | "paid" | "rejected";
+  reference: string | null;
+  requestedAt: string;
+  decidedAt: string | null;
+}
+
+/** A payout request in the backoffice, with who asked and what we owe them now. */
+export interface AdminDriverPayout extends DriverPayout {
+  driverId: string;
+  driverName: string;
+  driverPhone: string | null;
+  balanceFcfa: number;
+}
+
+/** What we owe the driver (0 when they owe us): a negative balance. */
+export function owedToDriver(balance: number): number {
+  return balance < 0 ? -balance : 0;
 }
 
 /**

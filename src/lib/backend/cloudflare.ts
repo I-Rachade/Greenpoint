@@ -36,6 +36,10 @@ import type {
   RideBooking,
   CourierBooking,
   StationDrivers,
+  TripPayment,
+  PayoutNetwork,
+  DriverPayout,
+  AdminDriverPayout,
 } from "../drivers";
 import type { ReviewInput, StationReview } from "../station-extras";
 import type {
@@ -49,6 +53,27 @@ import type {
   FleetView,
   MyFleetInvite,
 } from "../fleet";
+import type {
+  AdminMerchant,
+  DriverShops,
+  MerchantActivity,
+  MerchantAddress,
+  MerchantAddressInput,
+  MerchantAssignmentRequest,
+  MerchantBookingsQuery,
+  MerchantDecision,
+  MerchantDriver,
+  MerchantDriverInput,
+  MerchantInvite,
+  MerchantJob,
+  MerchantPayMode,
+  MerchantShopInput,
+  MerchantStats,
+  MerchantStatsQuery,
+  MerchantTier,
+  MerchantView,
+  MyMerchantInvite,
+} from "../merchants";
 import type { LatLng } from "../geo";
 import type {
   Operator,
@@ -65,6 +90,7 @@ import { getActiveStation } from "../active-station";
 import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEntry, type SwapFilter, type SwapInput } from "../station-work";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
 import { kindFrom, type ReservationKind } from "../reservations";
+import { storedPushToken, storePushToken } from "../push";
 
 const TOKEN_KEY = "poinderecharge-session";
 /** How often open pages reload station data (other customers' holds, staff updates). */
@@ -128,6 +154,9 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "wallet_disabled",
   "wallet_frozen",
   "insufficient_balance",
+  "nothing_owed",
+  "payout_pending",
+  "payout_not_open",
   "recipient_not_found",
   "self_transfer",
   "invalid_amount",
@@ -186,6 +215,15 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "staff_other_station",
   "opening_hours_invalid",
   "proof_required",
+  "merchant_not_approved",
+  "merchant_limit",
+  "already_in_merchant",
+  "checked_in_at_shop",
+  "driver_checked_in",
+  "not_assigned",
+  "assignment_not_found",
+  "merchant_driver_exists",
+  "driver_checked_in_here",
 ];
 
 /**
@@ -314,6 +352,12 @@ export class CloudflareBackend implements Backend {
   }
 
   async signOut() {
+    // This phone gets no more notices for the account that leaves.
+    const token = storedPushToken();
+    if (token) {
+      await this.call("POST", "/api/push/token/remove", { token }).catch(() => undefined);
+      storePushToken(null);
+    }
     await this.call("POST", "/api/auth/logout").catch(() => undefined);
     this.dropSession();
     this.changed();
@@ -707,6 +751,15 @@ export class CloudflareBackend implements Backend {
     return this.act("DELETE", "/api/driver/queue");
   }
 
+  // No change notice: other screens of the driver do not depend on it.
+  async registerPushToken(token: string, platform: "android" | "ios") {
+    await this.call("POST", "/api/push/token", { token, platform });
+  }
+
+  reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }) {
+    return this.call<{ kept: boolean }>("POST", "/api/driver/position", position);
+  }
+
   private job(id: string, action: string, body?: unknown) {
     return this.act("POST", `/api/driver/jobs/${encodeURIComponent(id)}/${action}`, body);
   }
@@ -776,8 +829,8 @@ export class CloudflareBackend implements Backend {
     return job;
   }
 
-  async bookDelivery(parcelId: string, home: HomePoint) {
-    const job = await this.call<DeliveryJob>("POST", `/api/parcels/${encodeURIComponent(parcelId)}/delivery`, { home });
+  async bookDelivery(parcelId: string, home: HomePoint, payWith?: TripPayment) {
+    const job = await this.call<DeliveryJob>("POST", `/api/parcels/${encodeURIComponent(parcelId)}/delivery`, { home, payWith });
     this.changed();
     return job;
   }
@@ -804,6 +857,20 @@ export class CloudflareBackend implements Backend {
 
   settleDriver(stationId: string, badge: string, amountFcfa: number) {
     return this.act("POST", `/api/stations/${encodeURIComponent(stationId)}/drivers/settle`, { badge, amount: amountFcfa });
+  }
+
+  async requestDriverPayout(network: PayoutNetwork, phone: string) {
+    const payout = await this.call<DriverPayout>("POST", "/api/driver/payouts", { network, phone });
+    this.changed();
+    return payout;
+  }
+
+  adminDriverPayouts() {
+    return this.call<AdminDriverPayout[]>("GET", "/api/admin/driver-payouts");
+  }
+
+  decideDriverPayout(id: string, status: "paid" | "rejected", reference?: string) {
+    return this.act("POST", `/api/admin/driver-payouts/${encodeURIComponent(id)}`, { status, reference });
   }
 
   adminDrivers() {
@@ -891,6 +958,140 @@ export class CloudflareBackend implements Backend {
 
   setFleetTier(managerId: string, tier: FleetTier) {
     return this.act("POST", `/api/admin/fleets/${encodeURIComponent(managerId)}/tier`, { tier });
+  }
+
+  // Merchants ------------------------------------------------------------------------
+
+  registerMerchant(contact: string, code: string, pin: string, shop: MerchantShopInput) {
+    return this.startSession("/api/auth/register-merchant", { contact, code: code.trim(), pin, shop });
+  }
+
+  merchantView() {
+    return this.call<MerchantView>("GET", "/api/merchant");
+  }
+
+  merchantBookings(query: MerchantBookingsQuery) {
+    return this.call<MerchantJob[]>("POST", "/api/merchant/bookings", query);
+  }
+
+  merchantActivity() {
+    return this.call<MerchantActivity[]>("GET", "/api/merchant/activity");
+  }
+
+  merchantStats(query: MerchantStatsQuery) {
+    return this.call<MerchantStats>("POST", "/api/merchant/stats", query);
+  }
+
+  async addMerchantAddress(input: MerchantAddressInput) {
+    const address = await this.call<MerchantAddress>("POST", "/api/merchant/addresses", input);
+    this.changed();
+    return address;
+  }
+
+  removeMerchantAddress(addressId: string) {
+    return this.act("DELETE", `/api/merchant/addresses/${encodeURIComponent(addressId)}`);
+  }
+
+  confirmShopReturn(jobId: string) {
+    return this.act("POST", `/api/merchant/jobs/${encodeURIComponent(jobId)}/returned`);
+  }
+
+  async updateMerchantShop(input: MerchantShopInput) {
+    await this.act("POST", "/api/merchant/shop", input);
+    // The shop's name is in the profile.
+    const profile = await this.getProfile();
+    this.authListeners.forEach((fn) => fn(profile));
+  }
+
+  async inviteMerchantEmployee(phone: string) {
+    const invite = await this.call<MerchantInvite>("POST", "/api/merchant/invites", { phone });
+    this.changed();
+    return invite;
+  }
+
+  revokeMerchantInvite(inviteId: string) {
+    return this.act("POST", `/api/merchant/invites/${encodeURIComponent(inviteId)}/revoke`);
+  }
+
+  removeMerchantEmployee(userId: string) {
+    return this.act("POST", `/api/merchant/members/${encodeURIComponent(userId)}/remove`);
+  }
+
+  async addMerchantDriver(input: MerchantDriverInput) {
+    const driver = await this.call<MerchantDriver>("POST", "/api/merchant/drivers", input);
+    this.changed();
+    return driver;
+  }
+
+  changeMerchantPay(assignmentId: string, payMode: MerchantPayMode, ratePerHourFcfa: number | null) {
+    return this.act("POST", `/api/merchant/drivers/${encodeURIComponent(assignmentId)}/pay`, { payMode, ratePerHourFcfa });
+  }
+
+  endMerchantDriver(assignmentId: string) {
+    return this.act("POST", `/api/merchant/drivers/${encodeURIComponent(assignmentId)}/end`);
+  }
+
+  merchantCheckout(driverId: string) {
+    return this.act("POST", `/api/merchant/drivers/${encodeURIComponent(driverId)}/checkout`);
+  }
+
+  myMerchantInvites() {
+    return this.call<MyMerchantInvite[]>("GET", "/api/merchant-invites");
+  }
+
+  async acceptMerchantInvite(token: string) {
+    await this.act("POST", `/api/merchant-invites/${encodeURIComponent(token)}/accept`);
+    // The account is a merchant account now: the menu follows the role.
+    const profile = await this.getProfile();
+    this.authListeners.forEach((fn) => fn(profile));
+  }
+
+  declineMerchantInvite(token: string) {
+    return this.act("POST", `/api/merchant-invites/${encodeURIComponent(token)}/decline`);
+  }
+
+  merchantAssignmentRequests() {
+    return this.call<MerchantAssignmentRequest[]>("GET", "/api/merchant-assignments");
+  }
+
+  decideMerchantAssignment(assignmentId: string, approve: boolean) {
+    return this.act("POST", `/api/merchant-assignments/${encodeURIComponent(assignmentId)}/${approve ? "approve" : "decline"}`);
+  }
+
+  driverShops() {
+    return this.call<DriverShops>("GET", "/api/driver/shops");
+  }
+
+  checkInAtShop(merchantId: string, position: LatLng) {
+    return this.act("POST", `/api/driver/shops/${encodeURIComponent(merchantId)}/checkin`, { position });
+  }
+
+  checkOutOfShop() {
+    return this.act("POST", "/api/driver/shops/checkout");
+  }
+
+  confirmShopHoursReceived(checkinId: string) {
+    return this.act("POST", `/api/driver/shops/hours/${encodeURIComponent(checkinId)}/received`);
+  }
+
+  adminMerchants() {
+    return this.call<AdminMerchant[]>("GET", "/api/admin/merchants");
+  }
+
+  reviewMerchant(merchantId: string, action: MerchantDecision) {
+    return this.act("POST", `/api/admin/merchants/${encodeURIComponent(merchantId)}/review`, { action });
+  }
+
+  setMerchantTier(merchantId: string, tier: MerchantTier) {
+    return this.act("POST", `/api/admin/merchants/${encodeURIComponent(merchantId)}/tier`, { tier });
+  }
+
+  setMerchantOwner(merchantId: string, userId: string) {
+    return this.act("POST", `/api/admin/merchants/${encodeURIComponent(merchantId)}/owner`, { userId });
+  }
+
+  adminRemoveMerchantEmployee(merchantId: string, userId: string) {
+    return this.act("POST", `/api/admin/merchants/${encodeURIComponent(merchantId)}/members/${encodeURIComponent(userId)}/remove`);
   }
 
   /** Private photos need the session, so they are fetched and shown from memory. */

@@ -184,7 +184,7 @@ describe("computeKpis", () => {
       reservations24h: 1,
       reservations7d: 5,
     });
-    expect(k.usersByRole).toEqual({ customer: 2, operator: 0, fleet_manager: 0, admin: 1, driver: 0 });
+    expect(k.usersByRole).toEqual({ customer: 2, operator: 0, fleet_manager: 0, admin: 1, driver: 0, merchant: 0 });
     // 4 ended this week: 2 completed, 1 cancelled, 1 expired.
     expect(k.completionRate7d).toBe(0.5);
     expect(k.noShowRate7d).toBe(0.25);

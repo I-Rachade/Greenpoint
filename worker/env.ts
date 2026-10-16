@@ -29,6 +29,8 @@ export interface Env {
   CINETPAY_SITE_ID?: string;
   /** Secret in the callback URL the provider calls, see docs/ZAHLUNGEN.md. */
   PAYMENT_CALLBACK_SECRET?: string;
+  /** Firebase service account JSON (secret) for push notifications; without it no push is sent, see docs/DEPLOYMENT.md. */
+  FCM_SERVICE_ACCOUNT?: string;
   /** Most code e-mails sent per hour across all addresses. Default 100. */
   EMAIL_HOURLY_LIMIT?: string;
   /** Shared key of the connected sockets (secret), see docs/steckdosen-lora.md. */

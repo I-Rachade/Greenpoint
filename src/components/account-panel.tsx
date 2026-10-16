@@ -20,6 +20,8 @@ import { PageTitle } from "./page-title";
 import { isStationStaff, runsOperator, worksAtStations } from "@/lib/operators";
 import { managesFleet } from "@/lib/fleet";
 import { isDriverAccount } from "@/lib/drivers";
+import { isMerchantAccount } from "@/lib/merchants";
+import { MerchantInvitesCard } from "./merchants/merchant-invites";
 
 const CODE_LENGTH = 6;
 const digits = (value: string) => value.replace(/\D/g, "").slice(0, CODE_LENGTH);
@@ -42,6 +44,8 @@ export function AccountPanel() {
   const driver = isDriverAccount(profile);
   // Fleet managers are not customers either (plan phase 7): no customer code, reservations or wallet.
   const fleet = profile?.role === "fleet_manager";
+  // Shop accounts (merchant and employees) are not customers either (R11): no code, greenpoints, reservations or wallet.
+  const merchant = isMerchantAccount(profile);
   const { unread } = useAlerts();
   const [deleted, setDeleted] = useState(false);
   const a = t.ui.account;
@@ -91,15 +95,19 @@ export function AccountPanel() {
           </section>
 
           {/* The customer's own code (swaps, wallet); drivers show their driver QR on /chauffeur instead. */}
-          {(profile.phone || profile.email) && !driver && !fleet && <MyCode contact={(profile.phone ?? profile.email)!} />}
+          {(profile.phone || profile.email) && !driver && !fleet && !merchant && <MyCode contact={(profile.phone ?? profile.email)!} />}
 
-          <MenuGroup title={a.menu} top={isStationStaff(profile) || driver || fleet ? undefined : <GreenpointHighlight />}>
+          {/* A customer invited into a shop's team accepts or declines here (or on /marchand). */}
+          <MerchantInvitesCard />
+
+          <MenuGroup title={a.menu} top={isStationStaff(profile) || driver || fleet || merchant ? undefined : <GreenpointHighlight />}>
             {driver && <MenuLink href="/chauffeur" icon={ScooterIcon} label={t.nav.driver} />}
+            {merchant && <MenuLink href="/marchand" icon={StoreIcon} label={t.merchant.title} />}
             <MenuLink href="/favoris" icon={HeartIcon} label={t.ui.tabs.favorites} />
             <MenuLink href="/notifications" icon={BellIcon} label={t.ui.tabs.alerts} value={unread > 0 ? unread : undefined} />
             {/* Drivers are never customers (plan phase 5): no reservations, wallet or greenpoints. */}
-            {!driver && !fleet && <MenuLink href="/reservations" icon={TicketIcon} label={t.nav.reservations} />}
-            {walletShown && features.wallet && !fleet && <MenuLink href="/portefeuille" icon={WalletIcon} label={t.nav.wallet} />}
+            {!driver && !fleet && !merchant && <MenuLink href="/reservations" icon={TicketIcon} label={t.nav.reservations} />}
+            {walletShown && features.wallet && !fleet && !merchant && <MenuLink href="/portefeuille" icon={WalletIcon} label={t.nav.wallet} />}
             {/* Customers apply once the driver module is on, and keep their application page. */}
             {profile.role === "customer" && features.parcels && (features.drivers || !!profile.driverStatus) && (
               <MenuLink href="/chauffeur" icon={ScooterIcon} label={profile.driverStatus ? t.nav.driver : t.account.becomeDriver} />
