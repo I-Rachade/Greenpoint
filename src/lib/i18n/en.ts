@@ -1052,7 +1052,7 @@ export const en: Dictionary = {
       scan: "Scan",
       scanned: "QR code read",
       stopScan: "Stop",
-      scanUnsupported: "Scanning is not available on this device: type the code.",
+      scanUnsupported: "The camera could not be opened: allow it in the phone settings.",
       handedOver: "Parcel {no} handed out. The sender has been told.",
       newTitle: "New parcel",
       senderPhone: "Sender's phone",

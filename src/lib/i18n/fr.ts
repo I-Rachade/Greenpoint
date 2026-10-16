@@ -1052,7 +1052,7 @@ export const fr = {
       scan: "Scanner",
       scanned: "QR code lu",
       stopScan: "Arrêter",
-      scanUnsupported: "Le scan n'est pas disponible sur cet appareil : tapez le code.",
+      scanUnsupported: "Impossible d'ouvrir la caméra : autorisez-la dans les réglages du téléphone.",
       handedOver: "Colis {no} remis. L'expéditeur est prévenu.",
       newTitle: "Nouveau colis",
       senderPhone: "Téléphone de l'expéditeur",
