@@ -68,9 +68,9 @@ export function BottomNav() {
   ].filter((tab) => tab.show);
 
   // The scanner page (src/components/scan-hub.tsx: scan a socket or show my QR code): a raised round button in the exact middle of
-  // the bar, on every page; the tabs split left and right of it. Only customers can start a charge themselves, so
-  // staff, drivers, fleets and merchants don't get it.
-  const scan = customer;
+  // the bar, on every page; the tabs split left and right of it. Customers and station staff get it (staff scan
+  // the customer's code there); drivers, fleets and merchants don't.
+  const scan = customer || staff;
   const split = scan ? Math.ceil(tabs.length / 2) : tabs.length;
 
   const renderTabs = (list: typeof tabs) =>

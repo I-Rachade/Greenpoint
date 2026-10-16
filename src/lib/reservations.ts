@@ -87,3 +87,17 @@ export function heldTargets(reservations: Reservation[], stationId: string, now:
 export function staffFlowHref(r: Pick<Reservation, "id" | "type"> & { kind?: ReservationKind }): string {
   return `${reservationKind(r) === "swap" ? "/operator/echange" : "/operator/recharge"}?reservation=${encodeURIComponent(r.id)}`;
 }
+
+// The QR code a customer shows for a reservation (src/components/scan-hub.tsx): it names the
+// reservation, so station staff who scan it land on it with the 4-digit code filled in.
+const RESERVATION_QR_PREFIX = "poinderecharge:resa:";
+
+export function reservationQrPayload(id: string, code: string): string {
+  return `${RESERVATION_QR_PREFIX}${id}:${code}`;
+}
+
+/** The reservation id and code in a scanned reservation QR code, or null for any other text. */
+export function parseReservationQr(text: string): { id: string; code: string } | null {
+  const m = /^poinderecharge:resa:([\w:.-]{1,80}):(\d{4})$/.exec(text.trim());
+  return m ? { id: m[1], code: m[2] } : null;
+}

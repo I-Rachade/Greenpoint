@@ -23,7 +23,7 @@ import { WorkShell } from "./work-shell";
  * and "start here", which starts the charge for the customer and completes the reservation.
  * A car charger or a counted place is completed with the code ("confirm arrival").
  */
-function ReservationCharge({ station, reservation: r, onDone }: { station: StationView; reservation: Reservation; onDone: () => void }) {
+function ReservationCharge({ station, reservation: r, onDone, initialCode }: { station: StationView; reservation: Reservation; onDone: () => void; initialCode: string }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const toast = useToast();
@@ -31,7 +31,7 @@ function ReservationCharge({ station, reservation: r, onDone }: { station: Stati
   const what = useReservationWhat();
   const now = useNow();
   const R = t.work.reservations;
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(initialCode);
   const outlets = (station.chargingPoints ?? [])
     .filter((p) => isConnected(p) && displayStatus(p, now) === "free" && (!p.reserved || p.id === r.target))
     .sort((a, b) => a.label.localeCompare(b.label));
@@ -131,7 +131,8 @@ function ReservationCharge({ station, reservation: r, onDone }: { station: Stati
 function FromReservation({ station }: { station: StationView }) {
   const { t } = useI18n();
   const { backend } = useApp();
-  const id = useSearchParams().get("reservation");
+  const params = useSearchParams();
+  const id = params.get("reservation");
   const [finished, setFinished] = useState(false);
   const { data, error, reload } = useLiveQuery(() => (id ? backend.stationReservations(station.id) : Promise.resolve([])), `${station.id}:${id ?? ""}`);
   if (!id) return null;
@@ -147,7 +148,7 @@ function FromReservation({ station }: { station: StationView }) {
   if (!data) return error ? <LoadFailed error={error} onRetry={reload} /> : <SkeletonCard />;
   const r = data.find((x) => x.id === id && reservationKind(x) === "charging_point");
   if (!r || !isHolding(r)) return <EmptyState text={t.work.reservations.gone} action={<Button href="/operator/reservations">{t.work.reservations.back}</Button>} />;
-  return <ReservationCharge station={station} reservation={r} onDone={() => setFinished(true)} />;
+  return <ReservationCharge station={station} reservation={r} onDone={() => setFinished(true)} initialCode={params.get("code") ?? ""} />;
 }
 
 /** Free charging places, counted by staff (as on the station page before). */
@@ -188,13 +189,15 @@ function FreeSlots({ station }: { station: StationView }) {
 /** /operator/recharge: motorbike outlets and car chargers: start, stop, take payment; greenpoints for a charge. */
 export function ChargingPage() {
   const { t } = useI18n();
+  // A customer's account scanned on the scanner page (src/components/station-work/staff-scan.tsx).
+  const client = useSearchParams().get("client") ?? undefined;
   return (
     <WorkShell title={t.work.charging.title} services={["charging", "ev"]}>
       {({ station }) => (
         <>
           <FromReservation key={station.id} station={station} />
           {offersCharging(station.kind) && <FreeSlots station={station} />}
-          <StaffCharging station={station} />
+          <StaffCharging station={station} customer={client} />
           <GreenpointStaff station={station} />
         </>
       )}

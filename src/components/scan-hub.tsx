@@ -5,11 +5,14 @@ import { useState } from "react";
 import { customerCode } from "@/lib/charging";
 import { format } from "@/lib/i18n/format";
 import { useLiveQuery } from "@/lib/hooks";
+import { isStationStaff } from "@/lib/operators";
 import { pickupQrPayload } from "@/lib/parcels";
+import { reservationQrPayload } from "@/lib/reservations";
 import { useApp } from "./app-provider";
 import { BoxIcon, QrIcon, TicketIcon, UserIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { QrImage } from "./parcels/qr-image";
+import { StaffScan } from "./station-work/staff-scan";
 
 /** One QR code the customer can show: a parcel to collect, a reservation, or their own account. */
 interface ShownCode {
@@ -30,6 +33,12 @@ interface ShownCode {
  * reservation, then the account's own code that staff scan to identify the customer.
  */
 export function ScanHub() {
+  const { profile } = useApp();
+  // Station staff scan the customer's code instead: a parcel to hand over, a reservation, an account.
+  return isStationStaff(profile) ? <StaffScan /> : <CustomerScan />;
+}
+
+function CustomerScan() {
   const { t, locale } = useI18n();
   const { backend, profile, features } = useApp();
   const L = t.ui.scanHub;
@@ -68,8 +77,8 @@ export function ScanHub() {
         kind: "reservation",
         chip: L.reservation,
         label: `${L.reservation} · ${stationName(r.stationId)}`,
-        // Staff type or scan the 4-digit code into the reservation's code field.
-        qr: r.pickupCode!,
+        // Staff scan it to open the reservation with its code (src/components/station-work/staff-scan.tsx).
+        qr: reservationQrPayload(r.id, r.pickupCode!),
         code: r.pickupCode!,
         hint: format(L.reservationHint, { station: stationName(r.stationId), time: time(r.expiresAt) }),
       });
