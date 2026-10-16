@@ -24,9 +24,9 @@ export function useWhen() {
 /** A titled block of the backoffice. */
 export function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
-    <Card className="space-y-3 p-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-heading text-lg font-semibold">{title}</h2>
+    <Card className="space-y-3 p-4 shadow-none sm:p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="font-heading text-base font-semibold">{title}</h2>
         {aside}
       </div>
       {children}
@@ -108,7 +108,7 @@ export function PeriodPicker({ value, onChange }: { value: ReportPeriod; onChang
   const { t } = useI18n();
   const names: Record<ReportPeriod, string> = { 1: t.owner.periods.today, 7: t.owner.periods.week, 30: t.owner.periods.month, 365: t.owner.periods.year };
   return (
-    <div role="radiogroup" aria-label={t.owner.period} className="flex flex-wrap gap-1">
+    <div role="radiogroup" aria-label={t.owner.period} className="inline-flex flex-wrap gap-1 rounded-full bg-black/5 p-1 dark:bg-white/10">
       {REPORT_PERIODS.map((d) => (
         <button
           key={d}
@@ -116,7 +116,9 @@ export function PeriodPicker({ value, onChange }: { value: ReportPeriod; onChang
           role="radio"
           aria-checked={value === d}
           onClick={() => onChange(d)}
-          className={`min-h-11 rounded-full px-4 text-sm font-semibold ${value === d ? "bg-gp-forest text-white" : "border border-gp-border text-zinc-700 dark:text-zinc-300"}`}
+          className={`min-h-10 rounded-full px-4 text-sm font-semibold ${
+            value === d ? "bg-gp-surface text-gp-forest shadow-sm dark:text-white" : "text-gp-muted hover:text-gp-forest dark:hover:text-white"
+          }`}
         >
           {names[d]}
         </button>
