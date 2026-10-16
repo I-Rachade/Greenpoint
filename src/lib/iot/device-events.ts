@@ -9,6 +9,8 @@ export interface OutletReading {
   status?: DeviceStatus;
   powerWatts?: number;
   energyWh?: number;
+  /** The charge the reading belongs to, when the device says (Xingke cloud transactionId). */
+  transactionId?: string;
 }
 
 /** The device's answer to a start or stop command we sent (see worker/devices.ts). */
@@ -244,20 +246,30 @@ export function parseXingke(text: string): DeviceEvent[] {
     .filter((e): e is DeviceEvent => e !== null);
 }
 
+/** One outlet reading as ingest() takes it. */
+export interface IngestOutlet {
+  outlet: number;
+  status?: DeviceStatus;
+  power_watts?: number;
+  energy_wh?: number;
+  transaction_id?: string;
+}
+
 /** Outlet readings as the Worker stores them (worker/devices.ts). */
-export function toIngestOutlets(event: DeviceEvent) {
+export function toIngestOutlets(event: DeviceEvent): IngestOutlet[] {
   return event.outlets.map((o) => ({
     outlet: o.outlet,
     status: o.status,
     power_watts: o.powerWatts,
     energy_wh: o.energyWh,
+    transaction_id: o.transactionId,
   }));
 }
 
 /** Stores one message; returns the number of outlets updated. */
 export type Ingest = (
   externalId: string,
-  outlets: ReturnType<typeof toIngestOutlets>,
+  outlets: IngestOutlet[],
   payload: unknown,
   extra?: Pick<DeviceEvent, "allOutlets" | "ack">,
 ) => Promise<{ updated: number } | { error: string }>;

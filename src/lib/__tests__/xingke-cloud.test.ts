@@ -74,7 +74,7 @@ describe("Xingke cloud callbacks", () => {
         power: 260.85,
         energy: 1.25,
       }),
-    ).toEqual({ outlets: [{ outlet: 1, status: "charging", powerWatts: 261, energyWh: 1250 }] });
+    ).toEqual({ outlets: [{ outlet: 1, status: "charging", powerWatts: 261, energyWh: 1250, transactionId: "20261013000000000001" }] });
   });
 
   it("maps stop reasons", () => {
@@ -186,8 +186,8 @@ describe("vendor JSON examples", () => {
 
   it("maps the example events as documented", () => {
     const read = (name: string) => xingkeEffect(parseXingkeCallback(fixture(name)));
-    expect(read("19_event_ChargingStatusNotification.json")?.outlets).toEqual([{ outlet: 1, status: "charging", powerWatts: 261, energyWh: 1250 }]);
-    expect(read("20_event_ChargingStatusNotification.json")?.outlets).toEqual([{ outlet: 1, status: "done", powerWatts: 0, energyWh: 1500 }]);
+    expect(read("19_event_ChargingStatusNotification.json")?.outlets).toEqual([{ outlet: 1, status: "charging", powerWatts: 261, energyWh: 1250, transactionId: "20261013000000000001" }]);
+    expect(read("20_event_ChargingStatusNotification.json")?.outlets).toEqual([{ outlet: 1, status: "done", powerWatts: 0, energyWh: 1500, transactionId: "20261013000000000001" }]);
     expect(read("21_event_StatusNotification.json")?.outlets.map((o) => o.status)).toEqual(["free", "charging", "fault"]);
     expect(read("27_event_FaultNotification.json")).toEqual({ outlets: [], allOutlets: "fault" });
     expect(read("25_event_DeviceOffline.json")?.online).toBe(false);
