@@ -39,11 +39,12 @@ export function BottomNav() {
 
   if (hidden) return null;
 
+  // The lite version (backoffice switch) has no stations tab: the map, the scanner and the account.
   // Favourites and alerts live on the account page; its tab carries the unread count.
   // Parcels and trips only show while the parcel module is on in the backoffice.
   const tabs = [
     { href: "/", label: t.ui.tabs.map, icon: MapIcon, active: pathname === "/", show: true },
-    { href: "/stations", label: t.ui.tabs.stations, icon: ListIcon, active: pathname.startsWith("/stations") || pathname.startsWith("/station"), show: !staff },
+    { href: "/stations", label: t.ui.tabs.stations, icon: ListIcon, active: pathname.startsWith("/stations") || pathname.startsWith("/station"), show: !staff && !features.lite },
     { href: "/operator", label: t.ui.tabs.myStation, icon: StoreIcon, active: pathname.startsWith("/operator"), show: staff },
     { href: "/chauffeur", label: t.nav.driver, icon: ScooterIcon, active: pathname.startsWith("/chauffeur"), show: driver },
     { href: "/flotte", label: t.nav.fleet, icon: TruckIcon, active: pathname.startsWith("/flotte"), show: fleet && features.parcels },
