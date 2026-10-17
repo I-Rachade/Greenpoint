@@ -9,6 +9,7 @@ import {
   formatKwh,
   type ChargeSession,
 } from "@/lib/charging";
+import { MAX_CARD_TOPUP_XOF, validTopup, type CounterCard } from "@/lib/charge-cards";
 import { displayStatus } from "@/lib/iot/charging-points";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
@@ -237,7 +238,8 @@ export function StaffCharging({ station, customer }: { station: StationView; cus
                         {ch.stop}
                       </button>
                     )}
-                    {charge.status === "stopped" && charge.amountXof > 0 && (
+                    {charge.status === "stopped" && charge.card && charge.amountXof > 0 && <p className="text-xs text-zinc-500">{ch.cardPaid}</p>}
+                    {charge.status === "stopped" && !charge.card && charge.amountXof > 0 && (
                       <button type="button" disabled={busy} onClick={() => setConfirm({ kind: "cash", id: charge.id })} className={`${button} min-h-11 flex-1`}>
                         {ch.collectCash} · {xof(charge.amountXof)}
                       </button>
@@ -305,6 +307,7 @@ export function StaffCharging({ station, customer }: { station: StationView; cus
           </p>
         )}
       </ConfirmSheet>
+      <CardCounter station={station} onTopUp={reload} />
       {data && (
         <div className="space-y-2 border-t border-black/10 pt-3 dark:border-white/10">
           <div className="text-sm font-medium">{ch.today}</div>
@@ -313,7 +316,7 @@ export function StaffCharging({ station, customer }: { station: StationView; cus
             {data.today.map((c) => (
               <li key={c.id} className="flex justify-between gap-2 text-zinc-600 dark:text-zinc-400">
                 <span>
-                  {new Date(c.startedAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })} · {c.pointLabel} · {c.customer ?? ch.cashCustomer} ·{" "}
+                  {new Date(c.startedAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })} · {c.pointLabel} · {c.customer ?? (c.card ? format(ch.cardCustomer, { tag: c.card }) : ch.cashCustomer)} ·{" "}
                   {formatKwh(c.energyWh, locale)}
                 </span>
                 <span className="tabular-nums">
@@ -325,6 +328,116 @@ export function StaffCharging({ station, customer }: { station: StationView; cus
         </div>
       )}
     </section>
+  );
+}
+
+/** Station staff: a charging card's credit, and topping it up with the cash the customer hands over. */
+function CardCounter({ station, onTopUp }: { station: StationView; onTopUp: () => void }) {
+  const { t, locale } = useI18n();
+  const { backend } = useApp();
+  const errorMessage = useErrorMessage();
+  const cc = t.charging.cardCounter;
+  const xof = (n: number) => formatXof(n, locale);
+  const [tag, setTag] = useState("");
+  const [found, setFound] = useState<CounterCard | null>(null);
+  const [amount, setAmount] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const value = Number(amount);
+
+  async function check(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setMessage(null);
+    setFound(null);
+    try {
+      setFound(await backend.counterCard(station.id, tag.trim()));
+    } catch (err) {
+      setMessage({ ok: false, text: errorMessage(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function topUp() {
+    if (!found) return;
+    setBusy(true);
+    try {
+      const card = await backend.topUpCard(station.id, found.idTag, value);
+      setFound(card);
+      setAmount("");
+      setMessage({ ok: true, text: format(cc.done, { tag: card.idTag, amount: xof(card.balanceXof) }) });
+      onTopUp();
+    } catch (err) {
+      setMessage({ ok: false, text: errorMessage(err) });
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2 border-t border-black/10 pt-3 dark:border-white/10">
+      <div className="text-sm font-medium">{cc.title}</div>
+      <p className="text-xs text-zinc-500">{cc.intro}</p>
+      <form onSubmit={check} className="flex gap-2">
+        <input
+          className={`${input} font-mono uppercase`}
+          required
+          maxLength={24}
+          placeholder={cc.number}
+          aria-label={cc.number}
+          value={tag}
+          onChange={(e) => {
+            setTag(e.target.value);
+            setFound(null);
+          }}
+        />
+        <button type="submit" disabled={busy} className={`${ghost} shrink-0`}>
+          {cc.check}
+        </button>
+      </form>
+      {found && (
+        <div className="space-y-2 rounded-lg bg-zinc-100 px-3 py-2 dark:bg-zinc-900">
+          <p className={`text-sm font-medium ${found.balanceXof < 0 ? "text-red-600" : ""}`}>
+            {format(cc.credit, { tag: found.label ? `${found.idTag} (${found.label})` : found.idTag, amount: xof(found.balanceXof) })}
+          </p>
+          {found.blocked ? (
+            <p className="text-sm text-red-600">{cc.blocked}</p>
+          ) : (
+            <div className="flex gap-2">
+              <input
+                className={input}
+                type="number"
+                inputMode="numeric"
+                min={5}
+                max={MAX_CARD_TOPUP_XOF}
+                step={5}
+                placeholder={cc.amount}
+                aria-label={cc.amount}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+              <button type="button" disabled={busy || !validTopup(value)} onClick={() => setConfirming(true)} className={`${button} shrink-0`}>
+                {cc.topUp}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {message && <p className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>{message.text}</p>}
+      <ConfirmSheet
+        open={confirming && !!found}
+        title={found ? format(cc.confirmTitle, { amount: xof(value), tag: found.idTag }) : ""}
+        confirmLabel={cc.confirm}
+        busy={busy}
+        onConfirm={() => void topUp()}
+        onCancel={() => setConfirming(false)}
+      >
+        <p>{format(cc.confirmBody, { amount: xof(value) })}</p>
+      </ConfirmSheet>
+    </div>
   );
 }
 

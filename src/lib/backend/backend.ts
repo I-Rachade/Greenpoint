@@ -1,6 +1,7 @@
 import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "../batteries";
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
 import type { AdminCharging, ChargePointInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
+import type { ChargeCard, ChargeCardInput, CounterCard } from "../charge-cards";
 import type {
   Operator,
   VehicleType,
@@ -195,6 +196,10 @@ export type BackendErrorCode =
   | "charge_wrong_status"
   | "charge_unpaid"
   | "charge_qr_disabled"
+  | "card_invalid"
+  | "card_unknown"
+  | "card_blocked"
+  | "card_has_balance"
   | "point_reserved"
   | "service_already_unlocked"
   | "service_request_pending"
@@ -730,4 +735,18 @@ export interface Backend {
   adminCharging(): Promise<AdminCharging>;
   /** The network default (`stationId` null) or a station's own price (null values = default). */
   saveChargeTariff(input: ChargeTariffInput): Promise<void>;
+  /** Backoffice: charging cards with their credit, the most recently swiped first (admins only). */
+  adminChargeCards(): Promise<ChargeCard[]>;
+  /** Adds a card by its number, or changes its name and the customer it belongs to (no contact: nobody). */
+  saveChargeCard(input: ChargeCardInput): Promise<void>;
+  /** Corrects a card's credit, either way, with a reason (admins only). */
+  adjustChargeCard(idTag: string, amountXof: number, reason: string): Promise<void>;
+  /** A blocked card no longer starts charges and takes no top-up; its credit stays. */
+  setChargeCardBlocked(idTag: string, blocked: boolean): Promise<void>;
+  /** Only a card without credit. */
+  deleteChargeCard(idTag: string): Promise<void>;
+  /** Station staff: a card's credit at the counter. */
+  counterCard(stationId: string, idTag: string): Promise<CounterCard>;
+  /** Station staff took cash and put it on the card. */
+  topUpCard(stationId: string, idTag: string, amountXof: number): Promise<CounterCard>;
 }

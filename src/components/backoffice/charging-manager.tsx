@@ -6,13 +6,14 @@ import { useI18n } from "@/components/i18n-provider";
 import { formatKwh, type AdminCharging, type ChargeTariffInput } from "@/lib/charging";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
+import { ChargeCardsManager } from "./charge-cards-manager";
 import { card, field, Loading, Pill, StaleNotice, Table, td, th, useDateTime } from "./shared";
 
 type Message = { ok: boolean; text: string } | null;
 
 const num = (text: string): number | null => (text.trim() === "" ? null : Number(text));
 
-/** Backoffice "Recharges": the network default price, a price per station, and the latest charges. */
+/** Backoffice "Recharges": the network default price, a price per station, charging cards, and the latest charges. */
 export function ChargingManager() {
   const { t, locale } = useI18n();
   const { backend } = useApp();
@@ -61,6 +62,8 @@ export function ChargingManager() {
           ))}
         </ul>
       </section>
+
+      <ChargeCardsManager />
 
       <h2 className="font-semibold">{a.sessions}</h2>
       <p className="text-sm">{format(a.totals, { amount: xof(data.totals.paidXof), energy: formatKwh(data.totals.energyWh, locale), n: data.totals.count })}</p>
