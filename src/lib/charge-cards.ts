@@ -68,6 +68,35 @@ export function cleanCardTag(raw: string): string | null {
   return tag;
 }
 
+/**
+ * The spellings one card can have. Our cards are 13.56 MHz MIFARE Classic (M1) with a 4-byte
+ * chip id, printed on the card as a 10-digit decimal number; a charge point may send that
+ * number or the id in hex (8 digits), in either byte order. Staff type the printed number, so
+ * a card is found by any of these. The tag itself comes first.
+ */
+export function cardTagVariants(tag: string): string[] {
+  const out = [tag];
+  let n: number | null = null;
+  if (/^\d{1,10}$/.test(tag) && Number(tag) <= 0xffffffff) {
+    n = Number(tag);
+    out.push(String(n), String(n).padStart(10, "0"));
+  }
+  if (/^[0-9A-F]{8}$/.test(tag)) {
+    const be = parseInt(tag, 16);
+    const le = parseInt(reverseBytes(tag), 16);
+    for (const v of [be, le]) out.push(String(v), String(v).padStart(10, "0"));
+  }
+  if (n !== null) {
+    const hex = n.toString(16).toUpperCase().padStart(8, "0");
+    out.push(hex, reverseBytes(hex));
+  }
+  return [...new Set(out)];
+}
+
+function reverseBytes(hex8: string): string {
+  return hex8.match(/../g)!.reverse().join("");
+}
+
 /** The most recently swiped or added first. */
 export function sortCards(cards: ChargeCard[]): ChargeCard[] {
   const at = (c: ChargeCard) => c.lastSwipedAt ?? c.createdAt;

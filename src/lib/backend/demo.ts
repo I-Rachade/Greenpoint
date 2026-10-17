@@ -80,7 +80,7 @@ import {
   type ChargeTariffInput,
   type StationCharging,
 } from "../charging";
-import { cleanCardTag, sortCards, validAdjustment, validTopup, type ChargeCard, type ChargeCardInput, type CounterCard } from "../charge-cards";
+import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, validTopup, type ChargeCard, type ChargeCardInput, type CounterCard } from "../charge-cards";
 import {
   DEMO_CHARGING_POINTS,
   DEMO_OPERATORS,
@@ -7734,12 +7734,13 @@ export class DemoBackend implements Backend {
   async saveChargeCard(input: ChargeCardInput): Promise<void> {
     const state = this.load();
     this.requireAdmin(state);
-    const idTag = cleanCardTag(input.idTag);
-    if (!idTag) throw new BackendError("card_invalid");
+    const clean = cleanCardTag(input.idTag);
+    if (!clean) throw new BackendError("card_invalid");
     const contact = input.contact?.trim() ?? "";
     const userId = contact ? this.findWalletUser(state, contact).id : null;
     const label = input.label?.trim().slice(0, 60) || null;
     const cards = state.chargeCards ?? seedChargeCards();
+    const idTag = cardTagVariants(clean).find((v) => cards.some((c) => c.idTag === v)) ?? clean;
     const known = cards.some((c) => c.idTag === idTag);
     const chargeCards = known
       ? cards.map((c) => (c.idTag === idTag ? { ...c, userId, label } : c))
@@ -7807,7 +7808,8 @@ interface DemoChargeCard {
 
 function demoCard(state: DemoState, rawTag: string): DemoChargeCard {
   const tag = cleanCardTag(rawTag);
-  const card = tag ? (state.chargeCards ?? seedChargeCards()).find((c) => c.idTag === tag) : undefined;
+  const cards = state.chargeCards ?? seedChargeCards();
+  const card = tag ? cardTagVariants(tag).map((v) => cards.find((c) => c.idTag === v)).find(Boolean) : undefined;
   if (!card) throw new BackendError("card_unknown");
   return card;
 }
@@ -7819,7 +7821,7 @@ function counterView(c: DemoChargeCard): CounterCard {
 /** A card someone swiped at a socket a few minutes ago, with no credit yet. */
 function seedChargeCards(): DemoChargeCard[] {
   const swiped = new Date(Date.now() - 4 * 60_000).toISOString();
-  return [{ idTag: "04A3F21B7C", userId: null, label: null, blocked: false, balanceXof: 0, createdAt: swiped, lastSwipedAt: swiped, lastDevice: "820008" }];
+  return [{ idTag: "2745839105", userId: null, label: null, blocked: false, balanceXof: 0, createdAt: swiped, lastSwipedAt: swiped, lastDevice: "820008" }];
 }
 
 /** What the app sees of a stored counter event (without request id, station and person id). */
