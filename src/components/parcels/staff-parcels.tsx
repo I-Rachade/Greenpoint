@@ -28,7 +28,7 @@ import { useI18n } from "../i18n-provider";
 import { canScanQr, QrScanner } from "./qr-scanner";
 import { MenuTile } from "./menu-tile";
 import { SizePicker } from "./size-picker";
-import { SlipDialog } from "./slip-dialog";
+import { LabelDialog, SlipDialog } from "./slip-dialog";
 import { OutgoingRuns, ReceiveParcels, type RunAction } from "./collection-runs";
 import { ConfirmSheet } from "../confirm-sheet";
 import { useActiveStation } from "../station-work/use-active-station";
@@ -401,8 +401,23 @@ function StationParcels({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [slip, setSlip] = useState<Parcel | null>(null);
+  // The shipping label to print; after a new parcel, the drop-off slip follows (then: true).
+  const [label, setLabel] = useState<{ parcel: Parcel; then: boolean } | null>(null);
+  // A new parcel whose sender has the app: the slip is there, printed only on request.
+  const [slipInApp, setSlipInApp] = useState<Parcel | null>(null);
   const [cancelling, setCancelling] = useState<Parcel | null>(null);
   const hasDepot = info.depots.some((d) => d.stationId === station.id);
+
+  /**
+   * Label first, then the sender's drop-off slip (for a new parcel): in the app if they
+   * use it, with printing on request, otherwise printed or shared right away.
+   */
+  function slipAfterLabel(parcel: Parcel, then: boolean) {
+    setLabel(null);
+    if (!then) return;
+    if (parcel.senderHasApp) setSlipInApp(parcel);
+    else setSlip(parcel);
+  }
 
   const run: RunAction = async (action, success = "") => {
     setError("");
@@ -466,7 +481,8 @@ function StationParcels({
           onError={setError}
           onCreated={(parcel) => {
             setNotice(format(s.created, { no: parcel.trackingNo }));
-            setSlip(parcel);
+            setSlipInApp(null);
+            setLabel({ parcel, then: true });
             reload();
           }}
         />
@@ -498,7 +514,8 @@ function StationParcels({
                   onError={setError}
                   onAccepted={(parcel) => {
                     setNotice(format(s.accepted, { no: parcel.trackingNo }));
-                    setSlip(parcel);
+                    setSlipInApp(null);
+                    setLabel({ parcel, then: true });
                     reload();
                     reloadBookings();
                   }}
@@ -510,7 +527,15 @@ function StationParcels({
       )}
       {section === "expedier" && (
         <Section icon={BoxOutIcon} title={s.outgoing} hint={s.outgoingHint}>
-          <OutgoingRuns station={station} stations={stations} outgoing={outgoing} run={run} onSlip={setSlip} onCancelParcel={setCancelling} />
+          <OutgoingRuns
+            station={station}
+            stations={stations}
+            outgoing={outgoing}
+            run={run}
+            onSlip={setSlip}
+            onLabel={(parcel) => setLabel({ parcel, then: false })}
+            onCancelParcel={setCancelling}
+          />
         </Section>
       )}
       {section === "arrivees" && (
@@ -537,6 +562,14 @@ function StationParcels({
                   <button type="button" className={small} onClick={() => void run(() => backend.resendPickupCode(p.id), s.resent)}>
                     {s.resend}
                   </button>
+                  <button
+                    type="button"
+                    className={small}
+                    aria-label={`${t.parcels.labelActions.reprint} ${p.trackingNo}`}
+                    onClick={() => setLabel({ parcel: p, then: false })}
+                  >
+                    {t.parcels.labelActions.reprint}
+                  </button>
                 </li>
               ))}
             </ul>
@@ -562,6 +595,34 @@ function StationParcels({
             </ul>
           )}
         </Section>
+      )}
+      {slipInApp && (
+        <div role="status" className="flex flex-wrap items-center gap-2 rounded-lg bg-zinc-100 p-3 text-sm dark:bg-zinc-900">
+          <p className="flex-1 basis-56">{format(t.parcels.slipInApp, { phone: slipInApp.sender.phone })}</p>
+          <button
+            type="button"
+            className={small}
+            onClick={() => {
+              setSlip(slipInApp);
+              setSlipInApp(null);
+            }}
+          >
+            {t.parcels.slipPrintAnyway}
+          </button>
+        </div>
+      )}
+      {label && (
+        <LabelDialog
+          parcel={label.parcel}
+          stations={stations}
+          stationId={station.id}
+          onClose={() => slipAfterLabel(label.parcel, label.then)}
+          onStuck={(parcel) => {
+            setNotice(format(t.parcels.labelActions.done, { no: parcel.trackingNo }));
+            reload();
+            slipAfterLabel(parcel, label.then);
+          }}
+        />
       )}
       {slip && <SlipDialog parcel={slip} stations={stations} onClose={() => setSlip(null)} />}
       <ConfirmSheet

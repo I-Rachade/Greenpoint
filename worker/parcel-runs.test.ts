@@ -5,7 +5,7 @@ import type { Profile } from "../src/lib/types";
 import { bookDelivery, bookPickup, bookCourier } from "./drivers";
 import type { Env } from "./env";
 import { cancelRun, departRun, receiveParcel, removeRunParcel, scanRunParcel, startRun, stationRuns } from "./parcel-runs";
-import { createParcel, myParcels, type ParcelCtx } from "./parcels";
+import { createParcel, markLabelPrinted, myParcels, type ParcelCtx } from "./parcels";
 import { fakeD1 } from "./test-d1";
 
 const OWN_OPERATOR = "00000000-0000-4000-8000-000000000001";
@@ -99,6 +99,7 @@ describe("collection run", () => {
     const p1 = await createParcel(t.staffA, A.id, parcelInput());
     const p2 = await createParcel(t.staffA, A.id, parcelInput());
     const p3 = await createParcel(t.staffA, A.id, parcelInput());
+    for (const p of [p1, p2, p3]) await markLabelPrinted(t.staffA, A.id, p.id);
 
     // Staff of station A need no active station (they have one); the driver comes from the QR or the typed code.
     await expect(startRun(t.staffA, A.id, "NOTACODE", [p1.id])).rejects.toMatchObject({ code: "driver_not_found" });
@@ -150,10 +151,38 @@ describe("collection run", () => {
     expect((await stationRuns(t.staffA, A.id))[0]).toMatchObject({ id: run.id, status: "done" });
   });
 
+  it("needs the shipping label stuck on before a run, logs every print, and says whether the sender has the app", async () => {
+    const t = setup();
+    t.db.prepare("update users set last_sign_in_at = ? where id = 'sender'").run(new Date().toISOString());
+    const p1 = await createParcel(t.staffA, A.id, parcelInput("92 00 00 00", "91 00 00 00"));
+    expect(p1).toMatchObject({ labelPrintedAt: null, senderHasApp: true });
+    const p2 = await createParcel(t.staffA, A.id, parcelInput("92 00 00 00", "91 99 99 99"));
+    expect(p2.senderHasApp).toBe(false);
+
+    await expect(startRun(t.staffA, A.id, DRIVER_CODE, [p1.id])).rejects.toMatchObject({ code: "parcel_label_missing" });
+    await expect(markLabelPrinted(t.sender, A.id, p1.id)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(markLabelPrinted(t.staffA, A.id, "nope")).rejects.toMatchObject({ code: "parcel_not_found" });
+    const first = await markLabelPrinted(t.staffA, A.id, p1.id);
+    expect(first.labelPrintedAt).toEqual(expect.any(String));
+    // A reprint keeps the first time and is logged too.
+    const again = await markLabelPrinted(t.staffA, A.id, p1.id);
+    expect(again.labelPrintedAt).toBe(first.labelPrintedAt);
+    const log = t.db.prepare("select changes from audit_log where table_name = 'parcels' and row_id = ? and action = 'update' order by id").all(p1.id) as {
+      changes: string;
+    }[];
+    expect(log.map((l) => JSON.parse(l.changes).label)).toEqual(["printed", "reprinted"]);
+
+    const run = await startRun(t.staffA, A.id, DRIVER_CODE, [p1.id]);
+    // The label's QR code holds the parcel number alone.
+    await scanRunParcel(t.staffA, A.id, run.id, p1.trackingNo);
+    expect(scans(t, p1.id)).toHaveLength(1);
+  });
+
   it("lets staff take a parcel off or call off a run before it leaves", async () => {
     const t = setup();
     const p1 = await createParcel(t.staffA, A.id, parcelInput());
     const p2 = await createParcel(t.staffA, A.id, parcelInput());
+    for (const p of [p1, p2]) await markLabelPrinted(t.staffA, A.id, p.id);
     const run = await startRun(t.atA, A.id, DRIVER_CODE, [p1.id, p2.id]);
     await scanRunParcel(t.atA, A.id, run.id, p1.trackingNo);
     // p2 is not on the shelf: off the run, then the run can leave with p1 alone.
@@ -173,6 +202,7 @@ describe("collection run", () => {
   it("only staff of the station, an owner or admin at their active station load a run", async () => {
     const t = setup();
     const p1 = await createParcel(t.staffA, A.id, parcelInput());
+    await markLabelPrinted(t.staffA, A.id, p1.id);
     // Owner and admin without the active station: 409; with another one: 409; a customer or driver: 403.
     await expect(startRun(t.ctx(OWNER), A.id, DRIVER_CODE, [p1.id])).rejects.toMatchObject({ code: "active_station_required" });
     await expect(startRun(t.ctx(ADMIN, B.id), A.id, DRIVER_CODE, [p1.id])).rejects.toMatchObject({ code: "active_station_required" });
@@ -185,6 +215,7 @@ describe("collection run", () => {
   it("shows the customer the real history of the parcel", async () => {
     const t = setup();
     const p1 = await createParcel(t.staffA, A.id, parcelInput("92 00 00 00", SENDER.phone!));
+    await markLabelPrinted(t.staffA, A.id, p1.id);
     const run = await startRun(t.staffA, A.id, DRIVER_CODE, [p1.id]);
     await scanRunParcel(t.staffA, A.id, run.id, p1.trackingNo);
     await departRun(t.staffA, A.id, run.id);

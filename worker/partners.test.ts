@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { signWebhook } from "../src/lib/partners";
 import type { Profile } from "../src/lib/types";
 import type { Env } from "./env";
-import type { ParcelCtx } from "./parcels";
+import { markLabelPrinted, type ParcelCtx } from "./parcels";
 import { departRun, receiveParcel, scanRunParcel, startRun } from "./parcel-runs";
 import {
   acceptBooking,
@@ -138,6 +138,7 @@ async function carry(env: Env, db: DatabaseSync, parcel: { id: string; trackingN
     ...ctxFor(env, ADMIN),
     request: new Request("https://app.poinderecharge.com/api", { headers: { "X-Active-Station": station } }),
   });
+  await markLabelPrinted(at("st-a"), "st-a", parcel.id);
   const run = await startRun(at("st-a"), "st-a", "ABCDEFGH", [parcel.id]);
   await scanRunParcel(at("st-a"), "st-a", run.id, parcel.trackingNo);
   await departRun(at("st-a"), "st-a", run.id);

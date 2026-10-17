@@ -718,6 +718,12 @@ export class CloudflareBackend implements Backend {
     return parcel;
   }
 
+  async markParcelLabel(stationId: string, parcelId: string) {
+    const parcel = await this.call<Parcel>("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels/${encodeURIComponent(parcelId)}/label`);
+    this.changed();
+    return parcel;
+  }
+
   stationRuns(stationId: string) {
     return this.call<ParcelRun[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/runs`);
   }
