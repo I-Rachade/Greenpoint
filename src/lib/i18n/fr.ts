@@ -2293,7 +2293,7 @@ export const fr = {
     cardPaid: "Payée par la carte quand la prise termine la recharge.",
     cardCounter: {
       title: "Cartes de recharge",
-      intro: "Lisez le numéro imprimé sur la carte, ou celui que le backoffice affiche après un passage sur une prise.",
+      intro: "Saisissez le numéro à 10 chiffres imprimé sur la carte.",
       number: "Numéro de carte",
       check: "Voir le crédit",
       credit: "Carte {tag} : {amount} de crédit",
@@ -2407,7 +2407,7 @@ export const fr = {
         title: "Cartes de recharge",
         intro:
           "Chaque carte a son propre crédit. Le client la passe sur une prise OCPP : la recharge démarre sans l'application si le crédit couvre le prix minimum de la station, s'arrête quand le crédit est épuisé et est payée par la carte. Le personnel recharge les cartes en espèces au comptoir de la station. Une carte passée pour la première fois apparaît ici avec son numéro et sans crédit ; la lier à un client est facultatif.",
-        number: "Numéro de carte",
+        number: "Numéro de carte (10 chiffres)",
         contact: "Téléphone ou e-mail du client (facultatif)",
         label: "Nom (facultatif)",
         save: "Enregistrer la carte",

@@ -1,4 +1,4 @@
-import { cleanCardTag, sortCards, validAdjustment, validTopup, type ChargeCard, type CounterCard } from "../src/lib/charge-cards";
+import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, validTopup, type ChargeCard, type CounterCard } from "../src/lib/charge-cards";
 import type { Profile } from "../src/lib/types";
 import { findCustomer, stationTariff } from "./charging";
 import { ApiError, nowIso, readJson, uuid } from "./http";
@@ -7,6 +7,20 @@ import { ApiError, nowIso, readJson, uuid } from "./http";
 // reaches us as the OCPP idTag of Authorize and StartTransaction (worker/ocpp.ts); a card with
 // enough credit opens a charge (openCardCharge in worker/charging.ts), which is stopped when
 // the credit is used up (cardStops) and paid from the card when it ends (settleCardCharges).
+
+/**
+ * The number a card is stored under: its own if known, else the stored spelling of the same
+ * card (decimal printed number or hex chip id, see cardTagVariants), else the tag itself.
+ */
+async function storedTag(db: D1Database, tag: string): Promise<string> {
+  const variants = cardTagVariants(tag);
+  const { results } = await db
+    .prepare(`select id_tag from charge_cards where id_tag in (${variants.map(() => "?").join(", ")})`)
+    .bind(...variants)
+    .all<{ id_tag: string }>();
+  const found = new Set(results.map((r) => r.id_tag));
+  return variants.find((v) => found.has(v)) ?? tag;
+}
 
 /** The idTagInfo status for a card: OCPP 1.6 AuthorizationStatus. */
 export type CardStatus = "Accepted" | "Blocked" | "ConcurrentTx" | "Invalid";
@@ -18,8 +32,9 @@ export type CardStatus = "Accepted" | "Blocked" | "ConcurrentTx" | "Invalid";
  * its credit covers the minimum price of the charge point's station (at least 5 FCFA).
  */
 export async function swipeCard(db: D1Database, externalId: string, rawTag: string): Promise<{ status: CardStatus; tag: string | null; userId: string | null }> {
-  const tag = cleanCardTag(rawTag);
-  if (!tag) return { status: "Invalid", tag: null, userId: null };
+  const clean = cleanCardTag(rawTag);
+  if (!clean) return { status: "Invalid", tag: null, userId: null };
+  const tag = await storedTag(db, clean);
   const now = nowIso();
   const card = await db
     .prepare(
@@ -72,7 +87,8 @@ async function loadCard(db: D1Database, rawTag: string) {
   } catch {
     throw new ApiError("card_unknown", 404);
   }
-  const tag = cleanCardTag(decoded);
+  const clean = cleanCardTag(decoded);
+  const tag = clean && (await storedTag(db, clean));
   const card =
     tag &&
     (await db
@@ -173,8 +189,9 @@ function audit(db: D1Database, admin: Profile, action: "insert" | "update" | "de
  */
 export async function saveChargeCard(db: D1Database, admin: Profile, request: Request) {
   const body = await readJson<{ idTag?: unknown; contact?: unknown; label?: unknown }>(request);
-  const tag = cleanCardTag(String(body.idTag ?? ""));
-  if (!tag) throw new ApiError("card_invalid");
+  const clean = cleanCardTag(String(body.idTag ?? ""));
+  if (!clean) throw new ApiError("card_invalid");
+  const tag = await storedTag(db, clean);
   const contact = typeof body.contact === "string" ? body.contact.trim() : "";
   const customer = contact ? await findCustomer(db, contact) : null;
   if (contact && !customer) throw new ApiError("recipient_not_found", 404);

@@ -476,3 +476,26 @@ describe("OCPP charges by card", () => {
     expect(db.prepare("select count(*) n from charge_card_transactions").get()).toEqual({ n: 2 });
   });
 });
+
+describe("M1 card numbers", () => {
+  const ADMIN = { id: "admin", phone: "+22890000001", email: null, fullName: "Admin", role: "admin" } as const;
+  const post = (body: object) => new Request("https://x", { method: "POST", body: JSON.stringify(body) });
+
+  it("find a card by its printed decimal number when the charge point sends the chip id in hex, either byte order", async () => {
+    const { db, d1 } = await setup();
+    // Printed 2745839105 = 0xA3AA2E01; read back to front: 012EAAA3.
+    await saveChargeCard(d1, ADMIN, post({ idTag: "2745839105" }));
+    await adjustChargeCard(d1, ADMIN, "2745839105", post({ amountXof: 500, reason: "first top-up" }));
+    expect(await handleOcppCall(d1, ID, "Authorize", { idTag: "A3AA2E01" })).toEqual({ idTagInfo: { status: "Accepted" } });
+    expect(await handleOcppCall(d1, ID, "Authorize", { idTag: "012eaaa3" })).toEqual({ idTagInfo: { status: "Accepted" } });
+    expect(db.prepare("select id_tag, last_device_id from charge_cards").all()).toEqual([{ id_tag: "2745839105", last_device_id: ID }]);
+  });
+
+  it("find a card swiped in hex by the number staff type at the counter", async () => {
+    const { d1 } = await setup();
+    await handleOcppCall(d1, ID, "Authorize", { idTag: "012EAAA3" });
+    const card = await topUpCard(d1, ADMIN, async () => true, "st", "2745839105", post({ amountXof: 1000 }));
+    expect(card).toMatchObject({ idTag: "012EAAA3", balanceXof: 1000 });
+    expect(await listChargeCards(d1)).toHaveLength(1);
+  });
+});

@@ -2293,7 +2293,7 @@ export const en: Dictionary = {
     cardPaid: "Paid from the card when the socket ends the charge.",
     cardCounter: {
       title: "Charging cards",
-      intro: "Read the number printed on the card, or the one the backoffice shows after a swipe at a socket.",
+      intro: "Type the 10-digit number printed on the card.",
       number: "Card number",
       check: "Check credit",
       credit: "Card {tag}: {amount} credit",
@@ -2407,7 +2407,7 @@ export const en: Dictionary = {
         title: "Charging cards",
         intro:
           "Each card has its own credit. A customer swipes it at an OCPP socket: the charge starts without the app if the credit covers the station's minimum price, stops when the credit is used up, and is paid from the card. Staff top cards up in cash at the station counter. A card swiped for the first time shows up here with its number and no credit; linking it to a customer is optional.",
-        number: "Card number",
+        number: "Card number (10 digits)",
         contact: "Customer's phone or e-mail (optional)",
         label: "Name (optional)",
         save: "Save card",
