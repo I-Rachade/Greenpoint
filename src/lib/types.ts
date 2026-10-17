@@ -157,7 +157,7 @@ export interface StationInput {
   photos?: string[];
   /** Left out: unchanged. */
   amenities?: Amenity[];
-  /** Restaurant, shop, charging or swap; null = automatic. Left out: unchanged. */
+  /** Restaurant, shop, charging, swap or EV chargers; null = automatic. Left out: unchanged. */
   mainActivity?: MainActivity | null;
 }
 

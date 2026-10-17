@@ -35,9 +35,9 @@ export const REST_AMENITIES: Amenity[] = ["seating", "shade", "toilets", "water"
  * It picks the illustration shown while the station has no photo; null = automatic, from its services.
  * Some stations are first a restaurant or a shop that also charges or swaps.
  */
-export type MainActivity = "charging" | "swap" | "restaurant" | "shop";
+export type MainActivity = "charging" | "swap" | "ev" | "restaurant" | "shop";
 
-export const MAIN_ACTIVITIES: MainActivity[] = ["charging", "swap", "restaurant", "shop"];
+export const MAIN_ACTIVITIES: MainActivity[] = ["charging", "swap", "ev", "restaurant", "shop"];
 
 /** A known main activity, or null (automatic). */
 export function cleanMainActivity(value: unknown): MainActivity | null {

@@ -113,6 +113,7 @@ describe("station main activity", () => {
     expect(placeholderPhoto({ ...swap, mainActivity: "shop", evChargers: [{}] })).toBe("/station-photos/shop.svg");
     expect(placeholderPhoto({ ...swap, mainActivity: null, evChargers: [{}] })).toBe("/station-photos/ev.svg");
     expect(placeholderPhoto({ id: "s", kind: "both", mainActivity: "charging" })).toBe("/station-photos/charging.svg");
+    expect(placeholderPhoto({ ...swap, mainActivity: "ev" })).toBe("/station-photos/ev.svg");
     // A real photo still wins.
     expect(stationPhotos({ ...swap, mainActivity: "shop", photos: ["/p.jpg"] })).toEqual(["/p.jpg"]);
   });

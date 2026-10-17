@@ -65,7 +65,7 @@ export function StationMediaFields({
       <fieldset className="space-y-2">
         <legend className="text-sm font-semibold">{a.mainActivity}</legend>
         <p className="text-xs text-zinc-500">{a.mainActivityHint}</p>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {choices.map((c) => {
             const on = c.value === mainActivity;
             return (
