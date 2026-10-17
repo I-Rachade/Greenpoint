@@ -7,9 +7,10 @@ import { format } from "@/lib/i18n/format";
 import type { ReportPeriod } from "@/lib/owner-backoffice";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
-import { BatteryIcon, CheckCircleIcon, HistoryIcon, PulseIcon, StoreIcon, UsersIcon, WalletIcon } from "./icons";
+import { BatteryIcon, CheckCircleIcon, ClipboardIcon, HistoryIcon, PulseIcon, StoreIcon, UsersIcon, WalletIcon } from "./icons";
 import { LoadFailed, StaleNotice } from "./load-state";
 import { BatteryRegistry } from "./batteries/battery-registry";
+import { CashView } from "./owner/cash";
 import { HistoryView } from "./owner/history";
 import { LiveView } from "./owner/live";
 import { ReportView } from "./owner/report";
@@ -20,12 +21,13 @@ import { EmptyState, SkeletonCard } from "./ui";
 
 export { SERVICE_TONE } from "./owner/stations";
 
-const TABS = ["live", "report", "history", "batteries", "staff", "stations"] as const;
+const TABS = ["live", "report", "cash", "history", "batteries", "staff", "stations"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_ICON: Record<Tab, ComponentType<SVGProps<SVGSVGElement> & { size?: number }>> = {
   live: PulseIcon,
   report: WalletIcon,
+  cash: ClipboardIcon,
   history: HistoryIcon,
   batteries: BatteryIcon,
   staff: UsersIcon,
@@ -198,6 +200,7 @@ export function OwnerPanel() {
                 {(tab === "report" || tab === "history") && <PeriodPicker value={days} onChange={setDays} />}
                 {tab === "live" && <LiveView stationId={selected?.id ?? null} stationName={stationName} />}
                 {tab === "report" && <ReportView stationId={selected?.id ?? null} days={days} />}
+                {tab === "cash" && <CashView stationId={selected?.id ?? null} />}
                 {tab === "history" && <HistoryView stationId={selected?.id ?? null} days={days} />}
                 {tab === "batteries" && <BatteryRegistry stationId={selected?.id ?? null} />}
                 {tab === "staff" && <StaffView view={data} stations={shown} onChanged={changed} />}

@@ -15,7 +15,7 @@ import {
   type UserRole,
   type VehicleType,
 } from "../types";
-import { BackendError, type Backend, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
+import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
 import { applyDemoSwapBattery, resolveDemoBattery, seedDemoBatteries, type DemoBattery, type DemoBatteryEvent, type DemoSwapBattery } from "./demo-batteries";
 import {
   BATTERY_LIST_MAX,
@@ -97,6 +97,24 @@ import {
 } from "./demo-data";
 import { cleanAmenities, cleanMainActivity, cleanPhotos, cleanReview, ratingOf, shortName, type ReviewInput, type StationReview } from "../station-extras";
 import { depotPoints, hasAnyPoint, kindFor } from "../station-points";
+import {
+  cleanSwapOwner,
+  COMMISSION_MODES,
+  handoverInputError,
+  HANDOVER_NOTE_MAX,
+  monthStartOf,
+  stationCash,
+  swapOwnerOf,
+  validCommissionPct,
+  type CashHandover,
+  type CashItem,
+  type CommissionMode,
+  type HandoverInput,
+  type HandoverStatus,
+  type StationCash,
+  type StationCashSettings,
+  type SwapOwner,
+} from "../station-cash";
 import { validBatteryType, type BatteryType, type BatteryTypeInput } from "../battery-types";
 import { DEMO_STAFF, demoHistory, demoReassignments, demoUsers } from "../admin/demo-seed";
 import { cleanOpeningHours } from "../opening-hours";
@@ -364,6 +382,16 @@ function pickupCode(): string {
   return String(Math.floor(Math.random() * 10_000)).padStart(4, "0");
 }
 
+type DemoHandover = CashHandover & { createdById: string; decidedById: string | null };
+
+/** A stored closing as the API shows it, without who made and decided it. */
+function handoverView(h: DemoHandover): CashHandover {
+  const view: CashHandover & Partial<Pick<DemoHandover, "createdById" | "decidedById">> = { ...h };
+  delete view.createdById;
+  delete view.decidedById;
+  return view;
+}
+
 interface DemoState {
   operators: Operator[];
   stations: Station[];
@@ -449,8 +477,12 @@ interface DemoState {
   batteryHistory?: DemoBatteryEvent[];
   /** Swap price per station in FCFA (stations.price_battery_xof); missing = DEMO_SWAP_PRICE at own stations. */
   swapPrices?: Record<string, number | null>;
-  /** Swap log, newest first (as table swap_log). */
-  swaps?: (SwapEntry & { requestId: string; staffId: string; customerId: string | null; driverId?: string | null; fleetManagerId?: string | null })[];
+  /** Swap log, newest first (as table swap_log); `owner` as swap_log.owner (0045, missing = the station's rule). */
+  swaps?: (SwapEntry & { requestId: string; staffId: string; customerId: string | null; driverId?: string | null; fleetManagerId?: string | null; owner?: SwapOwner })[];
+  /** Station type and the host's commission of partner stations (stations.swap_owner, commission_*; 0045). */
+  stationCash?: Record<string, { swapOwner: SwapOwner | null; commissionPct: number; commissionMode: CommissionMode }>;
+  /** Cash closings of partner stations (as table cash_handovers), with who made and decided them. */
+  cashHandovers?: DemoHandover[];
   /** Fleets (as table fleets, 0032); missing = the demo fleet manager's approved fleet. */
   fleets?: DemoFleet[];
   /** Fleet invites, newest first (as table fleet_invites). */
@@ -1771,6 +1803,7 @@ export class DemoBackend implements Backend {
       out: batteryOut ? resolveDemoBattery(register.batteries, batteryOut, batteryType) : null,
       in: batteryIn ? resolveDemoBattery(register.batteries, batteryIn, batteryType) : null,
     };
+    const swapOwner = swapOwnerOf(station.isOwn, state.stationCash?.[station.id]?.swapOwner);
     let payment: SwapPayment;
     let amount: number;
     const price = swapPrice(state, station);
@@ -1779,7 +1812,7 @@ export class DemoBackend implements Backend {
       amount = price ?? 0;
     } else if (type === "app" && input.payment !== "cash") {
       if (features.lite) throw new BackendError("cash_only");
-      if (!station.isOwn) throw new BackendError("payment_not_offered");
+      if (swapOwner !== "poinderecharge") throw new BackendError("payment_not_offered");
       payment = "wallet";
       if (!price) throw new BackendError("swap_price_missing");
       amount = price;
@@ -1873,7 +1906,7 @@ export class DemoBackend implements Backend {
       });
     }
     next = { ...next, batteries: reg.batteries, batteryHistory: reg.history };
-    next = { ...next, swaps: [{ ...entry, requestId: input.requestId, staffId: actor.profile.id, customerId: customer?.id ?? null, driverId: driver?.driverId ?? null, fleetManagerId: driver?.managerId ?? null }, ...(next.swaps ?? [])].slice(0, 1000) };
+    next = { ...next, swaps: [{ ...entry, requestId: input.requestId, staffId: actor.profile.id, customerId: customer?.id ?? null, driverId: driver?.driverId ?? null, fleetManagerId: driver?.managerId ?? null, owner: swapOwner }, ...(next.swaps ?? [])].slice(0, 1000) };
     if (reservation) {
       const done = reservation.id;
       next = { ...next, reservations: next.reservations.map((x) => (x.id === done ? { ...x, status: "completed" as const } : x)) };
@@ -2682,6 +2715,7 @@ export class DemoBackend implements Backend {
     const hours = Array.from({ length: 24 }, () => 0);
     const revenue = { swapCashXof: 0, swapAppXof: 0, swapFleetXof: 0, chargeCashXof: 0, chargeAppXof: 0, cashXof: 0, totalXof: 0 };
     let chargesXof = 0;
+    let swapsXof = 0;
     const people = new Map<string, StaffStats>();
     const entry = (id: string, role: StaffStats["role"] | null) => {
       const e = people.get(id) ?? { personId: id, person: "", role: role ?? "staff", swaps: 0, charges: 0, actions: 0 };
@@ -2696,7 +2730,10 @@ export class DemoBackend implements Backend {
         d.swapXof += x.amountXof;
       }
       hours[new Date(x.createdAt).getUTCHours()]++;
-      if (x.payment === "cash") revenue.swapCashXof += x.amountXof;
+      // A shop station only hosts the swapping (0045): not its revenue, the cash is owed to poinderecharge.
+      if (this.swapOwnerOfEntry(state, x) === "poinderecharge" && !state.stations.find((st) => st.id === x.stationId)?.isOwn) {
+        if (x.payment === "cash") swapsXof += x.amountXof;
+      } else if (x.payment === "cash") revenue.swapCashXof += x.amountXof;
       else if (x.payment === "wallet") revenue.swapAppXof += x.amountXof;
       else if (x.payment === "fleet") revenue.swapFleetXof += x.amountXof;
       entry(x.staffId, x.role).swaps++;
@@ -2729,6 +2766,9 @@ export class DemoBackend implements Backend {
     revenue.cashXof = revenue.swapCashXof + revenue.chargeCashXof;
     revenue.totalXof = revenue.cashXof + revenue.swapAppXof + revenue.swapFleetXof + revenue.chargeAppXof;
     const driversXof = (state.ledger ?? []).filter((l) => l.kind === "settlement" && l.stationId && set.has(l.stationId) && l.at >= from).reduce((a, l) => a + l.amountFcfa, 0);
+    const cardsXof = (state.cardTopups ?? [])
+      .filter((t) => set.has(t.stationId) && t.at >= from && !state.stations.find((st) => st.id === t.stationId)?.isOwn)
+      .reduce((a, t) => a + t.amountXof, 0);
     for (const a of (state.stationActions ?? []).filter((a) => set.has(a.stationId) && a.createdAt >= from)) entry(a.personId, a.role).actions++;
     for (const p of people.values()) p.person = this.personName(state, p.personId) ?? "?";
     return {
@@ -2736,10 +2776,154 @@ export class DemoBackend implements Backend {
       from,
       perDay,
       revenue,
-      poinderecharge: { parcelsXof, driversXof, chargesXof, totalXof: parcelsXof + driversXof + chargesXof, thirdParty },
+      poinderecharge: { parcelsXof, driversXof, chargesXof, swapsXof, cardsXof, totalXof: parcelsXof + driversXof + chargesXof + swapsXof + cardsXof, thirdParty },
       hours,
       staff: [...people.values()].sort((a, b) => b.swaps + b.charges + b.actions - (a.swaps + a.charges + a.actions)),
     };
+  }
+
+  // Station cash (as worker/station-cash.ts) ---------------------------------------------
+
+  /** Who owned a logged swap: its own owner, else the station's rule (as SWAP_OWNER_SQL). */
+  private swapOwnerOfEntry(state: DemoState, x: { stationId: string; owner?: SwapOwner }): SwapOwner {
+    const station = state.stations.find((st) => st.id === x.stationId);
+    return x.owner ?? swapOwnerOf(!!station?.isOwn, state.stationCash?.[x.stationId]?.swapOwner);
+  }
+
+  private stationCashOf(state: DemoState, ids: string[] | null, now = new Date()): StationCash[] {
+    const partner = state.stations
+      .filter((st) => !st.isOwn && (!ids || ids.includes(st.id)))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const parcels = this.parcelsOf(state);
+    return partner.map((st) => {
+      const settings = state.stationCash?.[st.id];
+      const cash: CashItem[] = [
+        ...(state.charges ?? [])
+          .filter((c) => c.stationId === st.id && c.status === "paid" && c.paidAt && c.paymentMethod === "cash")
+          .map((c): CashItem => ({ kind: "chargesXof", at: c.paidAt!, amountXof: c.amountXof })),
+        ...(state.swaps ?? [])
+          .filter((x) => x.stationId === st.id && x.payment === "cash" && this.swapOwnerOfEntry(state, x) === "poinderecharge")
+          .map((x): CashItem => ({ kind: "swapsXof", at: x.createdAt, amountXof: x.amountXof })),
+        ...parcels
+          .filter((p) => p.fromStationId === st.id && p.paymentMethod === "cash" && p.paidAt && p.status !== "cancelled")
+          .map((p): CashItem => ({ kind: "parcelsXof", at: p.paidAt!, amountXof: p.priceFcfa })),
+        ...(state.ledger ?? [])
+          .filter((l) => l.kind === "settlement" && l.stationId === st.id)
+          .map((l): CashItem => ({ kind: "driversXof", at: l.at, amountXof: l.amountFcfa })),
+        ...(state.cardTopups ?? []).filter((t) => t.stationId === st.id).map((t): CashItem => ({ kind: "cardsXof", at: t.at, amountXof: t.amountXof })),
+      ];
+      const sales = [
+        ...(state.charges ?? []).filter((c) => c.stationId === st.id && c.status === "paid" && c.paidAt && !c.partnerId).map((c) => ({ at: c.paidAt!, amountXof: c.amountXof })),
+        ...(state.swaps ?? [])
+          .filter((x) => x.stationId === st.id && x.payment !== "none" && this.swapOwnerOfEntry(state, x) === "poinderecharge")
+          .map((x) => ({ at: x.createdAt, amountXof: x.amountXof })),
+      ];
+      return stationCash(
+        {
+          stationId: st.id,
+          stationName: st.name,
+          operatorName: state.operators.find((o) => o.id === st.operatorId)?.name ?? "",
+          swapOwner: settings?.swapOwner ?? "operator",
+          commissionPct: settings?.commissionPct ?? 0,
+          commissionMode: settings?.commissionMode ?? "monthly",
+          // The demo has no history before this feature: every station's balance starts at the beginning of the month.
+          start: monthStartOf(now),
+          cash,
+          sales,
+          handovers: (state.cashHandovers ?? []).filter((h) => h.stationId === st.id).map(handoverView),
+        },
+        now,
+      );
+    });
+  }
+
+  async ownerCash(stationId: string | null): Promise<StationCash[]> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    if (profile.role === "admin" && !stationId) return this.stationCashOf(state, null);
+    return this.stationCashOf(state, this.backofficeStations(state, stationId).ids);
+  }
+
+  async closeCashDay(input: HandoverInput): Promise<CashHandover> {
+    const error = handoverInputError(input);
+    if (error) throw new BackendError(error as BackendErrorCode);
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    this.backofficeStations(state, input.stationId);
+    const now = new Date();
+    const [cash] = this.stationCashOf(state, [input.stationId], now);
+    if (!cash) throw new BackendError("own_station");
+    if (cash.dueXof !== input.expectedDueXof) throw new BackendError("cash_changed");
+    const handover: CashHandover = {
+      id: crypto.randomUUID(),
+      stationId: input.stationId,
+      periodFrom: cash.since,
+      periodUntil: now.toISOString(),
+      cashXof: cash.lines.totalXof,
+      carryXof: cash.carryXof,
+      commissionXof: cash.commissionXof,
+      dueXof: cash.dueXof,
+      amountXof: input.amountXof,
+      method: input.method,
+      reference: input.reference.trim(),
+      note: input.note?.trim() || null,
+      status: "pending",
+      createdBy: personLabel(profile),
+      createdAt: now.toISOString(),
+      decidedBy: null,
+      decidedAt: null,
+      rejectReason: null,
+    };
+    const next = withAudit(
+      { ...state, cashHandovers: [{ ...handover, createdById: profile.id, decidedById: null }, ...(state.cashHandovers ?? [])] },
+      { table: "cash_handovers", action: "insert", rowId: handover.id, changes: { amount_xof: handover.amountXof, due_xof: handover.dueXof, method: handover.method }, stationId: input.stationId },
+    );
+    this.save(next);
+    return handover;
+  }
+
+  async decideHandover(id: string, confirm: boolean, reason?: string): Promise<CashHandover> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const profile = this.requireProfile(state);
+    const why = reason?.trim() ?? "";
+    if (!confirm && (!why || why.length > HANDOVER_NOTE_MAX)) throw new BackendError("reject_reason_required");
+    const found = (state.cashHandovers ?? []).find((h) => h.id === id);
+    if (!found) throw new BackendError("unknown", "not_found");
+    if (found.status !== "pending") throw new BackendError("handover_decided");
+    const decided = {
+      ...found,
+      status: (confirm ? "confirmed" : "rejected") as HandoverStatus,
+      decidedBy: personLabel(profile),
+      decidedById: profile.id,
+      decidedAt: new Date().toISOString(),
+      rejectReason: confirm ? null : why,
+    };
+    this.save(
+      withAudit(
+        { ...state, cashHandovers: (state.cashHandovers ?? []).map((h) => (h.id === id ? decided : h)) },
+        { table: "cash_handovers", action: "update", rowId: id, changes: { status: ["pending", decided.status] }, stationId: found.stationId },
+      ),
+    );
+    return handoverView(decided);
+  }
+
+  async saveStationCashSettings(stationId: string, settings: StationCashSettings): Promise<void> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const station = state.stations.find((st) => st.id === stationId);
+    if (!station) throw new BackendError("station_not_found");
+    if (station.isOwn) throw new BackendError("own_station");
+    const swapOwner = cleanSwapOwner(settings?.swapOwner);
+    if (!swapOwner || !validCommissionPct(settings?.commissionPct) || !COMMISSION_MODES.includes(settings?.commissionMode)) throw new BackendError("unknown", "bad_request");
+    const before = state.stationCash?.[stationId] ?? { swapOwner: null, commissionPct: 0, commissionMode: "monthly" as CommissionMode };
+    const after = { swapOwner, commissionPct: settings.commissionPct, commissionMode: settings.commissionMode };
+    this.save(
+      withAudit(
+        { ...state, stationCash: { ...state.stationCash, [stationId]: after } },
+        { table: "stations", action: "update", rowId: stationId, changes: diff(before, after), stationId },
+      ),
+    );
   }
 
   /** As ownerSaveStation() in worker/api.ts: hours as days and times (never empty), phone and prices. */

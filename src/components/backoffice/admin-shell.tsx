@@ -9,6 +9,7 @@ import {
   BoltIcon,
   BoxIcon,
   CarIcon,
+  ClipboardIcon,
   GearIcon,
   GlobeIcon,
   GridIcon,
@@ -68,6 +69,7 @@ export const ADMIN_NAV: { group: GroupKey; links: { href: string; key: NavKey }[
     links: [
       { href: "/admin/wallet", key: "wallet" },
       { href: "/admin/charging", key: "charging" },
+      { href: "/admin/caisse", key: "stationCash" },
     ],
   },
   {
@@ -100,6 +102,7 @@ const NAV_ICON: Record<NavKey, ComponentType<SVGProps<SVGSVGElement> & { size?: 
   merchants: StoreIcon,
   wallet: WalletIcon,
   charging: PhoneBoltIcon,
+  stationCash: ClipboardIcon,
   services: GearIcon,
   operators: ShieldIcon,
   devices: WifiIcon,

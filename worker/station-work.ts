@@ -36,6 +36,7 @@ import {
 } from "../src/lib/station-work";
 import type { Profile } from "../src/lib/types";
 import { periodStart, reportPeriod } from "../src/lib/owner-backoffice";
+import { swapOwnerOf, type SwapOwner } from "../src/lib/station-cash";
 import { newTrxId, personLabel } from "../src/lib/wallet";
 import { verifyPin } from "./auth";
 import type { Env } from "./env";
@@ -119,11 +120,12 @@ interface StationInfo {
   battery_capacity: number;
   price_battery_xof: number | null;
   is_own: number | null;
+  swap_owner: SwapOwner | null;
 }
 
 async function stationInfo(db: D1Database, stationId: string): Promise<StationInfo> {
   const s = await db
-    .prepare("select s.id, s.name, s.battery_capacity, s.price_battery_xof, o.is_own from stations s left join operators o on o.id = s.operator_id where s.id = ?")
+    .prepare("select s.id, s.name, s.battery_capacity, s.price_battery_xof, o.is_own, s.swap_owner from stations s left join operators o on o.id = s.operator_id where s.id = ?")
     .bind(stationId)
     .first<StationInfo>();
   if (!s) throw new ApiError("station_not_found", 404);
@@ -583,7 +585,8 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     out: batteryOut ? await resolveSwapBattery(db, batteryOut, batteryType) : null,
     in: batteryIn ? await resolveSwapBattery(db, batteryIn, batteryType) : null,
   };
-  // How it is paid (Lite: cash only).
+  // Who the swap belongs to (0045), kept on the log row; how it is paid (Lite: cash only).
+  const owner = swapOwnerOf(!!station.is_own, station.swap_owner);
   let payment: SwapPayment;
   let amount: number;
   if (type === "fleet") {
@@ -591,8 +594,8 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     amount = station.price_battery_xof ?? 0;
   } else if (type === "app" && input.payment !== "cash") {
     if (features.lite) throw new ApiError("cash_only", 409);
-    // As for charges (worker/charging.ts): app payments only at our own stations, cash elsewhere.
-    if (!station.is_own) throw new ApiError("payment_not_offered", 409);
+    // App payments only where the swap is ours (our stations, shop stations: 0045), cash elsewhere.
+    if (owner !== "poinderecharge") throw new ApiError("payment_not_offered", 409);
     payment = "wallet";
     if (!station.price_battery_xof) throw new ApiError("swap_price_missing", 409);
     amount = station.price_battery_xof;
@@ -645,8 +648,8 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     db
       .prepare(
         `insert into swap_log (id, request_id, station_id, battery_type_id, has_battery_in, battery_in_label, battery_out_label, customer_type,
-           customer_user_id, driver_id, fleet_manager_id, reservation_id, payment, amount_xof, wallet_trx_id, staff_id, role, created_at)
-         select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18
+           customer_user_id, driver_id, fleet_manager_id, reservation_id, payment, amount_xof, wallet_trx_id, staff_id, role, created_at, owner)
+         select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?20
          where exists (select 1 from battery_events where request_id = ?19)`,
       )
       .bind(
@@ -669,6 +672,7 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
         actor.role,
         now,
         outRequest,
+        owner,
       ),
   ];
   const swapExists = { sql: "exists (select 1 from swap_log where request_id = ?12)", value: input.requestId };

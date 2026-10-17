@@ -91,6 +91,7 @@ import type { ReservationKind } from "../reservations";
 import type { BatteryEventInput, BatteryEventView, StationCounter, SwapEntry, SwapFilter, SwapInput } from "../station-work";
 import type { ReviewInput, StationReview } from "../station-extras";
 import type { LatLng } from "../geo";
+import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "../station-cash";
 import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
 
 /** Where a code goes: by SMS to the phone number or by e-mail. */
@@ -258,6 +259,12 @@ export type BackendErrorCode =
   | "driver_checked_in_here"
   | "merchant_locked"
   | "address_limit"
+  | "cash_changed"
+  | "handover_reference_required"
+  | "handover_note_required"
+  | "handover_decided"
+  | "reject_reason_required"
+  | "own_station"
   | "unknown";
 
 export class BackendError extends Error {
@@ -362,6 +369,15 @@ export interface Backend {
 
   // Owner backoffice (see src/lib/owner-backoffice.ts): one station or all (`null`)
   ownerLive(stationId: string | null): Promise<OwnerLive>;
+  // Station cash (see src/lib/station-cash.ts): partner stations only
+  /** The balance, what is due now and the handovers of the owner's partner stations (admins: all of them). */
+  ownerCash(stationId: string | null): Promise<StationCash[]>;
+  /** Closes the open period and records what was handed over (pending until an admin confirms it). */
+  closeCashDay(input: HandoverInput): Promise<CashHandover>;
+  /** Admins: the money of a handover arrived (confirm) or not (reject, with a reason). */
+  decideHandover(id: string, confirm: boolean, reason?: string): Promise<CashHandover>;
+  /** Admins: operator station or shop station, and the host's commission. */
+  saveStationCashSettings(stationId: string, settings: StationCashSettings): Promise<void>;
   ownerReport(stationId: string | null, days: ReportPeriod): Promise<OwnerReport>;
 
   // Service unlock per station (see src/lib/station-services.ts)

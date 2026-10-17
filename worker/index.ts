@@ -6,6 +6,8 @@ import { corsHeaders } from "./http";
 import { handleOcppUpgrade, logOcppAttempt } from "./ocpp";
 import { runParcelDeadlines } from "./parcels";
 import { runPartnerDeadlines, runPartnerEvents } from "./partners";
+import { runCashAlerts } from "./station-cash";
+import { CASH_DEADLINE_HOUR } from "../src/lib/station-cash";
 
 // The Durable Object behind each OCPP charge point's WebSocket (wrangler.jsonc).
 export { OcppConnection } from "./ocpp";
@@ -50,6 +52,7 @@ export default {
    * Crons in wrangler.jsonc: every minute partner webhooks and driver offers
    * (worker/drivers.ts), daily parcel reminders and returns. Nothing runs while
    * its module is switched off; parcels catch up once the module is back on.
+   * At 10:00 the minute cron also tells the admins which stations did not close their cash.
    */
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
@@ -60,5 +63,9 @@ export default {
       }),
     );
     if (controller.cron !== DAILY_CRON) ctx.waitUntil(runDispatch(env).catch((err) => console.error("dispatch", err)));
+    const at = new Date(controller.scheduledTime);
+    if (controller.cron !== DAILY_CRON && at.getUTCHours() === CASH_DEADLINE_HOUR && at.getUTCMinutes() === 0) {
+      ctx.waitUntil(runCashAlerts(env, at).catch((err) => console.error("cash alerts", err)));
+    }
   },
 } satisfies ExportedHandler<Env>;
