@@ -612,3 +612,35 @@ describe("DemoBackend point partners", () => {
     await expect(backend.pointPartnerDashboard(30)).rejects.toMatchObject({ code: "partner_suspended" });
   });
 });
+
+describe("DemoBackend station cash (as worker/station-cash.ts)", () => {
+  const PARTNER_STATION = "st-hedzranawoe"; // the demo's partner station (op-example)
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-12T12:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("closes the day, carries a rejected handover over and keeps the commission back", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    setActiveStation(PARTNER_STATION);
+    await backend.topUpCard(PARTNER_STATION, "2745839105", 2000);
+    const [before] = await backend.ownerCash(PARTNER_STATION);
+    expect(before).toMatchObject({ type: "operator", dueXof: 2000, lines: { cardsXof: 2000, totalXof: 2000 } });
+    const input = { stationId: PARTNER_STATION, method: "cash" as const, reference: "Agent Komi", expectedDueXof: 2000 };
+    await expect(backend.closeCashDay({ ...input, amountXof: 1500 })).rejects.toMatchObject({ code: "handover_note_required" });
+    await expect(backend.closeCashDay({ ...input, amountXof: 1000, expectedDueXof: 1000 })).rejects.toMatchObject({ code: "cash_changed" });
+    const h = await backend.closeCashDay({ ...input, amountXof: 2000 });
+    expect((await backend.ownerCash(PARTNER_STATION))[0]).toMatchObject({ dueXof: 0, pendingXof: 2000 });
+    await expect(backend.decideHandover(h.id, false)).rejects.toMatchObject({ code: "reject_reason_required" });
+    expect(await backend.decideHandover(h.id, false, "Rien reçu")).toMatchObject({ status: "rejected" });
+    await expect(backend.decideHandover(h.id, true)).rejects.toMatchObject({ code: "handover_decided" });
+    expect((await backend.ownerCash(PARTNER_STATION))[0]).toMatchObject({ carryXof: 2000, dueXof: 2000 });
+    // A shop station: swaps are ours; commission kept back on what is ours (the top-up is not a sale).
+    await backend.saveStationCashSettings(PARTNER_STATION, { swapOwner: "poinderecharge", commissionPct: 10, commissionMode: "deduct" });
+    expect((await backend.ownerCash(PARTNER_STATION))[0]).toMatchObject({ type: "shop", commissionXof: 0, dueXof: 2000 });
+  });
+});

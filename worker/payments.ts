@@ -1,5 +1,6 @@
 import { normalizeTogoPhone } from "../src/lib/phone";
 import type { Profile } from "../src/lib/types";
+import { swapOwnerOf, type SwapOwner } from "../src/lib/station-cash";
 import type { Env } from "./env";
 import { TOPUP_IDENTIFIER_PREFIX, topupCallback } from "./wallet-topups";
 import { chargePaymentSucceeded } from "./charging";
@@ -118,7 +119,7 @@ export async function startPayment(env: Env, user: Profile, request: Request): P
 
   const r = await env.DB.prepare(
     `select r.id, r.user_id, r.station_id, r.type, r.status, r.expires_at,
-            s.price_battery_xof, s.price_slot_xof, o.is_own
+            s.price_battery_xof, s.price_slot_xof, o.is_own, s.swap_owner
        from reservations r
        join stations s on s.id = r.station_id
        left join operators o on o.id = s.operator_id
@@ -135,14 +136,17 @@ export async function startPayment(env: Env, user: Profile, request: Request): P
       price_battery_xof: number | null;
       price_slot_xof: number | null;
       is_own: number | null;
+      swap_owner: SwapOwner | null;
     }>();
   if (!r || r.user_id !== user.id) throw new ApiError("not_found", 404);
   if (r.status !== "active" || r.expires_at <= nowIso()) throw new ApiError("reservation_not_active", 409);
   // Collecting money for third-party operators may count as a payment service
   // under BCEAO Instruction 001-01-2024 (see planung/rechtliches-togo.md). Until
-  // the provider offers split payments, only our own stations take payments.
+  // the provider offers split payments, only what is ours takes payments: a battery where the
+  // swap is ours (our stations, shop stations: 0045), a slot at our own stations.
   const price = r.type === "battery" ? r.price_battery_xof : r.price_slot_xof;
-  if (!r.is_own || price == null) throw new ApiError("payment_not_offered", 409);
+  const ours = r.type === "battery" ? swapOwnerOf(!!r.is_own, r.swap_owner) === "poinderecharge" : !!r.is_own;
+  if (!ours || price == null) throw new ApiError("payment_not_offered", 409);
   return createPayment(env, user, { stationId: r.station_id, reservationId: r.id, sessionId: null, amountXof: price, network, phone });
 }
 

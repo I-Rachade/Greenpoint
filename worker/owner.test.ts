@@ -351,7 +351,7 @@ describe("owner backoffice (staff get none)", () => {
     // The partner's station only hosts the sockets (0039): its charges are not its revenue.
     expect(r.revenue).toEqual({ swapCashXof: 400, swapAppXof: 400, swapFleetXof: 0, chargeCashXof: 0, chargeAppXof: 0, cashXof: 400, totalXof: 800 });
     // Parcel cash (the cancelled one was refunded), the driver's cash and the charges paid in cash: for poinderecharge, not revenue.
-    expect(r.poinderecharge).toEqual({ parcelsXof: 700, driversXof: 2000, chargesXof: 300, totalXof: 3000, thirdParty: true });
+    expect(r.poinderecharge).toEqual({ parcelsXof: 700, driversXof: 2000, chargesXof: 300, swapsXof: 0, cardsXof: 0, totalXof: 3000, thirdParty: true });
     const today = r.perDay[r.perDay.length - 1];
     expect(today).toMatchObject({ swaps: 2, charges: 2, parcels: 2, swapXof: 800, chargeXof: 500 });
     expect(r.perDay).toHaveLength(7);

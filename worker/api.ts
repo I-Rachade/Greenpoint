@@ -46,6 +46,8 @@ import {
 import { cleanOpeningHours } from "../src/lib/opening-hours";
 import { reportPeriod } from "../src/lib/owner-backoffice";
 import { ownerLive, ownerReport } from "./owner";
+import { closeCashDay, decideHandover, ownerCash, saveStationCashSettings } from "./station-cash";
+import type { HandoverInput, StationCashSettings } from "../src/lib/station-cash";
 import { normalizeTogoPhone } from "../src/lib/phone";
 import { personLabel } from "../src/lib/wallet";
 import { MAX_PROMO_IMAGE_BYTES, pickPromotion, safeImage, safeLink, type Promotion, type PromotionInput } from "../src/lib/promo";
@@ -1899,6 +1901,15 @@ const ROUTES: [string, RegExp, Handler][] = [
   // Owner backoffice (worker/owner.ts): live queue and handovers, settlement and statistics.
   ["GET", /^\/api\/owner\/live$/, (c) => ownerLive(c, c.url.searchParams.get("stationId") || null)],
   ["GET", /^\/api\/owner\/report$/, (c) => ownerReport(c, c.url.searchParams.get("stationId") || null, reportPeriod(c.url.searchParams.get("days")))],
+  // Station cash (worker/station-cash.ts): what partner stations owe, their closings and the admin's confirmation.
+  ["GET", /^\/api\/owner\/cash$/, (c) => ownerCash(c, c.url.searchParams.get("stationId") || null)],
+  ["POST", /^\/api\/owner\/cash\/handovers$/, async (c) => closeCashDay(c, await readJson<HandoverInput>(c.request))],
+  [
+    "POST",
+    /^\/api\/admin\/cash\/handovers\/([\w-]+)\/decide$/,
+    async (c, [id]) => decideHandover(c, id, await readJson<{ confirm?: unknown; reason?: unknown }>(c.request)),
+  ],
+  ["POST", /^\/api\/admin\/cash\/stations\/([\w-]+)$/, async (c, [id]) => saveStationCashSettings(c, id, await readJson<Partial<StationCashSettings>>(c.request))],
   [
     "POST",
     /^\/api\/owner\/staff\/move$/,

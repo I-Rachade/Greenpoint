@@ -73,6 +73,8 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/owner/reassignments/:id/resolve": OWNER,
   "GET /api/owner/live": OWNER,
   "GET /api/owner/report": OWNER,
+  "GET /api/owner/cash": OWNER,
+  "POST /api/owner/cash/handovers": OWNER,
   "GET /api/station-services": OWNER,
   "POST /api/station-services/request": ["owner"], // the owner asks, the admin decides
   "POST /api/admin/station-services/decide": ADMIN,
@@ -268,6 +270,8 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/admin/devices/:id/outlets/:id/:id": ADMIN,
   "POST /api/admin/devices/:id/partner": ADMIN,
   "POST /api/admin/devices/:id/qr": ADMIN,
+  "POST /api/admin/cash/handovers/:id/decide": ADMIN,
+  "POST /api/admin/cash/stations/:id": ADMIN,
   "GET /api/admin/point-partners": ADMIN,
   "POST /api/admin/point-partners": ADMIN,
   "POST /api/admin/point-partners/:id/status": ADMIN,

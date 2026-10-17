@@ -11,6 +11,8 @@
 // - Charging sockets belong to poinderecharge or a point partner, never to the station that
 //   hosts them (migration 0039): at a partner's station the charges are not its revenue, and
 //   the cash it took for them is owed to poinderecharge too.
+// - At a shop station the swapping is poinderecharge's as well (0045): its swaps are not the
+//   shop's revenue either. What a partner owes is handed over daily (src/lib/station-cash.ts).
 
 import type { Reservation } from "./types";
 
@@ -126,6 +128,10 @@ export interface OwnerReport {
     driversXof: number;
     /** Charges paid in cash at a partner's station: the sockets are not the station's (0039). */
     chargesXof: number;
+    /** Swaps paid in cash at a shop station: the swapping is poinderecharge's there (0045). */
+    swapsXof: number;
+    /** Charging cards topped up in cash at a partner's counter. */
+    cardsXof: number;
     totalXof: number;
     /** Whether a station of the report belongs to a partner (the cash is owed to poinderecharge). */
     thirdParty: boolean;

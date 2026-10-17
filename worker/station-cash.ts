@@ -1,0 +1,342 @@
+// Station types and the daily cash handover (migration 0045): what a partner station took for
+// poinderecharge, its closings and the admin's confirmation, the host's commission and the
+// late alert. Types and the balance rule: src/lib/station-cash.ts.
+
+import type { AuditTable } from "../src/lib/admin/types";
+import {
+  cleanCommissionMode,
+  cleanSwapOwner,
+  handoverInputError,
+  HANDOVER_NOTE_MAX,
+  monthStartOf,
+  stationCash,
+  validCommissionPct,
+  type CashHandover,
+  type CashItem,
+  type CommissionItem,
+  type HandoverInput,
+  type HandoverMethod,
+  type HandoverStatus,
+  type StationCash,
+  type StationCashSettings,
+  type SwapOwner,
+} from "../src/lib/station-cash";
+import type { Profile } from "../src/lib/types";
+import { personLabel } from "../src/lib/wallet";
+import type { Env } from "./env";
+import { ApiError, nowIso, uuid } from "./http";
+import { notifyUser } from "./notify";
+import { backofficeStations } from "./owner";
+
+interface CashCtx {
+  db: D1Database;
+  requireUser(): Promise<Profile>;
+  requireAdmin(): Promise<Profile>;
+  audit(
+    actor: string | null,
+    table: AuditTable,
+    action: "insert" | "update" | "delete",
+    rowId: string,
+    changes: Record<string, unknown>,
+    ids?: { stationId?: string | null; userId?: string | null },
+  ): D1PreparedStatement;
+}
+
+/**
+ * Who owned a swap_log row `l` (station `s`, operator `o`): its own owner, else the station's
+ * rule at the time it is read (older swaps, before 0045).
+ */
+export const SWAP_OWNER_SQL = `coalesce(l.owner, case when coalesce(o.is_own, 0) = 1 then 'poinderecharge' else coalesce(s.swap_owner, 'operator') end)`;
+
+interface StationRow {
+  id: string;
+  name: string;
+  operator_name: string;
+  swap_owner: SwapOwner | null;
+  commission_pct: number;
+  commission_mode: string;
+  start: string;
+}
+
+interface HandoverRow {
+  id: string;
+  station_id: string;
+  period_from: string;
+  period_until: string;
+  cash_xof: number;
+  carry_xof: number;
+  commission_xof: number;
+  due_xof: number;
+  amount_xof: number;
+  method: HandoverMethod;
+  reference: string;
+  note: string | null;
+  status: HandoverStatus;
+  created_by: string;
+  created_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  reject_reason: string | null;
+  c_name: string | null;
+  c_phone: string | null;
+  c_email: string | null;
+  d_name: string | null;
+  d_phone: string | null;
+  d_email: string | null;
+}
+
+const HANDOVER_SELECT = `select h.*, cu.full_name as c_name, cu.phone as c_phone, cu.email as c_email,
+  du.full_name as d_name, du.phone as d_phone, du.email as d_email
+  from cash_handovers h left join users cu on cu.id = h.created_by left join users du on du.id = h.decided_by`;
+
+const label = (name: string | null, phone: string | null, email: string | null) =>
+  name || phone || email ? personLabel({ fullName: name, phone, email }) : null;
+
+function toHandover(r: HandoverRow): CashHandover {
+  return {
+    id: r.id,
+    stationId: r.station_id,
+    periodFrom: r.period_from,
+    periodUntil: r.period_until,
+    cashXof: r.cash_xof,
+    carryXof: r.carry_xof,
+    commissionXof: r.commission_xof,
+    dueXof: r.due_xof,
+    amountXof: r.amount_xof,
+    method: r.method,
+    reference: r.reference,
+    note: r.note,
+    status: r.status,
+    createdBy: label(r.c_name, r.c_phone, r.c_email) ?? "?",
+    createdAt: r.created_at,
+    decidedBy: label(r.d_name, r.d_phone, r.d_email),
+    decidedAt: r.decided_at,
+    rejectReason: r.reject_reason,
+  };
+}
+
+const IN = (n: number) => `(select value from json_each(?${n}))`;
+
+/**
+ * The balance of partner stations (operators that are not ours), from their rows. Our own
+ * stations owe nothing to anyone and are left out. `ids` null: every partner station.
+ */
+export async function cashOfStations(db: D1Database, ids: string[] | null, now = new Date()): Promise<StationCash[]> {
+  const { results: stations } = await db
+    .prepare(
+      `select s.id, s.name, o.name as operator_name, s.swap_owner, s.commission_pct, s.commission_mode,
+              coalesce(s.cash_since, s.created_at) as start
+       from stations s join operators o on o.id = s.operator_id
+       where coalesce(o.is_own, 0) = 0 and (?1 is null or s.id in ${IN(1)})
+       order by s.name`,
+    )
+    .bind(ids ? JSON.stringify(ids) : null)
+    .all<StationRow>();
+  if (!stations.length) return [];
+  const list = JSON.stringify(stations.map((s) => s.id));
+  const monthStart = monthStartOf(now);
+  const from = stations.reduce((a, s) => (s.start < a ? s.start : a), monthStart);
+  const [charges, swaps, parcels, drivers, cards, chargeSales, swapSales, handovers] = await Promise.all([
+    db
+      .prepare(`select station_id, paid_at as at, amount_xof as amount from charging_sessions where station_id in ${IN(1)} and status = 'paid' and payment_method = 'cash' and paid_at >= ?2`)
+      .bind(list, from)
+      .all<{ station_id: string; at: string; amount: number }>(),
+    db
+      .prepare(
+        `select l.station_id, l.created_at as at, l.amount_xof as amount from swap_log l
+         join stations s on s.id = l.station_id left join operators o on o.id = s.operator_id
+         where l.station_id in ${IN(1)} and l.payment = 'cash' and l.created_at >= ?2 and ${SWAP_OWNER_SQL} = 'poinderecharge'`,
+      )
+      .bind(list, from)
+      .all<{ station_id: string; at: string; amount: number }>(),
+    db
+      .prepare(
+        `select from_station_id as station_id, paid_at as at, price_fcfa as amount from parcels
+         where from_station_id in ${IN(1)} and payment_method = 'cash' and paid_at >= ?2 and status <> 'cancelled'`,
+      )
+      .bind(list, from)
+      .all<{ station_id: string; at: string; amount: number }>(),
+    db
+      .prepare(`select station_id, at, amount_fcfa as amount from driver_ledger where kind = 'settlement' and station_id in ${IN(1)} and at >= ?2`)
+      .bind(list, from)
+      .all<{ station_id: string; at: string; amount: number }>(),
+    db
+      .prepare(`select station_id, created_at as at, amount_xof as amount from charge_card_transactions where type = 'topup' and amount_xof > 0 and station_id in ${IN(1)} and created_at >= ?2`)
+      .bind(list, from)
+      .all<{ station_id: string; at: string; amount: number }>(),
+    // The commission counts our sockets (a point partner's are settled with the partner) and our swaps, however paid.
+    db
+      .prepare(`select station_id, paid_at as at, amount_xof as amount from charging_sessions where station_id in ${IN(1)} and status = 'paid' and partner_id is null and paid_at >= ?2`)
+      .bind(list, from)
+      .all<{ station_id: string; at: string; amount: number }>(),
+    db
+      .prepare(
+        `select l.station_id, l.created_at as at, l.amount_xof as amount from swap_log l
+         join stations s on s.id = l.station_id left join operators o on o.id = s.operator_id
+         where l.station_id in ${IN(1)} and l.payment <> 'none' and l.created_at >= ?2 and ${SWAP_OWNER_SQL} = 'poinderecharge'`,
+      )
+      .bind(list, from)
+      .all<{ station_id: string; at: string; amount: number }>(),
+    db.prepare(`${HANDOVER_SELECT} where h.station_id in ${IN(1)}`).bind(list).all<HandoverRow>(),
+  ]);
+
+  const byStation = <T extends { station_id: string }>(rows: T[]) => {
+    const map = new Map<string, T[]>();
+    for (const r of rows) map.set(r.station_id, [...(map.get(r.station_id) ?? []), r]);
+    return map;
+  };
+  const cash = new Map<string, CashItem[]>();
+  const push = (kind: CashItem["kind"], rows: { station_id: string; at: string; amount: number }[]) => {
+    for (const r of rows) cash.set(r.station_id, [...(cash.get(r.station_id) ?? []), { kind, at: r.at, amountXof: r.amount }]);
+  };
+  push("chargesXof", charges.results);
+  push("swapsXof", swaps.results);
+  push("parcelsXof", parcels.results);
+  push("driversXof", drivers.results);
+  push("cardsXof", cards.results);
+  const sales = byStation([...chargeSales.results, ...swapSales.results]);
+  const handoversOf = byStation(handovers.results);
+
+  return stations.map((s) =>
+    stationCash(
+      {
+        stationId: s.id,
+        stationName: s.name,
+        operatorName: s.operator_name,
+        swapOwner: s.swap_owner ?? "operator",
+        commissionPct: s.commission_pct,
+        commissionMode: cleanCommissionMode(s.commission_mode),
+        start: s.start,
+        cash: cash.get(s.id) ?? [],
+        sales: (sales.get(s.id) ?? []).map((r): CommissionItem => ({ at: r.at, amountXof: r.amount })),
+        handovers: (handoversOf.get(s.id) ?? []).map(toHandover),
+      },
+      now,
+    ),
+  );
+}
+
+/** GET /api/owner/cash?stationId=: the owner's partner stations (an admin: all of them). */
+export async function ownerCash(c: CashCtx, stationId: string | null): Promise<StationCash[]> {
+  const user = await c.requireUser();
+  if (user.role === "admin" && !stationId) return cashOfStations(c.db, null);
+  const { ids } = await backofficeStations(c, stationId);
+  return cashOfStations(c.db, ids);
+}
+
+/**
+ * POST /api/owner/cash/handovers: the owner closes the open period of a partner station and
+ * records what was handed over, pending until an admin confirms it. The amount due must be the
+ * one the owner saw (409 cash_changed otherwise).
+ */
+export async function closeCashDay(c: CashCtx, input: HandoverInput): Promise<CashHandover> {
+  const user = await c.requireUser();
+  if (typeof input?.stationId !== "string") throw new ApiError("bad_request");
+  // Who may close the station's day before what was sent is looked at.
+  await backofficeStations(c, input.stationId);
+  const error = handoverInputError(input);
+  if (error) throw new ApiError(error as "bad_request");
+  const now = new Date();
+  const [cash] = await cashOfStations(c.db, [input.stationId], now);
+  if (!cash) throw new ApiError("own_station", 409);
+  if (cash.dueXof !== input.expectedDueXof) throw new ApiError("cash_changed", 409);
+  const id = uuid();
+  const row = {
+    station_id: input.stationId,
+    period_from: cash.since,
+    period_until: now.toISOString(),
+    cash_xof: cash.lines.totalXof,
+    carry_xof: cash.carryXof,
+    commission_xof: cash.commissionXof,
+    due_xof: cash.dueXof,
+    amount_xof: input.amountXof,
+    method: input.method,
+    reference: input.reference.trim(),
+    note: input.note?.trim() || null,
+  };
+  try {
+    await c.db.batch([
+      c.db
+        .prepare(
+          `insert into cash_handovers (id, station_id, period_from, period_until, cash_xof, carry_xof, commission_xof, due_xof, amount_xof,
+             method, reference, note, status, created_by, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+        )
+        .bind(id, ...Object.values(row), user.id, row.period_until),
+      c.audit(user.id, "cash_handovers", "insert", id, row, { stationId: input.stationId }),
+    ]);
+  } catch (err) {
+    // Another closing of the same period got there first.
+    if (/UNIQUE constraint failed/i.test(String(err))) throw new ApiError("cash_changed", 409);
+    throw err;
+  }
+  const saved = await c.db.prepare(`${HANDOVER_SELECT} where h.id = ?`).bind(id).first<HandoverRow>();
+  return toHandover(saved!);
+}
+
+/** POST /api/admin/cash/handovers/:id/decide { confirm, reason }: the money arrived, or not (with a reason). */
+export async function decideHandover(c: CashCtx, id: string, body: { confirm?: unknown; reason?: unknown }): Promise<CashHandover> {
+  const admin = await c.requireAdmin();
+  const confirm = body?.confirm === true;
+  const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
+  if (!confirm && (!reason || reason.length > HANDOVER_NOTE_MAX)) throw new ApiError("reject_reason_required");
+  const row = await c.db.prepare("select station_id, status from cash_handovers where id = ?").bind(id).first<{ station_id: string; status: HandoverStatus }>();
+  if (!row) throw new ApiError("not_found", 404);
+  if (row.status !== "pending") throw new ApiError("handover_decided", 409);
+  const status: HandoverStatus = confirm ? "confirmed" : "rejected";
+  const now = nowIso();
+  const [update] = await c.db.batch([
+    c.db
+      .prepare("update cash_handovers set status = ?, decided_by = ?, decided_at = ?, reject_reason = ? where id = ? and status = 'pending'")
+      .bind(status, admin.id, now, confirm ? null : reason, id),
+    c.audit(admin.id, "cash_handovers", "update", id, { status: ["pending", status], ...(confirm ? {} : { reject_reason: reason }) }, { stationId: row.station_id }),
+  ]);
+  if (!update.meta.changes) throw new ApiError("handover_decided", 409);
+  const saved = await c.db.prepare(`${HANDOVER_SELECT} where h.id = ?`).bind(id).first<HandoverRow>();
+  return toHandover(saved!);
+}
+
+/** POST /api/admin/cash/stations/:id: an operator station or a shop station, and the host's commission. */
+export async function saveStationCashSettings(c: CashCtx, stationId: string, input: Partial<StationCashSettings>): Promise<StationCash> {
+  const admin = await c.requireAdmin();
+  const swapOwner = cleanSwapOwner(input?.swapOwner);
+  if (!swapOwner || !validCommissionPct(input?.commissionPct) || (input?.commissionMode !== "deduct" && input?.commissionMode !== "monthly")) {
+    throw new ApiError("bad_request");
+  }
+  const before = await c.db
+    .prepare(
+      `select s.swap_owner, s.commission_pct, s.commission_mode, coalesce(o.is_own, 0) as is_own
+       from stations s left join operators o on o.id = s.operator_id where s.id = ?`,
+    )
+    .bind(stationId)
+    .first<{ swap_owner: SwapOwner | null; commission_pct: number; commission_mode: string; is_own: number }>();
+  if (!before) throw new ApiError("station_not_found", 404);
+  if (before.is_own) throw new ApiError("own_station", 409);
+  const after = { swap_owner: swapOwner, commission_pct: input.commissionPct, commission_mode: input.commissionMode };
+  const changes = Object.fromEntries(
+    Object.entries(after)
+      .filter(([k, v]) => before[k as keyof typeof before] !== v)
+      .map(([k, v]) => [k, [before[k as keyof typeof before], v]]),
+  );
+  if (Object.keys(changes).length) {
+    await c.db.batch([
+      c.db.prepare("update stations set swap_owner = ?, commission_pct = ?, commission_mode = ? where id = ?").bind(swapOwner, input.commissionPct, input.commissionMode, stationId),
+      c.audit(admin.id, "stations", "update", stationId, changes, { stationId }),
+    ]);
+  }
+  const [cash] = await cashOfStations(c.db, [stationId]);
+  return cash;
+}
+
+/** Daily cron (10:00): tells the admins which stations have not closed a day with cash for poinderecharge. */
+export async function runCashAlerts(env: Env, now = new Date()): Promise<string[]> {
+  const late = (await cashOfStations(env.DB, null, now)).filter((s) => s.late);
+  if (!late.length) return [];
+  const { results: admins } = await env.DB.prepare("select id from users where role = 'admin'").all<{ id: string }>();
+  const names = late.map((s) => `${s.stationName} (${s.dueXof} FCFA)`).join(", ");
+  const message = {
+    subject: "Caisse : stations en retard",
+    text: `Ces stations n'ont pas clôturé leur caisse avant 10 h : ${names}.\n\nVoir le backoffice, Caisse des stations.`,
+  };
+  await Promise.all(admins.map((a) => notifyUser(env, a.id, message)));
+  return late.map((s) => s.stationId);
+}

@@ -13,7 +13,7 @@ import { isMerchantAccount } from "@/lib/merchants";
 
 /** Screens without the tab bar: sign-in, and the staff and admin tools. */
 const HIDDEN_PREFIXES = ["/login", "/admin", "/operator"];
-/** Station staff keep the tab bar on their station screens, which are one of their three tabs. */
+/** Station staff keep the tab bar on their station screens, which open from the account tab. */
 const STAFF_HIDDEN_PREFIXES = ["/login", "/admin"];
 
 /** Tab bar at the bottom of the screen on phones (web and app). */
@@ -22,7 +22,7 @@ export function BottomNav() {
   const { profile, features } = useApp();
   const pathname = usePathname();
   const { unread } = useAlerts();
-  // Station staff only get the map, their station and their account.
+  // Station staff only get the map and their account; their station opens from the account page.
   const staff = isStationStaff(profile);
   // Drivers get the map, their driver page and their account (plan phase 5).
   const driver = isDriverAccount(profile);
@@ -45,7 +45,6 @@ export function BottomNav() {
   const tabs = [
     { href: "/", label: t.ui.tabs.map, icon: MapIcon, active: pathname === "/", show: true },
     { href: "/stations", label: t.ui.tabs.stations, icon: ListIcon, active: pathname.startsWith("/stations") || pathname.startsWith("/station"), show: !staff && !features.lite },
-    { href: "/operator", label: t.ui.tabs.myStation, icon: StoreIcon, active: pathname.startsWith("/operator"), show: staff },
     { href: "/chauffeur", label: t.nav.driver, icon: ScooterIcon, active: pathname.startsWith("/chauffeur"), show: driver },
     { href: "/flotte", label: t.nav.fleet, icon: TruckIcon, active: pathname.startsWith("/flotte"), show: fleet && features.parcels },
     { href: "/marchand", label: t.merchant.nav, icon: StoreIcon, active: pathname.startsWith("/marchand"), show: merchant },
@@ -61,7 +60,7 @@ export function BottomNav() {
       href: profile ? "/compte" : "/login",
       label: t.ui.tabs.account,
       icon: UserIcon,
-      active: ["/compte", "/parametres", "/reservations", "/portefeuille", "/favoris", "/notifications"].some((p) => pathname.startsWith(p)),
+      active: ["/compte", "/operator", "/parametres", "/reservations", "/portefeuille", "/favoris", "/notifications"].some((p) => pathname.startsWith(p)),
       badge: unread,
       show: true,
     },

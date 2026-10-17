@@ -100,7 +100,8 @@ export type AuditTable =
   | "ev_chargers"
   | "charging_sessions"
   | "station_services"
-  | "settings";
+  | "settings"
+  | "cash_handovers";
 
 export const AUDIT_TABLES: AuditTable[] = [
   "reservations",
@@ -141,6 +142,7 @@ export const AUDIT_TABLES: AuditTable[] = [
   "partner_api_keys",
   "partner_bookings",
   "wallets",
+  "cash_handovers",
   "settings",
 ];
 

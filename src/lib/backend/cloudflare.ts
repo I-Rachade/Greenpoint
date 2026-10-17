@@ -91,6 +91,7 @@ import type {
 import type { StationService, StationServiceInfo } from "../station-services";
 import { getActiveStation } from "../active-station";
 import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEntry, type SwapFilter, type SwapInput } from "../station-work";
+import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "../station-cash";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
 import { kindFrom, type ReservationKind } from "../reservations";
 import { storedPushToken, storePushToken } from "../push";
@@ -664,6 +665,29 @@ export class CloudflareBackend implements Backend {
 
   async setDevicePartner(externalId: string, partnerId: string | null) {
     await this.call("POST", `/api/admin/devices/${encodeURIComponent(externalId)}/partner`, { partnerId });
+    this.changed();
+  }
+
+  // Station cash ------------------------------------------------------------------------
+
+  ownerCash(stationId: string | null) {
+    return this.call<StationCash[]>("GET", `/api/owner/cash${stationId ? `?stationId=${encodeURIComponent(stationId)}` : ""}`);
+  }
+
+  async closeCashDay(input: HandoverInput) {
+    const handover = await this.call<CashHandover>("POST", "/api/owner/cash/handovers", input);
+    this.changed();
+    return handover;
+  }
+
+  async decideHandover(id: string, confirm: boolean, reason?: string) {
+    const handover = await this.call<CashHandover>("POST", `/api/admin/cash/handovers/${encodeURIComponent(id)}/decide`, { confirm, reason });
+    this.changed();
+    return handover;
+  }
+
+  async saveStationCashSettings(stationId: string, settings: StationCashSettings) {
+    await this.call("POST", `/api/admin/cash/stations/${encodeURIComponent(stationId)}`, settings);
     this.changed();
   }
 
