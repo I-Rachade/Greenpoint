@@ -5,7 +5,7 @@
 // demo backend and the Worker (worker/charging.ts).
 
 export type ChargeStatus = "charging" | "stopped" | "paid" | "cancelled";
-export type ChargePaymentMethod = "cash" | "wallet" | "flooz" | "tmoney";
+export type ChargePaymentMethod = "cash" | "wallet" | "flooz" | "tmoney" | "card";
 
 /** How often both screens ask for fresh values while a charge runs or waits for payment. */
 export const CHARGE_POLL_MS = 20_000;
@@ -71,6 +71,8 @@ export interface ChargeSession {
   pendingPaymentId?: string | null;
   /** The customer started it by scanning the outlet's QR code, and may stop it in the app. */
   selfStarted?: boolean;
+  /** The charging card that started it and pays it from its credit. */
+  card?: string;
 }
 
 // Charging by QR code: a sticker on each outlet links to /recharge?p=<charging point id>; the

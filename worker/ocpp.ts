@@ -13,6 +13,7 @@ import {
   errorFrame,
   meterReading,
   parseFrame,
+  remoteStopRequest,
   resultFrame,
   statusEffect,
   type OcppCall,
@@ -20,10 +21,10 @@ import {
   type OcppResult,
 } from "../src/lib/iot/ocpp";
 import { swipeCard } from "./charge-cards";
-import { cancelRefusedStart, openCardCharge } from "./charging";
+import { cancelRefusedStart, cardStops, openCardCharge, settleCardCharges } from "./charging";
 import { ingest, recountFreeSlots } from "./devices";
 import type { Env } from "./env";
-import { ApiError, nowIso, sha256 } from "./http";
+import { ApiError, nowIso, sha256, uuid } from "./http";
 
 // OCPP 1.6J central system: charge points connect to
 //   wss://app.poinderecharge.com/api/devices/ocpp/<chargePointId>
@@ -106,6 +107,7 @@ export async function handleOcppCall(db: D1Database, externalId: string, action:
     case "StatusNotification": {
       const effect = statusEffect(payload);
       await apply(externalId, toIngestOutlets({ externalId, outlets: effect.outlets }), payload, { allOutlets: effect.allOutlets });
+      await settleCardCharges(db, externalId);
       return {};
     }
     case "Authorize": {
@@ -122,9 +124,9 @@ export async function handleOcppCall(db: D1Database, externalId: string, action:
       if (isOurTag(idTag)) {
         status = await tagStatus(db, externalId, idTag, connectorId);
       } else {
-        // A swiped card: its customer's charge opens on this outlet, or the card is refused.
+        // A swiped card: its charge opens on this outlet, or the card is refused.
         const card = await swipeCard(db, externalId, idTag);
-        status = card.status === "Accepted" && !(await openCardCharge(db, externalId, connectorId, card.userId!, idTag.slice(0, 20))) ? "Invalid" : card.status;
+        status = card.status === "Accepted" && !(await openCardCharge(db, externalId, connectorId, { tag: card.tag!, userId: card.userId })) ? "Invalid" : card.status;
       }
       // Every start gets a transactionId, also a refused one; the charge point then stops it.
       const tx = await db
@@ -149,6 +151,8 @@ export async function handleOcppCall(db: D1Database, externalId: string, action:
       if (tx) {
         const energy = Math.max(0, stop - tx.meter_start);
         await apply(externalId, [{ outlet: tx.connector_id, status: "done", power_watts: 0, energy_wh: energy }], payload);
+        // A card charge is paid from the card now that its energy is final.
+        await settleCardCharges(db, externalId);
       }
       return { idTagInfo: { status: "Accepted" } };
     }
@@ -166,6 +170,43 @@ export async function handleOcppCall(db: D1Database, externalId: string, action:
     default:
       throw new OcppCallError("NotImplemented", `${action} is not supported`);
   }
+}
+
+/** How often a charge point reports its meter while charging, so a card charge stops close to its credit. */
+export const OCPP_METER_SECONDS = 30;
+
+/** A request we send the charge point right after answering one of its requests. */
+export interface OcppFollowUp {
+  /** Our device_commands row, if the answer closes one (applyOcppResult). */
+  commandId: number | null;
+  messageId: string;
+  action: string;
+  payload: object;
+}
+
+/**
+ * What we ask of the charge point after answering `action`: after a boot, to report its meter
+ * every OCPP_METER_SECONDS; after a reading, to stop each card charge whose credit is used up.
+ */
+export async function ocppFollowUps(db: D1Database, externalId: string, action: string): Promise<OcppFollowUp[]> {
+  if (action === "BootNotification") {
+    return [{ commandId: null, messageId: uuid(), action: "ChangeConfiguration", payload: { key: "MeterValueSampleInterval", value: String(OCPP_METER_SECONDS) } }];
+  }
+  if (action !== "MeterValues" && action !== "StatusNotification" && action !== "StartTransaction") return [];
+  const follow: OcppFollowUp[] = [];
+  for (const stop of await cardStops(db, externalId)) {
+    const messageId = uuid();
+    const payload = remoteStopRequest(stop.transactionId);
+    const row = await db
+      .prepare(
+        `insert into device_commands (external_id, outlet, kind, order_no, line, message_id, created_by, created_at)
+         values (?, ?, 'stop', ?, ?, ?, 'card', ?) returning id`,
+      )
+      .bind(externalId, stop.outlet, String(stop.transactionId), JSON.stringify([2, messageId, "RemoteStopTransaction", payload]), messageId, nowIso())
+      .first<{ id: number }>();
+    follow.push({ commandId: row!.id, messageId, action: "RemoteStopTransaction", payload });
+  }
+  return follow;
 }
 
 /** The frame that answers a CALL. */
@@ -326,7 +367,8 @@ export async function traceOcpp(db: D1Database, externalId: string, entry: Recor
 }
 
 interface Pending {
-  commandId: number;
+  /** Null for a request that closes no command of ours (ChangeConfiguration). */
+  commandId: number | null;
   action: string;
 }
 
@@ -385,13 +427,25 @@ export class OcppConnection implements DurableObject {
       const reply = await answerCall(this.env.DB, externalId, frame);
       ws.send(reply);
       if (trace || reply.startsWith("[4,")) await traceOcpp(this.env.DB, externalId, { dir: "out", frame: reply });
+      if (reply.startsWith("[4,")) return;
+      try {
+        for (const f of await ocppFollowUps(this.env.DB, externalId, frame.action)) {
+          await this.ctx.storage.put<Pending>(`pending:${f.messageId}`, { commandId: f.commandId, action: f.action });
+          const call = callFrame(f.messageId, f.action, f.payload);
+          ws.send(call);
+          if (trace) await traceOcpp(this.env.DB, externalId, { dir: "out", frame: call });
+        }
+      } catch (err) {
+        // The connection dropped: a card stop is sent again with the next reading (cardStops).
+        await traceOcpp(this.env.DB, externalId, { dir: "error", error: `follow-up: ${String(err).slice(0, 200)}` });
+      }
       return;
     }
     const key = `pending:${frame.id}`;
     const pending = await this.ctx.storage.get<Pending>(key);
     if (!pending) return;
     await this.ctx.storage.delete(key);
-    await applyOcppResult(this.env.DB, pending.commandId, frame);
+    if (pending.commandId !== null) await applyOcppResult(this.env.DB, pending.commandId, frame);
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {

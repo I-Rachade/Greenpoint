@@ -80,7 +80,7 @@ import {
   type ChargeTariffInput,
   type StationCharging,
 } from "../charging";
-import { cleanCardTag, sortCards, type ChargeCard, type ChargeCardInput } from "../charge-cards";
+import { cleanCardTag, sortCards, validAdjustment, validTopup, type ChargeCard, type ChargeCardInput, type CounterCard } from "../charge-cards";
 import {
   DEMO_CHARGING_POINTS,
   DEMO_OPERATORS,
@@ -435,6 +435,8 @@ interface DemoState {
   stationTariffs?: Record<string, { kwhXof: number | null; minXof: number | null }>;
   /** Charging cards (missing = one card swiped at a socket, not linked yet). */
   chargeCards?: DemoChargeCard[];
+  /** Cash put on cards at a counter, for the station's takings. */
+  cardTopups?: { stationId: string; amountXof: number; at: string }[];
   /** Service unlock per station (as table station_services; filled in by withServiceRows). */
   stationServices?: DemoServiceRow[];
   /** Counter events, newest first (as table battery_events). */
@@ -7412,8 +7414,10 @@ export class DemoBackend implements Backend {
       open: all.filter((c) => c.status === "charging" || c.status === "stopped"),
       today: all.filter((c) => (c.status === "paid" || c.status === "cancelled") && c.startedAt >= day),
       takings: {
-        cashXof: paid.filter((c) => c.paymentMethod === "cash").reduce((n, c) => n + c.amountXof, 0),
-        appXof: paid.filter((c) => c.paymentMethod !== "cash").reduce((n, c) => n + c.amountXof, 0),
+        cashXof:
+          paid.filter((c) => c.paymentMethod === "cash").reduce((n, c) => n + c.amountXof, 0) +
+          (state.cardTopups ?? []).filter((t) => t.stationId === stationId && t.at >= day).reduce((n, t) => n + t.amountXof, 0),
+        appXof: paid.filter((c) => c.paymentMethod !== "cash" && c.paymentMethod !== "card").reduce((n, c) => n + c.amountXof, 0),
         count: paid.length,
       },
     };
@@ -7717,6 +7721,7 @@ export class DemoBackend implements Backend {
           idTag: c.idTag,
           label: c.label,
           blocked: c.blocked,
+          balanceXof: c.balanceXof ?? 0,
           customer: u ? { id: u.id, fullName: u.fullName, phone: u.phone, email: u.email } : null,
           createdAt: c.createdAt,
           lastSwipedAt: c.lastSwipedAt,
@@ -7731,14 +7736,44 @@ export class DemoBackend implements Backend {
     this.requireAdmin(state);
     const idTag = cleanCardTag(input.idTag);
     if (!idTag) throw new BackendError("card_invalid");
-    const user = this.findWalletUser(state, input.contact);
+    const contact = input.contact?.trim() ?? "";
+    const userId = contact ? this.findWalletUser(state, contact).id : null;
     const label = input.label?.trim().slice(0, 60) || null;
     const cards = state.chargeCards ?? seedChargeCards();
     const known = cards.some((c) => c.idTag === idTag);
     const chargeCards = known
-      ? cards.map((c) => (c.idTag === idTag ? { ...c, userId: user.id, label } : c))
-      : [...cards, { idTag, userId: user.id, label, blocked: false, createdAt: new Date().toISOString(), lastSwipedAt: null, lastDevice: null }];
+      ? cards.map((c) => (c.idTag === idTag ? { ...c, userId, label } : c))
+      : [...cards, { idTag, userId, label, blocked: false, balanceXof: 0, createdAt: new Date().toISOString(), lastSwipedAt: null, lastDevice: null }];
     this.save({ ...state, chargeCards });
+  }
+
+  async adjustChargeCard(idTag: string, amountXof: number, reason: string): Promise<void> {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!validAdjustment(amountXof) || !reason.trim()) throw new BackendError("unknown", "bad_request");
+    const cards = state.chargeCards ?? seedChargeCards();
+    if (!cards.some((c) => c.idTag === idTag)) throw new BackendError("card_unknown");
+    this.save({ ...state, chargeCards: cards.map((c) => (c.idTag === idTag ? { ...c, balanceXof: (c.balanceXof ?? 0) + amountXof } : c)) });
+  }
+
+  /** As counterCardInfo() in worker/charge-cards.ts. */
+  async counterCard(stationId: string, idTag: string): Promise<CounterCard> {
+    const state = this.load();
+    this.stationActor(state, stationId);
+    return counterView(demoCard(state, idTag));
+  }
+
+  /** As topUpCard() in worker/charge-cards.ts: the cash goes into the station's takings. */
+  async topUpCard(stationId: string, idTag: string, amountXof: number): Promise<CounterCard> {
+    const state = this.load();
+    this.stationActor(state, stationId);
+    if (!validTopup(amountXof)) throw new BackendError("unknown", "bad_request");
+    const card = demoCard(state, idTag);
+    if (card.blocked) throw new BackendError("card_blocked");
+    const updated = { ...card, balanceXof: (card.balanceXof ?? 0) + amountXof };
+    const cardTopups = [...(state.cardTopups ?? []), { stationId, amountXof, at: new Date().toISOString() }];
+    this.save({ ...state, cardTopups, chargeCards: (state.chargeCards ?? seedChargeCards()).map((c) => (c.idTag === card.idTag ? updated : c)) });
+    return counterView(updated);
   }
 
   async setChargeCardBlocked(idTag: string, blocked: boolean): Promise<void> {
@@ -7752,6 +7787,7 @@ export class DemoBackend implements Backend {
   async deleteChargeCard(idTag: string): Promise<void> {
     const state = this.load();
     this.requireAdmin(state);
+    if ((state.chargeCards ?? seedChargeCards()).some((c) => c.idTag === idTag && (c.balanceXof ?? 0) !== 0)) throw new BackendError("card_has_balance");
     this.save({ ...state, chargeCards: (state.chargeCards ?? seedChargeCards()).filter((c) => c.idTag !== idTag) });
   }
 
@@ -7762,15 +7798,28 @@ interface DemoChargeCard {
   userId: string | null;
   label: string | null;
   blocked: boolean;
+  /** Missing on cards saved before balances existed. */
+  balanceXof?: number;
   createdAt: string;
   lastSwipedAt: string | null;
   lastDevice: string | null;
 }
 
-/** A card someone swiped at a socket a few minutes ago, waiting to be linked to a customer. */
+function demoCard(state: DemoState, rawTag: string): DemoChargeCard {
+  const tag = cleanCardTag(rawTag);
+  const card = tag ? (state.chargeCards ?? seedChargeCards()).find((c) => c.idTag === tag) : undefined;
+  if (!card) throw new BackendError("card_unknown");
+  return card;
+}
+
+function counterView(c: DemoChargeCard): CounterCard {
+  return { idTag: c.idTag, label: c.label, blocked: c.blocked, balanceXof: c.balanceXof ?? 0 };
+}
+
+/** A card someone swiped at a socket a few minutes ago, with no credit yet. */
 function seedChargeCards(): DemoChargeCard[] {
   const swiped = new Date(Date.now() - 4 * 60_000).toISOString();
-  return [{ idTag: "04A3F21B7C", userId: null, label: null, blocked: false, createdAt: swiped, lastSwipedAt: swiped, lastDevice: "820008" }];
+  return [{ idTag: "04A3F21B7C", userId: null, label: null, blocked: false, balanceXof: 0, createdAt: swiped, lastSwipedAt: swiped, lastDevice: "820008" }];
 }
 
 /** What the app sees of a stored counter event (without request id, station and person id). */

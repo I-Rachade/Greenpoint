@@ -267,7 +267,7 @@ import {
   stationCharging,
   stopCharge,
 } from "./charging";
-import { deleteChargeCard, listChargeCards, saveChargeCard, setChargeCardBlocked } from "./charge-cards";
+import { adjustChargeCard, counterCardInfo, deleteChargeCard, listChargeCards, saveChargeCard, setChargeCardBlocked, topUpCard } from "./charge-cards";
 
 // Rows as stored in D1 (snake_case, booleans as 0/1, JSON as text).
 
@@ -1971,6 +1971,9 @@ const ROUTES: [string, RegExp, Handler][] = [
       return payCash(c.env, user, c.actAt, station, id);
     },
   ],
+  // Charging cards at the counter: staff look up a card's credit and top it up in cash.
+  ["GET", /^\/api\/stations\/([\w-]+)\/charge-cards\/([^/]+)$/, async (c, [id, tag]) => counterCardInfo(c.db, await c.requireUser(), (u, s) => c.isStaffOf(u, s), id, tag)],
+  ["POST", /^\/api\/stations\/([\w-]+)\/charge-cards\/([^/]+)\/topup$/, async (c, [id, tag]) => topUpCard(c.db, await c.requireUser(), c.actAt, id, tag, c.request)],
   ["GET", /^\/api\/charging\/mine$/, async (c) => myCharges(c.env, await customerUser(c))],
   // Charging by QR code: the outlet's page is readable before signing in.
   ["GET", /^\/api\/charging\/points\/([\w-]+)$/, async (c, [id]) => chargePointInfo(c.env, await c.user(), id)],
@@ -1990,6 +1993,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     return listChargeCards(c.db);
   }],
   ["POST", /^\/api\/admin\/charge-cards$/, async (c) => saveChargeCard(c.db, await c.requireAdmin(), c.request)],
+  ["POST", /^\/api\/admin\/charge-cards\/([^/]+)\/balance$/, async (c, [tag]) => adjustChargeCard(c.db, await c.requireAdmin(), tag, c.request)],
   ["POST", /^\/api\/admin\/charge-cards\/([^/]+)\/block$/, async (c, [tag]) => setChargeCardBlocked(c.db, await c.requireAdmin(), tag, c.request)],
   ["DELETE", /^\/api\/admin\/charge-cards\/([^/]+)$/, async (c, [tag]) => deleteChargeCard(c.db, await c.requireAdmin(), tag)],
   ["GET", /^\/api\/admin\/greenpoint$/, async (c) => {

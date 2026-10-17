@@ -23,6 +23,8 @@ import type { Env } from "./env";
 import { chargeEarnStatement } from "./greenpoint";
 import { ApiError, nowIso, readJson, uuid } from "./http";
 import { requireService, serviceActive } from "./services";
+import { cardBooking, cardTopupsSince } from "./charge-cards";
+import { cardStopReached } from "../src/lib/charge-cards";
 import { mobilePaymentOffered, startChargePayment, type Payment } from "./payments";
 import { walletAccess } from "./wallet";
 import { checkPickupCode, evTargetSql, stillActive, type ReservationRow } from "./reservations";
@@ -64,6 +66,7 @@ interface SessionRow {
   email: string | null;
   greenpoints: number | null;
   started_by: string;
+  charge_card: string | null;
 }
 
 const SESSION_SELECT = `
@@ -95,6 +98,7 @@ function toSession(r: SessionRow): ChargeSession {
     paidAt: r.paid_at,
     greenpoints: r.greenpoints ?? 0,
     ...(r.user_id && r.started_by === r.user_id ? { selfStarted: true } : {}),
+    ...(r.charge_card ? { card: r.charge_card } : {}),
   };
 }
 
@@ -478,12 +482,11 @@ export async function cancelCharge(env: Env, user: Profile, isStaffOf: StaffChec
  * this update. Returns false when the charge was no longer waiting for payment.
  */
 async function bookPayment(
-  env: Env,
+  db: D1Database,
   s: SessionRow,
   pay: { method: ChargePaymentMethod; amountXof: number; ref: string; by: string | null },
   extra: D1PreparedStatement[] = [],
 ): Promise<boolean> {
-  const db = env.DB;
   const now = nowIso();
   const earned = s.user_id
     ? await chargeEarnStatement(db, {
@@ -515,8 +518,9 @@ export async function payCash(env: Env, user: Profile, isStaffOf: StaffCheck, st
   const s = await staffSession(env, user, isStaffOf, stationId, id);
   if (s.status === "paid") return toSession(s);
   const amount = chargePrice(s.energy_wh, { kwhXof: s.kwh_xof, minXof: s.min_xof });
-  if (s.status !== "stopped" || amount <= 0) throw new ApiError("charge_wrong_status", 409);
-  if (!(await bookPayment(env, s, { method: "cash", amountXof: amount, ref: uuid(), by: user.id }))) throw new ApiError("charge_wrong_status", 409);
+  // A card charge is paid from the card's credit (settleCardCharges).
+  if (s.status !== "stopped" || amount <= 0 || s.charge_card) throw new ApiError("charge_wrong_status", 409);
+  if (!(await bookPayment(env.DB, s, { method: "cash", amountXof: amount, ref: uuid(), by: user.id }))) throw new ApiError("charge_wrong_status", 409);
   return toSession(await loadSession(env.DB, id));
 }
 
@@ -535,13 +539,15 @@ export async function stationCharging(env: Env, user: Profile, isStaffOf: StaffC
   ]);
   const sessions = results.map(toSession);
   const paidToday = sessions.filter((x) => x.status === "paid" && (x.paidAt ?? "") >= day);
+  // Card charges were paid in advance: the cash came in when the card was topped up here.
+  const topups = await cardTopupsSince(db, stationId, day);
   return {
     tariff,
     open: sessions.filter((x) => x.status === "charging" || x.status === "stopped"),
     today: sessions.filter((x) => x.status === "paid" || x.status === "cancelled"),
     takings: {
-      cashXof: paidToday.filter((x) => x.paymentMethod === "cash").reduce((a, x) => a + x.amountXof, 0),
-      appXof: paidToday.filter((x) => x.paymentMethod !== "cash").reduce((a, x) => a + x.amountXof, 0),
+      cashXof: paidToday.filter((x) => x.paymentMethod === "cash").reduce((a, x) => a + x.amountXof, topups),
+      appXof: paidToday.filter((x) => x.paymentMethod !== "cash" && x.paymentMethod !== "card").reduce((a, x) => a + x.amountXof, 0),
       count: paidToday.length,
     },
   };
@@ -560,7 +566,7 @@ function dayStartLome(now = new Date()): string {
  * (payments.ts), so their sockets are paid at the counter only.
  */
 async function payOptions(env: Env, user: Profile, s: SessionRow): Promise<{ wallet: boolean; mobile: boolean }> {
-  if (s.status !== "stopped" || s.partner_id) return { wallet: false, mobile: false };
+  if (s.status !== "stopped" || s.partner_id || s.charge_card) return { wallet: false, mobile: false };
   const wallet = await walletAccess(env, user).then(
     () => true,
     () => false,
@@ -625,7 +631,7 @@ export async function payWithWallet(env: Env, user: Profile, id: string, request
       .bind(uuid(), trxId, user.id, amount, s.station_name, key, JSON.stringify({ chargingSession: s.id, energyWh: s.energy_wh }), now, s.id),
   ];
   try {
-    if (!(await bookPayment(env, s, { method: "wallet", amountXof: amount, ref: trxId, by: user.id }, extra))) throw new ApiError("charge_wrong_status", 409);
+    if (!(await bookPayment(db, s, { method: "wallet", amountXof: amount, ref: trxId, by: user.id }, extra))) throw new ApiError("charge_wrong_status", 409);
   } catch (err) {
     if (/CHECK constraint failed/i.test(String(err))) throw new ApiError("insufficient_balance");
     if (/idempotency_key/.test(String(err))) return customerView(env, user, await loadSession(db, id));
@@ -648,7 +654,7 @@ export async function payWithMobile(env: Env, user: Profile, id: string, request
 export async function chargePaymentSucceeded(env: Env, p: { id: string; charging_session_id: string; amount_xof: number; network: "flooz" | "tmoney"; user_id: string | null }) {
   const s = await loadSession(env.DB, p.charging_session_id).catch(() => null);
   if (!s || s.status !== "stopped") return;
-  await bookPayment(env, s, { method: p.network, amountXof: p.amount_xof, ref: p.id, by: p.user_id });
+  await bookPayment(env.DB, s, { method: p.network, amountXof: p.amount_xof, ref: p.id, by: p.user_id });
 }
 
 // Charging by QR code ------------------------------------------------------------------
@@ -760,14 +766,14 @@ async function closeEmptyCharges(db: D1Database, userId: string) {
 // Charging by card ------------------------------------------------------------------------
 
 /**
- * A registered card started a charge at an OCPP charge point (StartTransaction, after
- * swipeCard in worker/charge-cards.ts accepted it): opens the card owner's charge on that
- * outlet as if they had started it by QR code, so it shows in their app, can be stopped
- * there, and is paid like any other. The charge point already switched on, so nothing is
- * sent. False when the outlet cannot take it: unknown outlet, station without charging,
- * outlet reserved for someone else, or a charge already open on it.
+ * A card with enough credit started a charge at an OCPP charge point (StartTransaction, after
+ * swipeCard in worker/charge-cards.ts accepted it): opens the card's charge on that outlet,
+ * the card owner's if it has one (then it shows in their app and can be stopped there). The
+ * charge point already switched on, so nothing is sent. False when the outlet cannot take it:
+ * unknown outlet, station without charging, outlet reserved for someone else, or a charge
+ * already open on it.
  */
-export async function openCardCharge(db: D1Database, deviceId: string, outlet: number, userId: string, idTag: string): Promise<boolean> {
+export async function openCardCharge(db: D1Database, deviceId: string, outlet: number, card: { tag: string; userId: string | null }): Promise<boolean> {
   const p = await db
     .prepare(
       `select p.id, p.station_id, p.label from charging_points p join stations s on s.id = p.station_id
@@ -778,38 +784,112 @@ export async function openCardCharge(db: D1Database, deviceId: string, outlet: n
   if (!p || !(await serviceActive(db, p.station_id, "charging"))) return false;
   const now = nowIso();
   const held = await db
-    .prepare("select 1 from reservations where kind = 'charging_point' and target = ? and status = 'active' and expires_at > ? and user_id <> ?")
-    .bind(p.id, now, userId)
+    .prepare("select 1 from reservations where kind = 'charging_point' and target = ? and status = 'active' and expires_at > ? and user_id is not ?")
+    .bind(p.id, now, card.userId)
     .first();
   if (held) return false;
-  await closeEmptyCharges(db, userId);
   const tariff = await stationTariff(db, p.station_id);
   const id = uuid();
-  try {
-    await db.batch([
-      db
-        .prepare(
-          `insert into charging_sessions (id, station_id, charging_point_id, device_id, outlet, point_label, order_no, user_id, kwh_xof, min_xof, started_by, started_at)
-           values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?8, ?11)`,
-        )
-        .bind(id, p.station_id, p.id, deviceId, outlet, p.label, idTag, userId, tariff.kwhXof, tariff.minXof, now),
-      // Old values of the previous charge must not show as this one's.
-      db.prepare("update charging_points set power_watts = null, energy_wh = null where id = ?").bind(p.id),
-      audit(db, userId, "insert", { id, station_id: p.station_id, user_id: userId }, { point: p.label, customer: userId, tariff, card: idTag }),
-      // The customer's charging reservation here is used now, as in openCharge.
+  const actor = card.userId ?? `card:${card.tag}`;
+  const statements = [
+    db
+      .prepare(
+        `insert into charging_sessions (id, station_id, charging_point_id, device_id, outlet, point_label, order_no, user_id, kwh_xof, min_xof, started_by, started_at, charge_card)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?7)`,
+      )
+      .bind(id, p.station_id, p.id, deviceId, outlet, p.label, card.tag, card.userId, tariff.kwhXof, tariff.minXof, actor, now),
+    // Old values of the previous charge must not show as this one's.
+    db.prepare("update charging_points set power_watts = null, energy_wh = null where id = ?").bind(p.id),
+    audit(db, actor, "insert", { id, station_id: p.station_id, user_id: card.userId }, { point: p.label, customer: card.userId, tariff, card: card.tag }),
+  ];
+  if (card.userId) {
+    // The card owner's charging reservation here is used now, as in openCharge.
+    statements.push(
       db
         .prepare(
           `update reservations set status = 'completed', charging_point_id = ?3
            where id = (select r.id from reservations r where r.user_id = ?1 and r.station_id = ?2 and r.kind = 'charging_point' and r.status = 'active'
                          and not ${evTargetSql("r")} order by (r.target = ?3) desc, r.created_at limit 1)`,
         )
-        .bind(userId, p.station_id, p.id),
-    ]);
+        .bind(card.userId, p.station_id, p.id),
+    );
+  }
+  try {
+    await db.batch(statements);
   } catch (err) {
     if (/UNIQUE/i.test(String(err))) return false;
     throw err;
   }
   return true;
+}
+
+/**
+ * Card charges on this charge point whose credit is used up, with their open OCPP transaction,
+ * for the caller to send RemoteStopTransaction. A running one is marked stopped (by "card")
+ * first. One the charge point still has not ended (the stop got lost when the connection
+ * dropped) is returned again, at most once a minute, until its transaction closes.
+ */
+export async function cardStops(db: D1Database, deviceId: string): Promise<{ sessionId: string; outlet: number; transactionId: number }[]> {
+  const { results } = await db
+    .prepare(
+      `select * from (
+         select cs.id, cs.station_id, cs.user_id, cs.outlet, cs.status, cs.energy_wh, cs.kwh_xof, c.balance_xof,
+                (select t.id from ocpp_transactions t where t.external_id = cs.device_id and t.connector_id = cs.outlet and t.stopped_at is null
+                  order by t.id desc limit 1) as transaction_id
+           from charging_sessions cs join charge_cards c on c.id_tag = cs.charge_card
+          where cs.device_id = ?1 and (cs.status = 'charging' or (cs.status = 'stopped' and cs.stopped_by = 'card'))
+       ) x
+       where transaction_id is not null
+         and not exists (select 1 from device_commands d where d.external_id = ?1 and d.kind = 'stop' and d.order_no = cast(x.transaction_id as text)
+                           and d.created_at > ?2)`,
+    )
+    .bind(deviceId, new Date(Date.now() - 60_000).toISOString())
+    .all<{ id: string; station_id: string; user_id: string | null; outlet: number; status: ChargeStatus; energy_wh: number; kwh_xof: number; balance_xof: number; transaction_id: number }>();
+  const stops = [];
+  for (const r of results) {
+    if (r.status === "charging") {
+      if (!cardStopReached(r.energy_wh, r.kwh_xof, r.balance_xof)) continue;
+      const [stopped] = await db.batch([
+        db.prepare("update charging_sessions set status = 'stopped', stopped_at = ?, stopped_by = 'card' where id = ? and status = 'charging'").bind(nowIso(), r.id),
+        auditIfChanged(db, null, r, { status: ["charging", "stopped"], reason: "card_credit_used" }),
+      ]);
+      if (stopped.meta.changes === 0) continue;
+    }
+    stops.push({ sessionId: r.id, outlet: r.outlet, transactionId: r.transaction_id });
+  }
+  return stops;
+}
+
+/**
+ * Pays the card charges on this charge point that have ended (the charge point closed its
+ * transaction, so the energy is final) from their card's credit: the price, at least the
+ * station's minimum, even if that takes the balance below 0 after a late stop. A charge that
+ * took no energy is cancelled at no cost.
+ */
+export async function settleCardCharges(db: D1Database, deviceId: string) {
+  const { results } = await db
+    .prepare(
+      `${SESSION_SELECT} where cs.device_id = ? and cs.charge_card is not null and cs.status = 'stopped'
+         and not exists (select 1 from ocpp_transactions t where t.external_id = cs.device_id and t.connector_id = cs.outlet and t.stopped_at is null)`,
+    )
+    .bind(deviceId)
+    .all<SessionRow>();
+  for (const s of results) {
+    const amount = chargePrice(s.energy_wh, { kwhXof: s.kwh_xof, minXof: s.min_xof });
+    if (amount <= 0) {
+      await db.batch([
+        db.prepare("update charging_sessions set status = 'cancelled' where id = ? and status = 'stopped' and energy_wh = 0").bind(s.id),
+        auditIfChanged(db, null, s, { status: ["stopped", "cancelled"], reason: "no_energy" }),
+      ]);
+      continue;
+    }
+    const ref = uuid();
+    // Only once the charge became paid with this reference: a second run takes nothing.
+    const mine = { sql: "(select payment_ref from charging_sessions where id = ?) = ?", params: [s.id, ref] };
+    await bookPayment(db, s, { method: "card", amountXof: amount, ref, by: null }, [
+      ...cardBooking(db, { tag: s.charge_card!, type: "charge", amountXof: -amount, stationId: s.station_id, sessionId: s.id, by: null }, mine),
+    ]);
+  }
 }
 
 /** POST /api/charging/:id/stop: the customer ends a charge they started by QR code or card. */
