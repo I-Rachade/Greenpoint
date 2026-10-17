@@ -2606,8 +2606,8 @@ export const fr = {
     },
     scanHub: {
       title: "Scanner",
-      intro: "Scannez une prise pour recharger, ou montrez votre QR-Code à la station.",
-      scan: "Scanner une prise",
+      intro: "Scannez un code pour recharger, ou montrez votre QR-Code à la station.",
+      scan: "Scanner un code",
       scanHint: "Démarrer une recharge",
       show: "Montrer mon QR-Code",
       showHint: "Retrait, réservation ou identifiant",

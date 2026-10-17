@@ -2606,8 +2606,8 @@ export const en: Dictionary = {
     },
     scanHub: {
       title: "Scan",
-      intro: "Scan a socket to charge, or show your QR code at the station.",
-      scan: "Scan a socket",
+      intro: "Scan a code to charge, or show your QR code at the station.",
+      scan: "Scan a code",
       scanHint: "Start a charge",
       show: "Show my QR code",
       showHint: "Pickup, reservation or ID",
