@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
-import { boxQrUrl } from "@/lib/charging";
+import { boxQrUrl, socketQrUrl } from "@/lib/charging";
 import { displayStatus } from "@/lib/iot/charging-points";
 import { canSwitch, DEVICE_LINKS, MAX_OUTLETS, type DeviceInput } from "@/lib/iot/devices";
 import { useErrorMessage, useLiveQuery, useNow, useRelativeTime } from "@/lib/hooks";
@@ -187,8 +187,27 @@ export function DevicesManager() {
                             />
                             {b.qrStart}
                           </label>
+                          {p.qrStart && d.qrToken && p.outlet !== null && (
+                            <button
+                              type="button"
+                              onClick={() => setQrShown(qrShown === p.id ? null : p.id)}
+                              aria-expanded={qrShown === p.id}
+                              className="text-gp-green-dark hover:underline"
+                            >
+                              {qrShown === p.id ? b.qrHide : b.qrShow}
+                            </button>
+                          )}
                         </div>
                         {!switchable && <p className="text-xs text-zinc-500">{b.qrNotSwitchable}</p>}
+                        {p.qrStart && d.qrToken && p.outlet !== null && qrShown === p.id && (
+                          <div className="flex flex-col items-center gap-1 pt-1">
+                            <QrImage text={socketQrUrl(qrOrigin(), d.qrToken, p.outlet)} label={`${b.qrStart} ${p.label}`} size={200} />
+                            <div className="font-mono font-semibold">
+                              {b.outlet} {p.outlet} · {p.label}
+                            </div>
+                            <p className="text-center text-xs text-zinc-500">{format(b.qrSocketPrint, { n: p.outlet })}</p>
+                          </div>
+                        )}
                       </li>
                     );
                   })}

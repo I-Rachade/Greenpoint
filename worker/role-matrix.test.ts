@@ -131,8 +131,6 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/charging/mine": CUSTOMER,
   "POST /api/charging/:id/pay/wallet": CUSTOMER,
   "POST /api/charging/:id/pay/mobile": CUSTOMER,
-  "GET /api/charging/points/:id": ALL,
-  "POST /api/charging/points/:id/start": CUSTOMER,
   "GET /api/charging/outlets/:id": ALL,
   "POST /api/charging/outlets/:id/start": CUSTOMER,
   "POST /api/charging/:id/stop": CUSTOMER,

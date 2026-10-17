@@ -75,7 +75,7 @@ import {
   validTariff,
   type AdminCharging,
   type ChargeOutletInfo,
-  type ChargePointInfo,
+  type ChargePointState,
   type ChargeSession,
   type ChargeTariff,
   type ChargeTariffInput,
@@ -7589,15 +7589,14 @@ export class DemoBackend implements Backend {
       });
   }
 
-  /** As chargePointInfo() in worker/charging.ts; demo sockets are always online. */
-  async chargePoint(pointId: string): Promise<ChargePointInfo> {
+  /** One outlet as qrPointState() in worker/charging.ts sees it; demo sockets are always online. */
+  private async chargePoint(pointId: string): Promise<{ stationId: string; stationName: string; label: string; state: ChargePointState; tariff: ChargeTariff }> {
     const state = this.load();
     const point = (state.devices ?? seedDevices()).flatMap((d) => d.points).find((p) => p.id === pointId);
     const station = point && state.stations.find((s) => s.id === point.stationId);
     if (!point || !station) throw new BackendError("unknown", "not_found");
     const busy = point.status === "charging" || (state.charges ?? []).some((c) => c.pointId === point.id && c.status === "charging");
     return {
-      pointId: point.id,
       label: point.label,
       stationId: station.id,
       stationName: station.name,
@@ -7638,7 +7637,7 @@ export class DemoBackend implements Backend {
   }
 
   /** As startSelfCharge() in worker/charging.ts. */
-  async startSelfCharge(pointId: string): Promise<ChargeSession> {
+  private async startSelfCharge(pointId: string): Promise<ChargeSession> {
     const state = this.load();
     const profile = this.requireProfile(state);
     const info = await this.chargePoint(pointId);

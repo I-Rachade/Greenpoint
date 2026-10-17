@@ -27,6 +27,9 @@ beforeAll(async () => {
   pinHash = await hashPin(PIN);
 });
 
+const BOX_ST = "0123456789abcdef0123456789abcdef";
+const BOX_OTHER = "fedcba9876543210fedcba9876543210";
+
 async function setup() {
   const { db, d1 } = fakeD1();
   const now = new Date().toISOString();
@@ -56,9 +59,9 @@ async function setup() {
       ('other', 'partner', 'Partenaire', 6.14, 1.23, 'charging', 0, 0, '${now}');
     insert into station_status (station_id, free_slots, full_batteries, updated_at) values ('st', 2, 0, '${now}'), ('other', 1, 0, '${now}');
     insert into station_staff (station_id, user_id) values ('st', 'staff');
-    insert into devices (external_id, station_id, vendor, link, outlets, last_seen_at, created_at) values
-      ('123456', 'st', 'Xingke', 'own_server', 2, '${now}', '${now}'),
-      ('654321', 'other', 'Xingke', 'own_server', 1, '${now}', '${now}');
+    insert into devices (external_id, station_id, vendor, link, outlets, last_seen_at, qr_token, created_at) values
+      ('123456', 'st', 'Xingke', 'own_server', 2, '${now}', '${BOX_ST}', '${now}'),
+      ('654321', 'other', 'Xingke', 'own_server', 1, '${now}', '${BOX_OTHER}', '${now}');
     insert into charging_points (id, station_id, label, status, device_id, outlet, last_seen_at, created_at) values
       ('p1', 'st', '3456-1', 'free', '123456', 1, '${now}', '${now}'),
       ('p2', 'st', '3456-2', 'free', '123456', 2, '${now}', '${now}'),
@@ -317,8 +320,15 @@ describe("paying in the app", () => {
 });
 
 describe("charging by QR code", () => {
-  const info = (env: Env, point: string, who = "kofi") => api<{ state: string; label: string; stationName: string; error?: string }>(env, who, "GET", `/api/charging/points/${point}`);
-  const selfStart = (env: Env, point: string, who = "kofi") => api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/points/${point}/start`, {});
+  // Each box has one QR code; the customer picks the outlet on it.
+  const boxOf = (point: string) => (point.startsWith("q") ? BOX_OTHER : BOX_ST);
+  const info = async (env: Env, point: string, who = "kofi") => {
+    const { status, data } = await api<{ stationName: string; outlets: { pointId: string; label: string; state: string }[] }>(env, who, "GET", `/api/charging/outlets/${boxOf(point)}`);
+    const outlet = data.outlets.find((o) => o.pointId === point)!;
+    return { status, data: { state: outlet.state, label: outlet.label, stationName: data.stationName } };
+  };
+  const selfStart = (env: Env, point: string, who = "kofi") =>
+    api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/outlets/${boxOf(point)}/start`, { pointId: point });
   const selfStop = (env: Env, id: string, who = "kofi") => api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/${id}/stop`, {});
   const allow = (env: Env, point: string, enabled: boolean, who = "admin") => api<{ ok?: boolean; error?: string }>(env, who, "POST", `/api/admin/charging-points/${point}/qr`, { enabled });
 
@@ -335,8 +345,10 @@ describe("charging by QR code", () => {
     // The other outlet stays off.
     expect((await info(env, "p2")).data.state).toBe("disabled");
     // The outlet's page is readable before signing in.
-    const anonymous = await handleApi(new Request("https://app.poinderecharge.com/api/charging/points/p1"), env);
-    expect(await anonymous.json()).toMatchObject({ state: "free" });
+    const anonymous = await handleApi(new Request(`https://app.poinderecharge.com/api/charging/outlets/${BOX_ST}`), env);
+    expect(((await anonymous.json()) as { outlets: { state: string }[] }).outlets[0]).toMatchObject({ state: "free" });
+    // A per-outlet code (stickers before one code per box) no longer opens anything.
+    expect((await handleApi(new Request("https://app.poinderecharge.com/api/charging/points/p1"), env)).status).toBe(404);
   });
 
   it("lets the customer start, follow, stop and pay a charge without staff", async () => {
@@ -409,8 +421,8 @@ describe("charging by QR code", () => {
 });
 
 describe("one QR code per socket box", () => {
-  const BOX = "0123456789abcdef0123456789abcdef";
-  const OTHER = "fedcba9876543210fedcba9876543210";
+  const BOX = BOX_ST;
+  const OTHER = BOX_OTHER;
   type Box = { label: string; stationName: string; outlets: { pointId: string; label: string; outlet: number; state: string; yours?: boolean }[]; error?: string };
   const box = (env: Env, token = BOX, who = "kofi") => api<Box>(env, who, "GET", `/api/charging/outlets/${token}`);
   const startAt = (env: Env, pointId: string, token = BOX, who = "kofi") =>

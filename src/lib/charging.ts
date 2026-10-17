@@ -77,19 +77,10 @@ export interface ChargeSession {
 
 // Charging by QR code: one sticker per socket box links to /recharge?o=<token>; the customer
 // picks a free outlet of the box and starts the charge in the app where an admin allowed it
-// (charging_points.qr_start). Older stickers name one outlet: /recharge?p=<charging point id>.
+// (charging_points.qr_start). The older per-outlet codes (/recharge?p=…) no longer work.
 
-/** What the outlet's page shows: "free" can be started now, the rest say why not. */
+/** What an outlet shows on the box's page: "free" can be started now, the rest say why not. */
 export type ChargePointState = "free" | "busy" | "reserved" | "offline" | "fault" | "disabled";
-
-export interface ChargePointInfo {
-  pointId: string;
-  label: string;
-  stationId: string;
-  stationName: string;
-  state: ChargePointState;
-  tariff: ChargeTariff;
-}
 
 /** One outlet of the box behind a scanned QR code, as the picker shows it. */
 export interface ChargeOutletSocket {
@@ -118,39 +109,36 @@ export function boxQrUrl(origin: string, token: string): string {
   return `${origin.replace(/\/$/, "")}${POINT_PATH}?o=${encodeURIComponent(token)}`;
 }
 
-/** What a scanned code opens: a box (one sticker, pick an outlet), an older per-outlet sticker, or nothing of ours. */
-export function chargeCodeTarget(text: string): { box: string } | { point: string } | null {
+/** The link printed on one outlet of the box: the box's code plus the outlet number, which the picker selects. */
+export function socketQrUrl(origin: string, token: string, outlet: number): string {
+  return `${boxQrUrl(origin, token)}&s=${outlet}`;
+}
+
+/**
+ * The box in a scanned code (our link), with the outlet when it is one outlet's code; null for
+ * any other text, older per-outlet codes (?p=) included. The outlet only preselects: the server
+ * checks it like any pick.
+ */
+export function boxFromCode(text: string): { token: string; outlet: number | null } | null {
   try {
     const url = new URL(text.trim());
     if (url.pathname.replace(/\/$/, "") !== POINT_PATH) return null;
-    const box = url.searchParams.get("o")?.toLowerCase();
-    if (box && BOX_TOKEN.test(box)) return { box };
-    const point = pointIdFromCode(text);
-    return point ? { point } : null;
+    const token = url.searchParams.get("o")?.toLowerCase();
+    if (!token || !BOX_TOKEN.test(token)) return null;
+    return { token, outlet: outletParam(url.searchParams.get("s")) };
   } catch {
     return null;
   }
+}
+
+/** The outlet number of a socket code (1 to 16), or null. */
+export function outletParam(raw: string | null): number | null {
+  return raw && /^([1-9]|1[0-6])$/.test(raw) ? Number(raw) : null;
 }
 
 /** A box token as typed in a link; anything else is not ours. */
 export function validBoxToken(token: string): boolean {
   return BOX_TOKEN.test(token);
-}
-
-/** The link of an outlet's own QR code (stickers printed before one code per box). */
-export function pointQrUrl(origin: string, pointId: string): string {
-  return `${origin.replace(/\/$/, "")}${POINT_PATH}?p=${encodeURIComponent(pointId)}`;
-}
-
-/** The charging point id in a scanned outlet code (our link), or null for any other text. */
-export function pointIdFromCode(text: string): string | null {
-  try {
-    const url = new URL(text.trim());
-    const id = url.pathname.replace(/\/$/, "") === POINT_PATH ? url.searchParams.get("p") : null;
-    return id && /^[\w:.-]{1,80}$/.test(id) ? id : null;
-  } catch {
-    return null;
-  }
 }
 
 /** Staff view of a station: the charges running or waiting for payment, and today's takings. */

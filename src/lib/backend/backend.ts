@@ -1,6 +1,6 @@
 import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "../batteries";
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
-import type { AdminCharging, ChargeOutletInfo, ChargePointInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
+import type { AdminCharging, ChargeOutletInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
 import type { ChargeCard, ChargeCardInput, CounterCard } from "../charge-cards";
 import type {
   Operator,
@@ -721,13 +721,9 @@ export interface Backend {
   payChargeCash(stationId: string, id: string): Promise<ChargeSession>;
   /** The signed-in customer's charges, newest first, with the ways to pay in the app. */
   myCharges(): Promise<ChargeSession[]>;
-  /** The outlet behind a scanned QR code: station, price and whether a charge can start now (no sign-in needed). */
-  chargePoint(pointId: string): Promise<ChargePointInfo>;
-  /** The customer switches the outlet on after scanning its QR code (where the backoffice allows it). */
-  startSelfCharge(pointId: string): Promise<ChargeSession>;
   /** The socket box behind a scanned QR code: station, price and each outlet with whether it can start now (no sign-in needed). */
   chargeOutlet(token: string): Promise<ChargeOutletInfo>;
-  /** The customer starts the outlet they picked on the scanned box (same checks as startSelfCharge). */
+  /** The customer starts the outlet they picked on the scanned box (only where the backoffice allows QR charging on it). */
   startOutletCharge(token: string, pointId: string): Promise<ChargeSession>;
   /** The customer switches off a charge they started by QR code; the price is then final. */
   stopSelfCharge(id: string): Promise<ChargeSession>;

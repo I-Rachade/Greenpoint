@@ -8,7 +8,6 @@ import {
   type ChargeSession,
   type ChargeStatus,
   type ChargeOutletInfo,
-  type ChargePointInfo,
   type ChargePointState,
   type ChargeTariff,
   type StationCharging,
@@ -718,16 +717,9 @@ async function qrPointState(db: D1Database, p: QrPointRow, userId: string | null
   return (await heldForOthers(db, p, userId)) ? "reserved" : "free";
 }
 
-/** GET /api/charging/points/:id: what the QR code of an outlet shows, also before signing in. */
-export async function chargePointInfo(env: Env, user: Profile | null, pointId: string): Promise<ChargePointInfo> {
-  const p = await loadQrPoint(env.DB, pointId);
-  const [state, tariff] = await Promise.all([qrPointState(env.DB, p, user?.id ?? null), stationTariff(env.DB, p.station_id)]);
-  return { pointId: p.id, label: p.label, stationId: p.station_id, stationName: p.station_name, state, tariff };
-}
-
 /**
- * POST /api/charging/points/:id/start: the customer switches the outlet on after scanning its
- * QR code. Only where an admin allowed it, on a live free outlet nobody else holds, and only
+ * The customer switches one outlet on themselves (startOutletCharge, after scanning the box's
+ * QR code). Only where an admin allowed it, on a live free outlet nobody else holds, and only
  * with no other charge of the customer running or waiting for payment.
  */
 export async function startSelfCharge(env: Env, user: Profile, pointId: string): Promise<ChargeSession> {

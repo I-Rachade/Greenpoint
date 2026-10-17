@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { chargeCodeTarget, type ChargeOutletSocket, type ChargePointState } from "@/lib/charging";
+import { boxFromCode, outletParam, type ChargeOutletSocket, type ChargePointState } from "@/lib/charging";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { loginHref } from "@/lib/next-path";
@@ -15,8 +15,7 @@ import { MyCharges } from "./charging";
 
 // Charging by QR code (src/lib/charging.ts): the customer scans the one sticker on a socket
 // box (?o=), sees the station, the price and every outlet of the box, picks a free one and
-// starts the charge. Older stickers name one outlet (?p=). The running charge, its stop
-// button and the payment are in MyCharges below.
+// starts the charge. The running charge, its stop button and the payment are in MyCharges below.
 
 const button = "w-full rounded-full bg-gp-green-dark px-4 py-3 text-sm font-semibold text-white disabled:opacity-50";
 
@@ -34,8 +33,11 @@ export function ChargeAtPoint() {
   const q = t.charging.qr;
   const router = useRouter();
   const params = useSearchParams();
-  const pointId = params.get("p") ?? "";
   const boxToken = params.get("o") ?? "";
+  // One outlet's code (?s=): that outlet is selected when it is free.
+  const outlet = outletParam(params.get("s"));
+  // A per-outlet code from before one code per box (?p=) no longer opens an outlet.
+  const oldCode = !boxToken && params.has("p");
   const { profile, ready } = useApp();
   // The scan button on the map (?scan=1) opens the camera straight away. useSearchParams
   // renders this page in the browser only, so canScanQr() can be asked here.
@@ -46,9 +48,11 @@ export function ChargeAtPoint() {
     <div className="mx-auto w-full max-w-2xl space-y-4 px-4 pb-6 pt-4">
       <PageTitle title={q.title} back />
       {boxToken ? (
-        <BoxCard key={boxToken} token={boxToken} />
-      ) : pointId ? (
-        <PointCard key={pointId} pointId={pointId} />
+        <BoxCard key={`${boxToken}:${outlet}`} token={boxToken} outlet={outlet} />
+      ) : oldCode ? (
+        <p role="alert" className="text-sm text-red-600">
+          {q.oldCode}
+        </p>
       ) : (
         <p className="text-sm text-zinc-600 dark:text-zinc-400">{q.scanHint}</p>
       )}
@@ -57,9 +61,9 @@ export function ChargeAtPoint() {
           onClose={() => setScanning(false)}
           onResult={(text) => {
             setScanning(false);
-            const target = chargeCodeTarget(text);
-            setScanError(target ? null : q.notOurCode);
-            if (target) router.replace("box" in target ? `/recharge?o=${target.box}` : `/recharge?p=${encodeURIComponent(target.point)}`);
+            const box = boxFromCode(text);
+            setScanError(box ? null : q.notOurCode);
+            if (box) router.replace(`/recharge?o=${box.token}${box.outlet ? `&s=${box.outlet}` : ""}`);
           }}
         />
       ) : canScanQr() ? (
@@ -69,12 +73,12 @@ export function ChargeAtPoint() {
             setScanError(null);
             setScanning(true);
           }}
-          className={pointId || boxToken ? "text-sm text-gp-green-dark underline dark:text-gp-green" : button}
+          className={boxToken ? "text-sm text-gp-green-dark underline dark:text-gp-green" : button}
         >
           {q.scan}
         </button>
       ) : (
-        !pointId && !boxToken && <p className="text-sm">{q.noScanner}</p>
+        !boxToken && <p className="text-sm">{q.noScanner}</p>
       )}
       {scanError && (
         <p role="alert" className="text-sm text-red-600">
@@ -83,74 +87,6 @@ export function ChargeAtPoint() {
       )}
       {ready && profile && <MyCharges />}
     </div>
-  );
-}
-
-function PointCard({ pointId }: { pointId: string }) {
-  const { t } = useI18n();
-  const q = t.charging.qr;
-  const { backend, profile, ready } = useApp();
-  const errorMessage = useErrorMessage();
-  const { data: info, error, reload } = useLiveQuery(() => backend.chargePoint(pointId), pointId);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-
-  if (!info) {
-    return error ? (
-      <p role="alert" className="text-sm text-red-600">
-        {q.notFound}
-      </p>
-    ) : (
-      <p className="text-sm text-zinc-500">{t.loading}</p>
-    );
-  }
-
-  async function start() {
-    setBusy(true);
-    setMessage(null);
-    try {
-      await backend.startSelfCharge(pointId);
-      setMessage({ ok: true, text: q.started });
-    } catch (err) {
-      setMessage({ ok: false, text: errorMessage(err) });
-    } finally {
-      setBusy(false);
-      reload();
-    }
-  }
-
-  const here = `/recharge?p=${encodeURIComponent(pointId)}`;
-  return (
-    <section className="space-y-3 rounded-2xl border border-gp-border bg-gp-surface p-4 shadow-sm dark:border-white/10">
-      <div>
-        <div className="text-sm text-zinc-600 dark:text-zinc-400">{info.stationName}</div>
-        <h2 className="text-xl font-semibold">{format(q.outlet, { label: info.label })}</h2>
-      </div>
-      <p className={`text-sm font-medium ${STATE_TONE[info.state]}`}>{q.states[info.state]}</p>
-      <p className="text-sm">{format(t.charging.tariff, { kwh: info.tariff.kwhXof, min: info.tariff.minXof })}</p>
-      {info.state === "free" &&
-        ready &&
-        (profile ? (
-          <>
-            <p className="text-sm">{q.plugIn}</p>
-            <button type="button" disabled={busy} onClick={() => void start()} className={button}>
-              {q.start}
-            </button>
-          </>
-        ) : (
-          <>
-            <p className="text-sm">{q.login}</p>
-            <Link href={loginHref(here)} className={`${button} block text-center`}>
-              {t.nav.login}
-            </Link>
-          </>
-        ))}
-      {message && (
-        <p role={message.ok ? "status" : "alert"} className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>
-          {message.text}
-        </p>
-      )}
-    </section>
   );
 }
 
@@ -164,7 +100,7 @@ const TILE: Record<ChargePointState, string> = {
 };
 
 /** One sticker per box: every outlet of it, only free ones can be picked. */
-function BoxCard({ token }: { token: string }) {
+function BoxCard({ token, outlet }: { token: string; outlet: number | null }) {
   const { t } = useI18n();
   const q = t.charging.qr;
   const { backend, profile, ready } = useApp();
@@ -191,8 +127,8 @@ function BoxCard({ token }: { token: string }) {
   }
 
   const free = info.outlets.filter((o) => o.state === "free");
-  // The customer's own reservation first, else the only free outlet.
-  const preferred = free.find((o) => o.yours) ?? (free.length === 1 ? free[0] : undefined);
+  // The scanned outlet's own code, then the customer's own reservation, else the only free outlet.
+  const preferred = free.find((o) => o.outlet === outlet) ?? free.find((o) => o.yours) ?? (free.length === 1 ? free[0] : undefined);
   const choice = free.find((o) => o.pointId === picked) ?? preferred;
 
   async function start(outlet: ChargeOutletSocket) {
@@ -210,7 +146,7 @@ function BoxCard({ token }: { token: string }) {
     }
   }
 
-  const here = `/recharge?o=${token}`;
+  const here = `/recharge?o=${token}${outlet ? `&s=${outlet}` : ""}`;
   return (
     <section className="space-y-3 rounded-2xl border border-gp-border bg-gp-surface p-4 shadow-sm dark:border-white/10">
       <div>
@@ -219,6 +155,11 @@ function BoxCard({ token }: { token: string }) {
       </div>
       <p className="text-sm">{format(t.charging.tariff, { kwh: info.tariff.kwhXof, min: info.tariff.minXof })}</p>
       <p className="text-sm">{free.length ? q.pick : q.noneFree}</p>
+      {outlet && free.length > 0 && !free.some((o) => o.outlet === outlet) && info.outlets.some((o) => o.outlet === outlet) && (
+        <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
+          {format(q.socketTaken, { n: outlet })}
+        </p>
+      )}
       <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="radiogroup" aria-label={q.pick}>
         {info.outlets.map((o) => {
           const selectable = o.state === "free";
