@@ -1,6 +1,6 @@
 import { offersCharging, offersSwap, withinOpeningHours } from "../src/lib/availability";
 import { depotPoints, hasAnyPoint } from "../src/lib/station-points";
-import { cleanAmenities, cleanPhotos, type ReviewInput } from "../src/lib/station-extras";
+import { cleanAmenities, cleanMainActivity, cleanPhotos, type ReviewInput } from "../src/lib/station-extras";
 import { deleteReview, saveReview, stationReviews } from "./reviews";
 import type { BatteryTypeInput } from "../src/lib/battery-types";
 import type { EvChargerInput } from "../src/lib/ev-chargers";
@@ -304,6 +304,8 @@ interface StationRow {
   /** JSON arrays; missing before migration 0021. */
   photos?: string;
   amenities?: string;
+  /** Missing before migration 0044. */
+  main_activity?: string | null;
   rating_avg: number | null;
   rating_count: number;
 }
@@ -358,6 +360,7 @@ function toStationView(r: StationRow): StationView & { isActive: boolean } {
     parcelPoint: r.depot_active ? { counter: r.depot_counter !== 0, lockers: r.depot_lockers ?? 0 } : null,
     photos: cleanPhotos(parseJson(r.photos)),
     amenities: cleanAmenities(parseJson(r.amenities)),
+    mainActivity: cleanMainActivity(r.main_activity),
     rating: { average: r.rating_avg ? Math.round(r.rating_avg * 10) / 10 : 0, count: r.rating_count ?? 0 },
   };
 }
@@ -897,12 +900,13 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
   const types = input.batteryTypeIds
     ? await stationBatteryTypeStatements(c.db, stationId, input.batteryTypeIds, offersSwap(input.kind))
     : null;
-  // Photos, amenities and the solar mark: left out of the input means unchanged (a new station is not solar).
+  // Photos, amenities, main activity and the solar mark: left out of the input means unchanged (a new station is not solar).
   const extras = {
     // Data URLs are for the demo only; real photos live in R2.
     ...(input.photos ? { photos: JSON.stringify(cleanPhotos(input.photos).filter((u) => !u.startsWith("data:"))) } : {}),
     ...(input.amenities ? { amenities: JSON.stringify(cleanAmenities(input.amenities)) } : {}),
     ...(input.isSolar !== undefined ? { is_solar: input.isSolar ? 1 : 0 } : {}),
+    ...(input.mainActivity !== undefined ? { main_activity: cleanMainActivity(input.mainActivity) } : {}),
   };
   const extraStatements = Object.entries(extras).map(([column, value]) =>
     c.db.prepare(`update stations set ${column} = ? where id = ?`).bind(value, stationId),
@@ -910,7 +914,7 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
   if (id) {
     const before = await c.db
       .prepare(
-        "select operator_id, name, address, lat, lng, kind, has_battery, vehicle_types, battery_capacity, opening_hours, phone, photos, amenities, is_solar from stations where id = ?",
+        "select operator_id, name, address, lat, lng, kind, has_battery, vehicle_types, battery_capacity, opening_hours, phone, photos, amenities, is_solar, main_activity from stations where id = ?",
       )
       .bind(id)
       .first<Record<string, unknown>>();

@@ -3,24 +3,32 @@
 import { useRef, useState } from "react";
 import { useErrorMessage, useLiveQuery, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { AMENITIES, MAX_STATION_PHOTOS, type Amenity } from "@/lib/station-extras";
+import { AMENITIES, MAIN_ACTIVITIES, MAX_STATION_PHOTOS, type Amenity, type MainActivity } from "@/lib/station-extras";
 import { useApp } from "../app-provider";
 import { shrinkImage } from "../drivers/shared";
 import { CameraIcon, StarIcon, TrashIcon } from "../icons";
 import { useI18n } from "../i18n-provider";
 import { AMENITY_ICONS, Stars } from "../station-look";
 
-/** Backoffice: the station's photos (first = cover) and what it offers to rest. */
+/** Backoffice: the station's main activity, its photos (first = cover) and what it offers to rest. */
 export function StationMediaFields({
   photos,
   amenities,
+  mainActivity,
+  autoPicture,
   onPhotos,
   onAmenities,
+  onMainActivity,
 }: {
   photos: string[];
   amenities: Amenity[];
+  /** Null = automatic. */
+  mainActivity: MainActivity | null;
+  /** The illustration "automatic" stands for, from the station's services. */
+  autoPicture: string;
   onPhotos: (photos: string[]) => void;
   onAmenities: (amenities: Amenity[]) => void;
+  onMainActivity: (mainActivity: MainActivity | null) => void;
 }) {
   const { t } = useI18n();
   const a = t.stationLook.admin;
@@ -47,8 +55,45 @@ export function StationMediaFields({
     }
   }
 
+  const choices: { value: MainActivity | null; label: string; picture: string }[] = [
+    { value: null, label: a.mainActivityAuto, picture: autoPicture },
+    ...MAIN_ACTIVITIES.map((m) => ({ value: m, label: a.mainActivities[m], picture: `/station-photos/${m}.svg` })),
+  ];
+
   return (
     <div className="space-y-4 sm:col-span-2">
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-semibold">{a.mainActivity}</legend>
+        <p className="text-xs text-zinc-500">{a.mainActivityHint}</p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {choices.map((c) => {
+            const on = c.value === mainActivity;
+            return (
+              <label
+                key={c.value ?? "auto"}
+                className={`cursor-pointer overflow-hidden rounded-lg border-2 text-sm ${
+                  on ? "border-gp-green-dark bg-gp-green/10 text-gp-green-dark" : "border-black/10 dark:border-white/15"
+                }`}
+              >
+                <input type="radio" name="main-activity" className="sr-only" checked={on} onChange={() => onMainActivity(c.value)} />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={c.picture} alt="" className="aspect-[16/9] w-full object-cover" />
+                <span className="flex items-center gap-1.5 px-2 py-1.5 font-medium">
+                  <span
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${on ? "border-gp-green-dark" : "border-zinc-400"}`}
+                    aria-hidden
+                  >
+                    {on && <span className="h-2 w-2 rounded-full bg-gp-green-dark" />}
+                  </span>
+                  {c.label}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        {photos.length > 0 && <p className="text-xs text-zinc-500">{a.mainActivityPhotosFirst}</p>}
+      </fieldset>
+
       <section className="space-y-2">
         <div>
           <h3 className="flex items-center gap-2 text-sm font-semibold">

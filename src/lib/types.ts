@@ -1,7 +1,7 @@
 import type { StationBatteryType } from "./battery-types";
 import type { StationEvCharger } from "./ev-chargers";
 import type { ParcelDepotInput } from "./parcels";
-import type { Amenity, StationRating } from "./station-extras";
+import type { Amenity, MainActivity, StationRating } from "./station-extras";
 import type { StationService } from "./station-services";
 import type { StationRole } from "./station-work";
 import type { ReservationKind, ReservationTargetKind } from "./reservations";
@@ -37,6 +37,8 @@ export interface Station {
   photos?: string[];
   /** Places to rest and services at the station (see station-extras.ts). */
   amenities?: Amenity[];
+  /** What the station mainly is (picks its illustration); null or missing = automatic. */
+  mainActivity?: MainActivity | null;
 }
 
 export interface StationStatus {
@@ -155,6 +157,8 @@ export interface StationInput {
   photos?: string[];
   /** Left out: unchanged. */
   amenities?: Amenity[];
+  /** Restaurant, shop, charging, swap or EV chargers; null = automatic. Left out: unchanged. */
+  mainActivity?: MainActivity | null;
 }
 
 export interface Operator {

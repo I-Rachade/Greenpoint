@@ -95,7 +95,7 @@ import {
   demoReviews,
   type DemoReview,
 } from "./demo-data";
-import { cleanAmenities, cleanPhotos, cleanReview, ratingOf, shortName, type ReviewInput, type StationReview } from "../station-extras";
+import { cleanAmenities, cleanMainActivity, cleanPhotos, cleanReview, ratingOf, shortName, type ReviewInput, type StationReview } from "../station-extras";
 import { depotPoints, hasAnyPoint, kindFor } from "../station-points";
 import { validBatteryType, type BatteryType, type BatteryTypeInput } from "../battery-types";
 import { DEMO_STAFF, demoHistory, demoReassignments, demoUsers } from "../admin/demo-seed";
@@ -1946,6 +1946,7 @@ export class DemoBackend implements Backend {
       // Left out of the input: unchanged.
       photos: input.photos ? cleanPhotos(input.photos) : (before?.photos ?? extras?.photos ?? []),
       amenities: input.amenities ? cleanAmenities(input.amenities) : (before?.amenities ?? extras?.amenities ?? []),
+      mainActivity: input.mainActivity !== undefined ? cleanMainActivity(input.mainActivity) : (before?.mainActivity ?? null),
     };
     if (id) {
       let next = withAudit(

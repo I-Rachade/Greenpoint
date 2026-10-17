@@ -8,6 +8,7 @@ import { format } from "@/lib/i18n/format";
 import type { Device } from "@/lib/iot/devices";
 import type { Parcel, ParcelDepot } from "@/lib/parcels";
 import { batteryTypeLabel, groupByBrand, type BatteryType } from "@/lib/battery-types";
+import { placeholderPhoto } from "@/lib/station-extras";
 import { hasAnyPoint, kindFor } from "@/lib/station-points";
 import { VEHICLE_TYPES, type StationInput, type StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
@@ -60,6 +61,7 @@ function toInput(s: StationView): StationInput {
     isSolar: s.isSolar,
     photos: s.photos ?? [],
     amenities: s.amenities ?? [],
+    mainActivity: s.mainActivity ?? null,
   };
 }
 
@@ -392,8 +394,16 @@ function StationForm({
       <StationMediaFields
         photos={form.input.photos ?? []}
         amenities={form.input.amenities ?? []}
+        mainActivity={form.input.mainActivity ?? null}
+        // What "automatic" shows: the illustration of the services ticked above.
+        autoPicture={placeholderPhoto({
+          id: stationId ?? "",
+          kind: form.swap && form.charging ? "both" : form.swap ? "swap" : form.charging ? "charging" : "parcel",
+          evChargers: evChargers > 0 ? [evChargers] : [],
+        })}
         onPhotos={(photos) => set("photos", photos)}
         onAmenities={(amenities) => set("amenities", amenities)}
+        onMainActivity={(mainActivity) => set("mainActivity", mainActivity)}
       />
       {stationId && <StationReviewsAdmin stationId={stationId} />}
 
@@ -618,6 +628,7 @@ export function AdminStations() {
     isSolar: false,
     photos: [],
     amenities: [],
+    mainActivity: null,
   };
 
   return (
