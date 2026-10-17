@@ -1,0 +1,46 @@
+// Cloudflare Worker: the static web app (`out/`) plus the API in `worker/`
+// (D1 database, R2 images, SMS login). See docs/DEPLOYMENT.md.
+// The Worker name must match the project name in the Cloudflare dashboard.
+// The "greenpoint" Worker belongs to the landing page; this is a separate one.
+// The Worker keeps its original name although the app is now called poinderecharge.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pointderecharge-app",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-10-01",
+  "build": { "command": "npm run build" },
+  "routes": [{ "pattern": "app.poinderecharge.com", "custom_domain": true }],
+  "assets": {
+    "directory": "./out",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    // Only /api/* runs the Worker code; pages and files are served directly.
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "poinderecharge-db",
+      "database_id": "fb6b9f3a-e01b-4391-9237-dced6151602a",
+      "migrations_dir": "worker/migrations"
+    }
+  ],
+  // Each OCPP charge point keeps a WebSocket to its own Durable Object (worker/ocpp.ts).
+  "durable_objects": { "bindings": [{ "name": "OCPP", "class_name": "OcppConnection" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OcppConnection"] }],
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "poinderecharge-media" }],
+  // Login codes by e-mail through Cloudflare Email Service. The domain must be
+  // onboarded under Email Service > Email Sending (see docs/DEPLOYMENT.md).
+  "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["noreply@poinderecharge.com"] }],
+  // Settings and secrets (ADMIN_PHONES, ADMIN_EMAILS, TEST_OTP, DIDIT_API_KEY, …) are set in the
+  // dashboard; keep them on deploy. See worker/env.ts.
+  "keep_vars": true,
+  // Daily at 08:00 in Lomé (UTC): parcel pickup reminders and returns (worker/parcels.ts).
+  // Every minute: webhooks to partner apps and their retries (worker/partners.ts), and driver
+  // offers sent out and run out (worker/drivers.ts runDispatch).
+  "triggers": { "crons": ["0 8 * * *", "* * * * *"] },
+  "observability": { "enabled": true },
+  // Branches other than production build a Preview (`npx wrangler preview`),
+  // which needs this block. Empty: Previews use the top-level settings.
+  "previews": {}
+}
