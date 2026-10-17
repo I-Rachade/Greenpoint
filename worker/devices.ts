@@ -33,6 +33,11 @@ import { chargeReadingStatement, hasOpenCharge } from "./charging";
 // Connected sockets (e.g. LoRa). See docs/steckdosen-lora.md.
 
 /** Oldest last_seen_at that still counts as online. */
+/** A box's QR token (devices.qr_token): 128 random bits, never derived from the device id. */
+export function newBoxToken(): string {
+  return [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export function onlineSince(): string {
   return new Date(Date.now() - DEVICE_OFFLINE_MINUTES * 60_000).toISOString();
 }
@@ -252,10 +257,10 @@ export async function createDevice(db: D1Database, input: DeviceInput, actor: st
   const statements = [
     db
       .prepare(
-        `insert into devices (external_id, station_id, vendor, model, link, outlets, vendor_ref, protocol, ocpp_key_hash, created_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `insert into devices (external_id, station_id, vendor, model, link, outlets, vendor_ref, protocol, ocpp_key_hash, qr_token, created_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(externalId, stationId, vendor, model, link, outlets, vendorRef, protocol, key && (await sha256(key)), now),
+      .bind(externalId, stationId, vendor, model, link, outlets, vendorRef, protocol, key && (await sha256(key)), newBoxToken(), now),
   ];
   for (let n = 1; n <= outlets; n++) {
     statements.push(
@@ -298,6 +303,7 @@ interface DeviceRow {
   last_seen_at: string | null;
   created_at: string;
   partner_id: string | null;
+  qr_token: string | null;
 }
 
 /** All sockets with their outlets, newest first. */
@@ -319,6 +325,7 @@ export async function listDevices(db: D1Database): Promise<Device[]> {
     lastSeenAt: d.last_seen_at,
     createdAt: d.created_at,
     partnerId: d.partner_id ?? null,
+    qrToken: d.qr_token ?? null,
     points: all.filter((p) => p.deviceId === d.external_id).sort((a, b) => (a.outlet ?? 0) - (b.outlet ?? 0)),
   }));
 }

@@ -51,7 +51,7 @@ async function setup() {
     insert into stations (id, operator_id, name, lat, lng, kind, battery_capacity, is_solar, created_at) values ('st', '${OPERATOR}', 'Bè', 6.13, 1.22, 'charging', 0, 1, '${now}');
     insert into station_status (station_id, free_slots, full_batteries, updated_at) values ('st', 2, 0, '${now}');
     insert into station_staff (station_id, user_id) values ('st', 'staff');
-    insert into devices (external_id, station_id, vendor, link, outlets, vendor_ref, last_seen_at, created_at) values ('${DEV.toUpperCase()}', 'st', 'Xingke', 'vendor_cloud', 2, '${DEV}', '${now}', '${now}');
+    insert into devices (external_id, station_id, vendor, link, outlets, vendor_ref, last_seen_at, qr_token, created_at) values ('${DEV.toUpperCase()}', 'st', 'Xingke', 'vendor_cloud', 2, '${DEV}', '${now}', '${BOX}', '${now}');
     insert into charging_points (id, station_id, label, status, device_id, outlet, last_seen_at, qr_start, created_at) values
       ('p1', 'st', 'A-1', 'free', '${DEV.toUpperCase()}', 1, '${now}', 1, '${now}'),
       ('p2', 'st', 'A-2', 'free', '${DEV.toUpperCase()}', 2, '${now}', 1, '${now}');
@@ -76,9 +76,14 @@ async function cb(env: Env, action: string, data: object, messageId = `ev${++n}`
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const result = (env: Env, cmd: any, status: string, code: string) => cb(env, "CommandResult", { requestAction: cmd.action, status, code, result: { connectorId: cmd.data.connectorId, transactionId: cmd.data.transactionId } }, cmd.messageId);
 const reading = (env: Env, outlet: number, tx: string, status: string, energy: number, reason = "None") => cb(env, "ChargingStatusNotification", { connectorId: outlet, transactionId: tx, status, reason, power: 150, energy });
-const selfStart = (env: Env, p: string, who = "kofi") => api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/points/${p}/start`, {});
+// The box's one QR code (devices.qr_token); the customer picks the outlet.
+const BOX = "0123456789abcdef0123456789abcdef";
+const selfStart = (env: Env, p: string, who = "kofi") => api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/outlets/${BOX}/start`, { pointId: p });
 const selfStop = (env: Env, id: string, who = "kofi") => api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/${id}/stop`, {});
-const info = (env: Env, p: string, who = "ama") => api<{ state: string }>(env, who, "GET", `/api/charging/points/${p}`);
+const info = async (env: Env, p: string, who = "ama") => {
+  const { data } = await api<{ outlets: { pointId: string; state: string }[] }>(env, who, "GET", `/api/charging/outlets/${BOX}`);
+  return { data: data.outlets.find((o) => o.pointId === p)! };
+};
 const sess = (db: { prepare(sql: string): { all(): unknown[] } }) => db.prepare("select id, user_id, status, energy_wh from charging_sessions order by started_at").all();
 
 describe("charging through the Xingke cloud", () => {

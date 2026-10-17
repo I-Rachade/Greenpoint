@@ -74,7 +74,8 @@ import {
   DEFAULT_CHARGE_TARIFF,
   validTariff,
   type AdminCharging,
-  type ChargePointInfo,
+  type ChargeOutletInfo,
+  type ChargePointState,
   type ChargeSession,
   type ChargeTariff,
   type ChargeTariffInput,
@@ -681,6 +682,20 @@ function freshState(): DemoState {
   };
 }
 
+/** A demo box's QR token: fixed per device, so a printed demo code keeps working (the Worker draws random ones). */
+function demoBoxToken(externalId: string): string {
+  return [...externalId].map((c) => c.charCodeAt(0).toString(16).padStart(2, "0")).join("").slice(0, 32).padEnd(32, "0");
+}
+
+function randomBoxToken(): string {
+  return [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Saved demo states from before one QR code per box have no token. */
+function boxToken(d: Device): string {
+  return d.qrToken ?? demoBoxToken(d.externalId);
+}
+
 /** The connected socket of the "Déckon" station, as a device. */
 function seedDevices(): Device[] {
   const [first] = DEMO_CHARGING_POINTS;
@@ -697,6 +712,7 @@ function seedDevices(): Device[] {
       lastSeenAt: null,
       createdAt: "2026-10-01T08:00:00.000Z",
       partnerId: null,
+      qrToken: demoBoxToken(first.deviceId!),
       points: DEMO_CHARGING_POINTS,
     },
     ...(
@@ -718,6 +734,7 @@ function seedDevices(): Device[] {
       lastSeenAt: null,
       createdAt: "2026-10-01T08:00:00.000Z",
       partnerId: null,
+      qrToken: demoBoxToken(externalId),
       points: demoSocketPoints(stationId, externalId, outlets, free),
     })),
   ];
@@ -2972,6 +2989,7 @@ export class DemoBackend implements Backend {
     return (state.devices ?? seedDevices()).map((d) => ({
       ...d,
       partnerId: d.partnerId ?? null,
+      qrToken: boxToken(d),
       lastSeenAt: seen,
       points: d.points.map((p) => ({ ...p, lastSeenAt: seen })),
     }));
@@ -2998,6 +3016,7 @@ export class DemoBackend implements Backend {
       lastSeenAt: null,
       createdAt: new Date().toISOString(),
       partnerId: null,
+      qrToken: randomBoxToken(),
       points: Array.from({ length: outlets }, (_, i) => ({
         id: `cp-${externalId}-${i + 1}`,
         stationId: input.stationId,
@@ -3046,6 +3065,16 @@ export class DemoBackend implements Backend {
     if (!all.some((d) => d.points.some((p) => p.id === pointId))) throw new BackendError("unknown", "not_found");
     const devices = all.map((d) => ({ ...d, points: d.points.map((p) => (p.id === pointId ? { ...p, qrStart: enabled } : p)) }));
     this.save({ ...state, devices });
+  }
+
+  async renewBoxQr(externalId: string): Promise<string> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const all = state.devices ?? seedDevices();
+    if (!all.some((d) => d.externalId === externalId)) throw new BackendError("unknown", "not_found");
+    const qrToken = randomBoxToken();
+    this.save({ ...state, devices: all.map((d) => (d.externalId === externalId ? { ...d, qrToken } : d)) });
+    return qrToken;
   }
 
   async setDevicePartner(externalId: string, partnerId: string | null) {
@@ -7560,15 +7589,14 @@ export class DemoBackend implements Backend {
       });
   }
 
-  /** As chargePointInfo() in worker/charging.ts; demo sockets are always online. */
-  async chargePoint(pointId: string): Promise<ChargePointInfo> {
+  /** One outlet as qrPointState() in worker/charging.ts sees it; demo sockets are always online. */
+  private async chargePoint(pointId: string): Promise<{ stationId: string; stationName: string; label: string; state: ChargePointState; tariff: ChargeTariff }> {
     const state = this.load();
     const point = (state.devices ?? seedDevices()).flatMap((d) => d.points).find((p) => p.id === pointId);
     const station = point && state.stations.find((s) => s.id === point.stationId);
     if (!point || !station) throw new BackendError("unknown", "not_found");
     const busy = point.status === "charging" || (state.charges ?? []).some((c) => c.pointId === point.id && c.status === "charging");
     return {
-      pointId: point.id,
       label: point.label,
       stationId: station.id,
       stationName: station.name,
@@ -7577,8 +7605,39 @@ export class DemoBackend implements Backend {
     };
   }
 
+  /** As outletInfo() in worker/charging.ts. */
+  async chargeOutlet(token: string): Promise<ChargeOutletInfo> {
+    const state = this.load();
+    const device = (state.devices ?? seedDevices()).find((d) => boxToken(d) === token);
+    const station = device && state.stations.find((s) => s.id === device.stationId);
+    if (!device || !station) throw new BackendError("unknown", "not_found");
+    const me = state.profile?.id ?? null;
+    const now = new Date().toISOString();
+    const outlets = await Promise.all(
+      [...device.points]
+        .filter((p) => p.outlet)
+        .sort((a, b) => a.outlet! - b.outlet!)
+        .map(async (p) => {
+          let { state: pointState } = await this.chargePoint(p.id);
+          const held = state.reservations.filter((r) => r.target === p.id && r.status === "active" && r.expiresAt > now);
+          if (pointState === "free" && held.some((r) => r.userId !== me)) pointState = "reserved";
+          const yours = pointState === "free" && !!me && held.some((r) => r.userId === me);
+          return { pointId: p.id, label: p.label, outlet: p.outlet!, state: pointState, ...(yours ? { yours: true } : {}) };
+        }),
+    );
+    return { label: device.externalId.slice(-4), stationId: station.id, stationName: station.name, tariff: this.chargeTariffOf(state, station.id), outlets };
+  }
+
+  /** As startOutletCharge() in worker/charging.ts. */
+  async startOutletCharge(token: string, pointId: string): Promise<ChargeSession> {
+    const outlet = (await this.chargeOutlet(token)).outlets.find((o) => o.pointId === pointId);
+    if (!outlet) throw new BackendError("unknown", "not_found");
+    if (outlet.state === "reserved") throw new BackendError("point_reserved");
+    return this.startSelfCharge(pointId);
+  }
+
   /** As startSelfCharge() in worker/charging.ts. */
-  async startSelfCharge(pointId: string): Promise<ChargeSession> {
+  private async startSelfCharge(pointId: string): Promise<ChargeSession> {
     const state = this.load();
     const profile = this.requireProfile(state);
     const info = await this.chargePoint(pointId);

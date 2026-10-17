@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
 import { reservableOutlets, reservableTypes } from "../reservations";
-import { pointIdFromCode, pointQrUrl } from "../charging";
+import { boxFromCode, boxQrUrl, socketQrUrl } from "../charging";
 
 // Runs without a browser: the demo falls back to in-memory storage.
 const STATION = "st-grand-marche"; // open around the clock in the demo data
@@ -186,18 +186,23 @@ describe("DemoBackend connected sockets", () => {
   it("starts and stops a charge by QR code where the admin allowed it", async () => {
     const backend = new DemoBackend();
     await backend.register("+22890123456", DEMO_CODE, "2580", "admin");
-    const point = (await backend.listDevices()).find((d) => d.stationId === STATION)!.points.find((p) => p.status === "free")!;
-    expect((await backend.chargePoint(point.id)).state).toBe("disabled");
-    await expect(backend.startSelfCharge(point.id)).rejects.toMatchObject({ code: "charge_qr_disabled" });
+    const device = (await backend.listDevices()).find((d) => d.stationId === STATION)!;
+    const point = device.points.find((p) => p.status === "free")!;
+    const token = device.qrToken!;
+    const stateOf = async () => (await backend.chargeOutlet(token)).outlets.find((o) => o.pointId === point.id)!.state;
+    expect(await stateOf()).toBe("disabled");
+    await expect(backend.startOutletCharge(token, point.id)).rejects.toMatchObject({ code: "charge_qr_disabled" });
 
     await backend.setQrStart(point.id, true);
     expect((await backend.listStations()).find((s) => s.id === STATION)!.chargingPoints!.find((p) => p.id === point.id)!.qrStart).toBe(true);
-    expect((await backend.chargePoint(point.id)).state).toBe("free");
-    const charge = await backend.startSelfCharge(point.id);
+    expect(await stateOf()).toBe("free");
+    const charge = await backend.startOutletCharge(token, point.id);
     expect(charge).toMatchObject({ status: "charging", selfStarted: true });
-    expect((await backend.chargePoint(point.id)).state).toBe("busy");
+    expect(await stateOf()).toBe("busy");
     // One charge at a time until it is paid.
-    await expect(backend.startSelfCharge(point.id)).rejects.toMatchObject({ code: "charge_unpaid" });
+    const other = device.points.find((p) => p.status === "free" && p.id !== point.id)!;
+    await backend.setQrStart(other.id, true);
+    await expect(backend.startOutletCharge(token, other.id)).rejects.toMatchObject({ code: "charge_unpaid" });
     expect((await backend.stopSelfCharge(charge.id)).status).toBe("stopped");
   });
 });
@@ -548,13 +553,40 @@ describe("DemoBackend driver phase 2 (as in the Worker)", () => {
 });
 
 describe("outlet QR codes", () => {
-  it("link to the outlet's page and are read back", () => {
-    const url = pointQrUrl("https://app.poinderecharge.com/", "1f0c-ab");
-    expect(url).toBe("https://app.poinderecharge.com/recharge?p=1f0c-ab");
-    expect(pointIdFromCode(` ${url} `)).toBe("1f0c-ab");
-    expect(pointIdFromCode("https://app.poinderecharge.com/recharge/?p=cp-DEMO:01-2")).toBe("cp-DEMO:01-2");
-    expect(pointIdFromCode("poinderecharge:id:+22890123456")).toBeNull();
-    expect(pointIdFromCode("https://example.com/station?p=x")).toBeNull();
+  it("link one code to the whole box and one derived code to each outlet", () => {
+    const token = "0123456789abcdef0123456789abcdef";
+    const url = boxQrUrl("https://app.poinderecharge.com/", token);
+    expect(url).toBe(`https://app.poinderecharge.com/recharge?o=${token}`);
+    expect(boxFromCode(` ${url} `)).toEqual({ token, outlet: null });
+    expect(socketQrUrl("https://app.poinderecharge.com", token, 3)).toBe(`${url}&s=3`);
+    expect(boxFromCode(socketQrUrl("https://app.poinderecharge.com", token, 3))).toEqual({ token, outlet: 3 });
+    expect(boxFromCode(`${url}&s=99`)).toEqual({ token, outlet: null });
+    // The older per-outlet codes, by charging point id, no longer open anything.
+    expect(boxFromCode("https://app.poinderecharge.com/recharge?p=1f0c-ab")).toBeNull();
+    expect(boxFromCode("https://app.poinderecharge.com/recharge?o=DEVEUI123")).toBeNull();
+    expect(boxFromCode("https://example.com/pay?o=" + token)).toBeNull();
+    expect(boxFromCode("poinderecharge:id:+22890123456")).toBeNull();
+  });
+
+  it("lets the customer pick a free outlet of the scanned box", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890999999", DEMO_CODE, "2580", "admin");
+    const device = (await backend.listDevices()).find((d) => d.externalId === "DEMO-UL01")!;
+    for (const p of device.points) await backend.setQrStart(p.id, true);
+    const token = device.qrToken!;
+    const info = await backend.chargeOutlet(token);
+    expect(info.outlets.map((o) => o.outlet)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    await backend.register("+22890123456", DEMO_CODE, "2580", "customer");
+    const first = info.outlets.find((o) => o.state === "free")!;
+    await backend.startOutletCharge(token, first.pointId);
+    expect((await backend.chargeOutlet(token)).outlets.find((o) => o.pointId === first.pointId)?.state).toBe("busy");
+    // Only outlets of this box can be started with its code.
+    await expect(backend.startOutletCharge(token, "cp-not-here")).rejects.toMatchObject({ code: "unknown" });
+
+    await backend.register("+22890999999", DEMO_CODE, "2580", "admin");
+    const renewed = await backend.renewBoxQr("DEMO-UL01");
+    expect(renewed).not.toBe(token);
+    await expect(backend.chargeOutlet(token)).rejects.toBeDefined();
   });
 });
 

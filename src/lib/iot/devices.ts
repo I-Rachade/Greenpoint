@@ -38,6 +38,8 @@ export interface Device {
   createdAt: string;
   /** The point partner who owns the socket; null: poinderecharge (src/lib/point-partners.ts). */
   partnerId: string | null;
+  /** The box's QR code (src/lib/charging.ts boxQrUrl); null before migration 0043 gave it one. */
+  qrToken: string | null;
   /** One charging point per outlet, by outlet number. */
   points: ChargingPoint[];
 }

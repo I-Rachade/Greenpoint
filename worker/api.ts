@@ -85,7 +85,7 @@ import {
   startOutlet,
   stopOutlet,
 } from "./devices";
-import type { DeviceInput } from "../src/lib/iot/devices";
+import { normalizeDeviceId, type DeviceInput } from "../src/lib/iot/devices";
 import type { PointPartnerInput } from "../src/lib/point-partners";
 import {
   addPointPartnerAccount,
@@ -259,9 +259,10 @@ import {
   payWithMobile,
   payWithWallet,
   saveChargeTariff,
-  chargePointInfo,
   setQrStart,
-  startSelfCharge,
+  outletInfo,
+  startOutletCharge,
+  renewOutletQr,
   stopSelfCharge,
   startCharge,
   stationCharging,
@@ -1976,8 +1977,8 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/stations\/([\w-]+)\/charge-cards\/([^/]+)\/topup$/, async (c, [id, tag]) => topUpCard(c.db, await c.requireUser(), c.actAt, id, tag, c.request)],
   ["GET", /^\/api\/charging\/mine$/, async (c) => myCharges(c.env, await customerUser(c))],
   // Charging by QR code: the outlet's page is readable before signing in.
-  ["GET", /^\/api\/charging\/points\/([\w-]+)$/, async (c, [id]) => chargePointInfo(c.env, await c.user(), id)],
-  ["POST", /^\/api\/charging\/points\/([\w-]+)\/start$/, async (c, [id]) => startSelfCharge(c.env, await customerUser(c), id)],
+  ["GET", /^\/api\/charging\/outlets\/([\w-]+)$/, async (c, [token]) => outletInfo(c.env, await c.user(), token)],
+  ["POST", /^\/api\/charging\/outlets\/([\w-]+)\/start$/, async (c, [token]) => startOutletCharge(c.env, await customerUser(c), token, c.request)],
   ["POST", /^\/api\/charging\/([\w-]+)\/stop$/, async (c, [id]) => stopSelfCharge(c.env, await customerUser(c), id)],
   ["POST", /^\/api\/admin\/charging-points\/([\w-]+)\/qr$/, async (c, [id]) => setQrStart(c.env, await c.requireAdmin(), id, c.request)],
   ["POST", /^\/api\/charging\/([\w-]+)\/pay\/wallet$/, async (c, [id]) => payWithWallet(c.env, await customerUser(c), id, c.request)],
@@ -2322,6 +2323,11 @@ const ROUTES: [string, RegExp, Handler][] = [
       return startOutlet(c.env, device, Number(outlet), admin.id, minutes);
     },
   ],
+  [
+    "POST",
+    /^\/api\/admin\/devices\/([\w:%-]+)\/qr$/,
+    async (c, [device]) => renewOutletQr(c.env, await c.requireAdmin(), normalizeDeviceId(decodeURIComponent(device))),
+  ],
   // Point partners, who own sockets (worker/point-partners.ts)
   [
     "POST",
@@ -2388,7 +2394,7 @@ export const OPEN_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/fleet-invites",
   "GET /api/merchant-invites",
   "GET /api/jobs/mine",
-  "GET /api/charging/points/:id",
+  "GET /api/charging/outlets/:id",
 ]);
 
 /** "GET /api/stations/:id/reviews" for the route's pattern: every capture group reads ":id". */
