@@ -230,6 +230,7 @@ import { notifyUser } from "./notify";
 import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setDriversEnabled, setLiteEnabled, setParcelsEnabled } from "./features";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 import { registerPushToken, removePushToken } from "./push";
+import { webPushKey } from "./web-push";
 import { adminPayouts, decidePayout } from "./trip-payments";
 import { activeServices, decideService, listStationServices, requestService, requireService, setService } from "./services";
 import { customerStation } from "../src/lib/station-services";
@@ -2178,6 +2179,7 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/admin\/driver-payouts$/, (c) => adminPayouts(c)],
   ["POST", /^\/api\/admin\/driver-payouts\/([\w-]+)$/, async (c, [id]) => decidePayout(c, id, await readJson<unknown>(c.request))],
   ["POST", /^\/api\/push\/token$/, async (c) => registerPushToken(c, await readJson<unknown>(c.request))],
+  ["GET", /^\/api\/push\/web-key$/, async (c) => (await c.requireUser(), webPushKey(c.db))],
   ["POST", /^\/api\/push\/token\/remove$/, async (c) => removePushToken(c, await readJson<unknown>(c.request))],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/board$/, (c, [id]) => boardRide(c, id)],
   [

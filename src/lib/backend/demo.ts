@@ -4363,6 +4363,12 @@ export class DemoBackend implements Backend {
   /** The demo runs in the browser: no push notices. */
   async registerPushToken() {}
 
+  async removePushToken() {}
+
+  async webPushKey(): Promise<{ publicKey: string }> {
+    throw new Error("unsupported");
+  }
+
   async reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }) {
     const state = this.load();
     const { driver } = this.demoDriver(state);
