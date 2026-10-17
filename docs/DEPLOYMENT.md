@@ -118,6 +118,8 @@ Eingerichtet: Firebase-Projekt `poinderecharge-app` mit der Android-App `com.poi
 2. Unter **Projekteinstellungen > Dienstkonten** einen neuen privaten Schlüssel erzeugen und den ganzen JSON-Inhalt als Worker-Secret `FCM_SERVICE_ACCOUNT` speichern.
 3. Die App mit `NEXT_PUBLIC_PUSH=1` bauen (zusätzlich zu den Werten oben). Ohne diesen Wert fragt die App nicht nach Push, denn ohne `google-services.json` würde Android beim Registrieren abstürzen.
 
+**Web-App im Browser:** braucht keine Einrichtung und kein Firebase. Wer angemeldet ist, schaltet unter **Paramètres > Notifications sur cet appareil** die Hinweise für diesen Browser ein (Chrome, Edge, Firefox, Safari auf dem Mac; auf dem iPhone nur, wenn die Seite zum Home-Bildschirm hinzugefügt wurde). Der Worker schickt sie über Standard-Web-Push (`worker/web-push.ts`); das Schlüsselpaar dafür legt er beim ersten Aufruf selbst an und speichert es in `app_settings` (`web_push_vapid`). Angezeigt werden sie von `public/push-sw.js`.
+
 ## Rechtliche Seiten
 
 Mentions légales (`/mentions-legales`), CGU (`/cgu`) und Datenschutzerklärung (`/confidentialite`), Französisch verbindlich, Englisch als Übersetzung. Texte in `src/lib/legal/content.ts`. Angaben, die nur die Firma kennt, stehen dort als `[À COMPLÉTER : …]` / `[TO BE COMPLETED: …]` und sind auf der Seite gelb markiert, bis sie ausgefüllt sind.

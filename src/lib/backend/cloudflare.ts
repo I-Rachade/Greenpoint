@@ -367,7 +367,7 @@ export class CloudflareBackend implements Backend {
     // This phone gets no more notices for the account that leaves.
     const token = storedPushToken();
     if (token) {
-      await this.call("POST", "/api/push/token/remove", { token }).catch(() => undefined);
+      await this.removePushToken(token).catch(() => undefined);
       storePushToken(null);
     }
     await this.call("POST", "/api/auth/logout").catch(() => undefined);
@@ -841,8 +841,16 @@ export class CloudflareBackend implements Backend {
   }
 
   // No change notice: other screens of the driver do not depend on it.
-  async registerPushToken(token: string, platform: "android" | "ios") {
+  async registerPushToken(token: string, platform: "android" | "ios" | "web") {
     await this.call("POST", "/api/push/token", { token, platform });
+  }
+
+  async removePushToken(token: string) {
+    await this.call("POST", "/api/push/token/remove", { token });
+  }
+
+  webPushKey() {
+    return this.call<{ publicKey: string }>("GET", "/api/push/web-key");
   }
 
   reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }) {

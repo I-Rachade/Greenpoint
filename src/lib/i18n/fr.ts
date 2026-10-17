@@ -2761,6 +2761,10 @@ export const fr = {
       about: "À propos",
       version: "Version",
       legal: "Informations légales",
+      pushThisDevice: "Notifications sur cet appareil",
+      pushOn: "Activées",
+      pushOff: "Désactivées",
+      pushBlocked: "Bloquées dans le navigateur",
     },
   },
   stationLook: {

@@ -5,6 +5,7 @@ import { hashPin } from "./auth";
 import type { Env } from "./env";
 import { sha256 } from "./http";
 import { fakeD1 } from "./test-d1";
+import { b64url, fromB64url } from "./web-push";
 import type { DeliveryJob, DriverHome } from "../src/lib/drivers";
 import type { FleetView } from "../src/lib/fleet";
 
@@ -176,6 +177,83 @@ describe("push notifications (driver phase 2)", () => {
     await call(env, "kofi", "POST", "/api/driver/queue", { stationId: "st", position: BE });
     await call(env, "yao", "POST", "/api/jobs/courier", COURIER);
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+/** A browser's side of Web Push: its subscription, and how it decrypts what arrives (RFC 8291). */
+async function browser(endpoint: string) {
+  const pair = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"])) as CryptoKeyPair;
+  const uaPublic = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+  const auth = crypto.getRandomValues(new Uint8Array(16));
+  const hkdf = async (salt: Uint8Array, ikm: Uint8Array, info: Uint8Array, n: number) =>
+    new Uint8Array(
+      await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info }, await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]), n * 8),
+    );
+  const enc = new TextEncoder();
+  return {
+    token: JSON.stringify({ endpoint, keys: { p256dh: b64url(uaPublic), auth: b64url(auth) } }),
+    async decrypt(body: Uint8Array) {
+      const salt = body.slice(0, 16);
+      const idLen = body[20];
+      const asPublic = body.slice(21, 21 + idLen);
+      const asKey = await crypto.subtle.importKey("raw", asPublic, { name: "ECDH", namedCurve: "P-256" }, false, []);
+      const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: "ECDH", public: asKey }, pair.privateKey, 256));
+      const ikm = await hkdf(auth, shared, new Uint8Array([...enc.encode("WebPush: info\0"), ...uaPublic, ...asPublic]), 32);
+      const cek = await hkdf(salt, ikm, enc.encode("Content-Encoding: aes128gcm\0"), 16);
+      const nonce = await hkdf(salt, ikm, enc.encode("Content-Encoding: nonce\0"), 12);
+      const aes = await crypto.subtle.importKey("raw", cek, "AES-GCM", false, ["decrypt"]);
+      const plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, aes, body.slice(21 + idLen)));
+      expect(plain[plain.length - 1]).toBe(2);
+      return JSON.parse(new TextDecoder().decode(plain.slice(0, -1)));
+    },
+  };
+}
+
+describe("push notifications in the browser (web app)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("accepts only a real push subscription from a browser", async () => {
+    const { env } = await setup();
+    expect((await call(env, "kofi", "POST", "/api/push/token", { token: "tok-1", platform: "web" })).status).toBe(400);
+    const b = await browser("https://push.example/abc");
+    expect((await call(env, "kofi", "POST", "/api/push/token", { token: b.token, platform: "web" })).status).toBe(200);
+  });
+
+  it("sends the offer to the driver's browser, signed with the app's key, without Firebase", async () => {
+    const { env, db } = await setup();
+    const key = (await call<{ publicKey: string }>(env, "kofi", "GET", "/api/push/web-key")).body.publicKey;
+    // The key is made once and stays.
+    expect((await call<{ publicKey: string }>(env, "ama", "GET", "/api/push/web-key")).body.publicKey).toBe(key);
+    const sent: { url: string; headers: Headers; body: Uint8Array }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        sent.push({ url, headers: new Headers(init.headers), body: new Uint8Array(init.body as Uint8Array) });
+        return new Response(null, { status: url.endsWith("/gone") ? 410 : 201 });
+      }),
+    );
+    const laptop = await browser("https://push.example/laptop");
+    const old = await browser("https://push.example/gone");
+    await call(env, "kofi", "POST", "/api/push/token", { token: laptop.token, platform: "web" });
+    await call(env, "kofi", "POST", "/api/push/token", { token: old.token, platform: "web" });
+    await call(env, "kofi", "POST", "/api/driver/queue", { stationId: "st", position: BE });
+    await call(env, "yao", "POST", "/api/jobs/courier", COURIER);
+
+    const toLaptop = sent.find((x) => x.url === "https://push.example/laptop")!;
+    expect(toLaptop.headers.get("content-encoding")).toBe("aes128gcm");
+    const notice = await laptop.decrypt(toLaptop.body);
+    expect(notice).toMatchObject({ title: "Nouvelle course pour vous", path: "/chauffeur" });
+    expect(notice.body).not.toContain("https://");
+    // VAPID: a JWT for the push service, signed with the key the browser subscribed with.
+    const [, jwt, k] = toLaptop.headers.get("authorization")!.match(/^vapid t=([^,]+), k=(.+)$/)!;
+    expect(k).toBe(key);
+    const [head, claims, signature] = jwt.split(".");
+    expect(JSON.parse(new TextDecoder().decode(fromB64url(claims))).aud).toBe("https://push.example");
+    const pub = await crypto.subtle.importKey("raw", fromB64url(key), { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+    expect(await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, pub, fromB64url(signature), new TextEncoder().encode(`${head}.${claims}`))).toBe(true);
+    // A browser that dropped its subscription is forgotten; no Firebase call without the secret.
+    expect(tokens(db)).toEqual([{ token: laptop.token, user_id: "kofi" }]);
+    expect(sent.some((x) => x.url.includes("googleapis.com"))).toBe(false);
   });
 });
 
