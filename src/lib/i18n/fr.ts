@@ -2827,6 +2827,11 @@ export const fr = {
       showLess: "Moins d'avis",
     },
     admin: {
+      mainActivity: "Activité principale",
+      mainActivityHint: "Ce que la station est d'abord. Elle choisit l'illustration montrée tant que la station n'a pas de photo.",
+      mainActivityAuto: "Automatique",
+      mainActivityPhotosFirst: "La station a des photos : la photo de couverture reste affichée à la place de l'illustration.",
+      mainActivities: { charging: "Recharge", swap: "Échange de batterie", restaurant: "Restaurant", shop: "Boutique" },
       photos: "Photos",
       photosHint: "La première photo sert de couverture dans l'application. JPG, PNG ou WebP, 2 Mo au plus.",
       addPhoto: "Ajouter une photo",

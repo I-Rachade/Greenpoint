@@ -30,6 +30,20 @@ export const AMENITIES: Amenity[] = [
 /** Amenities that make a station a place to rest while the battery charges. */
 export const REST_AMENITIES: Amenity[] = ["seating", "shade", "toilets", "water", "food", "drinks"];
 
+/**
+ * What a station mainly is, set in the backoffice (migration 0044_station_main_activity.sql).
+ * It picks the illustration shown while the station has no photo; null = automatic, from its services.
+ * Some stations are first a restaurant or a shop that also charges or swaps.
+ */
+export type MainActivity = "charging" | "swap" | "restaurant" | "shop";
+
+export const MAIN_ACTIVITIES: MainActivity[] = ["charging", "swap", "restaurant", "shop"];
+
+/** A known main activity, or null (automatic). */
+export function cleanMainActivity(value: unknown): MainActivity | null {
+  return typeof value === "string" && (MAIN_ACTIVITIES as string[]).includes(value) ? (value as MainActivity) : null;
+}
+
 /** Photos a station may have; the first one is the cover. */
 export const MAX_STATION_PHOTOS = 6;
 export const MAX_REVIEW_COMMENT = 500;
@@ -105,8 +119,16 @@ export function starCounts(reviews: readonly { rating: number }[]): number[] {
   return [5, 4, 3, 2, 1].map((n) => reviews.filter((r) => r.rating === n).length);
 }
 
-/** Illustration shown when a station has no photo yet: an electric car when it has a charger for one, else its main service. */
-export function placeholderPhoto(station: { kind: string; id: string; evChargers?: unknown[] }): string {
+/** The station fields that pick its pictures. */
+type PictureFields = { kind: string; id: string; photos?: string[]; evChargers?: unknown[]; mainActivity?: MainActivity | null };
+
+/**
+ * Illustration shown when a station has no photo yet: its main activity when one is set,
+ * else an electric car when it has a charger for one, else its main service.
+ */
+export function placeholderPhoto(station: PictureFields): string {
+  const main = cleanMainActivity(station.mainActivity);
+  if (main) return `/station-photos/${main}.svg`;
   if ((station.evChargers ?? []).length > 0) return "/station-photos/ev.svg";
   if (station.kind === "parcel") return "/station-photos/parcel.svg";
   if (station.kind === "swap") return "/station-photos/swap.svg";
@@ -114,6 +136,6 @@ export function placeholderPhoto(station: { kind: string; id: string; evChargers
   return "/station-photos/hub.svg";
 }
 
-export function stationPhotos(station: { kind: string; id: string; photos?: string[]; evChargers?: unknown[] }): string[] {
+export function stationPhotos(station: PictureFields): string[] {
   return station.photos && station.photos.length > 0 ? station.photos : [placeholderPhoto(station)];
 }

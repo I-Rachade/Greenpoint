@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StationInput, StationView } from "../src/lib/types";
-import type { StationReview } from "../src/lib/station-extras";
+import { placeholderPhoto, stationPhotos, type StationReview } from "../src/lib/station-extras";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { sha256 } from "./http";
@@ -88,6 +88,33 @@ describe("station photos and amenities", () => {
     s = await theStation(env);
     expect(s.photos).toHaveLength(2);
     expect(s.amenities).toEqual(["seating", "toilets"]);
+  });
+});
+
+describe("station main activity", () => {
+  it("saves it with the station, keeps it when left out and goes back to automatic with null", async () => {
+    const { env, station } = await withStation();
+    expect(station.mainActivity).toBeNull();
+    await call(env, ADMIN, "POST", "/api/admin/stations", { id: station.id, input: input({ mainActivity: "restaurant" }) });
+    expect((await theStation(env)).mainActivity).toBe("restaurant");
+    await call(env, ADMIN, "POST", "/api/admin/stations", { id: station.id, input: input({ name: "Maquis du Marché" }) });
+    expect((await theStation(env)).mainActivity).toBe("restaurant");
+    await call(env, ADMIN, "POST", "/api/admin/stations", { id: station.id, input: input({ mainActivity: "casino" as never }) });
+    expect((await theStation(env)).mainActivity).toBeNull();
+    await call(env, ADMIN, "POST", "/api/admin/stations", { id: station.id, input: input({ mainActivity: "shop" }) });
+    await call(env, ADMIN, "POST", "/api/admin/stations", { id: station.id, input: input({ mainActivity: null }) });
+    expect((await theStation(env)).mainActivity).toBeNull();
+  });
+
+  it("picks the illustration while the station has no photo", () => {
+    const swap = { id: "s", kind: "swap" };
+    expect(placeholderPhoto(swap)).toBe("/station-photos/swap.svg");
+    expect(placeholderPhoto({ ...swap, mainActivity: "restaurant" })).toBe("/station-photos/restaurant.svg");
+    expect(placeholderPhoto({ ...swap, mainActivity: "shop", evChargers: [{}] })).toBe("/station-photos/shop.svg");
+    expect(placeholderPhoto({ ...swap, mainActivity: null, evChargers: [{}] })).toBe("/station-photos/ev.svg");
+    expect(placeholderPhoto({ id: "s", kind: "both", mainActivity: "charging" })).toBe("/station-photos/charging.svg");
+    // A real photo still wins.
+    expect(stationPhotos({ ...swap, mainActivity: "shop", photos: ["/p.jpg"] })).toEqual(["/p.jpg"]);
   });
 });
 

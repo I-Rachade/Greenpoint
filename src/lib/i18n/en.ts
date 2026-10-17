@@ -2827,6 +2827,11 @@ export const en: Dictionary = {
       showLess: "Fewer reviews",
     },
     admin: {
+      mainActivity: "Main activity",
+      mainActivityHint: "What the station mainly is. It picks the illustration shown while the station has no photo.",
+      mainActivityAuto: "Automatic",
+      mainActivityPhotosFirst: "The station has photos: its cover photo is shown instead of the illustration.",
+      mainActivities: { charging: "Charging", swap: "Battery swap", restaurant: "Restaurant", shop: "Shop" },
       photos: "Photos",
       photosHint: "The first photo is the cover in the app. JPG, PNG or WebP, 2 MB at most.",
       addPhoto: "Add a photo",
