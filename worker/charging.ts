@@ -22,7 +22,7 @@ import { liveFreePointsSql, onlineSince, startOutlet, stopOutlet } from "./devic
 import type { Env } from "./env";
 import { chargeEarnStatement } from "./greenpoint";
 import { ApiError, nowIso, readJson, uuid } from "./http";
-import { requireService } from "./services";
+import { requireService, serviceActive } from "./services";
 import { mobilePaymentOffered, startChargePayment, type Payment } from "./payments";
 import { walletAccess } from "./wallet";
 import { checkPickupCode, evTargetSql, stillActive, type ReservationRow } from "./reservations";
@@ -276,7 +276,7 @@ export async function hasOpenCharge(db: D1Database, pointId: string): Promise<bo
 
 // Station staff --------------------------------------------------------------------
 
-async function findCustomer(db: D1Database, raw: unknown): Promise<{ id: string } | null> {
+export async function findCustomer(db: D1Database, raw: unknown): Promise<{ id: string } | null> {
   const text = contactFromCode(String(raw ?? ""));
   if (!text) return null;
   const contact = parseContact(text);
@@ -725,17 +725,7 @@ export async function startSelfCharge(env: Env, user: Profile, pointId: string):
   const db = env.DB;
   const p = await loadQrPoint(db, pointId);
   await requireService(db, p.station_id, "charging");
-  // A stopped charge that took no energy has nothing to pay: it is closed, not held against the customer.
-  const { results: empty } = await db
-    .prepare("select id, station_id, user_id from charging_sessions where user_id = ? and status = 'stopped' and energy_wh = 0")
-    .bind(user.id)
-    .all<{ id: string; station_id: string; user_id: string | null }>();
-  for (const e of empty) {
-    await db.batch([
-      db.prepare("update charging_sessions set status = 'cancelled' where id = ? and status = 'stopped' and energy_wh = 0").bind(e.id),
-      auditIfChanged(db, user.id, e, { status: ["stopped", "cancelled"], reason: "no_energy" }),
-    ]);
-  }
+  await closeEmptyCharges(db, user.id);
   const open = await db
     .prepare("select 1 from charging_sessions where user_id = ? and status in ('charging', 'stopped')")
     .bind(user.id)
@@ -753,7 +743,76 @@ export async function startSelfCharge(env: Env, user: Profile, pointId: string):
   });
 }
 
-/** POST /api/charging/:id/stop: the customer ends a charge they started by QR code. */
+/** A stopped charge that took no energy has nothing to pay: it is closed, not held against the customer. */
+async function closeEmptyCharges(db: D1Database, userId: string) {
+  const { results: empty } = await db
+    .prepare("select id, station_id, user_id from charging_sessions where user_id = ? and status = 'stopped' and energy_wh = 0")
+    .bind(userId)
+    .all<{ id: string; station_id: string; user_id: string | null }>();
+  for (const e of empty) {
+    await db.batch([
+      db.prepare("update charging_sessions set status = 'cancelled' where id = ? and status = 'stopped' and energy_wh = 0").bind(e.id),
+      auditIfChanged(db, userId, e, { status: ["stopped", "cancelled"], reason: "no_energy" }),
+    ]);
+  }
+}
+
+// Charging by card ------------------------------------------------------------------------
+
+/**
+ * A registered card started a charge at an OCPP charge point (StartTransaction, after
+ * swipeCard in worker/charge-cards.ts accepted it): opens the card owner's charge on that
+ * outlet as if they had started it by QR code, so it shows in their app, can be stopped
+ * there, and is paid like any other. The charge point already switched on, so nothing is
+ * sent. False when the outlet cannot take it: unknown outlet, station without charging,
+ * outlet reserved for someone else, or a charge already open on it.
+ */
+export async function openCardCharge(db: D1Database, deviceId: string, outlet: number, userId: string, idTag: string): Promise<boolean> {
+  const p = await db
+    .prepare(
+      `select p.id, p.station_id, p.label from charging_points p join stations s on s.id = p.station_id
+        where p.device_id = ? and p.outlet = ? and s.is_active = 1`,
+    )
+    .bind(deviceId, outlet)
+    .first<{ id: string; station_id: string; label: string }>();
+  if (!p || !(await serviceActive(db, p.station_id, "charging"))) return false;
+  const now = nowIso();
+  const held = await db
+    .prepare("select 1 from reservations where kind = 'charging_point' and target = ? and status = 'active' and expires_at > ? and user_id <> ?")
+    .bind(p.id, now, userId)
+    .first();
+  if (held) return false;
+  await closeEmptyCharges(db, userId);
+  const tariff = await stationTariff(db, p.station_id);
+  const id = uuid();
+  try {
+    await db.batch([
+      db
+        .prepare(
+          `insert into charging_sessions (id, station_id, charging_point_id, device_id, outlet, point_label, order_no, user_id, kwh_xof, min_xof, started_by, started_at)
+           values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?8, ?11)`,
+        )
+        .bind(id, p.station_id, p.id, deviceId, outlet, p.label, idTag, userId, tariff.kwhXof, tariff.minXof, now),
+      // Old values of the previous charge must not show as this one's.
+      db.prepare("update charging_points set power_watts = null, energy_wh = null where id = ?").bind(p.id),
+      audit(db, userId, "insert", { id, station_id: p.station_id, user_id: userId }, { point: p.label, customer: userId, tariff, card: idTag }),
+      // The customer's charging reservation here is used now, as in openCharge.
+      db
+        .prepare(
+          `update reservations set status = 'completed', charging_point_id = ?3
+           where id = (select r.id from reservations r where r.user_id = ?1 and r.station_id = ?2 and r.kind = 'charging_point' and r.status = 'active'
+                         and not ${evTargetSql("r")} order by (r.target = ?3) desc, r.created_at limit 1)`,
+        )
+        .bind(userId, p.station_id, p.id),
+    ]);
+  } catch (err) {
+    if (/UNIQUE/i.test(String(err))) return false;
+    throw err;
+  }
+  return true;
+}
+
+/** POST /api/charging/:id/stop: the customer ends a charge they started by QR code or card. */
 export async function stopSelfCharge(env: Env, user: Profile, id: string): Promise<ChargeSession> {
   const s = await ownSession(env, user, id);
   if (s.started_by !== user.id) throw new ApiError("forbidden", 403);

@@ -1,6 +1,7 @@
 import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "../batteries";
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
 import type { AdminCharging, ChargePointInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
+import type { ChargeCard, ChargeCardInput } from "../charge-cards";
 import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { OwnerLive, OwnerReport, ReportPeriod } from "../owner-backoffice";
 import type { EvCharger, EvChargerInput } from "../ev-chargers";
@@ -176,6 +177,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "charge_wrong_status",
   "charge_unpaid",
   "charge_qr_disabled",
+  "card_invalid",
   "point_reserved",
   "service_already_unlocked",
   "service_request_pending",
@@ -1449,5 +1451,21 @@ export class CloudflareBackend implements Backend {
 
   async saveChargeTariff(input: ChargeTariffInput) {
     await this.call("POST", "/api/admin/charging/tariff", input);
+  }
+
+  adminChargeCards() {
+    return this.call<ChargeCard[]>("GET", "/api/admin/charge-cards");
+  }
+
+  async saveChargeCard(input: ChargeCardInput) {
+    await this.call("POST", "/api/admin/charge-cards", input);
+  }
+
+  async setChargeCardBlocked(idTag: string, blocked: boolean) {
+    await this.call("POST", `/api/admin/charge-cards/${encodeURIComponent(idTag)}/block`, { blocked });
+  }
+
+  async deleteChargeCard(idTag: string) {
+    await this.call("DELETE", `/api/admin/charge-cards/${encodeURIComponent(idTag)}`);
   }
 }

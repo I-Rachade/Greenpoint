@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { deleteChargeCard, listChargeCards, saveChargeCard, setChargeCardBlocked } from "./charge-cards";
 import { startSelfCharge, stopSelfCharge } from "./charging";
 import { createDevice, startOutlet, stopOutlet } from "./devices";
 import type { Env } from "./env";
@@ -343,5 +344,74 @@ describe("OCPP charges by QR code", () => {
     expect(start.idTagInfo.status).toBe("Accepted");
     await handleOcppCall(d1, ID, "StopTransaction", { transactionId: start.transactionId, meterStop: 1400, timestamp: new Date().toISOString() });
     expect(sessions(db)).toEqual([{ status: "stopped", energy_wh: 400 }]);
+  });
+});
+
+describe("OCPP charges by card", () => {
+  const ADMIN = { id: "admin", phone: "+22890000001", email: null, fullName: "Admin", role: "admin" } as const;
+  const KOFI = { id: "kofi", phone: "+22896123456", email: null, fullName: "Kofi", role: "customer" } as const;
+  const CARD = "04A3F21B7C";
+
+  async function withCard() {
+    const s = await setup();
+    const now = new Date().toISOString();
+    s.db.exec(`insert into users (id, phone, full_name, role, created_at) values ('kofi', '${KOFI.phone}', 'Kofi', 'rider', '${now}');`);
+    await handleOcppCall(s.d1, ID, "BootNotification", { chargePointVendor: "V", chargePointModel: "M" });
+    await handleOcppCall(s.d1, ID, "StatusNotification", { connectorId: 1, status: "Available", errorCode: "NoError" });
+    await handleOcppCall(s.d1, ID, "StatusNotification", { connectorId: 2, status: "Available", errorCode: "NoError" });
+    return s;
+  }
+  const link = (d1: D1Database, idTag: string, contact = KOFI.phone) =>
+    saveChargeCard(d1, ADMIN, new Request("https://x", { method: "POST", body: JSON.stringify({ idTag, contact, label: "Kofi" }) }));
+  const start = (d1: D1Database, idTag: string, connectorId = 1) =>
+    handleOcppCall(d1, ID, "StartTransaction", { connectorId, idTag, meterStart: 5000, timestamp: new Date().toISOString() }) as Promise<{
+      transactionId: number;
+      idTagInfo: { status: string };
+    }>;
+  const sessions = (db: ReturnType<typeof fakeD1>["db"]) => db.prepare("select user_id, status, energy_wh, order_no from charging_sessions order by started_at").all();
+
+  it("list a card nobody registered after its first swipe, and refuse it", async () => {
+    const { db, d1 } = await withCard();
+    expect(await handleOcppCall(d1, ID, "Authorize", { idTag: "04:a3:f2:1b:7c" })).toEqual({ idTagInfo: { status: "Invalid" } });
+    expect((await start(d1, CARD)).idTagInfo.status).toBe("Invalid");
+    const cards = await listChargeCards(d1);
+    expect(cards).toEqual([expect.objectContaining({ idTag: CARD, customer: null, lastDevice: ID })]);
+    expect(sessions(db)).toEqual([]);
+  });
+
+  it("charge a registered card to its customer, who pays it like any charge", async () => {
+    const { db, d1 } = await withCard();
+    await link(d1, "04 a3 f2 1b 7c");
+    expect(await handleOcppCall(d1, ID, "Authorize", { idTag: CARD })).toEqual({ idTagInfo: { status: "Accepted" } });
+    const tx = await start(d1, CARD);
+    expect(tx.idTagInfo.status).toBe("Accepted");
+    expect(sessions(db)).toEqual([{ user_id: "kofi", status: "charging", energy_wh: 0, order_no: CARD }]);
+    expect(points(db)[0]).toMatchObject({ status: "charging" });
+    // A second card swipe while it runs is refused.
+    expect(await handleOcppCall(d1, ID, "Authorize", { idTag: CARD })).toEqual({ idTagInfo: { status: "ConcurrentTx" } });
+    await handleOcppCall(d1, ID, "StopTransaction", { transactionId: tx.transactionId, meterStop: 6500, timestamp: new Date().toISOString(), reason: "Local" });
+    expect(sessions(db)).toEqual([{ user_id: "kofi", status: "stopped", energy_wh: 1500, order_no: CARD }]);
+    // Not paid yet: the card waits until it is.
+    expect(await handleOcppCall(d1, ID, "Authorize", { idTag: CARD })).toEqual({ idTagInfo: { status: "Blocked" } });
+    expect((await start(d1, CARD, 2)).idTagInfo.status).toBe("Blocked");
+  });
+
+  it("refuse a blocked card, and one whose outlet is taken", async () => {
+    const { db, d1 } = await withCard();
+    await link(d1, CARD);
+    db.prepare("insert into users (id, phone, full_name, role, created_at) values ('ama', '+22896000000', 'Ama', 'rider', ?)").run(new Date().toISOString());
+    await link(d1, "CARD2", "+22896000000");
+    expect((await start(d1, "CARD2", 1)).idTagInfo.status).toBe("Accepted");
+    expect((await start(d1, CARD, 1)).idTagInfo.status).toBe("Invalid");
+    await setChargeCardBlocked(d1, ADMIN, CARD, new Request("https://x", { method: "POST", body: JSON.stringify({ blocked: true }) }));
+    expect((await start(d1, CARD, 2)).idTagInfo.status).toBe("Blocked");
+    expect(db.prepare("select count(*) n from charging_sessions where user_id = 'kofi'").get()).toEqual({ n: 0 });
+  });
+
+  it("refuse to register our own remote start tags or an unknown customer", async () => {
+    const { d1 } = await withCard();
+    await expect(link(d1, "PDR123")).rejects.toMatchObject({ code: "card_invalid" });
+    await expect(link(d1, CARD, "+22899999999")).rejects.toMatchObject({ code: "recipient_not_found" });
+    await expect(deleteChargeCard(d1, ADMIN, CARD)).rejects.toMatchObject({ code: "not_found" });
   });
 });

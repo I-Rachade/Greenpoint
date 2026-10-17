@@ -80,6 +80,7 @@ import {
   type ChargeTariffInput,
   type StationCharging,
 } from "../charging";
+import { cleanCardTag, sortCards, type ChargeCard, type ChargeCardInput } from "../charge-cards";
 import {
   DEMO_CHARGING_POINTS,
   DEMO_OPERATORS,
@@ -432,6 +433,8 @@ interface DemoState {
   charges?: DemoCharge[];
   chargeTariff?: ChargeTariff;
   stationTariffs?: Record<string, { kwhXof: number | null; minXof: number | null }>;
+  /** Charging cards (missing = one card swiped at a socket, not linked yet). */
+  chargeCards?: DemoChargeCard[];
   /** Service unlock per station (as table station_services; filled in by withServiceRows). */
   stationServices?: DemoServiceRow[];
   /** Counter events, newest first (as table battery_events). */
@@ -7703,6 +7706,71 @@ export class DemoBackend implements Backend {
     }
     this.save({ ...state, stationTariffs: { ...state.stationTariffs, [input.stationId]: { kwhXof: input.kwhXof, minXof: input.minXof } } });
   }
+  async adminChargeCards(): Promise<ChargeCard[]> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const users = state.users ?? demoUsers(new Date());
+    return sortCards(
+      (state.chargeCards ?? seedChargeCards()).map((c) => {
+        const u = c.userId ? users.find((x) => x.id === c.userId) : undefined;
+        return {
+          idTag: c.idTag,
+          label: c.label,
+          blocked: c.blocked,
+          customer: u ? { id: u.id, fullName: u.fullName, phone: u.phone, email: u.email } : null,
+          createdAt: c.createdAt,
+          lastSwipedAt: c.lastSwipedAt,
+          lastDevice: c.lastDevice,
+        };
+      }),
+    );
+  }
+
+  async saveChargeCard(input: ChargeCardInput): Promise<void> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const idTag = cleanCardTag(input.idTag);
+    if (!idTag) throw new BackendError("card_invalid");
+    const user = this.findWalletUser(state, input.contact);
+    const label = input.label?.trim().slice(0, 60) || null;
+    const cards = state.chargeCards ?? seedChargeCards();
+    const known = cards.some((c) => c.idTag === idTag);
+    const chargeCards = known
+      ? cards.map((c) => (c.idTag === idTag ? { ...c, userId: user.id, label } : c))
+      : [...cards, { idTag, userId: user.id, label, blocked: false, createdAt: new Date().toISOString(), lastSwipedAt: null, lastDevice: null }];
+    this.save({ ...state, chargeCards });
+  }
+
+  async setChargeCardBlocked(idTag: string, blocked: boolean): Promise<void> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const cards = state.chargeCards ?? seedChargeCards();
+    if (!cards.some((c) => c.idTag === idTag)) throw new BackendError("unknown", "not_found");
+    this.save({ ...state, chargeCards: cards.map((c) => (c.idTag === idTag ? { ...c, blocked } : c)) });
+  }
+
+  async deleteChargeCard(idTag: string): Promise<void> {
+    const state = this.load();
+    this.requireAdmin(state);
+    this.save({ ...state, chargeCards: (state.chargeCards ?? seedChargeCards()).filter((c) => c.idTag !== idTag) });
+  }
+
+}
+
+interface DemoChargeCard {
+  idTag: string;
+  userId: string | null;
+  label: string | null;
+  blocked: boolean;
+  createdAt: string;
+  lastSwipedAt: string | null;
+  lastDevice: string | null;
+}
+
+/** A card someone swiped at a socket a few minutes ago, waiting to be linked to a customer. */
+function seedChargeCards(): DemoChargeCard[] {
+  const swiped = new Date(Date.now() - 4 * 60_000).toISOString();
+  return [{ idTag: "04A3F21B7C", userId: null, label: null, blocked: false, createdAt: swiped, lastSwipedAt: swiped, lastDevice: "820008" }];
 }
 
 /** What the app sees of a stored counter event (without request id, station and person id). */

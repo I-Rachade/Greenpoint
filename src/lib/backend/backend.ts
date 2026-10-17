@@ -1,6 +1,7 @@
 import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "../batteries";
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
 import type { AdminCharging, ChargePointInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
+import type { ChargeCard, ChargeCardInput } from "../charge-cards";
 import type {
   Operator,
   VehicleType,
@@ -195,6 +196,7 @@ export type BackendErrorCode =
   | "charge_wrong_status"
   | "charge_unpaid"
   | "charge_qr_disabled"
+  | "card_invalid"
   | "point_reserved"
   | "service_already_unlocked"
   | "service_request_pending"
@@ -730,4 +732,11 @@ export interface Backend {
   adminCharging(): Promise<AdminCharging>;
   /** The network default (`stationId` null) or a station's own price (null values = default). */
   saveChargeTariff(input: ChargeTariffInput): Promise<void>;
+  /** Backoffice: charging cards, the ones swiped but not linked to a customer yet first (admins only). */
+  adminChargeCards(): Promise<ChargeCard[]>;
+  /** Links a card to the customer with this phone number or e-mail address, adding it if needed. */
+  saveChargeCard(input: ChargeCardInput): Promise<void>;
+  /** A blocked card no longer starts charges. */
+  setChargeCardBlocked(idTag: string, blocked: boolean): Promise<void>;
+  deleteChargeCard(idTag: string): Promise<void>;
 }

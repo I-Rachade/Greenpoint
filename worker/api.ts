@@ -267,6 +267,7 @@ import {
   stationCharging,
   stopCharge,
 } from "./charging";
+import { deleteChargeCard, listChargeCards, saveChargeCard, setChargeCardBlocked } from "./charge-cards";
 
 // Rows as stored in D1 (snake_case, booleans as 0/1, JSON as text).
 
@@ -1983,6 +1984,14 @@ const ROUTES: [string, RegExp, Handler][] = [
     return adminCharging(c.env);
   }],
   ["POST", /^\/api\/admin\/charging\/tariff$/, async (c) => saveChargeTariff(c.env, await c.requireAdmin(), c.request)],
+  // Charging cards (worker/charge-cards.ts); a card number is up to 20 printable characters.
+  ["GET", /^\/api\/admin\/charge-cards$/, async (c) => {
+    await c.requireAdmin();
+    return listChargeCards(c.db);
+  }],
+  ["POST", /^\/api\/admin\/charge-cards$/, async (c) => saveChargeCard(c.db, await c.requireAdmin(), c.request)],
+  ["POST", /^\/api\/admin\/charge-cards\/([^/]+)\/block$/, async (c, [tag]) => setChargeCardBlocked(c.db, await c.requireAdmin(), tag, c.request)],
+  ["DELETE", /^\/api\/admin\/charge-cards\/([^/]+)$/, async (c, [tag]) => deleteChargeCard(c.db, await c.requireAdmin(), tag)],
   ["GET", /^\/api\/admin\/greenpoint$/, async (c) => {
     await c.requireAdmin();
     return adminGreenpoint(c.env);

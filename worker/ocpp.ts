@@ -19,7 +19,8 @@ import {
   type OcppErrorFrame,
   type OcppResult,
 } from "../src/lib/iot/ocpp";
-import { cancelRefusedStart } from "./charging";
+import { swipeCard } from "./charge-cards";
+import { cancelRefusedStart, openCardCharge } from "./charging";
 import { ingest, recountFreeSlots } from "./devices";
 import type { Env } from "./env";
 import { ApiError, nowIso, sha256 } from "./http";
@@ -47,7 +48,7 @@ function int(value: unknown, what: string): number {
  * connector it was sent for, and only while nothing came after it: no newer command for
  * that outlet, and the charge it was sent for (if any) still running. A charge point that
  * remembers a start after the customer stopped, or any made-up "PDR…" tag, is refused.
- * There are no customer cards yet.
+ * Any other tag is a swiped card (swipeCard in worker/charge-cards.ts).
  */
 async function tagStatus(db: D1Database, externalId: string, idTag: string, connectorId?: number): Promise<"Accepted" | "Invalid"> {
   if (!idTag.startsWith(OCPP_TAG_PREFIX)) return "Invalid";
@@ -65,6 +66,9 @@ async function tagStatus(db: D1Database, externalId: string, idTag: string, conn
     .first();
   return ours ? "Accepted" : "Invalid";
 }
+
+/** Our remote start tags; case does not matter in OCPP. */
+const isOurTag = (idTag: string) => idTag.toUpperCase().startsWith(OCPP_TAG_PREFIX);
 
 /** The charge's start reading, by transactionId or else the connector's open charge. */
 async function meterStart(db: D1Database, externalId: string, connectorId: number, transactionId: unknown) {
@@ -104,14 +108,24 @@ export async function handleOcppCall(db: D1Database, externalId: string, action:
       await apply(externalId, toIngestOutlets({ externalId, outlets: effect.outlets }), payload, { allOutlets: effect.allOutlets });
       return {};
     }
-    case "Authorize":
-      return { idTagInfo: { status: await tagStatus(db, externalId, str(payload.idTag, "idTag")) } };
+    case "Authorize": {
+      const idTag = str(payload.idTag, "idTag");
+      const status = isOurTag(idTag) ? await tagStatus(db, externalId, idTag) : (await swipeCard(db, externalId, idTag)).status;
+      return { idTagInfo: { status } };
+    }
     case "StartTransaction": {
       const connectorId = int(payload.connectorId, "connectorId");
       const idTag = str(payload.idTag, "idTag");
       const start = int(payload.meterStart, "meterStart");
       if (connectorId < 1) throw new OcppCallError("PropertyConstraintViolation", "connectorId");
-      const status = await tagStatus(db, externalId, idTag, connectorId);
+      let status: string;
+      if (isOurTag(idTag)) {
+        status = await tagStatus(db, externalId, idTag, connectorId);
+      } else {
+        // A swiped card: its customer's charge opens on this outlet, or the card is refused.
+        const card = await swipeCard(db, externalId, idTag);
+        status = card.status === "Accepted" && !(await openCardCharge(db, externalId, connectorId, card.userId!, idTag.slice(0, 20))) ? "Invalid" : card.status;
+      }
       // Every start gets a transactionId, also a refused one; the charge point then stops it.
       const tx = await db
         .prepare("insert into ocpp_transactions (external_id, connector_id, id_tag, meter_start, started_at) values (?, ?, ?, ?, ?) returning id")
