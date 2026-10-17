@@ -1761,9 +1761,14 @@ export class DemoBackend implements Backend {
       amount = price;
     } else {
       payment = "cash";
-      const raw = input.amountXof ?? price ?? 0;
-      if (!validAmount(raw)) throw new BackendError("invalid_amount");
-      amount = raw;
+      if (type === "first_purchase") {
+        const raw = input.amountXof ?? 0;
+        if (!validAmount(raw)) throw new BackendError("invalid_amount");
+        amount = raw;
+      } else {
+        if (!price) throw new BackendError("swap_price_missing");
+        amount = price;
+      }
     }
 
     if (!reservation) {
