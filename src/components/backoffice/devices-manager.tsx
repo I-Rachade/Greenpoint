@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
-import { pointQrUrl } from "@/lib/charging";
+import { boxQrUrl } from "@/lib/charging";
 import { displayStatus } from "@/lib/iot/charging-points";
 import { canSwitch, DEVICE_LINKS, MAX_OUTLETS, type DeviceInput } from "@/lib/iot/devices";
 import { useErrorMessage, useLiveQuery, useNow, useRelativeTime } from "@/lib/hooks";
@@ -187,29 +187,49 @@ export function DevicesManager() {
                             />
                             {b.qrStart}
                           </label>
-                          {p.qrStart && (
-                            <button
-                              type="button"
-                              onClick={() => setQrShown(qrShown === p.id ? null : p.id)}
-                              aria-expanded={qrShown === p.id}
-                              className="text-gp-green-dark hover:underline"
-                            >
-                              {qrShown === p.id ? b.qrHide : b.qrShow}
-                            </button>
-                          )}
                         </div>
                         {!switchable && <p className="text-xs text-zinc-500">{b.qrNotSwitchable}</p>}
-                        {p.qrStart && qrShown === p.id && (
-                          <div className="flex flex-col items-center gap-1 pt-1">
-                            <QrImage text={pointQrUrl(qrOrigin(), p.id)} label={`${b.qrStart} ${p.label}`} size={200} />
-                            <div className="font-mono font-semibold">{p.label}</div>
-                            <p className="text-center text-xs text-zinc-500">{format(b.qrPrint, { label: p.label })}</p>
-                          </div>
-                        )}
                       </li>
                     );
                   })}
                 </ul>
+                {/* One sticker for the whole box: the customer picks the outlet in the app. */}
+                {d.qrToken && d.points.some((p) => p.qrStart) && (
+                  <div className="space-y-2 border-t border-black/10 pt-2 text-sm dark:border-white/10">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-medium">{b.qrBox}</span>
+                      <span className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setQrShown(qrShown === d.externalId ? null : d.externalId)}
+                          aria-expanded={qrShown === d.externalId}
+                          className="text-gp-green-dark hover:underline"
+                        >
+                          {qrShown === d.externalId ? b.qrHide : b.qrShow}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm(format(b.qrRenewConfirm, { id: d.externalId }))) {
+                              run(() => backend.renewBoxQr(d.externalId).then(() => undefined), format(b.qrRenewed, { id: d.externalId }));
+                            }
+                          }}
+                          className="text-zinc-600 hover:underline dark:text-zinc-300"
+                        >
+                          {b.qrRenew}
+                        </button>
+                      </span>
+                    </div>
+                    {qrShown === d.externalId && (
+                      <div className="flex flex-col items-center gap-1 pt-1">
+                        <QrImage text={boxQrUrl(qrOrigin(), d.qrToken)} label={`${b.qrBox} ${d.externalId}`} size={200} />
+                        <div className="text-xs text-zinc-500">{idx.stationName(d.stationId)}</div>
+                        <div className="font-mono font-semibold">{format(t.charging.qr.box, { label: d.externalId.slice(-4) })}</div>
+                        <p className="text-center text-xs text-zinc-500">{format(b.qrBoxPrint, { n: d.points.length })}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </li>
             );
           })}
@@ -219,7 +239,7 @@ export function DevicesManager() {
   );
 }
 
-/** The site the outlet's QR code opens: this one in a browser, the public app inside the native app. */
+/** The site the box's QR code opens: this one in a browser, the public app inside the native app. */
 function qrOrigin(): string {
   return window.location.protocol.startsWith("http") ? window.location.origin : "https://app.poinderecharge.com";
 }

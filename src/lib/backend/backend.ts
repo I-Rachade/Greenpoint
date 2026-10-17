@@ -1,6 +1,6 @@
 import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "../batteries";
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
-import type { AdminCharging, ChargePointInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
+import type { AdminCharging, ChargeOutletInfo, ChargePointInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
 import type { ChargeCard, ChargeCardInput, CounterCard } from "../charge-cards";
 import type {
   Operator,
@@ -425,6 +425,8 @@ export interface Backend {
   switchOutlet(externalId: string, outlet: number, on: boolean): Promise<void>;
   /** Allows or forbids customers to start a charge at this outlet by scanning its QR code. */
   setQrStart(pointId: string, enabled: boolean): Promise<void>;
+  /** A new QR code for the box; the old sticker stops working. Returns the new token. */
+  renewBoxQr(externalId: string): Promise<string>;
   /** Gives the socket to a point partner, or back to poinderecharge (`null`). */
   setDevicePartner(externalId: string, partnerId: string | null): Promise<void>;
 
@@ -723,6 +725,10 @@ export interface Backend {
   chargePoint(pointId: string): Promise<ChargePointInfo>;
   /** The customer switches the outlet on after scanning its QR code (where the backoffice allows it). */
   startSelfCharge(pointId: string): Promise<ChargeSession>;
+  /** The socket box behind a scanned QR code: station, price and each outlet with whether it can start now (no sign-in needed). */
+  chargeOutlet(token: string): Promise<ChargeOutletInfo>;
+  /** The customer starts the outlet they picked on the scanned box (same checks as startSelfCharge). */
+  startOutletCharge(token: string, pointId: string): Promise<ChargeSession>;
   /** The customer switches off a charge they started by QR code; the price is then final. */
   stopSelfCharge(id: string): Promise<ChargeSession>;
   /** Pays a stopped charge from the wallet; the PIN is checked on the server. */

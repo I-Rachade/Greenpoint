@@ -1,6 +1,6 @@
 import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "../batteries";
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
-import type { AdminCharging, ChargePointInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
+import type { AdminCharging, ChargeOutletInfo, ChargePointInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
 import type { ChargeCard, ChargeCardInput, CounterCard } from "../charge-cards";
 import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { OwnerLive, OwnerReport, ReportPeriod } from "../owner-backoffice";
@@ -1419,6 +1419,21 @@ export class CloudflareBackend implements Backend {
 
   chargePoint(pointId: string) {
     return this.call<ChargePointInfo>("GET", `/api/charging/points/${encodeURIComponent(pointId)}`);
+  }
+
+  chargeOutlet(token: string) {
+    return this.call<ChargeOutletInfo>("GET", `/api/charging/outlets/${encodeURIComponent(token)}`);
+  }
+
+  async startOutletCharge(token: string, pointId: string) {
+    const s = await this.call<ChargeSession>("POST", `/api/charging/outlets/${encodeURIComponent(token)}/start`, { pointId });
+    this.changed();
+    return s;
+  }
+
+  async renewBoxQr(externalId: string) {
+    const { qrToken } = await this.call<{ qrToken: string }>("POST", `/api/admin/devices/${encodeURIComponent(externalId)}/qr`, {});
+    return qrToken;
   }
 
   async startSelfCharge(pointId: string) {

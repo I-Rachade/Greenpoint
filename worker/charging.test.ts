@@ -407,3 +407,117 @@ describe("charging by QR code", () => {
     expect((await selfStart(env, "p1")).data.error).toBe("service_not_offered");
   });
 });
+
+describe("one QR code per socket box", () => {
+  const BOX = "0123456789abcdef0123456789abcdef";
+  const OTHER = "fedcba9876543210fedcba9876543210";
+  type Box = { label: string; stationName: string; outlets: { pointId: string; label: string; outlet: number; state: string; yours?: boolean }[]; error?: string };
+  const box = (env: Env, token = BOX, who = "kofi") => api<Box>(env, who, "GET", `/api/charging/outlets/${token}`);
+  const startAt = (env: Env, pointId: string, token = BOX, who = "kofi") =>
+    api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/outlets/${token}/start`, { pointId });
+  const allow = (env: Env, point: string) => api(env, "admin", "POST", `/api/admin/charging-points/${point}/qr`, { enabled: true });
+  async function boxes() {
+    const t = await setup();
+    t.db.exec(`update devices set qr_token = '${BOX}' where external_id = '123456'; update devices set qr_token = '${OTHER}' where external_id = '654321';`);
+    await allow(t.env, "p1");
+    await allow(t.env, "p2");
+    await allow(t.env, "q1");
+    return t;
+  }
+
+  it("lists every outlet of the box with whether it can start, before signing in and without anyone's name", async () => {
+    const { db, env } = await boxes();
+    db.exec("update charging_points set qr_start = 0 where id = 'p2'");
+    const anonymous = await handleApi(new Request(`https://app.poinderecharge.com/api/charging/outlets/${BOX}`), env);
+    const data = (await anonymous.json()) as Box;
+    expect(data).toMatchObject({ label: "3456", stationName: "Bè" });
+    expect(data.outlets).toEqual([
+      { pointId: "p1", label: "3456-1", outlet: 1, state: "free" },
+      { pointId: "p2", label: "3456-2", outlet: 2, state: "disabled" },
+    ]);
+    expect(JSON.stringify(data)).not.toContain("123456");
+    // Unknown or malformed tokens look the same: nothing to find.
+    expect((await box(env, "ffffffffffffffffffffffffffffffff")).status).toBe(404);
+    expect((await box(env, "123456")).status).toBe(404);
+  });
+
+  it("starts only the outlet picked, and only on the scanned box", async () => {
+    const { db, env } = await boxes();
+    // An outlet of another box, or a disabled one, cannot be started through this code.
+    expect((await startAt(env, "q1")).status).toBe(404);
+    db.exec("update charging_points set qr_start = 0 where id = 'p2'");
+    expect((await startAt(env, "p2")).data.error).toBe("charge_qr_disabled");
+    const started = await startAt(env, "p1");
+    expect(started.data).toMatchObject({ status: "charging", pointLabel: "3456-1", selfStarted: true });
+    expect(db.prepare("select kind, outlet from device_commands").get()).toEqual({ kind: "start", outlet: 1 });
+    // In use for the next customer, who cannot pick it.
+    expect((await box(env, BOX, "admin")).data.outlets[0].state).toBe("busy");
+    expect((await startAt(env, "p1", BOX, "admin")).data.error).toBe("charge_busy");
+  });
+
+  it("marks outlets reserved by others, and the customer's own reservation", async () => {
+    const { db, env } = await boxes();
+    const now = new Date().toISOString();
+    const later = new Date(Date.now() + 600_000).toISOString();
+    db.exec(`insert into reservations (id, user_id, station_id, type, kind, target, status, created_at, expires_at, pickup_code)
+             values ('r-admin', 'admin', 'st', 'slot', 'charging_point', 'p1', 'active', '${now}', '${later}', '1234')`);
+    expect((await box(env)).data.outlets.map((o) => [o.state, o.yours])).toEqual([
+      ["reserved", undefined],
+      ["free", undefined],
+    ]);
+    expect((await startAt(env, "p1")).data.error).toBe("point_reserved");
+    expect((await box(env, BOX, "admin")).data.outlets[0]).toMatchObject({ state: "free", yours: true });
+  });
+
+  // Two starts sent at once both pass the early "no open charge" read before either writes:
+  // here that read is made to miss, as it would for the second request.
+  function racing(env: Env): Env {
+    const d1 = env.DB;
+    const miss = { first: async () => null };
+    const DB = new Proxy(d1, {
+      get(target, key) {
+        if (key === "prepare") {
+          return (sql: string) => (/^select 1 from charging_sessions where user_id = \? and status in/.test(sql) ? { bind: () => miss } : target.prepare(sql));
+        }
+        const v = Reflect.get(target, key);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    return { ...env, DB } as Env;
+  }
+
+  it("starts one charge only when the customer sends two starts at once", async () => {
+    const { db, env } = await boxes();
+    expect((await startAt(env, "p1")).status).toBe(200);
+    const second = await startAt(racing(env), "p2");
+    expect(second).toMatchObject({ status: 409, data: { error: "charge_unpaid" } });
+    expect(db.prepare("select count(*) as n from charging_sessions where user_id = 'kofi'").get()).toEqual({ n: 1 });
+    expect(db.prepare("select count(*) as n from device_commands").get()).toEqual({ n: 1 });
+  });
+
+  it("does not use up the customer's reservation when the start is refused", async () => {
+    const { db, env } = await boxes();
+    expect((await startAt(env, "p1")).status).toBe(200);
+    const now = new Date().toISOString();
+    const later = new Date(Date.now() + 600_000).toISOString();
+    db.exec(`insert into reservations (id, user_id, station_id, type, kind, target, status, created_at, expires_at, pickup_code)
+             values ('r-kofi', 'kofi', 'st', 'slot', 'charging_point', 'p2', 'active', '${now}', '${later}', '4321')`);
+    expect((await startAt(racing(env), "p2")).status).toBe(409);
+    expect(db.prepare("select status from reservations where id = 'r-kofi'").get()).toEqual({ status: "active" });
+  });
+
+  it("gives new boxes a code and lets only an admin renew it, which voids the old sticker", async () => {
+    const { db, env } = await boxes();
+    expect((await api(env, "staff", "POST", "/api/admin/devices/123456/qr", {})).status).toBe(403);
+    const renewed = await api<{ qrToken: string }>(env, "admin", "POST", "/api/admin/devices/123456/qr", {});
+    expect(renewed.data.qrToken).toMatch(/^[0-9a-f]{32}$/);
+    expect((await box(env)).status).toBe(404);
+    expect((await box(env, renewed.data.qrToken)).data.outlets).toHaveLength(2);
+    expect(db.prepare("select changes from audit_log where table_name = 'devices'").get()).toEqual({ changes: '{"qr_token":"renewed"}' });
+
+    await api(env, "admin", "POST", "/api/admin/devices", { externalId: "a1b2c3d4e5f60708", stationId: "st", outlets: 3 });
+    const fresh = db.prepare("select qr_token from devices where external_id = 'A1B2C3D4E5F60708'").get() as { qr_token: string } | undefined;
+    expect(fresh?.qr_token).toMatch(/^[0-9a-f]{32}$/);
+    expect(fresh?.qr_token).not.toBe(renewed.data.qrToken);
+  });
+});

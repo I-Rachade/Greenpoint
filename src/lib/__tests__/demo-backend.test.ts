@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
 import { reservableOutlets, reservableTypes } from "../reservations";
-import { pointIdFromCode, pointQrUrl } from "../charging";
+import { boxQrUrl, chargeCodeTarget, pointIdFromCode, pointQrUrl } from "../charging";
 
 // Runs without a browser: the demo falls back to in-memory storage.
 const STATION = "st-grand-marche"; // open around the clock in the demo data
@@ -555,6 +555,38 @@ describe("outlet QR codes", () => {
     expect(pointIdFromCode("https://app.poinderecharge.com/recharge/?p=cp-DEMO:01-2")).toBe("cp-DEMO:01-2");
     expect(pointIdFromCode("poinderecharge:id:+22890123456")).toBeNull();
     expect(pointIdFromCode("https://example.com/station?p=x")).toBeNull();
+  });
+
+  it("link one code to the whole box, and older per-outlet stickers still read", () => {
+    const token = "0123456789abcdef0123456789abcdef";
+    const url = boxQrUrl("https://app.poinderecharge.com/", token);
+    expect(url).toBe(`https://app.poinderecharge.com/recharge?o=${token}`);
+    expect(chargeCodeTarget(url)).toEqual({ box: token });
+    expect(chargeCodeTarget(url.toUpperCase().replace("HTTPS://APP.POINDERECHARGE.COM/RECHARGE?O=", "https://app.poinderecharge.com/recharge?o="))).toEqual({ box: token });
+    expect(chargeCodeTarget(pointQrUrl("https://app.poinderecharge.com", "p1"))).toEqual({ point: "p1" });
+    expect(chargeCodeTarget("https://app.poinderecharge.com/recharge?o=DEVEUI123")).toBeNull();
+    expect(chargeCodeTarget("https://example.com/pay?o=" + token)).toBeNull();
+  });
+
+  it("lets the customer pick a free outlet of the scanned box", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890999999", DEMO_CODE, "2580", "admin");
+    const device = (await backend.listDevices()).find((d) => d.externalId === "DEMO-UL01")!;
+    for (const p of device.points) await backend.setQrStart(p.id, true);
+    const token = device.qrToken!;
+    const info = await backend.chargeOutlet(token);
+    expect(info.outlets.map((o) => o.outlet)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    await backend.register("+22890123456", DEMO_CODE, "2580", "customer");
+    const first = info.outlets.find((o) => o.state === "free")!;
+    await backend.startOutletCharge(token, first.pointId);
+    expect((await backend.chargeOutlet(token)).outlets.find((o) => o.pointId === first.pointId)?.state).toBe("busy");
+    // Only outlets of this box can be started with its code.
+    await expect(backend.startOutletCharge(token, "cp-not-here")).rejects.toMatchObject({ code: "unknown" });
+
+    await backend.register("+22890999999", DEMO_CODE, "2580", "admin");
+    const renewed = await backend.renewBoxQr("DEMO-UL01");
+    expect(renewed).not.toBe(token);
+    await expect(backend.chargeOutlet(token)).rejects.toBeDefined();
   });
 });
 

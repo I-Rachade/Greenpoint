@@ -75,8 +75,9 @@ export interface ChargeSession {
   card?: string;
 }
 
-// Charging by QR code: a sticker on each outlet links to /recharge?p=<charging point id>; the
-// customer starts the charge in the app where an admin allowed it (charging_points.qr_start).
+// Charging by QR code: one sticker per socket box links to /recharge?o=<token>; the customer
+// picks a free outlet of the box and starts the charge in the app where an admin allowed it
+// (charging_points.qr_start). Older stickers name one outlet: /recharge?p=<charging point id>.
 
 /** What the outlet's page shows: "free" can be started now, the rest say why not. */
 export type ChargePointState = "free" | "busy" | "reserved" | "offline" | "fault" | "disabled";
@@ -90,9 +91,53 @@ export interface ChargePointInfo {
   tariff: ChargeTariff;
 }
 
-const POINT_PATH = "/recharge";
+/** One outlet of the box behind a scanned QR code, as the picker shows it. */
+export interface ChargeOutletSocket {
+  pointId: string;
+  label: string;
+  outlet: number;
+  state: ChargePointState;
+  /** The signed-in customer's own reservation holds this outlet: it is free for them. */
+  yours?: boolean;
+}
 
-/** The link printed as the outlet's QR code. */
+/** The socket box behind a scanned QR code: one sticker, the customer picks an outlet. */
+export interface ChargeOutletInfo {
+  label: string;
+  stationId: string;
+  stationName: string;
+  tariff: ChargeTariff;
+  outlets: ChargeOutletSocket[];
+}
+
+const POINT_PATH = "/recharge";
+const BOX_TOKEN = /^[0-9a-f]{32}$/;
+
+/** The link printed as the box's QR code (devices.qr_token, worker/migrations/0043_device_qr.sql). */
+export function boxQrUrl(origin: string, token: string): string {
+  return `${origin.replace(/\/$/, "")}${POINT_PATH}?o=${encodeURIComponent(token)}`;
+}
+
+/** What a scanned code opens: a box (one sticker, pick an outlet), an older per-outlet sticker, or nothing of ours. */
+export function chargeCodeTarget(text: string): { box: string } | { point: string } | null {
+  try {
+    const url = new URL(text.trim());
+    if (url.pathname.replace(/\/$/, "") !== POINT_PATH) return null;
+    const box = url.searchParams.get("o")?.toLowerCase();
+    if (box && BOX_TOKEN.test(box)) return { box };
+    const point = pointIdFromCode(text);
+    return point ? { point } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A box token as typed in a link; anything else is not ours. */
+export function validBoxToken(token: string): boolean {
+  return BOX_TOKEN.test(token);
+}
+
+/** The link of an outlet's own QR code (stickers printed before one code per box). */
 export function pointQrUrl(origin: string, pointId: string): string {
   return `${origin.replace(/\/$/, "")}${POINT_PATH}?p=${encodeURIComponent(pointId)}`;
 }

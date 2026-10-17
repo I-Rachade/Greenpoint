@@ -7,18 +7,20 @@ import {
   type ChargePaymentMethod,
   type ChargeSession,
   type ChargeStatus,
+  type ChargeOutletInfo,
   type ChargePointInfo,
   type ChargePointState,
   type ChargeTariff,
   type StationCharging,
   contactFromCode,
+  validBoxToken,
 } from "../src/lib/charging";
 import { parseContact } from "../src/lib/contact";
 import type { Profile } from "../src/lib/types";
 import { newTrxId, personLabel } from "../src/lib/wallet";
 import { verifyPin } from "./auth";
 import { canSwitch, type DeviceLink, type DeviceProtocol } from "../src/lib/iot/devices";
-import { liveFreePointsSql, onlineSince, startOutlet, stopOutlet } from "./devices";
+import { liveFreePointsSql, newBoxToken, onlineSince, startOutlet, stopOutlet } from "./devices";
 import type { Env } from "./env";
 import { chargeEarnStatement } from "./greenpoint";
 import { ApiError, nowIso, readJson, uuid } from "./http";
@@ -343,7 +345,7 @@ type OutletPoint = { id: string; station_id: string; label: string; device_id: s
 async function openCharge(
   env: Env,
   point: OutletPoint,
-  who: { customerId: string | null; actorId: string; reservation: ReservationRow | null },
+  who: { customerId: string | null; actorId: string; reservation: ReservationRow | null; alone?: boolean },
 ): Promise<ChargeSession> {
   const db = env.DB;
   const stationId = point.station_id;
@@ -365,9 +367,11 @@ async function openCharge(
     db
       .prepare(
         `insert into charging_sessions (id, station_id, charging_point_id, device_id, outlet, point_label, user_id, kwh_xof, min_xof, started_by, started_at)
-         select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11 where ?12 = 0 or changes() > 0`,
+         select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11 where (?12 = 0 or changes() > 0)
+            and (?13 = 0 or not exists (select 1 from charging_sessions where user_id = ?7 and status in ('charging', 'stopped')))`,
       )
-      .bind(id, stationId, point.id, point.device_id, point.outlet, point.label, row.user_id, tariff.kwhXof, tariff.minXof, actor, now, reservation ? 1 : 0),
+      // alone: in the same write as the check, so two starts sent at once cannot both pass it.
+      .bind(id, stationId, point.id, point.device_id, point.outlet, point.label, row.user_id, tariff.kwhXof, tariff.minXof, actor, now, reservation ? 1 : 0, who.alone ? 1 : 0),
     // Old values of the previous charge must not show as this one's.
     db.prepare("update charging_points set power_watts = null, energy_wh = null where id = ? and exists (select 1 from charging_sessions where id = ?)").bind(point.id, id),
     db
@@ -393,9 +397,10 @@ async function openCharge(
         .prepare(
           `update reservations set status = 'completed', charging_point_id = ?3
            where id = (select r.id from reservations r where r.user_id = ?1 and r.station_id = ?2 and r.kind = 'charging_point' and r.status = 'active'
-                         and not ${evTargetSql("r")} order by (r.target = ?3) desc, r.created_at limit 1)`,
+                         and not ${evTargetSql("r")} order by (r.target = ?3) desc, r.created_at limit 1)
+             and exists (select 1 from charging_sessions where id = ?4)`,
         )
-        .bind(who.customerId, stationId, point.id),
+        .bind(who.customerId, stationId, point.id, id),
     );
   }
   try {
@@ -404,7 +409,9 @@ async function openCharge(
     if (/UNIQUE/i.test(String(err))) throw new ApiError("charge_busy", 409);
     throw err;
   }
-  if (!(await db.prepare("select 1 from charging_sessions where id = ?").bind(id).first())) throw new ApiError("reservation_not_active");
+  if (!(await db.prepare("select 1 from charging_sessions where id = ?").bind(id).first())) {
+    throw who.alone ? new ApiError("charge_unpaid", 409) : new ApiError("reservation_not_active");
+  }
   try {
     const { order } = await startOutlet(env, point.device_id, point.outlet, actor);
     await db.prepare("update charging_sessions set order_no = ? where id = ?").bind(order, id).run();
@@ -674,16 +681,12 @@ interface QrPointRow {
   protocol: DeviceProtocol | null;
 }
 
-async function loadQrPoint(db: D1Database, pointId: string): Promise<QrPointRow> {
-  const p = await db
-    .prepare(
-      `select p.id, p.station_id, s.name as station_name, p.label, p.status, p.device_id, p.outlet, p.last_seen_at, p.qr_start,
+const QR_POINT_SQL = `select p.id, p.station_id, s.name as station_name, p.label, p.status, p.device_id, p.outlet, p.last_seen_at, p.qr_start,
               d.vendor, d.link, d.protocol
-         from charging_points p join stations s on s.id = p.station_id left join devices d on d.external_id = p.device_id
-        where p.id = ? and s.is_active = 1`,
-    )
-    .bind(pointId)
-    .first<QrPointRow>();
+         from charging_points p join stations s on s.id = p.station_id left join devices d on d.external_id = p.device_id`;
+
+async function loadQrPoint(db: D1Database, pointId: string): Promise<QrPointRow> {
+  const p = await db.prepare(`${QR_POINT_SQL} where p.id = ? and s.is_active = 1`).bind(pointId).first<QrPointRow>();
   if (!p || !p.device_id || !p.outlet) throw new ApiError("not_found", 404);
   return p;
 }
@@ -728,8 +731,11 @@ export async function chargePointInfo(env: Env, user: Profile | null, pointId: s
  * with no other charge of the customer running or waiting for payment.
  */
 export async function startSelfCharge(env: Env, user: Profile, pointId: string): Promise<ChargeSession> {
+  return selfCharge(env, user, await loadQrPoint(env.DB, pointId));
+}
+
+async function selfCharge(env: Env, user: Profile, p: QrPointRow): Promise<ChargeSession> {
   const db = env.DB;
-  const p = await loadQrPoint(db, pointId);
   await requireService(db, p.station_id, "charging");
   await closeEmptyCharges(db, user.id);
   const open = await db
@@ -746,7 +752,75 @@ export async function startSelfCharge(env: Env, user: Profile, pointId: string):
     customerId: user.id,
     actorId: user.id,
     reservation: null,
+    alone: true,
   });
+}
+
+/** The outlets of the box behind a QR token (devices.qr_token), by outlet number; unknown or inactive: 404. */
+async function loadBoxPoints(db: D1Database, token: string): Promise<QrPointRow[]> {
+  if (!validBoxToken(token)) throw new ApiError("not_found", 404);
+  const { results } = await db
+    .prepare(`${QR_POINT_SQL} where d.qr_token = ? and p.station_id = d.station_id and s.is_active = 1 and p.outlet is not null order by p.outlet`)
+    .bind(token)
+    .all<QrPointRow>();
+  if (!results.length) throw new ApiError("not_found", 404);
+  return results;
+}
+
+/**
+ * GET /api/charging/outlets/:token: what the box's QR code shows, also before signing in:
+ * the station, the price and every outlet with whether it can be started now. Nobody's name
+ * or contact, only "in use" or "reserved".
+ */
+export async function outletInfo(env: Env, user: Profile | null, token: string): Promise<ChargeOutletInfo> {
+  const db = env.DB;
+  const points = await loadBoxPoints(db, token);
+  const userId = user?.id ?? null;
+  const [outlets, tariff] = await Promise.all([
+    Promise.all(
+      points.map(async (p) => {
+        const state = await qrPointState(db, p, userId);
+        const yours = state === "free" && !!userId && (await heldByMe(db, p.id, userId));
+        return { pointId: p.id, label: p.label, outlet: p.outlet!, state, ...(yours ? { yours: true } : {}) };
+      }),
+    ),
+    stationTariff(db, points[0].station_id),
+  ]);
+  const first = points[0];
+  return { label: first.device_id!.slice(-4), stationId: first.station_id, stationName: first.station_name, tariff, outlets };
+}
+
+async function heldByMe(db: D1Database, pointId: string, userId: string): Promise<boolean> {
+  return !!(await db
+    .prepare("select 1 from reservations where kind = 'charging_point' and target = ? and status = 'active' and expires_at > ? and user_id = ?")
+    .bind(pointId, nowIso(), userId)
+    .first());
+}
+
+/**
+ * POST /api/charging/outlets/:token/start { pointId }: the customer picked one outlet of the
+ * scanned box. The outlet must belong to that box; then the same checks as one outlet's QR code.
+ */
+export async function startOutletCharge(env: Env, user: Profile, token: string, request: Request): Promise<ChargeSession> {
+  const { pointId } = await readJson<{ pointId?: unknown }>(request);
+  const p = (await loadBoxPoints(env.DB, token)).find((x) => x.id === pointId);
+  if (!p) throw new ApiError("not_found", 404);
+  return selfCharge(env, user, p);
+}
+
+/** POST /api/admin/devices/:id/qr: a new QR token for the box; the old sticker stops working. */
+export async function renewOutletQr(env: Env, admin: Profile, externalId: string): Promise<{ qrToken: string }> {
+  const db = env.DB;
+  const d = await db.prepare("select station_id from devices where external_id = ?").bind(externalId).first<{ station_id: string }>();
+  if (!d) throw new ApiError("not_found", 404);
+  const qrToken = newBoxToken();
+  await db.batch([
+    db.prepare("update devices set qr_token = ? where external_id = ?").bind(qrToken, externalId),
+    db
+      .prepare("insert into audit_log (at, actor, table_name, action, row_id, station_id, changes) values (?, ?, 'devices', 'update', ?, ?, ?)")
+      .bind(nowIso(), admin.id, externalId, d.station_id, JSON.stringify({ qr_token: "renewed" })),
+  ]);
+  return { qrToken };
 }
 
 /** A stopped charge that took no energy has nothing to pay: it is closed, not held against the customer. */
