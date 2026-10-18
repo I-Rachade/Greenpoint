@@ -51,6 +51,9 @@ async function setup() {
     insert into stations (id, operator_id, name, lat, lng, kind, battery_capacity, is_solar, created_at) values ('st', '${OPERATOR}', 'Bè', 6.13, 1.22, 'charging', 0, 1, '${now}');
     insert into station_status (station_id, free_slots, full_batteries, updated_at) values ('st', 2, 0, '${now}');
     insert into station_staff (station_id, user_id) values ('st', 'staff');
+    -- QR charges are paid in advance from Green Credit (0047).
+    update stations set green_credit = 1 where id = 'st';
+    insert into wallets (user_id, balance_xof, created_at, updated_at) values ('kofi', 5000, '${now}', '${now}'), ('ama', 5000, '${now}', '${now}');
     insert into devices (external_id, station_id, vendor, link, outlets, vendor_ref, last_seen_at, qr_token, created_at) values ('${DEV.toUpperCase()}', 'st', 'Xingke', 'vendor_cloud', 2, '${DEV}', '${now}', '${BOX}', '${now}');
     insert into charging_points (id, station_id, label, status, device_id, outlet, last_seen_at, qr_start, created_at) values
       ('p1', 'st', 'A-1', 'free', '${DEV.toUpperCase()}', 1, '${now}', 1, '${now}'),
@@ -78,7 +81,7 @@ const result = (env: Env, cmd: any, status: string, code: string) => cb(env, "Co
 const reading = (env: Env, outlet: number, tx: string, status: string, energy: number, reason = "None") => cb(env, "ChargingStatusNotification", { connectorId: outlet, transactionId: tx, status, reason, power: 150, energy });
 // The box's one QR code (devices.qr_token); the customer picks the outlet.
 const BOX = "0123456789abcdef0123456789abcdef";
-const selfStart = (env: Env, p: string, who = "kofi") => api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/outlets/${BOX}/start`, { pointId: p });
+const selfStart = (env: Env, p: string, who = "kofi") => api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/outlets/${BOX}/start`, { pointId: p, pin: "2580" });
 const selfStop = (env: Env, id: string, who = "kofi") => api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/${id}/stop`, {});
 const info = async (env: Env, p: string, who = "ama") => {
   const { data } = await api<{ outlets: { pointId: string; state: string }[] }>(env, who, "GET", `/api/charging/outlets/${BOX}`);

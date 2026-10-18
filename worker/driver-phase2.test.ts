@@ -192,17 +192,32 @@ describe("paying trips online and payouts to the phone (driver phase 2)", () => 
     return { env, db };
   }
 
-  it("takes the fare from the wallet, so the driver takes no cash and is paid out on the phone", async () => {
-    const { env, db } = await withWallet();
-    await call(env, "kofi", "POST", "/api/driver/queue", { stationId: "st", position: BE });
-    const job = await call<DeliveryJob>(env, "yao", "POST", "/api/jobs/courier", { ...COURIER, payWith: "wallet" });
+  /** A trip paid from the wallet before Green Credit (0047): booked in cash here, then turned into what such a booking left behind. */
+  async function prepaidTrip(env: Env, db: DatabaseSync) {
+    const job = await call<DeliveryJob>(env, "yao", "POST", "/api/jobs/courier", COURIER);
     expect(job.status).toBe(200);
     const fare = job.body.fareFcfa;
-    expect(job.body).toMatchObject({ prepaidFcfa: fare, collectFcfa: 0 });
-    expect(walletOf(db, "yao")).toBe(5000 - fare);
-    expect(db.prepare("select type, attribute, amount_xof from wallet_transactions where user_id = 'yao'").all()).toEqual([
-      { type: "trip", attribute: "send", amount_xof: fare },
-    ]);
+    db.prepare("update delivery_jobs set prepaid_fcfa = ?, collect_fcfa = 0 where id = ?").run(fare, job.body.id);
+    db.prepare("update wallets set balance_xof = balance_xof - ? where user_id = 'yao'").run(fare);
+    return { id: job.body.id, fare };
+  }
+
+  it("no longer takes a new trip's fare from Green Credit (energy only)", async () => {
+    const { env, db } = await withWallet();
+    const refused = await call(env, "yao", "POST", "/api/jobs/courier", { ...COURIER, payWith: "wallet" });
+    expect(refused).toMatchObject({ status: 409, body: { error: "payment_not_offered" } });
+    expect(db.prepare("select count(*) as n from delivery_jobs").get()).toEqual({ n: 0 });
+    expect(walletOf(db, "yao")).toBe(5000);
+    // Cash stays the default.
+    const cash = await call<DeliveryJob>(env, "yao", "POST", "/api/jobs/courier", COURIER);
+    expect(cash.body.prepaidFcfa).toBeUndefined();
+    expect(cash.body.collectFcfa).toBe(cash.body.fareFcfa);
+  });
+
+  it("pays the driver of a trip paid online on the phone, as the driver took no cash", async () => {
+    const { env, db } = await withWallet();
+    await call(env, "kofi", "POST", "/api/driver/queue", { stationId: "st", position: BE });
+    const job = { body: { id: (await prepaidTrip(env, db)).id } };
 
     await call(env, "kofi", "POST", `/api/driver/jobs/${job.body.id}/accept`);
     await call(env, "kofi", "POST", `/api/driver/jobs/${job.body.id}/board`);
@@ -232,23 +247,19 @@ describe("paying trips online and payouts to the phone (driver phase 2)", () => 
     expect((await call(env, "kofi", "POST", "/api/driver/payouts", { network: "tmoney", phone: "90 11 22 33" })).body).toMatchObject({ error: "nothing_owed" });
   });
 
-  it("gives the money back when the trip is called off, and refuses without enough balance", async () => {
+  it("still gives the money of a trip paid online back when it is called off, once", async () => {
     const { env, db } = await withWallet();
-    const job = await call<DeliveryJob>(env, "yao", "POST", "/api/jobs/courier", { ...COURIER, payWith: "wallet" });
-    await call(env, "yao", "POST", `/api/jobs/${job.body.id}/cancel`);
+    const job = await prepaidTrip(env, db);
+    expect(walletOf(db, "yao")).toBe(5000 - job.fare);
+    await call(env, "yao", "POST", `/api/jobs/${job.id}/cancel`);
     expect(walletOf(db, "yao")).toBe(5000);
     const mine = await call<DeliveryJob[]>(env, "yao", "GET", "/api/jobs/mine");
-    expect(mine.body[0]).toMatchObject({ status: "cancelled", prepaidFcfa: job.body.fareFcfa, refunded: true });
-    expect(db.prepare("select attribute from wallet_transactions where user_id = 'yao' order by created_at, attribute desc").all()).toHaveLength(2);
-
-    db.prepare("update wallets set balance_xof = 100 where user_id = 'yao'").run();
-    const poor = await call(env, "yao", "POST", "/api/jobs/courier", { ...COURIER, payWith: "wallet" });
-    expect(poor.body).toMatchObject({ error: "insufficient_balance" });
-    expect(db.prepare("select count(*) as n from delivery_jobs").get()).toEqual({ n: 1 });
-    // Cash stays the default.
-    const cash = await call<DeliveryJob>(env, "yao", "POST", "/api/jobs/courier", COURIER);
-    expect(cash.body.prepaidFcfa).toBeUndefined();
-    expect(cash.body.collectFcfa).toBe(cash.body.fareFcfa);
+    expect(mine.body[0]).toMatchObject({ status: "cancelled", prepaidFcfa: job.fare, refunded: true });
+    expect(db.prepare("select type, attribute, amount_xof from wallet_transactions where user_id = 'yao'").all()).toEqual([
+      { type: "trip", attribute: "received", amount_xof: job.fare },
+    ]);
+    await call(env, "yao", "POST", `/api/jobs/${job.id}/cancel`);
+    expect(walletOf(db, "yao")).toBe(5000);
   });
 });
 

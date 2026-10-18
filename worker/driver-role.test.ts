@@ -71,9 +71,7 @@ const role = (db: DatabaseSync, id: string) => (db.prepare("select role from use
 describe("drivers are not customers (R11)", () => {
   const customerRoutes: [string, string, unknown?][] = [
     ["GET", "/api/wallet"],
-    ["GET", "/api/wallet/recipient?contact=90000003"],
-    ["POST", "/api/wallet/send", { contact: "90000003", amountXof: 500, pin: PIN, idempotencyKey: "key-12345678" }],
-    ["POST", "/api/wallet/topups", { amountXof: 1000, network: "flooz", phone: "90000004" }],
+    ["POST", "/api/wallet/code", { pin: PIN }],
     ["GET", "/api/greenpoint"],
     ["POST", "/api/greenpoint/vehicle", { vehicle: "moped" }],
     ["POST", "/api/greenpoint/redemptions", { rewardId: "free-swap" }],
@@ -94,13 +92,6 @@ describe("drivers are not customers (R11)", () => {
     expect((await call(env, "ama", "GET", "/api/wallet")).status).toBe(200);
     expect((await call(env, "ama", "GET", "/api/greenpoint")).status).toBe(200);
     expect((await call(env, "ama", "POST", "/api/reservations", { stationId: "st", kind: "swap" })).status).toBe(200);
-  });
-
-  it("sends no money to a driver account", async () => {
-    const { env } = await setup();
-    expect((await call(env, "ama", "GET", "/api/wallet/recipient?contact=90000004")).body).toEqual({ error: "not_a_customer" });
-    const send = await call(env, "ama", "POST", "/api/wallet/send", { contact: "90000004", amountXof: 500, pin: PIN, idempotencyKey: "key-12345678" });
-    expect(send.body).toEqual({ error: "not_a_customer" });
   });
 
   it("gives drivers no greenpoints for their trips (W10)", async () => {

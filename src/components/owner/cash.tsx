@@ -19,7 +19,7 @@ import {
 import { Loaded, Section, useWhen, useXof } from "./shared";
 
 const STATUS_TONE: Record<HandoverStatus, BadgeTone> = { pending: "amber", confirmed: "green", rejected: "red" };
-const LINES: CashKind[] = ["chargesXof", "swapsXof", "parcelsXof", "driversXof", "cardsXof"];
+const LINES: CashKind[] = ["chargesXof", "swapsXof", "parcelsXof", "driversXof", "cardsXof", "creditXof"];
 
 function Row({ label, value, strong = false }: { label: ReactNode; value: number; strong?: boolean }) {
   const xof = useXof();

@@ -153,12 +153,15 @@ export interface SwapInput {
   /** Battery numbers (scan or type); required at a station with battery types (battery register, src/lib/batteries.ts). */
   batteryIn?: string | null;
   batteryOut?: string | null;
-  /** app (and optionally first purchase): the customer's phone, e-mail or app QR. */
+  /** app paid in cash (and optionally first purchase): the customer's phone, e-mail or app QR. */
   contact?: string | null;
-  /** app: "cash" or "wallet" (default). In Lite only cash. */
+  /** app: "cash" or "wallet" (Green Credit, default). In Lite only cash. */
   payment?: "cash" | "wallet";
-  /** Wallet payment: the customer types their PIN. */
-  pin?: string | null;
+  /**
+   * Green Credit payment: the one-time code the customer's app shows after they typed their PIN
+   * on their phone (src/lib/wallet.ts). Without a reservation, `contact` may carry it instead.
+   */
+  creditCode?: string | null;
   /** fleet: the driver's QR code or code. */
   driverCode?: string | null;
   /** cash and first purchase: what was taken; default the station's swap price. */
@@ -210,15 +213,17 @@ export function validAmount(n: unknown): n is number {
 // Station home -----------------------------------------------------------------------
 
 /** Tiles of the station home, each its own page; shown only while its service is active. */
-export type StationTile = "swap" | "counter" | "charging" | "parcels" | "reservations";
+export type StationTile = "swap" | "counter" | "charging" | "parcels" | "reservations" | "credit";
 
-export function stationTiles(active: readonly StationService[]): StationTile[] {
+/** The station's tiles; Green Credit only at a station an admin designated (0047). */
+export function stationTiles(active: readonly StationService[], greenCredit = false): StationTile[] {
   const has = (s: StationService) => active.includes(s);
   const tiles: StationTile[] = [];
   if (has("swap")) tiles.push("swap", "counter");
   if (has("charging") || has("ev")) tiles.push("charging");
   if (has("parcels")) tiles.push("parcels");
   if (has("swap") || has("charging")) tiles.push("reservations");
+  if (greenCredit) tiles.push("credit");
   return tiles;
 }
 

@@ -1,24 +1,12 @@
-import { normalizeTogoPhone } from "../src/lib/phone";
-import type { Profile } from "../src/lib/types";
-import { newTrxId, parseAmount, TOPUP_MAX_XOF, TOPUP_MIN_XOF, TOPUP_NETWORK_LABEL, type TopupInput, type WalletTopup } from "../src/lib/wallet";
+import { newTrxId, TOPUP_NETWORK_LABEL, type WalletTopup } from "../src/lib/wallet";
 import type { Env } from "./env";
-import { ApiError, nowIso, readJson, uuid } from "./http";
-import {
-  cardProviderFromEnv,
-  PAYMENT_NETWORKS,
-  ProviderError,
-  providerFromEnv,
-  type CheckoutProvider,
-  type PaymentNetwork,
-  type PaymentProvider,
-  type ProviderStatus,
-} from "./payment-providers";
-import { cardTopupAvailable, topupAvailable, walletAccess } from "./wallet";
+import { nowIso, uuid } from "./http";
+import { cardProviderFromEnv, providerFromEnv, type CheckoutProvider, type PaymentProvider, type ProviderStatus } from "./payment-providers";
 
-// Wallet top-ups from Flooz / T-Money or a bank card (Cashplus phase 2, "Add
-// money"). Mobile money is asked like a reservation payment (worker/payments.ts),
-// a card is paid on the card provider's checkout page. The wallet is credited only once the provider itself confirms the payment, and
-// the credit is tied to the top-up in one batch so it can never happen twice.
+// Wallet top-ups from Flooz / T-Money or a bank card (Cashplus phase 2). Green Credit (0047) is
+// loaded at the counter only, so no new online top-up starts; this stays so a top-up started
+// before still gets credited once the provider confirms it (worker/payments.ts callback). The
+// credit is tied to the top-up in one batch so it can never happen twice.
 
 /** Identifiers of top-ups start with this, so the shared provider callback can tell them from reservation payments. */
 export const TOPUP_IDENTIFIER_PREFIX = "pdw_";
@@ -37,18 +25,6 @@ interface TopupRow {
   wallet_tx_id: string | null;
   created_at: string;
   paid_at: string | null;
-}
-
-function toTopup(r: TopupRow): WalletTopup {
-  return {
-    id: r.id,
-    amountXof: r.amount_xof,
-    network: r.network,
-    status: r.status,
-    failureReason: r.failure_reason,
-    createdAt: r.created_at,
-    paidAt: r.paid_at,
-  };
 }
 
 function provider(env: Env): PaymentProvider {
@@ -147,103 +123,6 @@ async function applyStatus(env: Env, actor: string | null, t: TopupRow, s: Provi
       throw err;
     }
     return (await load(env, t.id)) ?? t;
-  }
-}
-
-/**
- * POST /api/wallet/topups { amountXof, network, phone }: asks the person's Flooz/T-Money
- * account for the money, or for network "card" opens a checkout at the card provider
- * (the answer carries its checkoutUrl).
- */
-export async function startTopup(env: Env, user: Profile, request: Request): Promise<WalletTopup> {
-  const input = await readJson<Partial<TopupInput>>(request);
-  await walletAccess(env, user);
-  const card = input.network === "card";
-  if (!(card ? cardTopupAvailable(env, user) : topupAvailable(env, user))) throw new ApiError("topup_unavailable", 503);
-  const amount = parseAmount(input.amountXof);
-  if (amount === null) throw new ApiError("invalid_amount");
-  if (amount < TOPUP_MIN_XOF) throw new ApiError("amount_too_small");
-  if (amount > TOPUP_MAX_XOF) throw new ApiError("amount_too_large");
-  // The card provider only takes multiples of 5 francs.
-  if (card && amount % 5 !== 0) throw new ApiError("invalid_amount");
-  const network = input.network as WalletTopup["network"];
-  if (!card && !PAYMENT_NETWORKS.includes(network as PaymentNetwork)) throw new ApiError("bad_request");
-  const phone = card ? null : typeof input.phone === "string" ? normalizeTogoPhone(input.phone) : null;
-  if (!card && !phone) throw new ApiError("phone_not_allowed");
-
-  const providerName = card ? cardProvider(env).name : provider(env).name;
-  const now = nowIso();
-  const id = uuid();
-  const row: TopupRow = {
-    id,
-    identifier: `${TOPUP_IDENTIFIER_PREFIX}${id.replace(/-/g, "")}`,
-    user_id: user.id,
-    amount_xof: amount,
-    network,
-    phone,
-    provider: providerName,
-    provider_reference: null,
-    status: "pending",
-    failure_reason: null,
-    wallet_tx_id: null,
-    created_at: now,
-    paid_at: null,
-  };
-  await env.DB.batch([
-    env.DB.prepare(
-      `insert into wallet_topups (id, identifier, user_id, amount_xof, network, phone, provider, status, created_at, updated_at)
-       values (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-    ).bind(row.id, row.identifier, user.id, amount, network, phone, providerName, now, now),
-    audit(env, user.id, "insert", row, { topup: true, amount_xof: amount, network, provider: providerName, status: "pending" }),
-  ]);
-
-  try {
-    let checkoutUrl: string | null = null;
-    let providerReference: string | undefined;
-    if (card) {
-      const origin = new URL(request.url).origin;
-      const started = await cardProvider(env).startCheckout({
-        identifier: row.identifier,
-        amountXof: amount,
-        description: "Recharge portefeuille poinderecharge",
-        returnUrl: `${origin}/portefeuille?topup=${id}`,
-        notifyUrl: `${origin}/api/payments/callback?key=${encodeURIComponent(env.PAYMENT_CALLBACK_SECRET ?? "")}`,
-        customer: { name: user.fullName, email: user.email, phone: user.phone },
-      });
-      checkoutUrl = started.checkoutUrl;
-      providerReference = started.providerReference;
-    } else {
-      ({ providerReference } = await provider(env).start({
-        identifier: row.identifier,
-        amountXof: amount,
-        phone: phone!,
-        network: network as PaymentNetwork,
-        description: "poinderecharge portefeuille",
-      }));
-    }
-    if (providerReference) {
-      await env.DB.prepare("update wallet_topups set provider_reference = ?, updated_at = ? where id = ?").bind(providerReference, nowIso(), id).run();
-      row.provider_reference = providerReference;
-    }
-    return { ...toTopup(row), checkoutUrl };
-  } catch (err) {
-    console.error("topup start", row.identifier, err);
-    const reason = err instanceof ProviderError ? err.message : "provider_unavailable";
-    await applyStatus(env, user.id, row, { status: "failed", failureReason: reason });
-    throw new ApiError("provider_unavailable", 502);
-  }
-}
-
-/** POST /api/wallet/topups/:id/refresh: the app asks while the person confirms on the phone or comes back from the card page. */
-export async function refreshTopup(env: Env, user: Profile, id: string): Promise<WalletTopup> {
-  const t = await load(env, id);
-  if (!t || t.user_id !== user.id) throw new ApiError("not_found", 404);
-  if (t.status !== "pending") return toTopup(t);
-  try {
-    return toTopup(await applyStatus(env, null, t, await fetchStatus(env, t)));
-  } catch (err) {
-    console.error("topup refresh", t.identifier, err);
-    return toTopup(t);
   }
 }
 

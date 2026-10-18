@@ -164,8 +164,10 @@ function SwapForm({
   const [code, setCode] = useState(initialCode);
   const [contact, setContact] = useState(initialContact);
   const [driverCode, setDriverCode] = useState("");
-  const [payment, setPayment] = useState<"wallet" | "cash">(features.lite ? "cash" : "wallet");
-  const [pin, setPin] = useState("");
+  // Green Credit only at a station an admin designated (0047).
+  const creditHere = !features.lite && !!station.greenCredit;
+  const [payment, setPayment] = useState<"wallet" | "cash">(creditHere ? "wallet" : "cash");
+  const [creditCode, setCreditCode] = useState("");
   const [amount, setAmount] = useState("");
   const [batteryIn, setBatteryIn] = useState("");
   const [batteryOut, setBatteryOut] = useState("");
@@ -180,7 +182,7 @@ function SwapForm({
   // Battery register: a station with battery types records every battery it swaps.
   const numbersRequired = batteryNumbersRequired(rows.some((r) => r.batteryTypeId !== ""));
   const typeLabel = row?.label ?? s.noType;
-  const wallet = customerType === "app" && payment === "wallet" && !features.lite;
+  const wallet = customerType === "app" && payment === "wallet" && creditHere;
   const takesCash = customerType === "cash" || customerType === "first_purchase" || (customerType === "app" && !wallet);
   // The swap price is set in the backoffice (station details); without it only a first purchase or a fleet swap goes through.
   const priceMissing = !counter.priceXof && customerType !== "first_purchase" && customerType !== "fleet";
@@ -199,12 +201,12 @@ function SwapForm({
       customerType,
       batteryIn: takesBatteryIn(customerType) ? batteryIn : null,
       batteryOut,
-      contact: !reservation && (customerType === "app" || customerType === "first_purchase") ? contact || null : null,
+      contact: !reservation && ((customerType === "app" && !wallet) || customerType === "first_purchase") ? contact || null : null,
       reservationId: reservation?.id ?? null,
       pickupCode: reservation ? code : null,
       driverCode: customerType === "fleet" ? driverCode : null,
       payment: customerType === "app" ? (wallet ? "wallet" : "cash") : undefined,
-      pin: wallet ? pin : null,
+      creditCode: wallet ? creditCode : null,
       amountXof: customerType === "first_purchase" && amount !== "" ? Number(amount) : null,
     };
     setBusy(true);
@@ -216,7 +218,7 @@ function SwapForm({
       setRequestId(newRequestId());
       setContact("");
       setDriverCode("");
-      setPin("");
+      setCreditCode("");
       setBatteryIn("");
       setBatteryOut("");
     } catch (err) {
@@ -300,7 +302,7 @@ function SwapForm({
         </fieldset>
       )}
 
-      {customerType === "app" && !reservation && <ScanField label={s.contact} hint={s.contactHint} value={contact} onChange={setContact} required inputMode="tel" />}
+      {customerType === "app" && !reservation && !wallet && <ScanField label={s.contact} hint={s.contactHint} value={contact} onChange={setContact} required inputMode="tel" />}
       {customerType === "first_purchase" && <ScanField label={s.contactOptional} value={contact} onChange={setContact} inputMode="tel" />}
       {customerType === "fleet" && <ScanField label={s.driverCode} hint={s.fleetHint} value={driverCode} onChange={setDriverCode} required />}
 
@@ -326,7 +328,7 @@ function SwapForm({
       {customerType !== "fleet" && (
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium">{s.payment}</legend>
-          {customerType === "app" && !features.lite && (
+          {customerType === "app" && creditHere && (
             <Chips
               value={payment}
               label={s.payment}
@@ -339,13 +341,7 @@ function SwapForm({
           )}
           {features.lite && <p className="text-sm text-gp-muted">{s.liteCashOnly}</p>}
           <p className={priceMissing ? "text-sm font-medium text-red-600" : "text-sm text-gp-muted"}>{counter.priceXof ? format(s.price, { price: formatXof(counter.priceXof, locale) }) : s.noPrice}</p>
-          {wallet && (
-            <label className="block space-y-1">
-              <span className="text-sm font-medium">{s.pin}</span>
-              <Input type="password" inputMode="numeric" autoComplete="off" maxLength={6} required value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} />
-              <span className="block text-xs text-gp-muted">{s.pinHint}</span>
-            </label>
-          )}
+          {wallet && <ScanField label={s.creditCode} hint={s.creditCodeHint} value={creditCode} onChange={setCreditCode} required />}
           {takesCash && customerType === "first_purchase" && (
             <label className="block space-y-1">
               <span className="text-sm font-medium">{s.purchaseAmount}</span>

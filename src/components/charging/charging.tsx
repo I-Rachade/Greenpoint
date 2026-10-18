@@ -13,7 +13,7 @@ import { MAX_CARD_TOPUP_XOF, validTopup, type CounterCard } from "@/lib/charge-c
 import { displayStatus } from "@/lib/iot/charging-points";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
-import type { StationView } from "@/lib/types";
+import type { ChargingPoint, StationView } from "@/lib/types";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
@@ -190,7 +190,13 @@ export function StaffCharging({ station, customer }: { station: StationView; cus
   const [error, setError] = useState<string | null>(null);
   // Stopping and booking cash cannot be undone, so each is confirmed first.
   const [confirm, setConfirm] = useState<{ kind: "stop" | "cash"; id: string } | null>(null);
-  const points = (station.chargingPoints ?? []).filter((p) => p.deviceId).sort((a, b) => a.label.localeCompare(b.label));
+  // Motorbike outlets, then the car chargers linked to an outlet (named after the charger, as their charges are).
+  const points: (ChargingPoint & { ev?: string })[] = [
+    ...(station.chargingPoints ?? []).filter((p) => p.deviceId).sort((a, b) => a.label.localeCompare(b.label)),
+    ...(station.evChargers ?? []).flatMap((c) =>
+      c.point ? [{ ...c.point, stationId: station.id, label: c.name, powerWatts: 0, ev: `${c.powerKw} kW` }] : [],
+    ),
+  ];
   usePolling(reload, (data?.open.length ?? 0) > 0);
 
   if (points.length === 0) return null;
@@ -218,6 +224,9 @@ export function StaffCharging({ station, customer }: { station: StationView; cus
         <h3 className="text-sm font-semibold">⚡ {ch.title}</h3>
         <p className="text-xs text-zinc-500">{ch.intro}</p>
         {data && <p className="mt-1 text-xs font-medium">{format(ch.tariff, { kwh: data.tariff.kwhXof, min: data.tariff.minXof })}</p>}
+        {data && points.some((p) => p.ev) && (
+          <p className="text-xs font-medium">{format(ch.evTariff, { kwh: data.evTariff.kwhXof, min: data.evTariff.minXof })}</p>
+        )}
       </div>
       {error && (
         <p role="alert" className="text-sm text-red-600">
@@ -239,7 +248,10 @@ export function StaffCharging({ station, customer }: { station: StationView; cus
                       </button>
                     )}
                     {charge.status === "stopped" && charge.card && charge.amountXof > 0 && <p className="text-xs text-zinc-500">{ch.cardPaid}</p>}
-                    {charge.status === "stopped" && !charge.card && charge.amountXof > 0 && (
+                    {charge.status === "stopped" && !charge.card && charge.creditLimitXof !== undefined && charge.amountXof > 0 && (
+                      <p className="text-xs text-zinc-500">{ch.creditPaid}</p>
+                    )}
+                    {charge.status === "stopped" && !charge.card && charge.creditLimitXof === undefined && charge.amountXof > 0 && (
                       <button type="button" disabled={busy} onClick={() => setConfirm({ kind: "cash", id: charge.id })} className={`${button} min-h-11 flex-1`}>
                         {ch.collectCash} · {xof(charge.amountXof)}
                       </button>
@@ -254,7 +266,8 @@ export function StaffCharging({ station, customer }: { station: StationView; cus
               ) : (
                 <div className="flex items-center justify-between gap-3 rounded-lg bg-zinc-100 px-3 py-2 dark:bg-zinc-900">
                   <span className="text-sm">
-                    <span className="font-medium">{p.label}</span> · {t.station.outletStatus[shown]}
+                    {p.ev && <span aria-hidden>🚗 </span>}
+                    <span className="font-medium">{p.label}</span> {p.ev && <span className="text-xs text-zinc-500">({p.ev})</span>} · {t.station.outletStatus[shown]}
                   </span>
                   {starting !== p.id && (
                     <button type="button" disabled={shown === "offline" || shown === "fault"} onClick={() => setStarting(p.id)} className={button}>
@@ -405,6 +418,8 @@ function CardCounter({ station, onTopUp }: { station: StationView; onTopUp: () =
           </p>
           {found.blocked ? (
             <p className="text-sm text-red-600">{cc.blocked}</p>
+          ) : found.linked ? (
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.errors.card_uses_credit}</p>
           ) : (
             <div className="flex gap-2">
               <input
@@ -464,6 +479,8 @@ function PayInApp({ charge, onDone }: { charge: ChargeSession; onDone: () => voi
   const amount = formatXof(charge.amountXof, locale);
 
   if (charge.status !== "stopped" || charge.amountXof <= 0) return null;
+  // Paid in advance: taken from the card or the Green Credit when the charge ends.
+  if (charge.card || charge.creditLimitXof !== undefined) return <p className="text-sm text-zinc-500">{charge.card ? ch.cardPaid : ch.creditPaid}</p>;
   if (!options.wallet && !options.mobile) return <p className="text-sm">{format(ch.payCashOnly, { amount })}</p>;
 
   async function run(action: () => Promise<unknown>) {

@@ -191,19 +191,20 @@ describe("DemoBackend connected sockets", () => {
     const token = device.qrToken!;
     const stateOf = async () => (await backend.chargeOutlet(token)).outlets.find((o) => o.pointId === point.id)!.state;
     expect(await stateOf()).toBe("disabled");
-    await expect(backend.startOutletCharge(token, point.id)).rejects.toMatchObject({ code: "charge_qr_disabled" });
+    await expect(backend.startOutletCharge(token, point.id, "2580")).rejects.toMatchObject({ code: "charge_qr_disabled" });
 
     await backend.setQrStart(point.id, true);
     expect((await backend.listStations()).find((s) => s.id === STATION)!.chargingPoints!.find((p) => p.id === point.id)!.qrStart).toBe(true);
     expect(await stateOf()).toBe("free");
-    const charge = await backend.startOutletCharge(token, point.id);
+    const charge = await backend.startOutletCharge(token, point.id, "2580");
     expect(charge).toMatchObject({ status: "charging", selfStarted: true });
     expect(await stateOf()).toBe("busy");
     // One charge at a time until it is paid.
     const other = device.points.find((p) => p.status === "free" && p.id !== point.id)!;
     await backend.setQrStart(other.id, true);
-    await expect(backend.startOutletCharge(token, other.id)).rejects.toMatchObject({ code: "charge_unpaid" });
-    expect((await backend.stopSelfCharge(charge.id)).status).toBe("stopped");
+    await expect(backend.startOutletCharge(token, other.id, "2580")).rejects.toMatchObject({ code: "charge_unpaid" });
+    // Paid in advance from Green Credit: a charge that took no energy is closed at once.
+    expect((await backend.stopSelfCharge(charge.id)).status).toBe("cancelled");
   });
 });
 
@@ -578,15 +579,43 @@ describe("outlet QR codes", () => {
     expect(info.outlets.map((o) => o.outlet)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     await backend.register("+22890123456", DEMO_CODE, "2580", "customer");
     const first = info.outlets.find((o) => o.state === "free")!;
-    await backend.startOutletCharge(token, first.pointId);
+    await backend.startOutletCharge(token, first.pointId, "2580");
     expect((await backend.chargeOutlet(token)).outlets.find((o) => o.pointId === first.pointId)?.state).toBe("busy");
     // Only outlets of this box can be started with its code.
-    await expect(backend.startOutletCharge(token, "cp-not-here")).rejects.toMatchObject({ code: "unknown" });
+    await expect(backend.startOutletCharge(token, "cp-not-here", "2580")).rejects.toMatchObject({ code: "unknown" });
 
     await backend.register("+22890999999", DEMO_CODE, "2580", "admin");
     const renewed = await backend.renewBoxQr("DEMO-UL01");
     expect(renewed).not.toBe(token);
     await expect(backend.chargeOutlet(token)).rejects.toBeDefined();
+  });
+});
+
+describe("DemoBackend car chargers (0048)", () => {
+  it("shows the connected charger on its station, starts it by QR code at the car price, and keeps its outlet off the motorbike places", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890123456", DEMO_CODE, "2580", "admin");
+    const station = (await backend.listStations()).find((s) => s.id === STATION)!;
+    const car = station.evChargers!.find((c) => c.point)!;
+    expect(car).toMatchObject({ name: "Borne VE 1", point: { qrStart: true, status: "free" } });
+    expect(station.chargingPoints!.some((p) => p.id === car.point!.id)).toBe(false);
+
+    const device = (await backend.listDevices()).find((d) => d.points.some((p) => p.id === car.point!.id))!;
+    const info = await backend.chargeOutlet(device.qrToken!);
+    expect(info.tariff).toEqual({ kwhXof: 200, minXof: 500 });
+    expect(info.outlets[0]).toMatchObject({ label: "Borne VE 1", ev: { name: "Borne VE 1", connector: "type2", powerKw: 22 } });
+    const charge = await backend.startOutletCharge(device.qrToken!, car.point!.id, "2580");
+    expect(charge).toMatchObject({ pointLabel: "Borne VE 1", tariff: { kwhXof: 200, minXof: 500 } });
+
+    // The admin sets a car price apart from the motorbike one; the charger can be unlinked.
+    await backend.saveChargeTariff({ ev: true, stationId: null, kwhXof: 250, minXof: 600 });
+    const admin = await backend.adminCharging();
+    expect(admin).toMatchObject({ defaultTariff: { kwhXof: 150, minXof: 100 }, evTariff: { kwhXof: 250, minXof: 600 } });
+    expect(admin.stations.find((s) => s.id === STATION)).toMatchObject({ evChargers: 1 });
+    const charger = (await backend.listEvChargers()).find((c) => c.id === car.id)!;
+    await expect(backend.saveEvCharger(null, { ...charger, name: "Autre", pointId: charger.pointId })).rejects.toMatchObject({ code: "outlet_busy" });
+    await backend.saveEvCharger(charger.id, { ...charger, pointId: null });
+    expect((await backend.listStations()).find((s) => s.id === STATION)!.evChargers!.find((c) => c.id === car.id)!.point).toBeUndefined();
   });
 });
 

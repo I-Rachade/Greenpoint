@@ -8,7 +8,7 @@ import {
   type XingkeCallback,
   type XingkeCommand,
 } from "../src/lib/iot/xingke-cloud";
-import { chargeStartFailed, chargeStopFailed } from "./charging";
+import { chargeStartFailed, chargeStopFailed, creditFollowUp } from "./charging";
 import { ingest, recountFreeSlots } from "./devices";
 import type { Env } from "./env";
 import { ApiError, nowIso } from "./http";
@@ -118,6 +118,8 @@ export async function handleXingkeCallback(request: Request, env: Env): Promise<
   if (seen) return ok();
   await applyCallback(env.DB, cb, body);
   await env.DB.prepare("insert or ignore into device_callbacks (key, received_at) values (?, ?)").bind(key, nowIso()).run();
+  // Green Credit charges: stopped when the credit is used up, paid once they ended (0047).
+  await creditFollowUp(env, cb.deviceId);
   return ok();
 }
 

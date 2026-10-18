@@ -39,6 +39,8 @@ function ReservationCharge({ station, reservation: r, onDone, initialCode }: { s
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isOutlet = r.targetKind === "outlet";
+  // A car charger linked to a connected outlet starts like an outlet (0048).
+  const evPoint = r.targetKind === "ev" ? station.evChargers?.find((c) => c.id === r.target)?.point : undefined;
 
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
@@ -106,11 +108,25 @@ function ReservationCharge({ station, reservation: r, onDone, initialCode }: { s
           <p className="text-xs text-gp-muted">{R.offlineHint}</p>
         </>
       )}
-      {r.targetKind === "ev" && <p className="text-sm text-gp-muted">{format(R.evHint, { name: r.targetLabel ?? "" })}</p>}
+      {evPoint && (
+        <>
+          <p className="text-sm text-gp-muted">{format(R.evStart, { name: r.targetLabel ?? "" })}</p>
+          <Button
+            size="lg"
+            className="w-full"
+            busy={busy}
+            disabled={!codeOk || displayStatus({ ...evPoint, stationId: station.id, label: "", powerWatts: 0 }, now) !== "free"}
+            onClick={() => void run(() => backend.startCharge(station.id, { pointId: evPoint.id, reservationId: r.id, pickupCode: code }))}
+          >
+            {R.startHere}
+          </Button>
+        </>
+      )}
+      {r.targetKind === "ev" && !evPoint && <p className="text-sm text-gp-muted">{format(R.evHint, { name: r.targetLabel ?? "" })}</p>}
       {r.targetKind === "place" && <p className="text-sm text-gp-muted">{R.placeHint}</p>}
       <Button
-        variant={isOutlet ? "secondary" : "primary"}
-        size={isOutlet ? undefined : "lg"}
+        variant={isOutlet || evPoint ? "secondary" : "primary"}
+        size={isOutlet || evPoint ? undefined : "lg"}
         className="w-full"
         busy={busy}
         disabled={!codeOk}

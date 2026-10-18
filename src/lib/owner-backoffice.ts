@@ -132,6 +132,8 @@ export interface OwnerReport {
     swapsXof: number;
     /** Charging cards topped up in cash at a partner's counter. */
     cardsXof: number;
+    /** Green Credit loaded in cash at a partner's counter (0047). */
+    creditXof: number;
     totalXof: number;
     /** Whether a station of the report belongs to a partner (the cash is owed to poinderecharge). */
     thirdParty: boolean;

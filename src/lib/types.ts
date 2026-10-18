@@ -84,6 +84,8 @@ export interface StationView extends Station {
   hasStaff?: boolean;
   /** Station work list (/api/staff/stations) only: the services active there now (station-services.ts). */
   activeServices?: StationService[];
+  /** Station work list only: the station loads and accepts Green Credit (0047). */
+  greenCredit?: boolean;
   /** Station work list only: the viewer's role at the station (station-work.ts). */
   myRole?: StationRole;
 }

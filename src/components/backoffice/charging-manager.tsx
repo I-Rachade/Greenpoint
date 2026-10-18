@@ -63,6 +63,27 @@ export function ChargingManager() {
         </ul>
       </section>
 
+      <section className={`${card} space-y-3`}>
+        <h2 className="font-semibold">{a.evTitle}</h2>
+        <p className="text-xs text-zinc-500">{a.evHint}</p>
+        <TariffForm ev stationId={null} kwh={data.evTariff.kwhXof} min={data.evTariff.minXof} required onSave={save} />
+        {data.stations.some((s) => s.evChargers > 0) && (
+          <ul className="divide-y divide-black/5 dark:divide-white/5">
+            {data.stations
+              .filter((s) => s.evChargers > 0)
+              .map((s) => (
+                <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                  <span>
+                    <span className="font-medium">{s.name}</span>{" "}
+                    <span className="text-xs text-zinc-500">{format(a.evChargers, { n: s.evChargers })}</span>
+                  </span>
+                  <TariffForm ev stationId={s.id} kwh={s.evKwhXof} min={s.evMinXof} placeholder={data.evTariff} onSave={save} />
+                </li>
+              ))}
+          </ul>
+        )}
+      </section>
+
       <ChargeCardsManager />
 
       <h2 className="font-semibold">{a.sessions}</h2>
@@ -117,6 +138,7 @@ function stationsFirst(data: AdminCharging) {
 }
 
 function TariffForm({
+  ev = false,
   stationId,
   kwh,
   min,
@@ -124,6 +146,8 @@ function TariffForm({
   placeholder,
   onSave,
 }: {
+  /** The car chargers' price instead of the motorbike outlets'. */
+  ev?: boolean;
   stationId: string | null;
   kwh: number | null;
   min: number | null;
@@ -137,7 +161,7 @@ function TariffForm({
   const [minText, setMin] = useState(min === null ? "" : String(min));
   function submit(e: FormEvent) {
     e.preventDefault();
-    void onSave({ stationId, kwhXof: num(kwhText), minXof: num(minText) });
+    void onSave({ ...(ev ? { ev } : {}), stationId, kwhXof: num(kwhText), minXof: num(minText) });
   }
   return (
     <form onSubmit={submit} className="flex flex-wrap items-end gap-2">

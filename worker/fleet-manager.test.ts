@@ -150,8 +150,7 @@ describe("fleet manager registration and approval (M1)", () => {
 describe("fleet managers are not customers (R11)", () => {
   const customerRoutes: [string, string, unknown?][] = [
     ["GET", "/api/wallet"],
-    ["POST", "/api/wallet/send", { contact: "90000003", amountXof: 500, pin: PIN, idempotencyKey: "key-12345678" }],
-    ["POST", "/api/wallet/topups", { amountXof: 1000, network: "flooz", phone: "90000007" }],
+    ["POST", "/api/wallet/code", { pin: PIN }],
     ["GET", "/api/greenpoint"],
     ["POST", "/api/greenpoint/redemptions", { rewardId: "free-swap" }],
     ["POST", "/api/reservations", { stationId: "st", kind: "swap" }],
@@ -164,11 +163,6 @@ describe("fleet managers are not customers (R11)", () => {
     const { env } = await setup();
     expect((await call(env, "edem", method, path, body)).status).toBe(403);
     expect((await call(env, "efua", method, path, body)).status).toBe(403);
-  });
-
-  it("sends no money to a fleet manager", async () => {
-    const { env } = await setup();
-    expect((await call(env, "ama", "GET", "/api/wallet/recipient?contact=90000007")).body).toEqual({ error: "not_a_customer" });
   });
 });
 

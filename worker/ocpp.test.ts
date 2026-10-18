@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { hashPin } from "./auth";
 import { adjustChargeCard, cardTopupsSince, deleteChargeCard, listChargeCards, saveChargeCard, setChargeCardBlocked, topUpCard } from "./charge-cards";
 import { settleCardCharges, startSelfCharge, stopSelfCharge } from "./charging";
 import { createDevice, startOutlet, stopOutlet } from "./devices";
@@ -288,12 +289,16 @@ describe("OCPP connection", () => {
 describe("OCPP charges by QR code", () => {
   const KOFI = { id: "kofi", phone: "+22896123456", email: null, fullName: "Kofi", role: "customer" } as const;
 
+  const PIN = "2580";
   async function charging() {
     const s = await setup();
     const now = new Date().toISOString();
+    // Paid in advance from Green Credit, with the PIN (0047).
     s.db.exec(`
-      insert into users (id, phone, full_name, role, created_at) values ('kofi', '${KOFI.phone}', 'Kofi', 'rider', '${now}');
+      insert into users (id, phone, full_name, role, created_at, pin_hash) values ('kofi', '${KOFI.phone}', 'Kofi', 'rider', '${now}', '${await hashPin(PIN)}');
       update charging_points set qr_start = 1;
+      update stations set green_credit = 1;
+      insert into wallets (user_id, balance_xof, created_at, updated_at) values ('kofi', 5000, '${now}', '${now}');
     `);
     await handleOcppCall(s.d1, ID, "BootNotification", { chargePointVendor: "V", chargePointModel: "M" });
     await handleOcppCall(s.d1, ID, "StatusNotification", { connectorId: 1, status: "Available", errorCode: "NoError" });
@@ -309,20 +314,20 @@ describe("OCPP charges by QR code", () => {
       `insert into reservations (id, user_id, station_id, type, status, created_at, expires_at, pickup_code, kind, target)
        values ('r1', 'kofi', 'st', 'slot', 'active', ?, ?, '1234', 'charging_point', ?)`,
     ).run(new Date(now - 60_000).toISOString(), new Date(now + 600_000).toISOString(), point);
-    await startSelfCharge(env, KOFI, point);
+    await startSelfCharge(env, KOFI, point, PIN);
     expect(db.prepare("select status from reservations").get()).toEqual({ status: "completed" });
     const call = JSON.parse(requests[0].body);
     await applyOcppResult(d1, call.commandId, { type: 3, id: call.messageId, payload: { status: "Rejected" } });
     expect(sessions(db)).toEqual([{ status: "cancelled", energy_wh: 0 }]);
     expect(db.prepare("select status, charging_point_id from reservations").get()).toEqual({ status: "active", charging_point_id: null });
     // The outlet can be started again.
-    await startSelfCharge(env, KOFI, point);
+    await startSelfCharge(env, KOFI, point, PIN);
     expect(db.prepare("select count(*) n from charging_sessions where status = 'charging'").get()).toEqual({ n: 1 });
   });
 
   it("never charge after the customer stopped, even if the charge point starts later", async () => {
     const { db, d1, env, requests, point } = await charging();
-    const s = await startSelfCharge(env, KOFI, point);
+    const s = await startSelfCharge(env, KOFI, point, PIN);
     const call = JSON.parse(requests[0].body);
     await applyOcppResult(d1, call.commandId, { type: 3, id: call.messageId, payload: { status: "Accepted" } });
     await stopSelfCharge(env, KOFI, s.id);
@@ -334,7 +339,7 @@ describe("OCPP charges by QR code", () => {
 
   it("charge normally with the tag of the running charge", async () => {
     const { db, d1, env, requests, point } = await charging();
-    await startSelfCharge(env, KOFI, point);
+    await startSelfCharge(env, KOFI, point, PIN);
     const call = JSON.parse(requests[0].body);
     await applyOcppResult(d1, call.commandId, { type: 3, id: call.messageId, payload: { status: "Accepted" } });
     const start = (await handleOcppCall(d1, ID, "StartTransaction", { connectorId: 1, idTag: call.payload.idTag, meterStart: 1000, timestamp: new Date().toISOString() })) as {
@@ -343,7 +348,12 @@ describe("OCPP charges by QR code", () => {
     };
     expect(start.idTagInfo.status).toBe("Accepted");
     await handleOcppCall(d1, ID, "StopTransaction", { transactionId: start.transactionId, meterStop: 1400, timestamp: new Date().toISOString() });
-    expect(sessions(db)).toEqual([{ status: "stopped", energy_wh: 400 }]);
+    // The energy is final: the charge is taken from the Green Credit at once.
+    expect(sessions(db)).toEqual([{ status: "paid", energy_wh: 400 }]);
+    const tx = db.prepare("select type, amount_xof, balance_after_xof from wallet_transactions").all() as { type: string; amount_xof: number; balance_after_xof: number }[];
+    expect(tx).toHaveLength(1);
+    expect(tx[0]).toMatchObject({ type: "charge", balance_after_xof: 5000 - tx[0].amount_xof });
+    expect(tx[0].amount_xof).toBeGreaterThan(0);
   });
 });
 

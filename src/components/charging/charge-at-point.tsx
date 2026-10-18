@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { boxFromCode, outletParam, type ChargeOutletSocket, type ChargePointState } from "@/lib/charging";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
-import { format } from "@/lib/i18n/format";
+import { format, formatXof } from "@/lib/i18n/format";
 import { loginHref } from "@/lib/next-path";
 import { useApp } from "../app-provider";
 import { useI18n } from "../i18n-provider";
@@ -15,7 +15,8 @@ import { MyCharges } from "./charging";
 
 // Charging by QR code (src/lib/charging.ts): the customer scans the one sticker on a socket
 // box (?o=), sees the station, the price and every outlet of the box, picks a free one and
-// starts the charge. The running charge, its stop button and the payment are in MyCharges below.
+// starts the charge with the PIN of their Green Credit, which pays it in advance (worker/charging.ts
+// selfCharge). The running charge and its stop button are in MyCharges below.
 
 const button = "w-full rounded-full bg-gp-green-dark px-4 py-3 text-sm font-semibold text-white disabled:opacity-50";
 
@@ -101,9 +102,10 @@ const TILE: Record<ChargePointState, string> = {
 
 /** One sticker per box: every outlet of it, only free ones can be picked. */
 function BoxCard({ token, outlet }: { token: string; outlet: number | null }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const q = t.charging.qr;
   const { backend, profile, ready } = useApp();
+  const [pin, setPin] = useState("");
   const errorMessage = useErrorMessage();
   const { data: info, error, reload } = useLiveQuery(() => backend.chargeOutlet(token), `${token}:${profile?.id ?? ""}`);
   const [picked, setPicked] = useState<string | null>(null);
@@ -135,26 +137,39 @@ function BoxCard({ token, outlet }: { token: string; outlet: number | null }) {
     setBusy(true);
     setMessage(null);
     try {
-      await backend.startOutletCharge(token, outlet.pointId);
+      await backend.startOutletCharge(token, outlet.pointId, pin);
       setMessage({ ok: true, text: q.started });
       setPicked(null);
     } catch (err) {
       setMessage({ ok: false, text: errorMessage(err) });
     } finally {
+      setPin("");
       setBusy(false);
       reload();
     }
   }
 
   const here = `/recharge?o=${token}${outlet ? `&s=${outlet}` : ""}`;
+  const xof = (n: number) => formatXof(n, locale);
+  const balance = info.balanceXof ?? 0;
+  const enough = balance >= info.tariff.minXof;
+  // A car charger linked to this box (0048): shown by its name, plug and power, at the car price.
+  const car = info.outlets.length > 0 && info.outlets.every((o) => o.ev) ? info.outlets[0].ev : undefined;
+  const plug = (c: string) => t.backoffice.evChargers.connectors[c as keyof typeof t.backoffice.evChargers.connectors] ?? c;
   return (
     <section className="space-y-3 rounded-2xl border border-gp-border bg-gp-surface p-4 shadow-sm dark:border-white/10">
       <div>
         <div className="text-sm text-zinc-600 dark:text-zinc-400">{info.stationName}</div>
-        <h2 className="text-xl font-semibold">{format(q.box, { label: info.label })}</h2>
+        <h2 className="text-xl font-semibold">{car ? `🚗 ${car.name}` : format(q.box, { label: info.label })}</h2>
+        {car && <div className="text-sm text-zinc-600 dark:text-zinc-400">{format(q.car, { plug: plug(car.connector), power: car.powerKw })}</div>}
       </div>
-      <p className="text-sm">{format(t.charging.tariff, { kwh: info.tariff.kwhXof, min: info.tariff.minXof })}</p>
-      <p className="text-sm">{free.length ? q.pick : q.noneFree}</p>
+      <p className="text-sm">{format(car ? t.charging.evTariff : t.charging.tariff, { kwh: info.tariff.kwhXof, min: info.tariff.minXof })}</p>
+      {!info.creditAccepted && (
+        <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
+          {q.creditNotAccepted}
+        </p>
+      )}
+      {info.creditAccepted && <p className="text-sm">{free.length ? (car ? q.carPlug : q.pick) : q.noneFree}</p>}
       {outlet && free.length > 0 && !free.some((o) => o.outlet === outlet) && info.outlets.some((o) => o.outlet === outlet) && (
         <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
           {format(q.socketTaken, { n: outlet })}
@@ -176,7 +191,7 @@ function BoxCard({ token, outlet }: { token: string; outlet: number | null }) {
                   selected ? "ring-4 ring-gp-yellow" : ""
                 }`}
               >
-                <span className="block text-base font-semibold">{format(q.socket, { n: o.outlet })}</span>
+                <span className="block text-base font-semibold">{o.ev ? o.ev.name : format(q.socket, { n: o.outlet })}</span>
                 <span className={`block text-xs font-medium ${selectable ? STATE_TONE.free : ""}`}>{o.yours ? q.yours : q.tile[o.state]}</span>
               </button>
             </li>
@@ -186,12 +201,34 @@ function BoxCard({ token, outlet }: { token: string; outlet: number | null }) {
       {choice &&
         ready &&
         (profile ? (
-          <>
-            <p className="text-sm">{q.plugIn}</p>
-            <button type="button" disabled={busy} onClick={() => void start(choice)} className={button}>
-              {format(q.startOn, { n: choice.outlet })}
-            </button>
-          </>
+          enough ? (
+            <>
+              <p className="text-sm">{format(q.credit, { amount: xof(balance) })}</p>
+              <p className="text-sm">{q.plugIn}</p>
+              <input
+                className="w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-base tracking-[0.4em] dark:border-white/20 dark:bg-zinc-900"
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                inputMode="numeric"
+                type="password"
+                autoComplete="off"
+                aria-label={q.creditPin}
+                placeholder={q.creditPin}
+              />
+              <button type="button" disabled={busy || pin.length !== 4} onClick={() => void start(choice)} className={button}>
+                {car ? q.start : format(q.startOn, { n: choice.outlet })}
+              </button>
+            </>
+          ) : (
+            <>
+              <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
+                {format(q.creditLow, { amount: xof(balance), min: xof(info.tariff.minXof) })}
+              </p>
+              <Link href="/portefeuille" className="text-sm font-medium text-gp-green-dark underline dark:text-gp-green">
+                {q.creditTopup}
+              </Link>
+            </>
+          )
         ) : (
           <>
             <p className="text-sm">{q.login}</p>

@@ -1,43 +1,24 @@
-// Wallet (Cashplus phase 1): a balance in FCFA per user, sending money to another
-// user, fees and limits per product, and admin corrections. Shared by the app,
-// the demo backend and the Worker. Plan: planung/cashplus-plan.md.
+// Green Credit (formerly the Cashplus wallet): a closed prepaid credit in FCFA per user, for
+// energy only. It is loaded in cash at the counter of a station an admin designated and spent
+// there on what belongs to poinderecharge (a charge started by QR code, a battery swap, a
+// charge with a card linked to the account). No transfers, no withdrawals, no online top-ups;
+// every payment needs the customer's PIN, typed on their own phone. Shared by the app, the
+// demo backend and the Worker. Plan: planung/credit-qr-plan.md (project folder).
 //
 // Amounts are whole francs (XOF has no subunit), so every amount is an integer.
 
 export type WalletTxType =
-  | "transfer" // user -> user (spec: TRANSFER-MONEY)
-  | "admin_adjust" // correction by an admin (spec: ADD-SUBTRACT-BALANCE)
-  | "topup" // paid in from Flooz or T-Money (spec: ADD-MONEY)
-  | "charge" // a charge at a socket paid from the balance (worker/charging.ts)
-  | "trip"; // a driver's trip paid from the balance, or its refund (worker/trip-payments.ts)
+  | "transfer" // user -> user; no longer possible, kept for the history
+  | "admin_adjust" // correction or cash refund by an admin
+  | "topup" // cash at a Green Credit station's counter (formerly also Flooz or T-Money)
+  | "charge" // a charge or a battery swap paid from the credit (worker/charging.ts, worker/station-work.ts)
+  | "trip"; // a driver's trip paid from the balance, or its refund; no longer possible for new trips
 
 /** Direction from the owner's point of view; a transfer has one row per side with the same trxId. */
 export type WalletTxAttribute = "send" | "received";
 
 /** Phase 1 only books final transactions; pending/rejected come with cash-in and cash-out. */
 export type WalletTxStatus = "success" | "pending" | "rejected";
-
-/** Products with their own fee and limits (spec: transaction_settings). */
-export type WalletProduct = "transfer";
-export const WALLET_PRODUCTS: WalletProduct[] = ["transfer"];
-
-/** Fee and limits of one product. Limits of 0 mean "no limit". */
-export interface WalletFeeSetting {
-  product: WalletProduct;
-  fixedXof: number;
-  /** Percent of the amount, e.g. 1.5 for 1.5 %. */
-  percent: number;
-  minXof: number;
-  maxXof: number;
-  dailyXof: number;
-  monthlyXof: number;
-  isActive: boolean;
-}
-
-/** Starting values; admins change them in the backoffice. */
-export const DEFAULT_FEE_SETTINGS: WalletFeeSetting[] = [
-  { product: "transfer", fixedXof: 0, percent: 0, minXof: 100, maxXof: 500_000, dailyXof: 1_000_000, monthlyXof: 5_000_000, isActive: true },
-];
 
 /** Highest single amount anywhere in the wallet, as a sanity bound. */
 export const WALLET_MAX_AMOUNT = 100_000_000;
@@ -73,12 +54,7 @@ export interface WalletTransaction {
   createdAt: string;
 }
 
-export interface WalletUsage {
-  todayXof: number;
-  monthXof: number;
-}
-
-/** What the signed-in user sees on the wallet page. */
+/** What the signed-in user sees on the Green Credit page. */
 export interface WalletView {
   /** False while the module is switched off; admins can still use it for testing. */
   enabled: boolean;
@@ -86,39 +62,78 @@ export interface WalletView {
   testMode: boolean;
   balanceXof: number;
   frozen: boolean;
-  transfer: WalletFeeSetting;
-  usage: WalletUsage;
-  /** What to put into a QR code so others can send to this user. */
-  receiveCode: string | null;
-  /** False while no real Flooz/T-Money provider is set up (admins can still test with the simulation). */
-  topupAvailable: boolean;
-  /** The same for top-ups by bank card. */
-  cardTopupAvailable: boolean;
+  /** Highest balance allowed (0 = no limit). */
+  maxXof: number;
+  /** Where the credit can be loaded and spent. */
+  stations: GreenCreditStation[];
   transactions: WalletTransaction[];
 }
 
-export interface WalletRecipient {
-  /** Name, or masked phone/e-mail when the person has no name. */
-  label: string;
+export interface GreenCreditStation {
+  id: string;
+  name: string;
 }
 
-export interface SendMoneyInput {
-  contact: string;
+/**
+ * The one-time code the app shows after the customer typed their PIN on their phone. Staff
+ * scan it (or type it) to load the credit or to take a swap from it. Valid a few minutes, used once.
+ */
+export interface CreditCode {
+  code: string;
+  expiresAt: string;
+}
+
+/** How long a counter code holds. */
+export const CREDIT_CODE_MINUTES = 5;
+const CREDIT_CODE_PREFIX = "GC-";
+
+/** QR content of a counter code: "GC-" and 8 digits. */
+export function creditCodePayload(code: string): string {
+  return `${CREDIT_CODE_PREFIX}${code}`;
+}
+
+/** The 8 digits of a scanned or typed counter code ("GC-1234 5678", "12345678"), or null. */
+export function parseCreditCode(text: string | null | undefined): string | null {
+  const digits = String(text ?? "").trim().toUpperCase().replace(/^GC-?/, "").replace(/[\s-]/g, "");
+  return /^\d{8}$/.test(digits) ? digits : null;
+}
+
+/** "12345678" -> "1234 5678", easier to read out at the counter. */
+export function formatCreditCode(code: string): string {
+  return `${code.slice(0, 4)} ${code.slice(4)}`;
+}
+
+/** What staff see after scanning a customer's counter code, before taking the cash. */
+export interface CounterCredit {
+  customer: string;
+  balanceXof: number;
+  /** The most that can still be loaded (null = no limit). */
+  maxTopupXof: number | null;
+}
+
+/** Smallest amount loaded at the counter. */
+export const CREDIT_TOPUP_MIN_XOF = 100;
+
+export interface CreditTopupInput {
+  code: string;
   amountXof: number;
-  pin: string;
-  /** Same key on a retry, so a double tap never pays twice. */
-  idempotencyKey: string;
-  remark?: string | null;
 }
 
-/** Bounds of one top-up from Flooz or T-Money. */
-export const TOPUP_MIN_XOF = 100;
-export const TOPUP_MAX_XOF = 500_000;
+export interface CreditTopupResult {
+  customer: string;
+  amountXof: number;
+  balanceXof: number;
+}
+
+/** The most a customer may still load with this balance and limit (null = no limit). */
+export function maxTopup(balanceXof: number, maxXof: number): number | null {
+  return maxXof > 0 ? Math.max(0, maxXof - balanceXof) : null;
+}
 
 export type TopupNetwork = "flooz" | "tmoney" | "card";
 export type TopupStatus = "pending" | "succeeded" | "failed" | "expired" | "cancelled";
 
-/** A top-up from the user's Flooz or T-Money account. The wallet is credited once the provider confirms it. */
+/** A top-up from Flooz, T-Money or a card, before Green Credit (history and late confirmations only). */
 export interface WalletTopup {
   id: string;
   amountXof: number;
@@ -129,22 +144,6 @@ export interface WalletTopup {
   paidAt: string | null;
   /** Card top-ups: the provider's page where the person types the card details (only in the answer that starts it). */
   checkoutUrl?: string | null;
-}
-
-export interface TopupInput {
-  amountXof: number;
-  network: TopupNetwork;
-  /** The Flooz/T-Money number that pays, +228…; not needed for a card. */
-  phone?: string;
-}
-
-/**
- * Pre-selects the network from a +228 number (same prefixes as worker/payment-providers.ts):
- * Togocom T-Money 70–73, 90–93; Moov Africa Flooz 78, 79, 96–99. The person can always change it.
- */
-export function guessTopupNetwork(phone: string | null | undefined): TopupNetwork {
-  const prefix = /^\+228(\d{2})\d{6}$/.exec(phone ?? "")?.[1];
-  return prefix && ["78", "79", "96", "97", "98", "99"].includes(prefix) ? "flooz" : "tmoney";
 }
 
 export const TOPUP_NETWORK_LABEL: Record<TopupNetwork, string> = { flooz: "Flooz", tmoney: "T-Money", card: "Carte bancaire" };
@@ -158,13 +157,16 @@ export interface AdminWalletTransaction extends WalletTransaction {
 
 export interface AdminWallet {
   enabled: boolean;
-  settings: WalletFeeSetting[];
+  /** Highest balance a customer may hold (0 = no limit). */
+  maxXof: number;
+  /** Every active station, with whether it is a Green Credit station. */
+  stations: (GreenCreditStation & { greenCredit: boolean })[];
   totals: {
-    /** Sum of all balances: what the platform owes its users. */
+    /** Sum of all balances: what poinderecharge owes in energy. */
     balancesXof: number;
     wallets: number;
-    /** Fees earned on successful transactions (spec: profit logs). */
-    feesXof: number;
+    /** Loaded in cash at the counters, all time. */
+    toppedUpXof: number;
     transactions: number;
   };
   transactions: AdminWalletTransaction[];
@@ -172,43 +174,10 @@ export interface AdminWallet {
 
 export interface WalletAdjustInput {
   contact: string;
-  direction: "add" | "subtract";
+  /** refund: the customer got the amount back in cash (closing an account, for example). */
+  direction: "add" | "subtract" | "refund";
   amountXof: number;
   remark: string;
-}
-
-export interface FeeQuote {
-  fixedXof: number;
-  percentXof: number;
-  feeXof: number;
-  /** What leaves the sender's wallet: amount + fee. */
-  payableXof: number;
-}
-
-/** Spec 1.3.3 for one currency: fee = fixed + amount × percent; the sender pays amount + fee. */
-export function quoteFee(amountXof: number, s: Pick<WalletFeeSetting, "fixedXof" | "percent">): FeeQuote {
-  const percentXof = Math.round((amountXof * s.percent) / 100);
-  const feeXof = s.fixedXof + percentXof;
-  return { fixedXof: s.fixedXof, percentXof, feeXof, payableXof: amountXof + feeXof };
-}
-
-export type LimitProblem = "amount_too_small" | "amount_too_large" | "daily_limit_exceeded" | "monthly_limit_exceeded";
-
-/** Spec 1.3.4: single amount between min and max, today's and this month's successful sends within their limits. */
-export function checkLimits(amountXof: number, s: WalletFeeSetting, usage: WalletUsage): LimitProblem | null {
-  if (s.minXof > 0 && amountXof < s.minXof) return "amount_too_small";
-  if (s.maxXof > 0 && amountXof > s.maxXof) return "amount_too_large";
-  if (s.dailyXof > 0 && usage.todayXof + amountXof > s.dailyXof) return "daily_limit_exceeded";
-  if (s.monthlyXof > 0 && usage.monthXof + amountXof > s.monthlyXof) return "monthly_limit_exceeded";
-  return null;
-}
-
-/** How much more may still be sent today and this month (null = no limit). */
-export function remaining(s: WalletFeeSetting, usage: WalletUsage): { todayXof: number | null; monthXof: number | null } {
-  return {
-    todayXof: s.dailyXof > 0 ? Math.max(0, s.dailyXof - usage.todayXof) : null,
-    monthXof: s.monthlyXof > 0 ? Math.max(0, s.monthlyXof - usage.monthXof) : null,
-  };
 }
 
 /** A positive whole number of francs within the sanity bound, or null. */
@@ -216,16 +185,6 @@ export function parseAmount(value: unknown): number | null {
   const n = typeof value === "string" ? Number(value.replace(/[\s.]/g, "")) : Number(value);
   if (!Number.isInteger(n) || n <= 0 || n > WALLET_MAX_AMOUNT) return null;
   return n;
-}
-
-/** Checks a fee setting from the backoffice; returns it cleaned up or null. */
-export function validFeeSetting(s: WalletFeeSetting): WalletFeeSetting | null {
-  const ints = [s.fixedXof, s.minXof, s.maxXof, s.dailyXof, s.monthlyXof];
-  if (!WALLET_PRODUCTS.includes(s.product)) return null;
-  if (ints.some((n) => !Number.isInteger(n) || n < 0 || n > WALLET_MAX_AMOUNT)) return null;
-  if (!Number.isFinite(s.percent) || s.percent < 0 || s.percent > 50) return null;
-  if (s.maxXof > 0 && s.minXof > s.maxXof) return null;
-  return { ...s, percent: Math.round(s.percent * 100) / 100, isActive: !!s.isActive };
 }
 
 /** "+22896123456" -> "+228 96 •• •• 56", "kofi@mail.tg" -> "ko••@mail.tg". */
@@ -245,23 +204,10 @@ export function shortName(fullName: string): string {
   return `${parts[0]} ${parts[parts.length - 1][0]}.`;
 }
 
-/** Label of a person for the other side of a transfer. */
+/** Label of a person as others see it (staff at the counter, history). */
 export function personLabel(p: { fullName: string | null; phone: string | null; email: string | null }): string {
   if (p.fullName?.trim()) return shortName(p.fullName);
   return maskContact(p.phone ?? p.email ?? "?");
-}
-
-const RECEIVE_PREFIX = "poinderecharge:pay:";
-
-/** QR payload for receiving money: the contact the sender types otherwise. */
-export function receivePayload(contact: string): string {
-  return `${RECEIVE_PREFIX}${contact}`;
-}
-
-/** The contact in a scanned receive QR code, or the text itself when someone typed a contact. */
-export function parseReceivePayload(text: string): string {
-  const t = text.trim();
-  return t.startsWith(RECEIVE_PREFIX) ? t.slice(RECEIVE_PREFIX.length) : t;
 }
 
 /** Start of today and of this month in Lomé (UTC, no daylight saving), as ISO strings. */

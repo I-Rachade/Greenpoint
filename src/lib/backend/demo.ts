@@ -72,6 +72,7 @@ import {
   chargePrice,
   contactFromCode,
   DEFAULT_CHARGE_TARIFF,
+  DEFAULT_EV_TARIFF,
   validTariff,
   type AdminCharging,
   type ChargeOutletInfo,
@@ -91,6 +92,7 @@ import {
   DEMO_BATTERY_TYPES,
   DEMO_STATION_BATTERY_TYPES,
   DEMO_EV_CHARGERS,
+  DEMO_EV_POINT,
   DEMO_STATION_EXTRAS,
   demoReviews,
   type DemoReview,
@@ -254,27 +256,21 @@ import {
   type MyFleetInvite,
 } from "../fleet";
 import {
-  checkLimits,
-  DEFAULT_FEE_SETTINGS,
+  CREDIT_CODE_MINUTES,
+  CREDIT_TOPUP_MIN_XOF,
+  maxTopup,
   newTrxId,
   parseAmount,
-  periodStarts,
+  parseCreditCode,
   personLabel,
-  quoteFee,
-  receivePayload,
-  TOPUP_MAX_XOF,
-  TOPUP_MIN_XOF,
-  TOPUP_NETWORK_LABEL,
-  validFeeSetting,
   WALLET_REMARK_MAX,
   type AdminWallet,
   type AdminWalletTransaction,
-  type SendMoneyInput,
-  type TopupInput,
+  type CounterCredit,
+  type CreditCode,
+  type CreditTopupInput,
+  type CreditTopupResult,
   type WalletAdjustInput,
-  type WalletFeeSetting,
-  type WalletRecipient,
-  type WalletTopup,
   type WalletTransaction,
   type WalletView,
 } from "../wallet";
@@ -465,6 +461,9 @@ interface DemoState {
   charges?: DemoCharge[];
   chargeTariff?: ChargeTariff;
   stationTariffs?: Record<string, { kwhXof: number | null; minXof: number | null }>;
+  /** Car chargers' price (0048): the network one and each station's own. */
+  evTariff?: ChargeTariff;
+  stationEvTariffs?: Record<string, { kwhXof: number | null; minXof: number | null }>;
   /** Charging cards (missing = one card swiped at a socket, not linked yet). */
   chargeCards?: DemoChargeCard[];
   /** Cash put on cards at a counter, for the station's takings. */
@@ -650,24 +649,25 @@ const DEMO_CHARGE_WATTS = 360;
 
 interface DemoWallet {
   enabled: boolean;
-  settings: WalletFeeSetting[];
   balances: Record<string, number>;
   frozen: string[];
   /** Ledger, newest first, with the idempotency key of each payment. */
-  transactions: (AdminWalletTransaction & { key?: string })[];
-  /** Simulated Flooz/T-Money top-ups; confirmed on the first status check. */
-  topups?: (WalletTopup & { userId: string })[];
+  transactions: (AdminWalletTransaction & { key?: string; stationId?: string })[];
+  /** Green Credit stations (0047); absent: every demo station, so it can be tried right away. */
+  creditStations?: string[];
+  /** Highest balance (0 = no limit). */
+  maxXof?: number;
+  /** Counter codes shown after the PIN (credit_codes). */
+  codes?: { code: string; userId: string; expiresAt: string; used: boolean }[];
 }
 
-/** Starting balance of every demo wallet, so sending money can be tried right away. */
+/** Starting balance of every demo Green Credit, so charging by QR code can be tried right away. */
 export const DEMO_WALLET_START = 25_000;
+/** The demo's balance limit, as migration 0047. */
+const DEMO_CREDIT_MAX = 50_000;
 
 /** Signs the demo's driver passes (app_settings.driver_pass_secret on Cloudflare). */
 const DEMO_PASS_SECRET = "demo-driver-pass";
-
-function demoTopupView(t: WalletTopup): WalletTopup {
-  return { id: t.id, amountXof: t.amountXof, network: t.network, status: t.status, failureReason: t.failureReason, createdAt: t.createdAt, paidAt: t.paidAt };
-}
 
 interface DemoGreenpoint {
   factors: GreenpointFactors;
@@ -698,7 +698,7 @@ function freshGreenpoint(): DemoGreenpoint {
 }
 
 function freshWallet(): DemoWallet {
-  return { enabled: true, settings: DEFAULT_FEE_SETTINGS, balances: {}, frozen: [], transactions: [] };
+  return { enabled: true, balances: {}, frozen: [], transactions: [] };
 }
 
 function freshState(): DemoState {
@@ -772,6 +772,22 @@ function seedDevices(): Device[] {
       qrToken: demoBoxToken(externalId),
       points: demoSocketPoints(stationId, externalId, outlets, free),
     })),
+    {
+      // The car charger of Grand Marché, connected over OCPP (DEMO_EV_CHARGERS).
+      externalId: DEMO_EV_POINT.deviceId!,
+      stationId: DEMO_EV_POINT.stationId,
+      vendor: "OCPP",
+      model: "Borne 22 kW",
+      link: "own_server",
+      protocol: "ocpp1.6",
+      ocppOpen: false,
+      outlets: 1,
+      lastSeenAt: null,
+      createdAt: "2026-10-01T08:00:00.000Z",
+      partnerId: null,
+      qrToken: demoBoxToken(DEMO_EV_POINT.deviceId!),
+      points: [DEMO_EV_POINT],
+    },
   ];
 }
 
@@ -1102,9 +1118,11 @@ export class DemoBackend implements Backend {
       // What active reservations hold, per battery type, outlet and car charger (as stations() in worker/api.ts).
       const holds = heldTargets(state.reservations, s.id);
       // Demo sockets pretend to report all the time.
-      const chargingPoints = (state.devices ?? seedDevices())
-        .flatMap((d) => d.points)
-        .filter((p) => p.stationId === s.id)
+      // A car charger's outlet is not a motorbike place: it shows on its charger (evChargers[].point).
+      const evPoints = new Map((state.evChargers ?? DEMO_EV_CHARGERS).filter((c) => c.pointId).map((c) => [c.pointId!, c]));
+      const stationPoints = (state.devices ?? seedDevices()).flatMap((d) => d.points).filter((p) => p.stationId === s.id);
+      const chargingPoints = stationPoints
+        .filter((p) => !evPoints.has(p.id))
         .map((p) => ({ ...p, lastSeenAt: seen, ...(holds.has(`charging_point:${p.id}`) ? { reserved: true } : {}) }));
       // Charging places are the connected outlets.
       const chargingSlots = chargingPoints.filter((p) => p.deviceId).length;
@@ -1120,7 +1138,13 @@ export class DemoBackend implements Backend {
       const evChargers = (state.evChargers ?? DEMO_EV_CHARGERS)
         .filter((c) => c.stationId === s.id && c.isActive)
         .sort((a, b) => a.name.localeCompare(b.name))
-        .map(({ id, name, connector, powerKw }) => ({ id, name, connector, powerKw, ...(holds.has(`charging_point:${id}`) ? { reserved: true } : {}) }));
+        .map(({ id, name, connector, powerKw, pointId }) => {
+          const p = stationPoints.find((x) => x.id === pointId && x.deviceId);
+          const point = p
+            ? { point: { id: p.id, status: p.status, deviceId: p.deviceId, outlet: p.outlet, lastSeenAt: seen, ...(p.qrStart ? { qrStart: true } : {}) } }
+            : {};
+          return { id, name, connector, powerKw, ...(holds.has(`charging_point:${id}`) ? { reserved: true } : {}), ...point };
+        });
       const extras = DEMO_STATION_EXTRAS[s.id];
       return {
         ...s,
@@ -1433,7 +1457,8 @@ export class DemoBackend implements Backend {
         picked = { target: point.id, targetLabel: point.label, targetKind: "outlet" };
       } else {
         if (!serviceActive(state, stationId, "ev")) throw new BackendError("service_not_offered");
-        if (ev!.reserved) throw new BackendError("outlet_busy");
+        // A connected charger is held only while its outlet is free (as reserve() in worker/api.ts).
+        if (ev!.reserved || (ev!.point && ev!.point.status !== "free")) throw new BackendError("outlet_busy");
         picked = { target: ev!.id, targetLabel: ev!.name, targetKind: "ev" };
       }
     } else {
@@ -1506,6 +1531,7 @@ export class DemoBackend implements Backend {
     return this.views(state, stations).map((s) => ({
       ...s,
       activeServices: STATION_SERVICES.filter((service) => serviceActive(state, s.id, service)),
+      greenCredit: this.isDemoCreditStation(state, s.id),
       myRole: profile.role === "admin" ? ("admin" as const) : owned.has(s.operatorId) ? ("owner" as const) : ("staff" as const),
     }));
   }
@@ -1782,6 +1808,12 @@ export class DemoBackend implements Backend {
       }
       const userId = reservation.userId;
       customer = users.find((u) => u.id === userId) ?? null;
+    } else if (type === "app" && input.payment !== "cash" && !features.lite) {
+      // Paid from Green Credit: the customer's counter code, shown after the PIN on their phone (0047).
+      const user = this.creditCodeOwner(state, String(input.creditCode ?? input.contact ?? ""));
+      if (user.id === actor.profile.id) throw new BackendError("own_reservation");
+      if (user.role !== "customer") throw new BackendError("not_a_customer");
+      customer = user;
     } else if (type === "app") {
       customer = findCustomer(input.contact);
     } else if (type === "first_purchase" && input.contact) {
@@ -1818,6 +1850,7 @@ export class DemoBackend implements Backend {
     } else if (type === "app" && input.payment !== "cash") {
       if (features.lite) throw new BackendError("cash_only");
       if (swapOwner !== "poinderecharge") throw new BackendError("payment_not_offered");
+      if (!this.isDemoCreditStation(state, stationId)) throw new BackendError("credit_not_accepted");
       payment = "wallet";
       if (!price) throw new BackendError("swap_price_missing");
       amount = price;
@@ -1849,8 +1882,9 @@ export class DemoBackend implements Backend {
     if (payment === "wallet" && customer) {
       const w = this.wallet(next);
       if (!features.wallet || !w.enabled) throw new BackendError("wallet_disabled");
-      const pinOf = next.pins?.[customer.phone ?? customer.email ?? ""];
-      if (!validPinFormat(String(input.pin ?? "")) || (pinOf !== undefined && pinOf !== input.pin)) throw new BackendError("invalid_pin");
+      // The code the customer's app showed after their PIN; used once, with the swap.
+      const code = String(input.creditCode ?? (reservation ? "" : (input.contact ?? "")));
+      if (this.creditCodeOwner(state, code).id !== customer.id) throw new BackendError("credit_code_invalid");
       if (w.frozen.includes(customer.id)) throw new BackendError("wallet_frozen");
       const before = this.balance(w, customer.id);
       if (before < amount) throw new BackendError("insufficient_balance");
@@ -1872,7 +1906,7 @@ export class DemoBackend implements Backend {
         adminId: null,
         key: `swap:${input.requestId}`,
       };
-      next = { ...next, wallet: { ...w, balances: { ...w.balances, [customer.id]: before - amount }, transactions: [tx, ...w.transactions] } };
+      next = { ...next, wallet: { ...this.useCreditCode(w, code), balances: { ...w.balances, [customer.id]: before - amount }, transactions: [tx, ...w.transactions] } };
     }
     const typeLabel = this.counterRows(state, stationId).find((r) => r.batteryTypeId === key)?.label ?? null;
     const entry: SwapEntry = {
@@ -2269,6 +2303,13 @@ export class DemoBackend implements Backend {
     if (!validEvCharger(input)) throw new BackendError("unknown", "invalid charger");
     if (input.stationId && !state.stations.some((s) => s.id === input.stationId)) throw new BackendError("station_not_found");
     const chargers = state.evChargers ?? DEMO_EV_CHARGERS;
+    const pointId = input.pointId || null;
+    // As saveEvCharger() in worker/ev-chargers.ts: an outlet of a connected device at the same station, not another charger's.
+    if (pointId) {
+      const point = (state.devices ?? seedDevices()).flatMap((d) => d.points).find((p) => p.id === pointId && p.deviceId && p.outlet);
+      if (!point || point.stationId !== input.stationId) throw new BackendError("unknown", "bad_request");
+      if (chargers.some((c) => c.pointId === pointId && c.id !== id)) throw new BackendError("outlet_busy");
+    }
     const charger: EvCharger = {
       id: id ?? crypto.randomUUID(),
       name: input.name.trim(),
@@ -2276,6 +2317,7 @@ export class DemoBackend implements Backend {
       powerKw: Number(input.powerKw),
       stationId: input.stationId || null,
       isActive: input.isActive,
+      pointId,
     };
     const before = chargers.find((c) => c.id === id);
     this.save(
@@ -2818,6 +2860,9 @@ export class DemoBackend implements Backend {
     const cardsXof = (state.cardTopups ?? [])
       .filter((t) => set.has(t.stationId) && t.at >= from && !state.stations.find((st) => st.id === t.stationId)?.isOwn)
       .reduce((a, t) => a + t.amountXof, 0);
+    const creditXof = this.wallet(state)
+      .transactions.filter((t) => t.type === "topup" && t.stationId && set.has(t.stationId) && t.createdAt >= from && !state.stations.find((st) => st.id === t.stationId)?.isOwn)
+      .reduce((a, t) => a + t.amountXof, 0);
     for (const a of (state.stationActions ?? []).filter((a) => set.has(a.stationId) && a.createdAt >= from)) entry(a.personId, a.role).actions++;
     for (const p of people.values()) p.person = this.personName(state, p.personId) ?? "?";
     return {
@@ -2825,7 +2870,16 @@ export class DemoBackend implements Backend {
       from,
       perDay,
       revenue,
-      poinderecharge: { parcelsXof, driversXof, chargesXof, swapsXof, cardsXof, totalXof: parcelsXof + driversXof + chargesXof + swapsXof + cardsXof, thirdParty },
+      poinderecharge: {
+        parcelsXof,
+        driversXof,
+        chargesXof,
+        swapsXof,
+        cardsXof,
+        creditXof,
+        totalXof: parcelsXof + driversXof + chargesXof + swapsXof + cardsXof + creditXof,
+        thirdParty,
+      },
       hours,
       staff: [...people.values()].sort((a, b) => b.swaps + b.charges + b.actions - (a.swaps + a.charges + a.actions)),
     };
@@ -2860,11 +2914,17 @@ export class DemoBackend implements Backend {
           .filter((l) => l.kind === "settlement" && l.stationId === st.id)
           .map((l): CashItem => ({ kind: "driversXof", at: l.at, amountXof: l.amountFcfa })),
         ...(state.cardTopups ?? []).filter((t) => t.stationId === st.id).map((t): CashItem => ({ kind: "cardsXof", at: t.at, amountXof: t.amountXof })),
+        ...this.wallet(state)
+          .transactions.filter((t) => t.type === "topup" && t.stationId === st.id)
+          .map((t): CashItem => ({ kind: "creditXof", at: t.createdAt, amountXof: t.amountXof })),
       ];
+      // No commission on Green Credit, loaded or spent (0047).
       const sales = [
-        ...(state.charges ?? []).filter((c) => c.stationId === st.id && c.status === "paid" && c.paidAt && !c.partnerId).map((c) => ({ at: c.paidAt!, amountXof: c.amountXof })),
+        ...(state.charges ?? [])
+          .filter((c) => c.stationId === st.id && c.status === "paid" && c.paidAt && !c.partnerId && c.paymentMethod !== "wallet")
+          .map((c) => ({ at: c.paidAt!, amountXof: c.amountXof })),
         ...(state.swaps ?? [])
-          .filter((x) => x.stationId === st.id && x.payment !== "none" && this.swapOwnerOfEntry(state, x) === "poinderecharge")
+          .filter((x) => x.stationId === st.id && x.payment !== "none" && x.payment !== "wallet" && this.swapOwnerOfEntry(state, x) === "poinderecharge")
           .map((x) => ({ at: x.createdAt, amountXof: x.amountXof })),
       ];
       return stationCash(
@@ -7127,106 +7187,106 @@ export class DemoBackend implements Backend {
     return user;
   }
 
+  private creditStations(state: DemoState): string[] {
+    return this.wallet(state).creditStations ?? state.stations.map((x) => x.id);
+  }
+
+  /** As isCreditStation() in worker/wallet.ts. */
+  isDemoCreditStation(state: DemoState, stationId: string): boolean {
+    return this.creditStations(state).includes(stationId);
+  }
+
+  private creditMax(state: DemoState): number {
+    return this.wallet(state).maxXof ?? DEMO_CREDIT_MAX;
+  }
+
   async myWallet(): Promise<WalletView> {
     const state = this.load();
     const profile = this.walletAccess(state);
     const w = this.wallet(state);
-    const transfer = w.settings.find((s) => s.product === "transfer") ?? DEFAULT_FEE_SETTINGS[0];
-    const mine = w.transactions.filter((t) => t.userId === profile.id);
-    const { day, month } = periodStarts();
-    const sent = mine.filter((t) => t.type === "transfer" && t.attribute === "send" && t.status === "success");
-    const contact = profile.phone ?? profile.email;
+    const ids = new Set(this.creditStations(state));
     return {
       enabled: w.enabled,
       testMode: !w.enabled,
       balanceXof: this.balance(w, profile.id),
       frozen: w.frozen.includes(profile.id),
-      transfer,
-      usage: {
-        todayXof: sent.filter((t) => t.createdAt >= day).reduce((n, t) => n + t.amountXof, 0),
-        monthXof: sent.filter((t) => t.createdAt >= month).reduce((n, t) => n + t.amountXof, 0),
-      },
-      receiveCode: contact ? receivePayload(contact) : null,
-      topupAvailable: true,
-      cardTopupAvailable: true,
-      transactions: mine.slice(0, 50),
+      maxXof: this.creditMax(state),
+      stations: state.stations.filter((x) => ids.has(x.id)).map((x) => ({ id: x.id, name: x.name })),
+      transactions: w.transactions.filter((t) => t.userId === profile.id).slice(0, 50),
     };
   }
 
-  async findWalletRecipient(contact: string): Promise<WalletRecipient> {
+  /** As createCreditCode() in worker/wallet.ts; the demo PIN is any valid one. */
+  async createCreditCode(pin: string): Promise<CreditCode> {
     const state = this.load();
     const profile = this.walletAccess(state);
-    const user = this.findWalletRecipientUser(state, contact);
-    if (user.id === profile.id) throw new BackendError("self_transfer");
-    return { label: personLabel(user) };
+    if (!/^\d{4}$/.test(pin)) throw new BackendError("invalid_pin");
+    const w = this.wallet(state);
+    const code = String(Math.floor(Math.random() * 100_000_000)).padStart(8, "0");
+    const expiresAt = new Date(Date.now() + CREDIT_CODE_MINUTES * 60_000).toISOString();
+    const codes = [...(w.codes ?? []).filter((c) => c.userId !== profile.id && c.expiresAt > new Date().toISOString()), { code, userId: profile.id, expiresAt, used: false }];
+    this.save({ ...state, wallet: { ...w, codes } });
+    return { code, expiresAt };
   }
 
-  async sendMoney(input: SendMoneyInput): Promise<WalletTransaction> {
+  private creditCodeOwner(state: DemoState, raw: string): AdminUser {
+    const code = parseCreditCode(raw);
+    const found = code && (this.wallet(state).codes ?? []).find((c) => c.code === code && !c.used && c.expiresAt > new Date().toISOString());
+    const user = found && (state.users ?? demoUsers(new Date())).find((u) => u.id === found.userId);
+    if (!user) throw new BackendError("credit_code_invalid");
+    if (this.wallet(state).frozen.includes(user.id)) throw new BackendError("wallet_frozen");
+    return user;
+  }
+
+  private useCreditCode(w: DemoWallet, raw: string): DemoWallet {
+    const code = parseCreditCode(raw);
+    return { ...w, codes: (w.codes ?? []).map((c) => (c.code === code ? { ...c, used: true } : c)) };
+  }
+
+  async checkCreditCode(stationId: string, code: string): Promise<CounterCredit> {
     const state = this.load();
-    const profile = this.walletAccess(state);
-    const w = this.wallet(state);
-    const done = w.transactions.find((t) => t.userId === profile.id && t.key === input.idempotencyKey);
-    if (done) return done;
+    this.stationActor(state, stationId);
+    if (!this.isDemoCreditStation(state, stationId)) throw new BackendError("credit_not_accepted");
+    const user = this.creditCodeOwner(state, code);
+    const balance = this.balance(this.wallet(state), user.id);
+    return { customer: personLabel(user), balanceXof: balance, maxTopupXof: maxTopup(balance, this.creditMax(state)) };
+  }
+
+  /** As topUpCredit() in worker/wallet.ts: the cash goes into the station's takings. */
+  async topUpCredit(stationId: string, input: CreditTopupInput): Promise<CreditTopupResult> {
+    const state = this.load();
+    const actor = this.stationActor(state, stationId);
+    if (!this.isDemoCreditStation(state, stationId)) throw new BackendError("credit_not_accepted");
     const amount = parseAmount(input.amountXof);
-    if (amount === null) throw new BackendError("invalid_amount");
-    const recipient = this.findWalletRecipientUser(state, input.contact);
-    if (recipient.id === profile.id) throw new BackendError("self_transfer");
-    const pinOf = state.pins?.[profile.phone ?? profile.email ?? ""];
-    if (!validPinFormat(input.pin) || (pinOf !== undefined && pinOf !== input.pin)) throw new BackendError("invalid_pin");
-    const view = await this.myWallet();
-    if (!view.transfer.isActive) throw new BackendError("wallet_disabled");
-    const problem = checkLimits(amount, view.transfer, view.usage);
-    if (problem) throw new BackendError(problem);
-    if (view.frozen) throw new BackendError("wallet_frozen");
-    if (w.frozen.includes(recipient.id)) throw new BackendError("recipient_not_found");
-    const fee = quoteFee(amount, view.transfer);
-    const before = this.balance(w, profile.id);
-    if (before < fee.payableXof) throw new BackendError("insufficient_balance");
-    const after = before - fee.payableXof;
-    const received = this.balance(w, recipient.id) + amount;
-    const now = new Date().toISOString();
-    const trxId = newTrxId("transfer");
-    const remark = input.remark?.trim().slice(0, WALLET_REMARK_MAX) || null;
-    const me = (state.users ?? []).find((u) => u.id === profile.id) ?? { ...profile };
-    const send: DemoWallet["transactions"][number] = {
+    if (amount === null || amount < CREDIT_TOPUP_MIN_XOF) throw new BackendError("invalid_amount");
+    const user = this.creditCodeOwner(state, input.code);
+    if (user.id === actor.profile.id) throw new BackendError("own_reservation");
+    const w = this.wallet(state);
+    const before = this.balance(w, user.id);
+    const limit = maxTopup(before, this.creditMax(state));
+    if (limit !== null && amount > limit) throw new BackendError("credit_limit_reached");
+    const station = state.stations.find((x) => x.id === stationId);
+    const tx: DemoWallet["transactions"][number] = {
       id: crypto.randomUUID(),
-      trxId,
-      type: "transfer",
-      attribute: "send",
+      trxId: newTrxId("topup"),
+      type: "topup",
+      attribute: "received",
       status: "success",
       amountXof: amount,
-      feeXof: fee.feeXof,
-      totalXof: fee.payableXof,
-      balanceAfterXof: after,
-      counterparty: personLabel(recipient),
-      remark,
-      createdAt: now,
-      userId: profile.id,
-      userLabel: [profile.fullName, profile.phone ?? profile.email].filter(Boolean).join(" · "),
-      adminId: null,
-      key: input.idempotencyKey,
-    };
-    const receive: DemoWallet["transactions"][number] = {
-      ...send,
-      id: crypto.randomUUID(),
-      attribute: "received",
       feeXof: 0,
       totalXof: amount,
-      balanceAfterXof: received,
-      counterparty: personLabel(me),
-      userId: recipient.id,
-      userLabel: [recipient.fullName, recipient.phone ?? recipient.email].filter(Boolean).join(" · "),
-      key: undefined,
+      balanceAfterXof: before + amount,
+      counterparty: station?.name ?? null,
+      remark: null,
+      createdAt: new Date().toISOString(),
+      userId: user.id,
+      userLabel: [user.fullName, user.phone ?? user.email].filter(Boolean).join(" · "),
+      adminId: null,
+      stationId,
     };
-    this.save({
-      ...state,
-      wallet: {
-        ...w,
-        balances: { ...w.balances, [profile.id]: after, [recipient.id]: received },
-        transactions: [send, receive, ...w.transactions].slice(0, 500),
-      },
-    });
-    return send;
+    const used = this.useCreditCode(w, input.code);
+    this.save({ ...state, wallet: { ...used, balances: { ...w.balances, [user.id]: before + amount }, transactions: [tx, ...w.transactions].slice(0, 500) } });
+    return { customer: personLabel(user), amountXof: amount, balanceXof: before + amount };
   }
 
   async adminWallet(filter: { type?: string; userId?: string } = {}): Promise<AdminWallet> {
@@ -7235,13 +7295,15 @@ export class DemoBackend implements Backend {
     const w = this.wallet(state);
     const users = state.users ?? demoUsers(new Date());
     const ids = new Set([...users.map((u) => u.id), ...Object.keys(w.balances)]);
+    const credit = new Set(this.creditStations(state));
     return {
       enabled: w.enabled,
-      settings: w.settings,
+      maxXof: this.creditMax(state),
+      stations: state.stations.map((x) => ({ id: x.id, name: x.name, greenCredit: credit.has(x.id) })),
       totals: {
         balancesXof: [...ids].reduce((n, id) => n + this.balance(w, id), 0),
         wallets: ids.size,
-        feesXof: w.transactions.filter((t) => t.status === "success").reduce((n, t) => n + t.feeXof, 0),
+        toppedUpXof: w.transactions.filter((t) => t.type === "topup" && t.stationId).reduce((n, t) => n + t.amountXof, 0),
         transactions: new Set(w.transactions.map((t) => t.trxId)).size,
       },
       transactions: w.transactions
@@ -7249,6 +7311,7 @@ export class DemoBackend implements Backend {
         .map((t) => {
           const copy = { ...t };
           delete copy.key;
+          delete copy.stationId;
           return copy;
         }),
     };
@@ -7288,84 +7351,24 @@ export class DemoBackend implements Backend {
     );
   }
 
-  async saveWalletFees(setting: WalletFeeSetting) {
+  async setCreditMax(maxXof: number) {
     const state = this.load();
     this.requireAdmin(state);
-    const s = validFeeSetting(setting);
-    if (!s) throw new BackendError("unknown", "bad_request");
-    const w = this.wallet(state);
+    if (!Number.isInteger(maxXof) || maxXof < 0 || maxXof > 10_000_000) throw new BackendError("unknown", "bad_request");
+    this.save(withAudit({ ...state, wallet: { ...this.wallet(state), maxXof } }, { table: "wallets", action: "update", rowId: "green_credit_max_xof", changes: { maxXof } }));
+  }
+
+  async setStationGreenCredit(stationId: string, enabled: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!state.stations.some((x) => x.id === stationId)) throw new BackendError("unknown", "not_found");
+    const list = this.creditStations(state).filter((id) => id !== stationId);
     this.save(
       withAudit(
-        { ...state, wallet: { ...w, settings: w.settings.map((x) => (x.product === s.product ? s : x)) } },
-        { table: "wallets", action: "update", rowId: `fees:${s.product}`, changes: { ...s } },
+        { ...state, wallet: { ...this.wallet(state), creditStations: enabled ? [...list, stationId] : list } },
+        { table: "stations", action: "update", rowId: stationId, stationId, changes: { green_credit: enabled } },
       ),
     );
-  }
-
-  async startTopup(input: TopupInput): Promise<WalletTopup> {
-    const state = this.load();
-    const profile = this.walletAccess(state);
-    const amount = parseAmount(input.amountXof);
-    if (amount === null) throw new BackendError("invalid_amount");
-    if (amount < TOPUP_MIN_XOF) throw new BackendError("amount_too_small");
-    if (amount > TOPUP_MAX_XOF) throw new BackendError("amount_too_large");
-    if (input.network !== "card" && !normalizeTogoPhone(input.phone ?? "")) throw new BackendError("phone_not_allowed");
-    const topup: WalletTopup & { userId: string } = {
-      id: crypto.randomUUID(),
-      amountXof: amount,
-      network: input.network,
-      status: "pending",
-      failureReason: null,
-      createdAt: new Date().toISOString(),
-      paidAt: null,
-      userId: profile.id,
-    };
-    const w = this.wallet(state);
-    this.save({ ...state, wallet: { ...w, topups: [topup, ...(w.topups ?? [])].slice(0, 100) } });
-    // A card is paid on the provider's page; in the demo that "page" sends straight back.
-    const checkoutUrl = input.network === "card" ? `${window.location.origin}/portefeuille?topup=${topup.id}` : null;
-    return { ...demoTopupView(topup), checkoutUrl };
-  }
-
-  async refreshTopup(id: string): Promise<WalletTopup> {
-    const state = this.load();
-    const profile = this.walletAccess(state);
-    const w = this.wallet(state);
-    const topup = (w.topups ?? []).find((t) => t.id === id && t.userId === profile.id);
-    if (!topup) throw new BackendError("unknown", "not_found");
-    let done = topup;
-    if (topup.status === "pending") {
-      const now = new Date().toISOString();
-      done = { ...topup, status: "succeeded", paidAt: now };
-      const after = this.balance(w, profile.id) + topup.amountXof;
-      const tx: AdminWalletTransaction = {
-        id: crypto.randomUUID(),
-        trxId: newTrxId("topup"),
-        type: "topup",
-        attribute: "received",
-        status: "success",
-        amountXof: topup.amountXof,
-        feeXof: 0,
-        totalXof: topup.amountXof,
-        balanceAfterXof: after,
-        counterparty: TOPUP_NETWORK_LABEL[topup.network],
-        remark: null,
-        createdAt: now,
-        userId: profile.id,
-        userLabel: [profile.fullName, profile.phone ?? profile.email].filter(Boolean).join(" · "),
-        adminId: null,
-      };
-      this.save({
-        ...state,
-        wallet: {
-          ...w,
-          balances: { ...w.balances, [profile.id]: after },
-          transactions: [tx, ...w.transactions].slice(0, 500),
-          topups: (w.topups ?? []).map((t) => (t.id === id ? done : t)),
-        },
-      });
-    }
-    return demoTopupView(done);
   }
 
   async adjustWallet(input: WalletAdjustInput): Promise<WalletTransaction> {
@@ -7643,10 +7646,15 @@ export class DemoBackend implements Backend {
 
   // Charging at a socket ----------------------------------------------------------------
 
-  private chargeTariffOf(state: DemoState, stationId: string): ChargeTariff {
-    const base = state.chargeTariff ?? DEFAULT_CHARGE_TARIFF;
-    const own = state.stationTariffs?.[stationId];
+  private chargeTariffOf(state: DemoState, stationId: string, ev = false): ChargeTariff {
+    const base = ev ? (state.evTariff ?? DEFAULT_EV_TARIFF) : (state.chargeTariff ?? DEFAULT_CHARGE_TARIFF);
+    const own = (ev ? state.stationEvTariffs : state.stationTariffs)?.[stationId];
     return { kwhXof: own?.kwhXof ?? base.kwhXof, minXof: own?.minXof ?? base.minXof };
+  }
+
+  /** As EV_OF_POINT in worker/charging.ts: the active car charger this outlet switches, if any. */
+  private evOfPoint(state: DemoState, pointId: string): EvCharger | undefined {
+    return (state.evChargers ?? DEMO_EV_CHARGERS).find((c) => c.pointId === pointId && c.isActive);
   }
 
   /** A running demo charge gains energy with time; the price follows. */
@@ -7655,7 +7663,60 @@ export class DemoBackend implements Backend {
     const view: ChargeSession = c.userId && c.startedBy === c.userId ? { ...rest, selfStarted: true } : rest;
     if (c.status !== "charging") return view;
     const energyWh = Math.round(((now - new Date(c.startedAt).getTime()) / 3_600_000) * DEMO_CHARGE_WATTS);
-    return { ...view, energyWh, powerWatts: DEMO_CHARGE_WATTS, amountXof: chargePrice(energyWh, c.tariff) };
+    const amountXof = chargePrice(energyWh, c.tariff);
+    return { ...view, energyWh, powerWatts: DEMO_CHARGE_WATTS, amountXof: c.creditLimitXof !== undefined ? Math.min(amountXof, c.creditLimitXof) : amountXof };
+  }
+
+  /**
+   * As creditStops() and settlePrepaidCharges() in worker/charging.ts: a Green Credit charge stops
+   * once it cost the credit it started with, and an ended one is taken from the credit at once.
+   */
+  private settleDemoCredit() {
+    let state = this.load();
+    const now = Date.now();
+    let changed = false;
+    for (const c of state.charges ?? []) {
+      if (c.creditLimitXof === undefined || !c.userId) continue;
+      let next: DemoCharge = c;
+      if (c.status === "charging") {
+        const energyWh = Math.round(((now - new Date(c.startedAt).getTime()) / 3_600_000) * DEMO_CHARGE_WATTS);
+        if (chargePrice(energyWh, c.tariff) < c.creditLimitXof) continue;
+        next = { ...c, status: "stopped", energyWh, amountXof: c.creditLimitXof, powerWatts: 0, stoppedAt: new Date(now).toISOString(), endedByDevice: true };
+      }
+      if (next.status !== "stopped") continue;
+      changed = true;
+      state = { ...state, charges: (state.charges ?? []).map((x) => (x.id === c.id ? next : x)) };
+      if (next.energyWh <= 0) {
+        state = { ...state, charges: state.charges!.map((x) => (x.id === c.id ? { ...x, status: "cancelled" as const } : x)) };
+        continue;
+      }
+      const w = this.wallet(state);
+      const before = this.balance(w, c.userId);
+      const amount = Math.max(0, Math.min(next.amountXof, before));
+      state = this.payCharge(state, c.id, "wallet");
+      state = { ...state, charges: state.charges!.map((x) => (x.id === c.id ? { ...x, amountXof: amount } : x)) };
+      const user = (state.users ?? demoUsers(new Date())).find((u) => u.id === c.userId) ?? state.profile;
+      const tx: DemoWallet["transactions"][number] = {
+        id: crypto.randomUUID(),
+        trxId: newTrxId("charge"),
+        type: "charge",
+        attribute: "send",
+        status: "success",
+        amountXof: amount,
+        feeXof: 0,
+        totalXof: amount,
+        balanceAfterXof: before - amount,
+        counterparty: c.stationName,
+        remark: null,
+        createdAt: new Date(now).toISOString(),
+        userId: c.userId,
+        userLabel: user ? [user.fullName, user.phone ?? user.email].filter(Boolean).join(" · ") : null,
+        adminId: null,
+        stationId: c.stationId,
+      };
+      state = { ...state, wallet: { ...w, balances: { ...w.balances, [c.userId]: before - amount }, transactions: [tx, ...w.transactions].slice(0, 500) } };
+    }
+    if (changed) this.save(state);
   }
 
   private updateCharge(state: DemoState, id: string, change: (c: DemoCharge) => DemoCharge): ChargeSession {
@@ -7674,6 +7735,7 @@ export class DemoBackend implements Backend {
     const paid = all.filter((c) => c.status === "paid" && (c.paidAt ?? "") >= day);
     return {
       tariff: this.chargeTariffOf(state, stationId),
+      evTariff: this.chargeTariffOf(state, stationId, true),
       open: all.filter((c) => c.status === "charging" || c.status === "stopped"),
       today: all.filter((c) => (c.status === "paid" || c.status === "cancelled") && c.startedAt >= day),
       takings: {
@@ -7690,15 +7752,22 @@ export class DemoBackend implements Backend {
   async startCharge(stationId: string, input: StartChargeInput): Promise<ChargeSession> {
     const state = this.load();
     const staff = this.stationActor(state, stationId).profile;
-    if (!serviceActive(state, stationId, "charging")) throw new BackendError("service_not_offered");
     const station = state.stations.find((s) => s.id === stationId);
     const point = (state.devices ?? seedDevices()).flatMap((d) => d.points).find((p) => p.id === input.pointId && p.stationId === stationId);
     if (!station || !point) throw new BackendError("unknown", "not_found");
+    // A car charger's outlet is the "ev" service, at the car price, under the charger's name.
+    const ev = this.evOfPoint(state, point.id);
+    if (!serviceActive(state, stationId, ev ? "ev" : "charging")) throw new BackendError("service_not_offered");
     if ((state.charges ?? []).some((c) => c.pointId === point.id && c.status === "charging")) throw new BackendError("charge_busy");
     let reservation: Reservation | null = null;
     if (input.reservationId) {
       reservation = state.reservations.find((r) => r.id === input.reservationId) ?? null;
-      if (!reservation || reservation.stationId !== stationId || reservationKind(reservation) !== "charging_point" || reservation.targetKind === "ev") {
+      if (
+        !reservation ||
+        reservation.stationId !== stationId ||
+        reservationKind(reservation) !== "charging_point" ||
+        (reservation.targetKind === "ev" ? reservation.target !== ev?.id : !!ev)
+      ) {
         throw new BackendError("forbidden");
       }
       if (reservation.userId === staff.id) throw new BackendError("own_reservation");
@@ -7713,20 +7782,17 @@ export class DemoBackend implements Backend {
         ? this.findWalletUser(state, text)
         : null;
     if (customer?.id === staff.id) throw new BackendError("own_reservation");
-    // The reservation used now: the one named, else the customer's outlet reservation here (this outlet first, never a car charger's).
+    // The reservation used now: the one named, else the customer's outlet reservation here (this outlet
+    // first, never a car charger's), or for a car charger, their reservation of that charger.
     const used =
       reservation ??
-      (customer
-        ? (state.reservations
-            .filter((r) => r.userId === customer.id && r.stationId === stationId && r.status === "active" && reservationKind(r) === "charging_point" && r.targetKind !== "ev")
-            .sort((a, b) => Number(b.target === point.id) - Number(a.target === point.id) || a.createdAt.localeCompare(b.createdAt))[0] ?? null)
-        : null);
+      (customer ? this.reservationToUse(state, customer.id, stationId, point.id, ev) : null);
     const reservations = used ? state.reservations.map((r) => (r.id === used.id ? { ...r, status: "completed" as const } : r)) : state.reservations;
     const charge: DemoCharge = {
       id: crypto.randomUUID(),
       stationId,
       stationName: station.name,
-      pointLabel: point.label,
+      pointLabel: ev?.name ?? point.label,
       pointId: point.id,
       partnerId: this.partnerOfPoint(state, point.id),
       startedBy: staff.id,
@@ -7735,7 +7801,7 @@ export class DemoBackend implements Backend {
       customer: customer ? personLabel(customer) : null,
       powerWatts: 0,
       energyWh: 0,
-      tariff: this.chargeTariffOf(state, stationId),
+      tariff: this.chargeTariffOf(state, stationId, !!ev),
       amountXof: 0,
       startedAt: new Date().toISOString(),
       stoppedAt: null,
@@ -7746,6 +7812,22 @@ export class DemoBackend implements Backend {
     };
     this.save({ ...state, reservations, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
     return this.chargeView(charge);
+  }
+
+  /** The customer's reservation a charge on this outlet completes (as openCharge() in worker/charging.ts). */
+  private reservationToUse(state: DemoState, userId: string, stationId: string, pointId: string, ev: EvCharger | undefined): Reservation | null {
+    return (
+      state.reservations
+        .filter(
+          (r) =>
+            r.userId === userId &&
+            r.stationId === stationId &&
+            r.status === "active" &&
+            reservationKind(r) === "charging_point" &&
+            (ev ? r.targetKind === "ev" && r.target === ev.id : r.targetKind !== "ev"),
+        )
+        .sort((a, b) => Number(b.target === pointId) - Number(a.target === pointId) || a.createdAt.localeCompare(b.createdAt))[0] ?? null
+    );
   }
 
   async stopCharge(stationId: string, id: string): Promise<ChargeSession> {
@@ -7811,6 +7893,7 @@ export class DemoBackend implements Backend {
   }
 
   async myCharges(): Promise<ChargeSession[]> {
+    this.settleDemoCredit();
     const state = this.load();
     const profile = this.requireProfile(state);
     const walletOn = demoFeatures(state).wallet && (this.wallet(state).enabled || profile.role === "admin");
@@ -7818,24 +7901,28 @@ export class DemoBackend implements Backend {
       .filter((c) => c.userId === profile.id)
       .map((c) => {
         // The money follows the socket's owner (worker/charging.ts payOptions): ours, at any station.
-        const open = c.status === "stopped" && !c.partnerId;
-        return { ...this.chargeView(c), payOptions: { wallet: open && walletOn, mobile: open }, pendingPaymentId: null };
+        const open = c.status === "stopped" && !c.partnerId && c.creditLimitXof === undefined;
+        return { ...this.chargeView(c), payOptions: { wallet: open && walletOn && this.isDemoCreditStation(state, c.stationId), mobile: open }, pendingPaymentId: null };
       });
   }
 
   /** One outlet as qrPointState() in worker/charging.ts sees it; demo sockets are always online. */
-  private async chargePoint(pointId: string): Promise<{ stationId: string; stationName: string; label: string; state: ChargePointState; tariff: ChargeTariff }> {
+  private async chargePoint(
+    pointId: string,
+  ): Promise<{ stationId: string; stationName: string; label: string; state: ChargePointState; tariff: ChargeTariff; ev?: EvCharger }> {
     const state = this.load();
     const point = (state.devices ?? seedDevices()).flatMap((d) => d.points).find((p) => p.id === pointId);
     const station = point && state.stations.find((s) => s.id === point.stationId);
     if (!point || !station) throw new BackendError("unknown", "not_found");
     const busy = point.status === "charging" || (state.charges ?? []).some((c) => c.pointId === point.id && c.status === "charging");
+    const ev = this.evOfPoint(state, point.id);
     return {
-      label: point.label,
+      ...(ev ? { ev } : {}),
+      label: ev?.name ?? point.label,
       stationId: station.id,
       stationName: station.name,
-      state: !point.qrStart ? "disabled" : point.status === "fault" ? "fault" : busy ? "busy" : "free",
-      tariff: this.chargeTariffOf(state, station.id),
+      state: !point.qrStart || !this.demoCreditAccepted(state, pointId) ? "disabled" : point.status === "fault" ? "fault" : busy ? "busy" : "free",
+      tariff: this.chargeTariffOf(state, station.id, !!ev),
     };
   }
 
@@ -7852,38 +7939,72 @@ export class DemoBackend implements Backend {
         .filter((p) => p.outlet)
         .sort((a, b) => a.outlet! - b.outlet!)
         .map(async (p) => {
-          let { state: pointState } = await this.chargePoint(p.id);
-          const held = state.reservations.filter((r) => r.target === p.id && r.status === "active" && r.expiresAt > now);
+          const info = await this.chargePoint(p.id);
+          const { ev, label } = info;
+          let pointState = info.state;
+          const held = state.reservations.filter((r) => (r.target === p.id || (!!ev && r.target === ev.id)) && r.status === "active" && r.expiresAt > now);
           if (pointState === "free" && held.some((r) => r.userId !== me)) pointState = "reserved";
           const yours = pointState === "free" && !!me && held.some((r) => r.userId === me);
-          return { pointId: p.id, label: p.label, outlet: p.outlet!, state: pointState, ...(yours ? { yours: true } : {}) };
+          return {
+            pointId: p.id,
+            label,
+            outlet: p.outlet!,
+            state: pointState,
+            ...(yours ? { yours: true } : {}),
+            ...(ev ? { ev: { name: ev.name, connector: ev.connector, powerKw: ev.powerKw } } : {}),
+          };
         }),
     );
-    return { label: device.externalId.slice(-4), stationId: station.id, stationName: station.name, tariff: this.chargeTariffOf(state, station.id), outlets };
+    const first = device.points.find((p) => p.outlet);
+    return {
+      label: device.externalId.slice(-4),
+      stationId: station.id,
+      stationName: station.name,
+      tariff: this.chargeTariffOf(state, station.id, !!first && !!this.evOfPoint(state, first.id)),
+      outlets,
+      creditAccepted: !!first && this.demoCreditAccepted(state, first.id),
+      ...(me ? { balanceXof: this.balance(this.wallet(state), me) } : {}),
+    };
+  }
+
+  /** As creditAcceptedAt() in worker/charging.ts: our socket at a Green Credit station. */
+  private demoCreditAccepted(state: DemoState, pointId: string): boolean {
+    const point = (state.devices ?? seedDevices()).flatMap((d) => d.points).find((p) => p.id === pointId);
+    return !!point && this.isDemoCreditStation(state, point.stationId) && !this.partnerOfPoint(state, pointId);
   }
 
   /** As startOutletCharge() in worker/charging.ts. */
-  async startOutletCharge(token: string, pointId: string): Promise<ChargeSession> {
+  async startOutletCharge(token: string, pointId: string, pin: string): Promise<ChargeSession> {
     const outlet = (await this.chargeOutlet(token)).outlets.find((o) => o.pointId === pointId);
     if (!outlet) throw new BackendError("unknown", "not_found");
-    if (outlet.state === "reserved") throw new BackendError("point_reserved");
-    return this.startSelfCharge(pointId);
+    return this.startSelfCharge(pointId, pin);
   }
 
-  /** As startSelfCharge() in worker/charging.ts. */
-  private async startSelfCharge(pointId: string): Promise<ChargeSession> {
+  /** As selfCharge() in worker/charging.ts: paid in advance from Green Credit, with the PIN. */
+  private async startSelfCharge(pointId: string, pin: string): Promise<ChargeSession> {
+    this.settleDemoCredit();
     const state = this.load();
-    const profile = this.requireProfile(state);
     const info = await this.chargePoint(pointId);
-    if (!serviceActive(state, info.stationId, "charging")) throw new BackendError("service_not_offered");
+    if (!serviceActive(state, info.stationId, info.ev ? "ev" : "charging")) throw new BackendError("service_not_offered");
+    if (!this.demoCreditAccepted(state, pointId)) throw new BackendError("credit_not_accepted");
+    const profile = this.walletAccess(state);
+    const pinOf = state.pins?.[profile.phone ?? profile.email ?? ""];
+    if (!/^\d{4}$/.test(pin) || (pinOf !== undefined && pinOf !== pin)) throw new BackendError("invalid_pin");
     if ((state.charges ?? []).some((c) => c.userId === profile.id && (c.status === "charging" || c.status === "stopped"))) {
       throw new BackendError("charge_unpaid");
     }
     if (info.state === "disabled") throw new BackendError("charge_qr_disabled");
     if (info.state !== "free") throw new BackendError("charge_busy");
-    const used = state.reservations
-      .filter((r) => r.userId === profile.id && r.stationId === info.stationId && r.status === "active" && reservationKind(r) === "charging_point" && r.targetKind !== "ev")
-      .sort((a, b) => Number(b.target === pointId) - Number(a.target === pointId) || a.createdAt.localeCompare(b.createdAt))[0];
+    const now = new Date().toISOString();
+    const heldBy = (r: Reservation) => r.target === pointId || (!!info.ev && r.target === info.ev.id);
+    if (state.reservations.some((r) => heldBy(r) && r.status === "active" && r.expiresAt > now && r.userId !== profile.id)) {
+      throw new BackendError("point_reserved");
+    }
+    const w = this.wallet(state);
+    if (w.frozen.includes(profile.id)) throw new BackendError("wallet_frozen");
+    const balance = this.balance(w, profile.id);
+    if (balance < Math.max(info.tariff.minXof, 5)) throw new BackendError("insufficient_balance");
+    const used = this.reservationToUse(state, profile.id, info.stationId, pointId, info.ev);
     const reservations = used ? state.reservations.map((r) => (r.id === used.id ? { ...r, status: "completed" as const } : r)) : state.reservations;
     const charge: DemoCharge = {
       id: crypto.randomUUID(),
@@ -7906,6 +8027,7 @@ export class DemoBackend implements Backend {
       paymentMethod: null,
       paidAt: null,
       greenpoints: 0,
+      creditLimitXof: balance,
     };
     this.save({ ...state, reservations, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
     return this.chargeView(charge);
@@ -7917,11 +8039,14 @@ export class DemoBackend implements Backend {
     const c = (state.charges ?? []).find((x) => x.id === id && x.userId === profile.id);
     if (!c) throw new BackendError("unknown", "not_found");
     if (c.startedBy !== profile.id) throw new BackendError("forbidden");
-    return this.updateCharge(state, id, (x) => {
+    const stopped = this.updateCharge(state, id, (x) => {
       if (x.status !== "charging") return x;
       const live = this.chargeView(x);
       return { ...x, status: "stopped", energyWh: live.energyWh, amountXof: live.amountXof, powerWatts: 0, stoppedAt: new Date().toISOString() };
     });
+    if (c.creditLimitXof === undefined) return stopped;
+    this.settleDemoCredit();
+    return this.chargeView((this.load().charges ?? []).find((x) => x.id === id)!);
   }
 
   async payChargeWallet(id: string, input: { pin: string; idempotencyKey: string }): Promise<ChargeSession> {
@@ -7930,6 +8055,9 @@ export class DemoBackend implements Backend {
     const c = (state.charges ?? []).find((x) => x.id === id && x.userId === profile.id);
     if (!c) throw new BackendError("unknown", "not_found");
     if (c.status === "paid") return this.chargeView(c);
+    if (c.status !== "stopped" || c.partnerId || c.creditLimitXof !== undefined || !this.isDemoCreditStation(state, c.stationId)) {
+      throw new BackendError("payment_not_offered");
+    }
     const pinOf = state.pins?.[profile.phone ?? profile.email ?? ""];
     if (!validPinFormat(input.pin) || (pinOf !== undefined && pinOf !== input.pin)) throw new BackendError("invalid_pin");
     const w = this.wallet(state);
@@ -7978,14 +8106,22 @@ export class DemoBackend implements Backend {
     const points = (state.devices ?? seedDevices()).flatMap((d) => d.points);
     return {
       defaultTariff: state.chargeTariff ?? DEFAULT_CHARGE_TARIFF,
+      evTariff: state.evTariff ?? DEFAULT_EV_TARIFF,
       stations: state.stations
-        .map((s) => ({
-          id: s.id,
-          name: s.name,
-          kwhXof: state.stationTariffs?.[s.id]?.kwhXof ?? null,
-          minXof: state.stationTariffs?.[s.id]?.minXof ?? null,
-          outlets: points.filter((p) => p.stationId === s.id && p.deviceId).length,
-        }))
+        .map((s) => {
+          const evs = (state.evChargers ?? DEMO_EV_CHARGERS).filter((c) => c.stationId === s.id && c.isActive && c.pointId);
+          const evPoints = new Set(evs.map((c) => c.pointId));
+          return {
+            id: s.id,
+            name: s.name,
+            kwhXof: state.stationTariffs?.[s.id]?.kwhXof ?? null,
+            minXof: state.stationTariffs?.[s.id]?.minXof ?? null,
+            outlets: points.filter((p) => p.stationId === s.id && p.deviceId && !evPoints.has(p.id)).length,
+            evKwhXof: state.stationEvTariffs?.[s.id]?.kwhXof ?? null,
+            evMinXof: state.stationEvTariffs?.[s.id]?.minXof ?? null,
+            evChargers: evs.length,
+          };
+        })
         .sort((a, b) => a.name.localeCompare(b.name)),
       sessions: charges,
       totals: { paidXof: paid.reduce((n, c) => n + c.amountXof, 0), energyWh: paid.reduce((n, c) => n + c.energyWh, 0), count: paid.length },
@@ -7998,10 +8134,11 @@ export class DemoBackend implements Backend {
     if (input.stationId === null) {
       const t = { kwhXof: input.kwhXof ?? -1, minXof: input.minXof ?? -1 };
       if (!validTariff(t)) throw new BackendError("unknown", "bad_request");
-      this.save({ ...state, chargeTariff: t });
+      this.save(input.ev ? { ...state, evTariff: t } : { ...state, chargeTariff: t });
       return;
     }
-    this.save({ ...state, stationTariffs: { ...state.stationTariffs, [input.stationId]: { kwhXof: input.kwhXof, minXof: input.minXof } } });
+    const own = { [input.stationId]: { kwhXof: input.kwhXof, minXof: input.minXof } };
+    this.save(input.ev ? { ...state, stationEvTariffs: { ...state.stationEvTariffs, ...own } } : { ...state, stationTariffs: { ...state.stationTariffs, ...own } });
   }
   async adminChargeCards(): Promise<ChargeCard[]> {
     const state = this.load();

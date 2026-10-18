@@ -58,6 +58,7 @@ async function setup() {
       ('kara', '${PARTNER}', 'Kara', 9.55, 1.19, 'swap', 10, '00:00-24:00', 400, '${now}');
     insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values
       ('be', 1, 0, 3, '${now}'), ('lome', 1, 0, 5, '${now}'), ('kara', 1, 0, 2, '${now}');
+    update stations set green_credit = 1 where id in ('be', 'kara');
     insert into station_staff (station_id, user_id) values ('be', 'afi');
     insert into wallets (user_id, balance_xof, created_at, updated_at) values ('ama', 2000, 'x', 'x');
     insert into drivers (user_id, status, full_name, id_number, license_number, wanted_type, code, created_at) values
@@ -91,6 +92,8 @@ const event = (env: Env, as: string, station: string, body: Record<string, unkno
   call<BatteryEventView>(env, as, "POST", `/api/stations/${station}/battery-events`, { requestId: rid(), ...body }, active);
 const swap = (env: Env, as: string, station: string, body: Record<string, unknown>, active?: string) =>
   call<SwapEntry>(env, as, "POST", `/api/stations/${station}/swaps`, { requestId: rid(), ...body }, active);
+/** The one-time Green Credit code the customer's app shows after they typed their PIN (0047). */
+const creditCode = async (env: Env, as: string, pin = PIN) => (await call<{ code: string }>(env, as, "POST", "/api/wallet/code", { pin })).body.code;
 const counter = async (env: Env, station: string, as = "admin") => (await call<StationCounter>(env, as, "GET", `/api/stations/${station}/counter`)).body;
 const full = (db: DatabaseSync, station: string) =>
   (db.prepare("select full_batteries from station_status where station_id = ?").get(station) as { full_batteries: number }).full_batteries;
@@ -281,19 +284,35 @@ describe("swaps (W7, R6, R9, R10)", () => {
     expect((await swap(env, "afi", "be", { customerType: "cash", batteryIn: "A1", batteryOut: "a1" })).body).toEqual({ error: "same_battery" });
   });
 
-  it("takes an app customer's swap price from the wallet with their PIN", async () => {
+  it("takes an app customer's swap price from Green Credit with the code their phone shows", async () => {
     const { env, db } = await setup();
-    expect((await swap(env, "afi", "be", { customerType: "app", contact: "90000005", pin: "1111" })).body).toEqual({ error: "invalid_pin" });
-    const ok = await swap(env, "afi", "be", { customerType: "app", contact: "poinderecharge:id:+22890000005", pin: PIN });
+    // The PIN is typed on the customer's own phone; a wrong one gives no code.
+    expect((await call(env, "ama", "POST", "/api/wallet/code", { pin: "1111" })).body).toEqual({ error: "invalid_pin" });
+    expect((await swap(env, "afi", "be", { customerType: "app", contact: "90000005" })).body).toEqual({ error: "credit_code_invalid" });
+    const ok = await swap(env, "afi", "be", { customerType: "app", creditCode: await creditCode(env, "ama") });
     expect(ok.body).toMatchObject({ customerType: "app", customer: "Ama", payment: "wallet", amountXof: 500 });
     expect(db.prepare("select balance_xof from wallets where user_id = 'ama'").get()).toEqual({ balance_xof: 1500 });
     expect(db.prepare("select type, amount_xof, counterparty_label from wallet_transactions").all()).toEqual([{ type: "charge", amount_xof: 500, counterparty_label: "Bè" }]);
     // Cash is fine for an app customer too; staff, drivers' managers and unknown numbers are not customers.
     expect((await swap(env, "afi", "be", { customerType: "app", contact: "90000005", payment: "cash" })).body).toMatchObject({ payment: "cash", amountXof: 500 });
-    expect((await swap(env, "afi", "be", { customerType: "app", contact: "90000006", pin: PIN })).body).toEqual({ error: "not_a_customer" });
-    expect((await swap(env, "afi", "be", { customerType: "app", contact: "90000004", pin: PIN })).body).toEqual({ error: "own_reservation" });
-    // App payments only at our own stations, as for charges.
-    expect((await swap(env, "kossi", "kara", { customerType: "app", contact: "90000005", pin: PIN }, "kara")).body).toEqual({ error: "payment_not_offered" });
+    // Staff have no Green Credit of their own: only customers get a code.
+    expect((await call(env, "afi", "POST", "/api/wallet/code", { pin: PIN })).status).toBe(403);
+    // App payments only where the swap is ours, as for charges, even at a Green Credit station.
+    expect((await swap(env, "kossi", "kara", { customerType: "app", creditCode: await creditCode(env, "ama") }, "kara")).body).toEqual({ error: "payment_not_offered" });
+  });
+
+  it("uses a counter code once, and only at a Green Credit station", async () => {
+    const { env, db } = await setup();
+    const code = await creditCode(env, "ama");
+    // Without a reservation the code may come in the contact field (the scanned QR).
+    expect((await swap(env, "afi", "be", { customerType: "app", contact: `GC-${code}` })).body).toMatchObject({ payment: "wallet", amountXof: 500 });
+    expect((await swap(env, "afi", "be", { customerType: "app", creditCode: code })).body).toEqual({ error: "credit_code_invalid" });
+    expect(db.prepare("select balance_xof from wallets where user_id = 'ama'").get()).toEqual({ balance_xof: 1500 });
+    // Lomé is ours but not designated for Green Credit: the code stays open for elsewhere.
+    const next = await creditCode(env, "ama");
+    expect((await swap(env, "yao", "lome", { customerType: "app", creditCode: next }, "lome")).body).toEqual({ error: "credit_not_accepted" });
+    expect(db.prepare("select used_at from credit_codes where used_at is null").all()).toHaveLength(1);
+    expect(db.prepare("select balance_xof from wallets where user_id = 'ama'").get()).toEqual({ balance_xof: 1500 });
   });
 
   it("refuses a cash swap at a station without a swap price, but not a first purchase", async () => {
@@ -306,7 +325,7 @@ describe("swaps (W7, R6, R9, R10)", () => {
   it("refuses a wallet swap the balance cannot pay, and takes nothing", async () => {
     const { env, db } = await setup();
     db.exec("update wallets set balance_xof = 100 where user_id = 'ama'");
-    expect((await swap(env, "afi", "be", { customerType: "app", contact: "90000005", pin: PIN })).body).toEqual({ error: "insufficient_balance" });
+    expect((await swap(env, "afi", "be", { customerType: "app", creditCode: await creditCode(env, "ama") })).body).toEqual({ error: "insufficient_balance" });
     expect(full(db, "be")).toBe(3);
     expect(count(db, "select count(*) as n from swap_log")).toBe(0);
   });
