@@ -3,7 +3,8 @@ import type { EvCharger } from "../ev-chargers";
 import type { ChargingPoint, Operator, Station, StationStatus } from "../types";
 import type { Amenity } from "../station-extras";
 
-// Example stations in Lomé (approximate positions).
+// Example stations in Lomé (approximate positions). Phone numbers are placeholders; Deckon has
+// neither phone nor staff, so the demo shows a greyed-out station that cannot be reserved.
 export const DEMO_OPERATORS: Operator[] = [
   { id: "op-poinderecharge", name: "poinderecharge", isOwn: true },
   { id: "op-example", name: "Exemple Opérateur", isOwn: false },
@@ -41,7 +42,7 @@ export const DEMO_STATIONS: Station[] = [
     chargingSlots: 0,
     batteryCapacity: 20,
     openingHours: "06:00-22:00",
-    phone: null,
+    phone: "+22822000001",
     isSolar: false,
   },
   {
@@ -58,7 +59,7 @@ export const DEMO_STATIONS: Station[] = [
     chargingSlots: 8,
     batteryCapacity: 0,
     openingHours: "07:00-20:00",
-    phone: null,
+    phone: "+22822000002",
     isSolar: true,
   },
   {
@@ -75,7 +76,7 @@ export const DEMO_STATIONS: Station[] = [
     chargingSlots: 4,
     batteryCapacity: 10,
     openingHours: "06:30-21:30",
-    phone: null,
+    phone: "+22822000003",
     isSolar: true,
   },
   {
@@ -92,7 +93,7 @@ export const DEMO_STATIONS: Station[] = [
     chargingSlots: 0,
     batteryCapacity: 16,
     openingHours: "06:00-22:00",
-    phone: null,
+    phone: "+22822000004",
     isSolar: false,
   },
   {
@@ -109,7 +110,7 @@ export const DEMO_STATIONS: Station[] = [
     chargingSlots: 4,
     batteryCapacity: 0,
     openingHours: "08:00-19:00",
-    phone: null,
+    phone: "+22822000005",
     isSolar: false,
   },
   {
@@ -143,7 +144,7 @@ export const DEMO_STATIONS: Station[] = [
     chargingSlots: 0,
     batteryCapacity: 0,
     openingHours: "06:00-22:00",
-    phone: null,
+    phone: "+22822000006",
     isSolar: false,
   },
 ];

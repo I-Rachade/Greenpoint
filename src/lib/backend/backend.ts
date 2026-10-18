@@ -114,6 +114,7 @@ export type BackendErrorCode =
   | "already_reserved"
   | "station_not_found"
   | "station_closed"
+  | "station_unattended"
   | "service_not_offered"
   | "none_available"
   | "daily_limit"

@@ -2494,6 +2494,7 @@ export const fr = {
     already_reserved: "Vous avez déjà une réservation active.",
     station_not_found: "Station introuvable.",
     station_closed: "Cette station est fermée.",
+    station_unattended: "Pas de réservation ici : cette station n'a encore ni téléphone ni personnel.",
     service_not_offered: "Ce service n'est pas proposé ici.",
     none_available: "Plus rien de disponible dans cette station.",
     daily_limit: "Trop de réservations non utilisées ces dernières 24 heures. Réessayez plus tard.",
@@ -2856,6 +2857,8 @@ export const fr = {
     swap: "Échange de batterie",
     freeOf: "{n}/{total} libres",
     fullOf: "{n}/{total} pleines",
+    unattended: "Sans réservation",
+    unattendedHint: "Cette station n'a encore ni téléphone ni personnel : la réservation n'est pas possible.",
     amenities: {
       title: "Points de repos et services",
       none: "Aucun service indiqué pour cette station.",

@@ -95,7 +95,7 @@ import {
   demoReviews,
   type DemoReview,
 } from "./demo-data";
-import { cleanAmenities, cleanMainActivity, cleanPhotos, cleanReview, ratingOf, shortName, type ReviewInput, type StationReview } from "../station-extras";
+import { cleanAmenities, cleanMainActivity, cleanPhotos, cleanReview, isUnattended, ratingOf, shortName, type ReviewInput, type StationReview } from "../station-extras";
 import { depotPoints, hasAnyPoint, kindFor } from "../station-points";
 import {
   cleanSwapOwner,
@@ -1132,6 +1132,7 @@ export class DemoBackend implements Backend {
         parcelPoint,
         batteryTypes,
         evChargers,
+        hasStaff: (state.staff ?? DEMO_STAFF).some((a) => a.stationId === s.id),
       };
     });
   }
@@ -1400,6 +1401,7 @@ export class DemoBackend implements Backend {
     const station = state.stations.find((s) => s.id === stationId);
     const status = state.statuses.find((s) => s.stationId === stationId);
     if (!station || !status) throw new BackendError("station_not_found");
+    if (isUnattended(this.views(state, [station])[0])) throw new BackendError("station_unattended");
     if (!status.isOpen || !withinOpeningHours(station.openingHours, now)) throw new BackendError("station_closed");
     const view = this.views(state, [station])[0];
     const held = countHolding(state.reservations, stationId, now);

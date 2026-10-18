@@ -2494,6 +2494,7 @@ export const en: Dictionary = {
     already_reserved: "You already have an active reservation.",
     station_not_found: "Station not found.",
     station_closed: "This station is closed.",
+    station_unattended: "No reservations here: this station has no phone number or staff yet.",
     service_not_offered: "This service is not offered here.",
     none_available: "Nothing left at this station.",
     daily_limit: "Too many unused reservations in the last 24 hours. Please try again later.",
@@ -2856,6 +2857,8 @@ export const en: Dictionary = {
     swap: "Battery swap",
     freeOf: "{n}/{total} free",
     fullOf: "{n}/{total} full",
+    unattended: "No reservations",
+    unattendedHint: "This station has no phone number or staff yet, so it cannot be reserved.",
     amenities: {
       title: "Rest area and services",
       none: "No services listed for this station.",

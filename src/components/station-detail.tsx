@@ -20,7 +20,7 @@ import { displayStatus, type ChargingPointDisplay } from "@/lib/iot/charging-poi
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { loginHref } from "@/lib/next-path";
-import { AMENITIES, stationPhotos } from "@/lib/station-extras";
+import { AMENITIES, isUnattended, stationPhotos } from "@/lib/station-extras";
 import { useBrandPref } from "@/lib/prefs";
 import { freeOfType, reservableEvChargers, reservableOutlets, reservableTypes, type ReservationKind } from "@/lib/reservations";
 import { RESERVATION_MINUTES, type Reservation, type StationView } from "@/lib/types";
@@ -191,6 +191,8 @@ export function StationDetail({ station, distance, onChanged }: Props) {
     el.parentElement?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // No phone and no staff: nobody would hold the reservation, so none is offered (worker refuses too).
+  const unattended = isUnattended(station);
   const battery = station.kind !== "parcel";
   const swap = offersSwap(station.kind);
   const charging = offersCharging(station.kind);
@@ -207,7 +209,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
   const noFreeType = (station.batteryTypes ?? []).length > 0 && reservableTypes(station).length === 0;
   const evFree = reservableEvChargers(station).length > 0;
   // Both reserve buttons leave room for the route as an icon only.
-  const twoReserve = battery && !!profile && swap && charging && !connected;
+  const twoReserve = battery && !unattended && !!profile && swap && charging && !connected;
 
   const primary =
     "flex flex-1 items-center justify-center gap-2 rounded-2xl bg-gp-green-dark px-4 py-3.5 text-sm font-semibold text-white shadow-md hover:bg-gp-forest disabled:opacity-40";
@@ -384,7 +386,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
                     <span className="font-normal text-gp-muted dark:text-zinc-400"> {format(t.station.moto.of, { total: points.length })}</span>
                   </p>
                 </div>
-                {profile ? (
+                {unattended ? null : profile ? (
                   <button
                     type="button"
                     disabled={busy || slots === 0 || outletChoices.length === 0 || !!activeHere}
@@ -464,7 +466,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
                       </span>
                       {c.reserved ? (
                         <span className="shrink-0 rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-800 dark:text-amber-300">{t.reserveFlow.reserved}</span>
-                      ) : profile ? (
+                      ) : profile && !unattended ? (
                         <button
                           type="button"
                           disabled={busy || !!activeHere || !evFree || !station.status.isOpen}
@@ -549,19 +551,22 @@ export function StationDetail({ station, distance, onChanged }: Props) {
               <span className="shrink-0 font-semibold text-gp-green-dark dark:text-gp-green">{t.phase1a.view}</span>
             </Link>
           )}
-          {battery && profile && swap && !activeHere && (
+          {battery && unattended && !activeHere && (
+            <p className="flex flex-1 items-center rounded-2xl bg-zinc-500/10 px-4 py-3 text-sm text-gp-muted dark:text-zinc-400">{L.unattendedHint}</p>
+          )}
+          {battery && !unattended && profile && swap && !activeHere && (
             <button type="button" disabled={busy || availableBatteries(station) === 0 || noFreeType} onClick={reserveBattery} className={primary}>
               <BatteryIcon size={18} />
               {t.station.reserveBattery}
             </button>
           )}
-          {battery && profile && charging && !connected && !activeHere && (
+          {battery && !unattended && profile && charging && !connected && !activeHere && (
             <button type="button" disabled={busy || slots === 0} onClick={() => void reserve("charging_point", null)} className={primary}>
               <BoltIcon size={18} />
               {t.station.reserveSlot}
             </button>
           )}
-          {battery && !profile && (
+          {battery && !unattended && !profile && (
             <Link href={loginHref(stationHref(station.id))} className={primary}>
               {t.station.loginToReserve}
             </Link>

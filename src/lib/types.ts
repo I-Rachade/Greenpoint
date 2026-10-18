@@ -80,6 +80,8 @@ export interface StationView extends Station {
   rating?: StationRating;
   /** Active electric car chargers assigned to the station (see ev-chargers.ts). */
   evChargers?: StationEvCharger[];
+  /** At least one staff member is assigned (station_staff); missing = assumed. See isUnattended() in station-extras.ts. */
+  hasStaff?: boolean;
   /** Station work list (/api/staff/stations) only: the services active there now (station-services.ts). */
   activeServices?: StationService[];
   /** Station work list only: the viewer's role at the station (station-work.ts). */

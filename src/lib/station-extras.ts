@@ -46,6 +46,14 @@ export function cleanMainActivity(value: unknown): MainActivity | null {
   return typeof value === "string" && (MAIN_ACTIVITIES as string[]).includes(value) ? (value as MainActivity) : null;
 }
 
+/**
+ * A station nobody answers for: no phone number and no staff assigned. It is shown greyed out
+ * and cannot be reserved (reserve() in worker/api.ts refuses with "station_unattended").
+ */
+export function isUnattended(station: { phone: string | null; hasStaff?: boolean }): boolean {
+  return !station.phone?.trim() && station.hasStaff === false;
+}
+
 /** Photos a station may have; the first one is the cover. */
 export const MAX_STATION_PHOTOS = 6;
 export const MAX_REVIEW_COMMENT = 500;

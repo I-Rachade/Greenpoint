@@ -57,6 +57,8 @@ async function setup() {
     insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values
       ('be', 1, 0, 2, '${now}'), ('solo', 1, 0, 1, '${now}'), ('ch', 1, 0, 0, '${now}'), ('cnt', 1, 1, 0, '${now}');
     insert into station_staff (station_id, user_id) values ('be', 'afi'), ('ch', 'efo');
+    -- Without staff, a phone number keeps a station reservable (isUnattended in station-extras.ts).
+    update stations set phone = '+22822000001' where id in ('solo', 'cnt');
     insert into wallets (user_id, balance_xof, created_at, updated_at) values ('ama', 2000, 'x', 'x');
     insert into devices (external_id, station_id, vendor, link, outlets, last_seen_at, created_at) values ('123456', 'ch', 'Xingke', 'own_server', 3, '${now}', '${now}');
     insert into charging_points (id, station_id, label, status, device_id, outlet, last_seen_at, created_at) values
@@ -302,5 +304,18 @@ describe("wrong pickup codes (as parcels)", () => {
     expect((await swap(env, "afi", "be", { customerType: "app", reservationId: r.id, pickupCode: r.pickupCode, payment: "cash" })).status).toBe(429);
     expect(count(db, "select count(*) as n from swap_log")).toBe(0);
     expect(typeFull(db, "ov")).toBe(2);
+  });
+});
+
+describe("stations nobody answers for", () => {
+  it("lists a station without phone and staff as such and refuses its reservations", async () => {
+    const { env, db } = await setup();
+    db.exec("update stations set phone = null where id = 'solo'");
+    expect(await stationOf(env, "solo")).toMatchObject({ phone: null, hasStaff: false });
+    expect((await reserve(env, "ama", { stationId: "solo", kind: "swap" })).body).toEqual({ error: "station_unattended" });
+    // A phone number or one staff member is enough.
+    db.exec("update stations set phone = '+22822000001' where id = 'solo'");
+    expect((await reserve(env, "ama", { stationId: "solo", kind: "swap" })).status).toBe(200);
+    expect(await stationOf(env, "be")).toMatchObject({ phone: null, hasStaff: true });
   });
 });

@@ -5,6 +5,7 @@ import { Map as MapLibreMap, Marker, NavigationControl } from "maplibre-gl";
 import { useEffect, useRef } from "react";
 import { stationAvailability } from "@/lib/availability";
 import { LOME_CENTER, type LatLng } from "@/lib/geo";
+import { isUnattended } from "@/lib/station-extras";
 import type { StationView } from "@/lib/types";
 import { AVAILABILITY_COLORS } from "./availability-badge";
 import { useReducedMotion } from "./ui";
@@ -21,7 +22,15 @@ interface Props {
 
 /** What a marker looks like; when this is unchanged after a live update, the marker is left alone. */
 function markerLook(station: StationView, selected: boolean): string {
-  return [station.name, station.kind, station.isSolar, (station.evChargers ?? []).length > 0, stationAvailability(station), selected].join("|");
+  return [
+    station.name,
+    station.kind,
+    station.isSolar,
+    (station.evChargers ?? []).length > 0,
+    stationAvailability(station),
+    isUnattended(station),
+    selected,
+  ].join("|");
 }
 
 /** Draws a station marker into `el` (a button created once per station and kept). */
@@ -42,6 +51,9 @@ function drawMarker(el: HTMLButtonElement, station: StationView, selected: boole
     fontSize: selected ? "16px" : "13px",
     lineHeight: "1",
     cursor: "pointer",
+    // Stations nobody answers for (no phone, no staff) are shown greyed out: no reservation there.
+    opacity: isUnattended(station) && !selected ? "0.55" : "1",
+    filter: isUnattended(station) ? "grayscale(1)" : "",
   });
   el.textContent = station.kind === "swap" ? "🔋" : station.kind === "parcel" ? "📦" : "⚡";
   // Solar stations (they earn greenpoints) carry a small sun.
