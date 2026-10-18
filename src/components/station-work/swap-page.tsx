@@ -165,7 +165,7 @@ function SwapForm({
   const [contact, setContact] = useState(initialContact);
   const [driverCode, setDriverCode] = useState("");
   // Green Credit only at a station an admin designated (0047).
-  const creditHere = !features.lite && !!station.greenCredit;
+  const creditHere = !!station.greenCredit;
   const [payment, setPayment] = useState<"wallet" | "cash">(creditHere ? "wallet" : "cash");
   const [creditCode, setCreditCode] = useState("");
   const [amount, setAmount] = useState("");
@@ -339,7 +339,7 @@ function SwapForm({
               ]}
             />
           )}
-          {features.lite && <p className="text-sm text-gp-muted">{s.liteCashOnly}</p>}
+          {features.lite && !creditHere && <p className="text-sm text-gp-muted">{s.liteCashOnly}</p>}
           <p className={priceMissing ? "text-sm font-medium text-red-600" : "text-sm text-gp-muted"}>{counter.priceXof ? format(s.price, { price: formatXof(counter.priceXof, locale) }) : s.noPrice}</p>
           {wallet && <ScanField label={s.creditCode} hint={s.creditCodeHint} value={creditCode} onChange={setCreditCode} required />}
           {takesCash && customerType === "first_purchase" && (

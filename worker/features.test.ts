@@ -111,17 +111,17 @@ describe("parcel module switch", () => {
 });
 
 describe("Lite version switch", () => {
-  it("hides parcels, drivers, Cashplus and car chargers, and brings them back as they were", async () => {
+  it("hides parcels, drivers and car chargers but keeps Green Credit, and brings them back as they were", async () => {
     const { db, env } = setup();
     await setDriversEnabled(env, ADMIN, true);
     await setLiteEnabled(env, ADMIN, true);
 
-    const lite = { parcels: false, drivers: false, wallet: false, evChargers: false, lite: true };
+    const lite = { parcels: false, drivers: false, wallet: true, evChargers: false, lite: true };
     expect(await getFeatures(env)).toEqual(lite);
     expect(await (await get(env, "/api/features")).json()).toEqual(lite);
     expect(await driversEnabled(env.DB)).toBe(false);
     expect((await get(env, "/api/parcels/info")).status).toBe(404);
-    await expect(walletAccess(env, ADMIN)).rejects.toMatchObject({ code: "wallet_disabled", status: 403 });
+    await expect(walletAccess(env, ADMIN)).resolves.toMatchObject({ enabled: true });
 
     const log = db.prepare("select actor, table_name, row_id, changes from audit_log where row_id = 'lite_mode'").get();
     expect(log).toEqual({ actor: "admin", table_name: "settings", row_id: "lite_mode", changes: '{"enabled":true}' });

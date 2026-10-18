@@ -18,6 +18,7 @@ import {
   setWalletFrozen,
   topUpCredit,
 } from "./wallet";
+import { counterCardInfo } from "./charge-cards";
 
 // --- A minimal D1 on top of SQLite, with the real migrations (as in payments.test.ts) ---
 
@@ -224,6 +225,18 @@ describe("Green Credit counter codes", () => {
     await setWalletFrozen(env, ADMIN, KOFI.phone, true);
     expect(await code(check(env, "st", c))).toBe("wallet_frozen");
     expect(await code(load(env, "st", c, 1_000))).toBe("wallet_frozen");
+  });
+});
+
+describe("linked card at the counter", () => {
+  it("shows whose account the card pays with and its Green Credit, never a card credit to load", async () => {
+    const { db, env } = setup();
+    const now = new Date().toISOString();
+    db.prepare("insert into charge_cards (id_tag, user_id, created_at) values ('1592637480', 'kofi', ?), ('2745839105', null, ?)").run(now, now);
+    await credit(env, KOFI.phone!, 1_200);
+    expect(await counterCardInfo(env.DB, STAFF, isStaffOf, "st", "1592637480")).toEqual({ idTag: "1592637480", label: null, blocked: false, linked: true, customer: "Kofi M.", balanceXof: 1_200 });
+    expect(await counterCardInfo(env.DB, STAFF, isStaffOf, "st", "2745839105")).toEqual({ idTag: "2745839105", label: null, blocked: false, balanceXof: 0 });
+    expect(await code(counterCardInfo(env.DB, AMA, isStaffOf, "st", "1592637480"))).toBe("forbidden");
   });
 });
 

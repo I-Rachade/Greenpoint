@@ -195,7 +195,7 @@ export type BackendErrorCode =
   | "credit_code_invalid"
   | "credit_not_accepted"
   | "credit_limit_reached"
-  | "card_uses_credit"
+  | "card_needs_account"
   | "reward_unavailable"
   | "redemption_open"
   | "not_enough_points"
@@ -780,8 +780,6 @@ export interface Backend {
   setChargeCardBlocked(idTag: string, blocked: boolean): Promise<void>;
   /** Only a card without credit. */
   deleteChargeCard(idTag: string): Promise<void>;
-  /** Station staff: a card's credit at the counter. */
+  /** Station staff: whose account a card is linked to, and its Green Credit (cards are no longer topped up). */
   counterCard(stationId: string, idTag: string): Promise<CounterCard>;
-  /** Station staff took cash and put it on the card. */
-  topUpCard(stationId: string, idTag: string, amountXof: number): Promise<CounterCard>;
 }

@@ -82,7 +82,7 @@ import {
   type ChargeTariffInput,
   type StationCharging,
 } from "../charging";
-import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, validTopup, type ChargeCard, type ChargeCardInput, type CounterCard } from "../charge-cards";
+import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, type ChargeCard, type ChargeCardInput, type CounterCard } from "../charge-cards";
 import {
   DEMO_CHARGING_POINTS,
   DEMO_OPERATORS,
@@ -1808,7 +1808,7 @@ export class DemoBackend implements Backend {
       }
       const userId = reservation.userId;
       customer = users.find((u) => u.id === userId) ?? null;
-    } else if (type === "app" && input.payment !== "cash" && !features.lite) {
+    } else if (type === "app" && input.payment !== "cash") {
       // Paid from Green Credit: the customer's counter code, shown after the PIN on their phone (0047).
       const user = this.creditCodeOwner(state, String(input.creditCode ?? input.contact ?? ""));
       if (user.id === actor.profile.id) throw new BackendError("own_reservation");
@@ -1848,7 +1848,6 @@ export class DemoBackend implements Backend {
       payment = "fleet";
       amount = price ?? 0;
     } else if (type === "app" && input.payment !== "cash") {
-      if (features.lite) throw new BackendError("cash_only");
       if (swapOwner !== "poinderecharge") throw new BackendError("payment_not_offered");
       if (!this.isDemoCreditStation(state, stationId)) throw new BackendError("credit_not_accepted");
       payment = "wallet";
@@ -8167,7 +8166,9 @@ export class DemoBackend implements Backend {
     const clean = cleanCardTag(input.idTag);
     if (!clean) throw new BackendError("card_invalid");
     const contact = input.contact?.trim() ?? "";
-    const userId = contact ? this.findWalletUser(state, contact).id : null;
+    // Every card belongs to an account (saveChargeCard in worker/charge-cards.ts).
+    if (!contact) throw new BackendError("card_needs_account");
+    const userId = this.findWalletUser(state, contact).id;
     const label = input.label?.trim().slice(0, 60) || null;
     const cards = state.chargeCards ?? seedChargeCards();
     const idTag = cardTagVariants(clean).find((v) => cards.some((c) => c.idTag === v)) ?? clean;
@@ -8191,20 +8192,19 @@ export class DemoBackend implements Backend {
   async counterCard(stationId: string, idTag: string): Promise<CounterCard> {
     const state = this.load();
     this.stationActor(state, stationId);
-    return counterView(demoCard(state, idTag));
+    return this.counterCardView(state, demoCard(state, idTag));
   }
 
-  /** As topUpCard() in worker/charge-cards.ts: the cash goes into the station's takings. */
-  async topUpCard(stationId: string, idTag: string, amountXof: number): Promise<CounterCard> {
-    const state = this.load();
-    this.stationActor(state, stationId);
-    if (!validTopup(amountXof)) throw new BackendError("unknown", "bad_request");
-    const card = demoCard(state, idTag);
-    if (card.blocked) throw new BackendError("card_blocked");
-    const updated = { ...card, balanceXof: (card.balanceXof ?? 0) + amountXof };
-    const cardTopups = [...(state.cardTopups ?? []), { stationId, amountXof, at: new Date().toISOString() }];
-    this.save({ ...state, cardTopups, chargeCards: (state.chargeCards ?? seedChargeCards()).map((c) => (c.idTag === card.idTag ? updated : c)) });
-    return counterView(updated);
+  /** As counterCardInfo() in worker/charge-cards.ts: a linked card shows the account's Green Credit. */
+  private counterCardView(state: DemoState, card: DemoChargeCard): CounterCard {
+    const owner = card.userId ? this.cardOwner(state, card.userId) : null;
+    if (!owner) return counterView(card);
+    const balance = this.balance(this.wallet(state), owner.id);
+    return { ...counterView(card), linked: true, customer: personLabel(owner), balanceXof: balance };
+  }
+
+  private cardOwner(state: DemoState, userId: string): Profile | null {
+    return (state.users ?? demoUsers(new Date())).find((u) => u.id === userId) ?? (state.profile?.id === userId ? state.profile : null);
   }
 
   async setChargeCardBlocked(idTag: string, blocked: boolean): Promise<void> {
@@ -8248,10 +8248,13 @@ function counterView(c: DemoChargeCard): CounterCard {
   return { idTag: c.idTag, label: c.label, blocked: c.blocked, balanceXof: c.balanceXof ?? 0 };
 }
 
-/** A card someone swiped at a socket a few minutes ago, with no credit yet. */
+/** A card someone swiped at a socket a few minutes ago, with no credit yet, and one linked to Yao's account. */
 function seedChargeCards(): DemoChargeCard[] {
   const swiped = new Date(Date.now() - 4 * 60_000).toISOString();
-  return [{ idTag: "2745839105", userId: null, label: null, blocked: false, balanceXof: 0, createdAt: swiped, lastSwipedAt: swiped, lastDevice: "820008" }];
+  return [
+    { idTag: "2745839105", userId: null, label: null, blocked: false, balanceXof: 0, createdAt: swiped, lastSwipedAt: swiped, lastDevice: "820008" },
+    { idTag: "1592637480", userId: "demo-u1", label: null, blocked: false, balanceXof: 0, createdAt: swiped, lastSwipedAt: null, lastDevice: null },
+  ];
 }
 
 /** What the app sees of a stored counter event (without request id, station and person id). */

@@ -656,7 +656,9 @@ describe("DemoBackend station cash (as worker/station-cash.ts)", () => {
     const backend = new DemoBackend();
     await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
     setActiveStation(PARTNER_STATION);
-    await backend.topUpCard(PARTNER_STATION, "2745839105", 2000);
+    // Cash put on a card before the card rule of October 2026 (cards are no longer topped up).
+    const memory = (backend as unknown as { memory: { cardTopups?: { stationId: string; amountXof: number; at: string }[] } }).memory;
+    memory.cardTopups = [{ stationId: PARTNER_STATION, amountXof: 2000, at: new Date().toISOString() }];
     const [before] = await backend.ownerCash(PARTNER_STATION);
     expect(before).toMatchObject({ type: "operator", dueXof: 2000, lines: { cardsXof: 2000, totalXof: 2000 } });
     const input = { stationId: PARTNER_STATION, method: "cash" as const, reference: "Agent Komi", expectedDueXof: 2000 };

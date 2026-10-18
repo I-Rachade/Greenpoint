@@ -35,8 +35,13 @@ export interface CounterCard {
   label: string | null;
   blocked: boolean;
   balanceXof: number;
-  /** Linked to a customer account: it pays with the account's Green Credit, loaded with the customer's code (0047). */
+  /**
+   * Linked to a customer account: it pays with the account's Green Credit, loaded with the
+   * customer's one-time QR code only (0047). `balanceXof` is then the account's.
+   */
   linked?: boolean;
+  /** Linked cards: whose account. */
+  customer?: string;
 }
 
 /** Top-ups at the counter: whole FCFA amounts in multiples of 5, up to this. */

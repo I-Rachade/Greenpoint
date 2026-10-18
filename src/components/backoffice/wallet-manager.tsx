@@ -15,7 +15,7 @@ type Message = { ok: boolean; text: string } | null;
 /** Backoffice "Green Credit": module switch, totals, balance limit, Green Credit stations, corrections and cash refunds, and the ledger. */
 export function WalletManager() {
   const { t, locale } = useI18n();
-  const { backend, features } = useApp();
+  const { backend } = useApp();
   const errorMessage = useErrorMessage();
   const when = useDateTime();
   const [type, setType] = useState("");
@@ -44,7 +44,6 @@ export function WalletManager() {
       <div>
         <h1 className="text-xl font-semibold">{b.title}</h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">{b.intro}</p>
-        {features.lite && <p className="text-sm text-amber-700 dark:text-amber-300">{t.backoffice.lite.moduleHidden}</p>}
       </div>
       {message && <p className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>{message.text}</p>}
 

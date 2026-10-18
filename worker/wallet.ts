@@ -22,7 +22,6 @@ import {
 } from "../src/lib/wallet";
 import { verifyPin } from "./auth";
 import type { Env } from "./env";
-import { liteEnabled } from "./features";
 import { ApiError, nowIso, readJson, sha256, uuid } from "./http";
 import { notifyUser } from "./notify";
 import { refuseNonCustomer } from "./roles";
@@ -84,11 +83,10 @@ async function walletEnabled(env: Env): Promise<boolean> {
   return row?.value === "1";
 }
 
-/** While the module is off only admins may use it, to test. The Lite version hides it from everyone. */
+/** While the module is off only admins may use it, to test. Green Credit stays on in the Lite version. */
 export async function walletAccess(env: Env, user: Profile): Promise<{ enabled: boolean; testMode: boolean }> {
   // Drivers are never customers (R11); their former balance waits in a customer account (0031).
   refuseNonCustomer(user);
-  if (await liteEnabled(env.DB)) throw new ApiError("wallet_disabled", 403);
   const enabled = await walletEnabled(env);
   if (enabled) return { enabled, testMode: false };
   if (user.role === "admin") return { enabled, testMode: true };
@@ -322,6 +320,14 @@ export async function topUpCredit(env: Env, user: Profile, isStaffOf: StaffCheck
     }
     return { customer: label(c.user), amountXof: amount, balanceXof: row.balance_after_xof };
   }
+}
+
+/** A card linked to an account, at the counter: whose Green Credit it pays with, and how much is left. */
+export async function cardOwnerCredit(db: D1Database, userId: string): Promise<{ customer: string; balanceXof: number }> {
+  const user = await db.prepare("select id, phone, email, full_name from users where id = ?").bind(userId).first<UserRow>();
+  if (!user) throw new ApiError("card_unknown", 404);
+  const wallet = await db.prepare("select balance_xof from wallets where user_id = ?").bind(userId).first<{ balance_xof: number }>();
+  return { customer: label(user), balanceXof: wallet?.balance_xof ?? 0 };
 }
 
 // Backoffice ---------------------------------------------------------------------
