@@ -45,6 +45,7 @@ const APPROVER: Role[] = ["driver", "fleet_manager", "admin"];
 /** Who may call each route; every route of the Worker is listed (the first test checks it). */
 const POLICY: Record<string, Role[]> = {
   "GET /api/stations": ALL,
+  "GET /api/repair-centers": ALL,
   "GET /api/operators": ALL,
   "GET /api/stations/:id/reviews": ALL,
   "POST /api/stations/:id/reviews": SIGNED,
@@ -89,6 +90,9 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/admin/ev-chargers": ADMIN,
   "POST /api/admin/ev-chargers": ADMIN,
   "DELETE /api/admin/ev-chargers/:id": ADMIN,
+  "GET /api/admin/repair-centers": ADMIN,
+  "POST /api/admin/repair-centers": ADMIN,
+  "DELETE /api/admin/repair-centers/:id": ADMIN,
   "POST /api/admin/operators": ADMIN,
   "POST /api/admin/operators/:id/owners": ADMIN,
   "DELETE /api/admin/operators/:id/owners/:id": ADMIN,

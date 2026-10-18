@@ -1,13 +1,16 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Map as MapLibreMap, Marker, NavigationControl } from "maplibre-gl";
+import { Map as MapLibreMap, Marker, NavigationControl, Popup } from "maplibre-gl";
 import { useEffect, useRef } from "react";
 import { stationAvailability } from "@/lib/availability";
 import { LOME_CENTER, type LatLng } from "@/lib/geo";
+import { format } from "@/lib/i18n/format";
+import type { RepairCenter } from "@/lib/repair-centers";
 import { isUnattended } from "@/lib/station-extras";
 import type { StationView } from "@/lib/types";
 import { AVAILABILITY_COLORS } from "./availability-badge";
+import { useI18n } from "./i18n-provider";
 import { useReducedMotion } from "./ui";
 
 // Free vector tiles from OpenStreetMap data, no API key, commercial use allowed.
@@ -15,6 +18,8 @@ export const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 
 interface Props {
   stations: StationView[];
+  /** Repair workshops away from stations: a wrench marker with a small card, no selection. */
+  workshops?: RepairCenter[];
   position: LatLng | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -82,7 +87,33 @@ function drawMarker(el: HTMLButtonElement, station: StationView, selected: boole
   }
 }
 
-export function StationMap({ stations, position, selectedId, onSelect }: Props) {
+/** The small card of a workshop marker, built from text nodes (names come from the backoffice). */
+function workshopCard(w: RepairCenter, labels: { title: string; call: string }): HTMLElement {
+  const box = document.createElement("div");
+  Object.assign(box.style, { fontSize: "13px", lineHeight: "1.35", color: "#14281d", maxWidth: "220px" });
+  const name = document.createElement("strong");
+  name.textContent = w.name;
+  const kind = document.createElement("div");
+  kind.textContent = labels.title;
+  kind.style.color = "#5b6b62";
+  box.append(name, kind);
+  if (w.address) {
+    const address = document.createElement("div");
+    address.textContent = w.address;
+    box.append(address);
+  }
+  if (w.phone) {
+    const call = document.createElement("a");
+    call.href = `tel:${w.phone.replace(/[^\d+]/g, "")}`;
+    call.textContent = `${labels.call} ${w.phone}`;
+    Object.assign(call.style, { display: "inline-block", marginTop: "4px", fontWeight: "600", color: "#1f7a45" });
+    box.append(call);
+  }
+  return box;
+}
+
+export function StationMap({ stations, workshops = [], position, selectedId, onSelect }: Props) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef(new Map<string, { marker: Marker; el: HTMLButtonElement; look: string }>());
@@ -146,6 +177,38 @@ export function StationMap({ stations, position, selectedId, onSelect }: Props) 
       markers.delete(id);
     }
   }, [stations, selectedId]);
+
+  // Workshop markers: grey with a wrench, below the stations; a tap opens their card.
+  const workshopMarkersRef = useRef<Marker[]>([]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    for (const m of workshopMarkersRef.current) m.remove();
+    workshopMarkersRef.current = workshops.map((w) => {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.setAttribute("aria-label", `${w.name}, ${t.stationLook.workshop}`);
+      Object.assign(el.style, {
+        width: "24px",
+        height: "24px",
+        borderRadius: "9999px",
+        border: "2px solid white",
+        boxShadow: "0 1px 4px rgba(0,0,0,.4)",
+        background: "#475569",
+        fontSize: "12px",
+        lineHeight: "1",
+        cursor: "pointer",
+      });
+      el.textContent = "🔧";
+      const title = w.operatorName ? format(t.stationLook.workshopOf, { brand: w.operatorName }) : t.stationLook.workshop;
+      const popup = new Popup({ offset: 14, closeButton: true }).setDOMContent(workshopCard(w, { title, call: t.stationLook.call }));
+      return new Marker({ element: el }).setLngLat([w.lng, w.lat]).setPopup(popup).addTo(map);
+    });
+    return () => {
+      for (const m of workshopMarkersRef.current) m.remove();
+      workshopMarkersRef.current = [];
+    };
+  }, [workshops, t]);
 
   // The map is removed with its markers; forget them too.
   useEffect(() => {

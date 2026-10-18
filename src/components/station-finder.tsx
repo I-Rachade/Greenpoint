@@ -53,6 +53,8 @@ export function StationFinder() {
   const { position, state } = usePosition();
   const active = useActiveReservation();
   const { data: stations, error, reload } = useLiveQuery(() => backend.listStations());
+  // Workshops only add markers; without them the map works as before.
+  const { data: workshops } = useLiveQuery(() => backend.listRepairCenters().catch(() => []));
   const [filter, setFilter] = useState<StationFilter>(DEFAULT_FILTER);
   const [, setBrandPref] = useBrandPref();
   const [query, setQuery] = useState("");
@@ -174,7 +176,13 @@ export function StationFinder() {
       </header>
 
       <div className="relative mx-4 mt-4 h-56 overflow-hidden rounded-3xl border border-gp-border shadow-sm md:col-start-2 md:row-span-2 md:row-start-1 md:m-0 md:h-auto md:rounded-none md:border-0 md:shadow-none dark:border-white/10">
-        <StationMap stations={shown.map((r) => r.station)} position={position} selectedId={selectedId} onSelect={setSelectedId} />
+        <StationMap
+          stations={shown.map((r) => r.station)}
+          workshops={workshops ?? []}
+          position={position}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+        />
         {active && (
           <Link
             href="/reservations"

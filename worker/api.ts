@@ -5,6 +5,8 @@ import { deleteReview, saveReview, stationReviews } from "./reviews";
 import type { BatteryTypeInput } from "../src/lib/battery-types";
 import type { EvChargerInput } from "../src/lib/ev-chargers";
 import { deleteEvCharger, evChargersByStation, listEvChargers, saveEvCharger } from "./ev-chargers";
+import type { RepairCenterInput } from "../src/lib/repair-centers";
+import { deleteRepairCenter, listRepairCenters, saveRepairCenter } from "./repair-centers";
 import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements } from "./battery-types";
 import { batteryDetail, listBatteries, lookupBattery, registerBatteries, setBatteryStatus } from "./batteries";
 import type { BatteryStatusInput, RegisterBatteriesInput } from "../src/lib/batteries";
@@ -1644,6 +1646,7 @@ type Handler = (c: Ctx, params: string[]) => Promise<unknown>;
 
 const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/stations$/, (c) => publicStations(c)],
+  ["GET", /^\/api\/repair-centers$/, (c) => listRepairCenters(c.db, true)],
   ["GET", /^\/api\/operators$/, (c) => listOperators(c)],
   ["GET", /^\/api\/stations\/([\w-]+)\/reviews$/, async (c, [id]) => stationReviews(c.db, id, await c.user())],
   [
@@ -1843,6 +1846,24 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/admin\/batteries$/, async (c) => registerBatteries(c, await readJson<RegisterBatteriesInput>(c.request))],
   ["PATCH", /^\/api\/admin\/batteries\/([\w-]+)$/, async (c, [id]) => setBatteryStatus(c, id, await readJson<BatteryStatusInput>(c.request))],
   ["GET", /^\/api\/admin\/ev-chargers$/, async (c) => (await c.requireAdmin(), listEvChargers(c.db))],
+  ["GET", /^\/api\/admin\/repair-centers$/, async (c) => (await c.requireAdmin(), listRepairCenters(c.db, false))],
+  [
+    "POST",
+    /^\/api\/admin\/repair-centers$/,
+    async (c) => {
+      const admin = await c.requireAdmin();
+      const { id, input } = await readJson<{ id: string | null; input: RepairCenterInput }>(c.request);
+      return saveRepairCenter(c, admin.id, id ? String(id) : null, input);
+    },
+  ],
+  [
+    "DELETE",
+    /^\/api\/admin\/repair-centers\/([\w-]+)$/,
+    async (c, [id]) => {
+      const admin = await c.requireAdmin();
+      return deleteRepairCenter(c, admin.id, id);
+    },
+  ],
   [
     "POST",
     /^\/api\/admin\/ev-chargers$/,
@@ -2396,6 +2417,7 @@ export const API_ROUTES: readonly (readonly [string, RegExp])[] = ROUTES.map(([m
  */
 export const OPEN_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/stations",
+  "GET /api/repair-centers",
   "GET /api/operators",
   "GET /api/stations/:id/reviews",
   "GET /api/me",

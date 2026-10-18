@@ -98,6 +98,7 @@ export type AuditTable =
   | "merchant_addresses"
   | "battery_types"
   | "ev_chargers"
+  | "repair_centers"
   | "charging_sessions"
   | "station_services"
   | "settings"

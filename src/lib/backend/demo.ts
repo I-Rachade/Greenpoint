@@ -310,6 +310,7 @@ import {
   type PointPartnerStatus,
 } from "../point-partners";
 import { validEvCharger, type EvCharger, type EvChargerInput } from "../ev-chargers";
+import { cleanRepairCenter, type RepairCenter, type RepairCenterInput } from "../repair-centers";
 import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
 import { ocppKey } from "../iot/ocpp";
 import {
@@ -411,6 +412,8 @@ interface DemoState {
   batteryTypes?: BatteryType[];
   /** Electric car chargers, assigned to a station or not. */
   evChargers?: EvCharger[];
+  /** Repair workshops away from stations (as table repair_centers, migration 0046); missing = none. */
+  repairCenters?: RepairCenter[];
   /** Battery types each station swaps, by station id. */
   stationBatteryTypes?: Record<string, string[]>;
   /** Full batteries per battery type, by station id then type id (default: the station's total spread over its types). */
@@ -2299,6 +2302,50 @@ export class DemoBackend implements Backend {
       withAudit(
         { ...state, evChargers: chargers.filter((c) => c !== before) },
         { table: "ev_chargers", action: "delete", rowId: id, stationId: before.stationId, changes: { ...before } },
+      ),
+    );
+  }
+
+  async listRepairCenters() {
+    return (this.load().repairCenters ?? []).filter((r) => r.isActive).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async adminRepairCenters() {
+    const state = this.load();
+    this.requireAdmin(state);
+    return [...(state.repairCenters ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async saveRepairCenter(id: string | null, input: RepairCenterInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const clean = cleanRepairCenter(input);
+    if (!clean) throw new BackendError("unknown", "invalid repair centre");
+    const centers = state.repairCenters ?? [];
+    const before = centers.find((r) => r.id === id);
+    const center: RepairCenter = {
+      ...clean,
+      id: before?.id ?? crypto.randomUUID(),
+      operatorName: state.operators.find((o) => o.id === clean.operatorId)?.name ?? null,
+    };
+    this.save(
+      withAudit(
+        { ...state, repairCenters: before ? centers.map((r) => (r === before ? center : r)) : [...centers, center] },
+        { table: "repair_centers", action: before ? "update" : "insert", rowId: center.id, stationId: null, changes: before ? diff(before, center) : { ...center } },
+      ),
+    );
+  }
+
+  async deleteRepairCenter(id: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const centers = state.repairCenters ?? [];
+    const before = centers.find((r) => r.id === id);
+    if (!before) return;
+    this.save(
+      withAudit(
+        { ...state, repairCenters: centers.filter((r) => r !== before) },
+        { table: "repair_centers", action: "delete", rowId: id, stationId: null, changes: { ...before } },
       ),
     );
   }
