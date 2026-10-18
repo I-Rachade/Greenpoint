@@ -59,6 +59,7 @@ async function setup() {
       ('be', 1, 0, 3, '${now}'), ('kara', 1, 0, 3, '${now}'), ('boutique', 1, 0, 3, '${now}');
     insert into station_staff (station_id, user_id) values ('kara', 'efo');
     insert into wallets (user_id, balance_xof, created_at, updated_at) values ('ama', 5000, 'x', 'x');
+    update stations set green_credit = 1 where id in ('kara', 'boutique');
   `);
   return { db, env };
 }
@@ -112,15 +113,18 @@ const close = (env: Env, as: string, stationId: string, amountXof: number, expec
 describe("station types: who owns the swapping", () => {
   it("lets the app pay a shop station's swaps, never an operator station's", async () => {
     const { env, db } = await setup();
-    const swap = (station: string, as: string) =>
-      call<{ id: string; payment: string; amountXof: number; error?: string }>(
+    // Paid from Green Credit with the one-time code Ama's phone shows after her PIN (0047).
+    const swap = async (station: string, as: string) => {
+      const creditCode = (await call<{ code: string }>(env, "ama", "POST", "/api/wallet/code", { pin: PIN })).body.code;
+      return call<{ id: string; payment: string; amountXof: number; error?: string }>(
         env,
         as,
         "POST",
         `/api/stations/${station}/swaps`,
-        { requestId: rid(), customerType: "app", contact: "90000006", pin: PIN },
+        { requestId: rid(), customerType: "app", creditCode },
         station,
       );
+    };
     expect((await swap("kara", "kossi")).body).toEqual({ error: "payment_not_offered" });
     const shop = await swap("boutique", "mensah");
     expect(shop.body).toMatchObject({ payment: "wallet", amountXof: 450 });
@@ -148,12 +152,15 @@ describe("daily cash handover", () => {
   it("lists what a partner station took for poinderecharge, never the operator's own swaps", async () => {
     const { env, db } = await setup();
     activity(db);
+    // Green Credit loaded in cash at kara's counter is ours too (0047).
+    db.exec(`insert into wallet_transactions (id, trx_id, user_id, type, attribute, amount_xof, fee_xof, total_xof, balance_after_xof, station_id, created_at)
+               values ('w1', 'AM11111111', 'ama', 'topup', 'received', 600, 0, 600, 5600, 'kara', '${ago(1)}')`);
     const kara = await cashOf(env, "kossi", "kara");
-    expect(kara).toMatchObject({ type: "operator", carryXof: 0, commissionXof: 0, dueXof: 2000, pendingXof: 0 });
-    expect(kara.lines).toEqual({ chargesXof: 300, swapsXof: 0, parcelsXof: 700, driversXof: 0, cardsXof: 1000, totalXof: 2000 });
+    expect(kara).toMatchObject({ type: "operator", carryXof: 0, commissionXof: 0, dueXof: 2600, pendingXof: 0 });
+    expect(kara.lines).toEqual({ chargesXof: 300, swapsXof: 0, parcelsXof: 700, driversXof: 0, cardsXof: 1000, creditXof: 600, totalXof: 2600 });
     const boutique = await cashOf(env, "mensah", "boutique");
-    // The cash swap is ours; the wallet one is paid already, it only counts for the commission.
-    expect(boutique).toMatchObject({ type: "shop", dueXof: 450, commissionBaseXof: 900 });
+    // The cash swap is ours; the Green Credit one is paid already and earns no commission.
+    expect(boutique).toMatchObject({ type: "shop", dueXof: 450, commissionBaseXof: 450 });
     expect(boutique.lines.swapsXof).toBe(450);
     // Our own stations owe nothing; an owner sees only their stations, an admin all.
     expect((await call<StationCash[]>(env, "yao", "GET", "/api/owner/cash")).body).toEqual([]);
@@ -196,14 +203,14 @@ describe("daily cash handover", () => {
     const { env, db } = await setup();
     activity(db);
     await call(env, "admin", "POST", "/api/admin/cash/stations/boutique", { swapOwner: "poinderecharge", commissionPct: 10, commissionMode: "deduct" });
-    // 10 % of our sales at the station (900), kept back from the cash (450).
-    expect(await cashOf(env, "mensah", "boutique")).toMatchObject({ commissionBaseXof: 900, commissionXof: 90, dueXof: 360, monthCommissionXof: expect.any(Number) });
-    const h = await close(env, "mensah", "boutique", 360, 360);
-    expect(h.body).toMatchObject({ commissionXof: 90, dueXof: 360 });
+    // 10 % of our sales at the station (450; not the Green Credit swap, 0047), kept back from the cash (450).
+    expect(await cashOf(env, "mensah", "boutique")).toMatchObject({ commissionBaseXof: 450, commissionXof: 45, dueXof: 405, monthCommissionXof: expect.any(Number) });
+    const h = await close(env, "mensah", "boutique", 405, 405);
+    expect(h.body).toMatchObject({ commissionXof: 45, dueXof: 405 });
     expect(await cashOf(env, "mensah", "boutique")).toMatchObject({ carryXof: 0, dueXof: 0 });
     await call(env, "admin", "POST", "/api/admin/cash/stations/kara", { swapOwner: "operator", commissionPct: 10, commissionMode: "monthly" });
-    // Monthly: the whole cash is handed over, the commission is only shown.
-    expect(await cashOf(env, "kossi", "kara")).toMatchObject({ commissionBaseXof: 500, commissionXof: 0, dueXof: 2000 });
+    // Monthly: the whole cash is handed over, the commission is only shown (the cash charge, not the Green Credit one).
+    expect(await cashOf(env, "kossi", "kara")).toMatchObject({ commissionBaseXof: 300, commissionXof: 0, dueXof: 2000 });
   });
 
   it("counts a station late after 10:00 the next morning and tells the admins", async () => {

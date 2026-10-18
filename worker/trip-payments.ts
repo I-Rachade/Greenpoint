@@ -18,6 +18,8 @@ import { walletAccess } from "./wallet";
 export function cleanPayWith(value: unknown): TripPayment {
   if (value === undefined || value === null) return "cash";
   if (!TRIP_PAYMENTS.includes(value as TripPayment)) throw new ApiError("bad_request");
+  // Green Credit pays energy only (0047): trips are paid in cash. Trips paid before still get refunds.
+  if (value === "wallet") throw new ApiError("payment_not_offered", 409);
   return value as TripPayment;
 }
 

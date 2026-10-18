@@ -28,7 +28,7 @@ import { evTargetSql } from "./reservations";
 import { ocppIdTag, ocppKey, remoteStartRequest, remoteStopRequest } from "../src/lib/iot/ocpp";
 import { sendOcppCommand } from "./ocpp";
 import { earnStatement } from "./greenpoint";
-import { chargeReadingStatement, hasOpenCharge } from "./charging";
+import { chargeReadingStatement, creditFollowUp, hasOpenCharge } from "./charging";
 
 // Connected sockets (e.g. LoRa). See docs/steckdosen-lora.md.
 
@@ -198,7 +198,13 @@ export function ingest(db: D1Database): Ingest {
 
 /** POST /api/devices/events: messages from sockets, network servers or a vendor cloud. */
 export function handleDeviceEvents(request: Request, env: Env): Promise<Response> {
-  return handleDeviceRequest(request, env.DEVICE_WEBHOOK_SECRET, ingest(env.DB));
+  const apply = ingest(env.DB);
+  return handleDeviceRequest(request, env.DEVICE_WEBHOOK_SECRET, async (externalId, outlets, payload, extra) => {
+    const result = await apply(externalId, outlets, payload, extra);
+    // Green Credit charges: stopped when the credit is used up, paid once they ended (0047).
+    await creditFollowUp(env, externalId);
+    return result;
+  });
 }
 
 function auditDevice(db: D1Database, actor: string, action: "insert" | "delete", device: string, stationId: string, changes: object) {

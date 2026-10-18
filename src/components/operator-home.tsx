@@ -8,7 +8,7 @@ import { stationTiles, type StationTile } from "@/lib/station-work";
 import type { StationView } from "@/lib/types";
 import { useApp } from "./app-provider";
 import { ConfirmSheet } from "./confirm-sheet";
-import { BatteryIcon, BoltIcon, BoxIcon, ClipboardIcon, ScooterIcon } from "./icons";
+import { BatteryIcon, BoltIcon, BoxIcon, ClipboardIcon, ScooterIcon, WalletIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { effectiveStatus } from "./reservation-list";
 import { WorkShell } from "./station-work/work-shell";
@@ -20,6 +20,7 @@ const TILE_HREF: Record<StationTile, string> = {
   charging: "/operator/recharge",
   parcels: "/operator/colis",
   reservations: "/operator/reservations",
+  credit: "/operator/green-credit",
 };
 
 const TILE_ICON: Record<StationTile, ComponentType<{ size?: number }>> = {
@@ -28,6 +29,7 @@ const TILE_ICON: Record<StationTile, ComponentType<{ size?: number }>> = {
   charging: BoltIcon,
   parcels: BoxIcon,
   reservations: ClipboardIcon,
+  credit: WalletIcon,
 };
 
 function Tile({ tile, hint }: { tile: StationTile; hint: string }) {
@@ -116,13 +118,14 @@ function StationHome({ station }: { station: StationView }) {
   const now = useNow(15_000);
   const { data: reservations } = useLiveQuery(() => backend.stationReservations(station.id), station.id);
   const active = (reservations ?? []).filter((r) => effectiveStatus(r, now) === "active").length;
-  const tiles = stationTiles(station.activeServices ?? []);
+  const tiles = stationTiles(station.activeServices ?? [], station.greenCredit);
   const hint: Record<StationTile, string> = {
     swap: t.work.tileHints.swap,
     counter: format(t.work.tileHints.counter, { n: station.status.fullBatteries }),
     charging: format(t.work.tileHints.charging, { n: freePlaces(station) }),
     parcels: t.work.tileHints.parcels,
     reservations: format(t.work.tileHints.reservations, { n: active }),
+    credit: t.work.tileHints.credit,
   };
   return (
     <>

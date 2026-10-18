@@ -191,19 +191,20 @@ describe("DemoBackend connected sockets", () => {
     const token = device.qrToken!;
     const stateOf = async () => (await backend.chargeOutlet(token)).outlets.find((o) => o.pointId === point.id)!.state;
     expect(await stateOf()).toBe("disabled");
-    await expect(backend.startOutletCharge(token, point.id)).rejects.toMatchObject({ code: "charge_qr_disabled" });
+    await expect(backend.startOutletCharge(token, point.id, "2580")).rejects.toMatchObject({ code: "charge_qr_disabled" });
 
     await backend.setQrStart(point.id, true);
     expect((await backend.listStations()).find((s) => s.id === STATION)!.chargingPoints!.find((p) => p.id === point.id)!.qrStart).toBe(true);
     expect(await stateOf()).toBe("free");
-    const charge = await backend.startOutletCharge(token, point.id);
+    const charge = await backend.startOutletCharge(token, point.id, "2580");
     expect(charge).toMatchObject({ status: "charging", selfStarted: true });
     expect(await stateOf()).toBe("busy");
     // One charge at a time until it is paid.
     const other = device.points.find((p) => p.status === "free" && p.id !== point.id)!;
     await backend.setQrStart(other.id, true);
-    await expect(backend.startOutletCharge(token, other.id)).rejects.toMatchObject({ code: "charge_unpaid" });
-    expect((await backend.stopSelfCharge(charge.id)).status).toBe("stopped");
+    await expect(backend.startOutletCharge(token, other.id, "2580")).rejects.toMatchObject({ code: "charge_unpaid" });
+    // Paid in advance from Green Credit: a charge that took no energy is closed at once.
+    expect((await backend.stopSelfCharge(charge.id)).status).toBe("cancelled");
   });
 });
 
@@ -578,10 +579,10 @@ describe("outlet QR codes", () => {
     expect(info.outlets.map((o) => o.outlet)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     await backend.register("+22890123456", DEMO_CODE, "2580", "customer");
     const first = info.outlets.find((o) => o.state === "free")!;
-    await backend.startOutletCharge(token, first.pointId);
+    await backend.startOutletCharge(token, first.pointId, "2580");
     expect((await backend.chargeOutlet(token)).outlets.find((o) => o.pointId === first.pointId)?.state).toBe("busy");
     // Only outlets of this box can be started with its code.
-    await expect(backend.startOutletCharge(token, "cp-not-here")).rejects.toMatchObject({ code: "unknown" });
+    await expect(backend.startOutletCharge(token, "cp-not-here", "2580")).rejects.toMatchObject({ code: "unknown" });
 
     await backend.register("+22890999999", DEMO_CODE, "2580", "admin");
     const renewed = await backend.renewBoxQr("DEMO-UL01");

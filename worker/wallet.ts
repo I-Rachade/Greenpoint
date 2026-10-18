@@ -1,38 +1,38 @@
 import { parseContact } from "../src/lib/contact";
 import type { Profile } from "../src/lib/types";
 import {
-  checkLimits,
+  CREDIT_CODE_MINUTES,
+  CREDIT_TOPUP_MIN_XOF,
+  maxTopup,
   newTrxId,
   parseAmount,
-  periodStarts,
+  parseCreditCode,
   personLabel,
-  quoteFee,
-  receivePayload,
-  validFeeSetting,
   WALLET_REMARK_MAX,
   type AdminWallet,
   type AdminWalletTransaction,
-  type SendMoneyInput,
+  type CounterCredit,
+  type CreditCode,
+  type CreditTopupResult,
+  type GreenCreditStation,
   type WalletAdjustInput,
-  type WalletFeeSetting,
-  type WalletProduct,
-  type WalletRecipient,
   type WalletTransaction,
   type WalletTxType,
-  type WalletUsage,
   type WalletView,
 } from "../src/lib/wallet";
 import { verifyPin } from "./auth";
-import { cardProviderFromEnv, providerFromEnv } from "./payment-providers";
 import type { Env } from "./env";
 import { liteEnabled } from "./features";
-import { notCustomerRole, refuseNonCustomer } from "./roles";
-import { ApiError, nowIso, readJson, uuid } from "./http";
+import { ApiError, nowIso, readJson, sha256, uuid } from "./http";
+import { notifyUser } from "./notify";
+import { refuseNonCustomer } from "./roles";
 
-// Wallet (Cashplus phase 1). Every booking is one D1 batch, which D1 runs as a
-// single transaction: if any statement fails (an overdrawn wallet breaks the
-// balance check, a repeated idempotency key breaks its unique index), nothing
-// of the batch is written. See src/lib/wallet.ts and planung/cashplus-plan.md.
+// Green Credit (migration 0047, formerly the Cashplus wallet): a closed prepaid credit for
+// energy, loaded in cash at the counter of a Green Credit station and spent on what belongs
+// to poinderecharge (worker/charging.ts, worker/station-work.ts). No transfers, no withdrawals,
+// no online top-ups. Every booking is one D1 batch, which D1 runs as a single transaction: if
+// any statement fails (an overdrawn wallet breaks the balance check, a repeated idempotency key
+// breaks its unique index), nothing of the batch is written. See src/lib/wallet.ts.
 
 interface TxRow {
   id: string;
@@ -49,17 +49,6 @@ interface TxRow {
   remark: string | null;
   admin_id: string | null;
   created_at: string;
-}
-
-interface FeeRow {
-  product: WalletProduct;
-  fixed_xof: number;
-  percent: number;
-  min_xof: number;
-  max_xof: number;
-  daily_xof: number;
-  monthly_xof: number;
-  is_active: number;
 }
 
 interface UserRow {
@@ -90,19 +79,6 @@ function toTransaction(r: TxRow): WalletTransaction {
   };
 }
 
-function toSetting(r: FeeRow): WalletFeeSetting {
-  return {
-    product: r.product,
-    fixedXof: r.fixed_xof,
-    percent: r.percent,
-    minXof: r.min_xof,
-    maxXof: r.max_xof,
-    dailyXof: r.daily_xof,
-    monthlyXof: r.monthly_xof,
-    isActive: !!r.is_active,
-  };
-}
-
 async function walletEnabled(env: Env): Promise<boolean> {
   const row = await env.DB.prepare("select value from app_settings where key = 'wallet_enabled'").first<{ value: string }>();
   return row?.value === "1";
@@ -117,41 +93,6 @@ export async function walletAccess(env: Env, user: Profile): Promise<{ enabled: 
   if (enabled) return { enabled, testMode: false };
   if (user.role === "admin") return { enabled, testMode: true };
   throw new ApiError("wallet_disabled", 403);
-}
-
-/**
- * Without real Flooz/T-Money credentials the simulated provider confirms every
- * payment, which would hand out free money. Then only admins may top up, to test.
- */
-export function topupAvailable(env: Env, user: Profile): boolean {
-  const pay = providerFromEnv((key) => env[key as keyof Env] as string | undefined);
-  return pay.name !== "mock" || user.role === "admin";
-}
-
-/** The same for bank cards, which have their own provider. */
-export function cardTopupAvailable(env: Env, user: Profile): boolean {
-  const pay = cardProviderFromEnv((key) => env[key as keyof Env] as string | undefined);
-  return pay.name !== "mock" || user.role === "admin";
-}
-
-async function feeSetting(env: Env, product: WalletProduct): Promise<WalletFeeSetting> {
-  const row = await env.DB.prepare("select * from wallet_fee_settings where product = ?").bind(product).first<FeeRow>();
-  if (!row) throw new ApiError("unknown", 500);
-  return toSetting(row);
-}
-
-/** Successful sends of this type today and this month (spec 1.3.4). */
-async function usage(env: Env, userId: string, type: WalletTxType): Promise<WalletUsage> {
-  const { day, month } = periodStarts();
-  const row = await env.DB.prepare(
-    `select coalesce(sum(case when created_at >= ?3 then amount_xof end), 0) as today,
-            coalesce(sum(amount_xof), 0) as month
-     from wallet_transactions
-     where user_id = ?1 and type = ?2 and attribute = 'send' and status = 'success' and created_at >= ?4`,
-  )
-    .bind(userId, type, day, month)
-    .first<{ today: number; month: number }>();
-  return { todayXof: row?.today ?? 0, monthXof: row?.month ?? 0 };
 }
 
 function ensureWallet(env: Env, userId: string, now: string) {
@@ -192,121 +133,194 @@ async function findUser(env: Env, rawContact: unknown): Promise<UserRow> {
 
 const label = (u: UserRow) => personLabel({ fullName: u.full_name, phone: u.phone, email: u.email });
 
+/** Highest balance a customer may hold (0 = no limit), set in the backoffice. */
+export async function creditMax(db: D1Database): Promise<number> {
+  const row = await db.prepare("select value from app_settings where key = 'green_credit_max_xof'").first<{ value: string }>();
+  const n = Number(row?.value ?? 0);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+/** The active stations that load and accept Green Credit. */
+async function creditStations(db: D1Database): Promise<GreenCreditStation[]> {
+  const { results } = await db.prepare("select id, name from stations where green_credit = 1 and is_active = 1 order by name").all<GreenCreditStation>();
+  return results;
+}
+
+/** Whether this station loads and accepts Green Credit (designated in the backoffice). */
+export async function isCreditStation(db: D1Database, stationId: string): Promise<boolean> {
+  return !!(await db.prepare("select 1 from stations where id = ? and green_credit = 1").bind(stationId).first());
+}
+
 // Users ------------------------------------------------------------------------
 
 export async function getWallet(env: Env, user: Profile): Promise<WalletView> {
   const { enabled, testMode } = await walletAccess(env, user);
-  const [wallet, transfer, used, history] = await Promise.all([
+  const [wallet, maxXof, stations, history] = await Promise.all([
     env.DB.prepare("select balance_xof, status from wallets where user_id = ?")
       .bind(user.id)
       .first<{ balance_xof: number; status: "active" | "frozen" }>(),
-    feeSetting(env, "transfer"),
-    usage(env, user.id, "transfer"),
+    creditMax(env.DB),
+    creditStations(env.DB),
     env.DB.prepare("select * from wallet_transactions where user_id = ? order by created_at desc, rowid desc limit ?")
       .bind(user.id, HISTORY_LIMIT)
       .all<TxRow>(),
   ]);
-  const contact = user.phone ?? user.email;
   return {
     enabled,
     testMode,
     balanceXof: wallet?.balance_xof ?? 0,
     frozen: wallet?.status === "frozen",
-    transfer,
-    usage: used,
-    receiveCode: contact ? receivePayload(contact) : null,
-    topupAvailable: topupAvailable(env, user),
-    cardTopupAvailable: cardTopupAvailable(env, user),
+    maxXof,
+    stations,
     transactions: history.results.map(toTransaction),
   };
 }
 
-/** Lets the sender check who will get the money before confirming. */
-export async function findRecipient(env: Env, user: Profile, contact: string | null): Promise<WalletRecipient> {
+/**
+ * POST /api/wallet/code { pin }: the customer typed their PIN on their own phone; the app
+ * shows the one-time code staff scan to load the credit or to take a swap from it. A new code
+ * voids the customer's older ones.
+ */
+export async function createCreditCode(env: Env, user: Profile, request: Request): Promise<CreditCode> {
+  const { pin } = await readJson<{ pin?: unknown }>(request);
   await walletAccess(env, user);
-  const recipient = await findUser(env, contact);
-  if (recipient.id === user.id) throw new ApiError("self_transfer");
-  if (notCustomerRole(recipient.role ?? "")) throw new ApiError("not_a_customer", 409);
-  return { label: label(recipient) };
-}
-
-/** Send Money (spec 1.4.2): PIN, fee, limits and balance checked on the server; two ledger rows. */
-export async function sendMoney(env: Env, user: Profile, request: Request): Promise<WalletTransaction> {
-  const input = await readJson<Partial<SendMoneyInput>>(request);
-  await walletAccess(env, user);
-  const amount = parseAmount(input.amountXof);
-  if (amount === null) throw new ApiError("invalid_amount");
-  const key = String(input.idempotencyKey ?? "");
-  if (!/^[\w-]{8,64}$/.test(key)) throw new ApiError("bad_request");
-
-  // A retry of a payment that went through answers with the same booking.
-  const done = await env.DB.prepare("select * from wallet_transactions where user_id = ? and idempotency_key = ?")
-    .bind(user.id, key)
-    .first<TxRow>();
-  if (done) return toTransaction(done);
-
-  const recipient = await findUser(env, input.contact);
-  if (recipient.id === user.id) throw new ApiError("self_transfer");
-  // Drivers and fleet managers have no wallet (R11).
-  if (notCustomerRole(recipient.role ?? "")) throw new ApiError("not_a_customer", 409);
-  await verifyPin(env, user.id, input.pin);
-
-  const setting = await feeSetting(env, "transfer");
-  if (!setting.isActive) throw new ApiError("wallet_disabled", 403);
-  const problem = checkLimits(amount, setting, await usage(env, user.id, "transfer"));
-  if (problem) throw new ApiError(problem);
-  const fee = quoteFee(amount, setting);
-
-  const sender = await env.DB.prepare("select balance_xof, status from wallets where user_id = ?")
-    .bind(user.id)
-    .first<{ balance_xof: number; status: string }>();
-  if (sender?.status === "frozen") throw new ApiError("wallet_frozen", 403);
-  if (!sender || sender.balance_xof < fee.payableXof) throw new ApiError("insufficient_balance");
-  const target = await env.DB.prepare("select status from wallets where user_id = ?").bind(recipient.id).first<{ status: string }>();
-  if (target?.status === "frozen") throw new ApiError("recipient_not_found", 404);
-
-  const remark = cleanRemark(input.remark);
-  const details = JSON.stringify({ fee, device: device(request) });
-  const me = await env.DB.prepare("select id, phone, email, full_name from users where id = ?").bind(user.id).first<UserRow>();
-
-  // A transaction number already taken (1 in 43 million) breaks its unique index: try another one.
+  await verifyPin(env, user.id, pin);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + CREDIT_CODE_MINUTES * 60_000).toISOString();
+  // A code still open for someone else breaks the primary key (1 in 100 million): try another one.
   for (let attempt = 0; ; attempt++) {
-    const now = nowIso();
-    const trxId = newTrxId("transfer");
-    const sendId = uuid();
+    const digits = crypto.getRandomValues(new Uint32Array(1))[0] % 100_000_000;
+    const code = String(digits).padStart(8, "0");
     try {
       await env.DB.batch([
-        ensureWallet(env, recipient.id, now),
-        // The check on balance_xof makes this fail when the money is no longer there.
-        env.DB.prepare("update wallets set balance_xof = balance_xof - ?, updated_at = ? where user_id = ?").bind(fee.payableXof, now, user.id),
-        env.DB.prepare(
-          `insert into wallet_transactions (id, trx_id, user_id, type, attribute, amount_xof, fee_xof, total_xof, balance_after_xof,
-             counterparty_user_id, counterparty_label, remark, idempotency_key, details, created_at)
-           values (?1, ?2, ?3, 'transfer', 'send', ?4, ?5, ?6, (select balance_xof from wallets where user_id = ?3), ?7, ?8, ?9, ?10, ?11, ?12)`,
-        ).bind(sendId, trxId, user.id, amount, fee.feeXof, fee.payableXof, recipient.id, label(recipient), remark, key, details, now),
-        env.DB.prepare("update wallets set balance_xof = balance_xof + ?, updated_at = ? where user_id = ?").bind(amount, now, recipient.id),
-        env.DB.prepare(
-          `insert into wallet_transactions (id, trx_id, user_id, type, attribute, amount_xof, fee_xof, total_xof, balance_after_xof,
-             counterparty_user_id, counterparty_label, remark, details, created_at)
-           values (?1, ?2, ?3, 'transfer', 'received', ?4, 0, ?4, (select balance_xof from wallets where user_id = ?3), ?5, ?6, ?7, '{}', ?8)`,
-        ).bind(uuid(), trxId, recipient.id, amount, user.id, me ? label(me) : null, remark, now),
+        env.DB.prepare("delete from credit_codes where user_id = ? and used_at is null").bind(user.id),
+        // Housekeeping: codes expired a day ago are of no use any more.
+        env.DB.prepare("delete from credit_codes where expires_at < ?").bind(new Date(now.getTime() - 86_400_000).toISOString()),
+        env.DB.prepare("insert into credit_codes (code_hash, user_id, created_at, expires_at) values (?, ?, ?, ?)").bind(
+          await sha256(code),
+          user.id,
+          now.toISOString(),
+          expiresAt,
+        ),
       ]);
     } catch (err) {
-      const message = (err as Error).message ?? "";
-      if (/CHECK constraint failed/i.test(message)) throw new ApiError("insufficient_balance");
-      if (/idempotency_key/.test(message)) {
-        // The same payment arrived twice at once; the other request booked it.
-        const again = await env.DB.prepare("select * from wallet_transactions where user_id = ? and idempotency_key = ?")
-          .bind(user.id, key)
-          .first<TxRow>();
-        if (again) return toTransaction(again);
-      }
-      if (/trx_id/.test(message) && attempt < 3) continue;
+      if (/UNIQUE|PRIMARY/i.test(String(err)) && attempt < 3) continue;
       throw err;
     }
-    const row = await env.DB.prepare("select * from wallet_transactions where id = ?").bind(sendId).first<TxRow>();
-    if (!row) throw new ApiError("unknown", 500);
-    return toTransaction(row);
+    return { code, expiresAt };
+  }
+}
+
+/** The customer behind a counter code that is still open; refused otherwise. */
+export async function creditCodeOwner(db: D1Database, rawCode: unknown): Promise<{ hash: string; user: UserRow }> {
+  const code = parseCreditCode(String(rawCode ?? ""));
+  if (!code) throw new ApiError("credit_code_invalid");
+  const hash = await sha256(code);
+  const row = await db
+    .prepare(
+      `select u.id, u.phone, u.email, u.full_name, u.role from credit_codes c join users u on u.id = c.user_id
+        where c.code_hash = ? and c.used_at is null and c.expires_at > ?`,
+    )
+    .bind(hash, nowIso())
+    .first<UserRow>();
+  if (!row) throw new ApiError("credit_code_invalid");
+  return { hash, user: row };
+}
+
+/**
+ * Marks a counter code used, for the batch that spends or loads with it. The statements after it
+ * only apply when `usedSql` holds: this request was the one that used the code.
+ */
+export function spendCreditCode(db: D1Database, hash: string, stationId: string, purpose: "topup" | "swap", at: string) {
+  return {
+    statement: db
+      .prepare("update credit_codes set used_at = ?, used_at_station = ?, used_for = ? where code_hash = ? and used_at is null and expires_at > ?")
+      .bind(at, stationId, purpose, hash, at),
+    usedSql: `exists (select 1 from credit_codes where code_hash = '${hash}' and used_at = '${at}' and used_for = '${purpose}')`,
+  };
+}
+
+async function requireCreditStation(db: D1Database, stationId: string) {
+  if (!(await isCreditStation(db, stationId))) throw new ApiError("credit_not_accepted", 409);
+}
+
+async function customerForCode(env: Env, rawCode: unknown) {
+  const owner = await creditCodeOwner(env.DB, rawCode);
+  const wallet = await env.DB.prepare("select balance_xof, status from wallets where user_id = ?")
+    .bind(owner.user.id)
+    .first<{ balance_xof: number; status: string }>();
+  if (wallet?.status === "frozen") throw new ApiError("wallet_frozen", 403);
+  return { ...owner, balance: wallet?.balance_xof ?? 0 };
+}
+
+type StaffCheck = (user: Profile, stationId: string) => Promise<boolean>;
+
+/** POST /api/stations/:id/green-credit/check { code }: who the code belongs to and how much may be loaded, before staff take the cash. */
+export async function counterCredit(env: Env, user: Profile, isStaffOf: StaffCheck, stationId: string, request: Request): Promise<CounterCredit> {
+  if (!(await isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
+  await requireCreditStation(env.DB, stationId);
+  const { code } = await readJson<{ code?: unknown }>(request);
+  const c = await customerForCode(env, code);
+  return { customer: label(c.user), balanceXof: c.balance, maxTopupXof: maxTopup(c.balance, await creditMax(env.DB)) };
+}
+
+/**
+ * POST /api/stations/:id/green-credit/topup { code, amountXof }: staff took the cash and load it
+ * on the customer's Green Credit. The code proves the customer typed their PIN on their phone;
+ * it is used once. The cash goes into the station's takings for poinderecharge (station-cash.ts).
+ */
+export async function topUpCredit(env: Env, user: Profile, isStaffOf: StaffCheck, stationId: string, request: Request): Promise<CreditTopupResult> {
+  if (!(await isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
+  const db = env.DB;
+  await requireCreditStation(db, stationId);
+  const input = await readJson<{ code?: unknown; amountXof?: unknown }>(request);
+  const amount = parseAmount(input.amountXof);
+  if (amount === null || amount < CREDIT_TOPUP_MIN_XOF) throw new ApiError("invalid_amount");
+  const c = await customerForCode(env, input.code);
+  if (c.user.id === user.id) throw new ApiError("own_reservation");
+  const limit = maxTopup(c.balance, await creditMax(db));
+  if (limit !== null && amount > limit) throw new ApiError("credit_limit_reached");
+  const station = await db.prepare("select name from stations where id = ?").bind(stationId).first<{ name: string }>();
+  for (let attempt = 0; ; attempt++) {
+    const now = nowIso();
+    const id = uuid();
+    const used = spendCreditCode(db, c.hash, stationId, "topup", now);
+    try {
+      await db.batch([
+        used.statement,
+        db.prepare(`insert into wallets (user_id, created_at, updated_at) select ?1, ?2, ?2 where ${used.usedSql} on conflict do nothing`).bind(c.user.id, now),
+        db.prepare(`update wallets set balance_xof = balance_xof + ?, updated_at = ? where user_id = ? and ${used.usedSql}`).bind(amount, now, c.user.id),
+        db
+          .prepare(
+            `insert into wallet_transactions (id, trx_id, user_id, type, attribute, amount_xof, fee_xof, total_xof, balance_after_xof,
+               counterparty_label, station_id, details, created_at)
+             select ?1, ?2, ?3, 'topup', 'received', ?4, 0, ?4, (select balance_xof from wallets where user_id = ?3), ?5, ?6, ?7, ?8
+              where ${used.usedSql}`,
+          )
+          .bind(id, newTrxId("topup"), c.user.id, amount, station?.name ?? null, stationId, JSON.stringify({ staff: user.id }), now),
+        db
+          .prepare(
+            `insert into audit_log (at, actor, table_name, action, row_id, station_id, user_id, changes)
+             select ?, ?, 'wallets', 'insert', ?, ?, ?, ? where ${used.usedSql}`,
+          )
+          .bind(now, user.id, id, stationId, c.user.id, JSON.stringify({ topup: amount, balance: [c.balance, c.balance + amount] })),
+      ]);
+    } catch (err) {
+      if (/trx_id/.test(String(err)) && attempt < 3) continue;
+      throw err;
+    }
+    const row = await db.prepare("select balance_after_xof from wallet_transactions where id = ?").bind(id).first<{ balance_after_xof: number }>();
+    // The code was used meanwhile (a double tap): nothing was loaded by this request.
+    if (!row) throw new ApiError("credit_code_invalid");
+    try {
+      await notifyUser(env, c.user.id, {
+        subject: `Green Credit : +${amount} FCFA`,
+        text: `${amount} FCFA ont été ajoutés à votre Green Credit à ${station?.name ?? "la station"}. Nouveau solde : ${row.balance_after_xof} FCFA.`,
+      });
+    } catch (err) {
+      console.error("credit topup notice", err);
+    }
+    return { customer: label(c.user), amountXof: amount, balanceXof: row.balance_after_xof };
   }
 }
 
@@ -317,7 +331,7 @@ export async function adminWallet(env: Env, url: URL): Promise<AdminWallet> {
   const userId = url.searchParams.get("user");
   const where: string[] = [];
   const params: unknown[] = [];
-  if (type === "transfer" || type === "admin_adjust" || type === "topup" || type === "charge") {
+  if (type === "transfer" || type === "admin_adjust" || type === "topup" || type === "charge" || type === "trip") {
     where.push("t.type = ?");
     params.push(type);
   }
@@ -326,15 +340,16 @@ export async function adminWallet(env: Env, url: URL): Promise<AdminWallet> {
     params.push(userId);
   }
   const filter = where.length ? `where ${where.join(" and ")}` : "";
-  const [enabled, settings, totals, rows] = await Promise.all([
+  const [enabled, maxXof, stations, totals, rows] = await Promise.all([
     walletEnabled(env),
-    env.DB.prepare("select * from wallet_fee_settings order by product").all<FeeRow>(),
+    creditMax(env.DB),
+    env.DB.prepare("select id, name, green_credit from stations where is_active = 1 order by name").all<{ id: string; name: string; green_credit: number }>(),
     env.DB.prepare(
       `select (select coalesce(sum(balance_xof), 0) from wallets) as balances,
               (select count(*) from wallets) as wallets,
-              (select coalesce(sum(fee_xof), 0) from wallet_transactions where status = 'success') as fees,
+              (select coalesce(sum(amount_xof), 0) from wallet_transactions where type = 'topup' and station_id is not null) as topped_up,
               (select count(distinct trx_id) from wallet_transactions) as transactions`,
-    ).first<{ balances: number; wallets: number; fees: number; transactions: number }>(),
+    ).first<{ balances: number; wallets: number; topped_up: number; transactions: number }>(),
     env.DB.prepare(
       `select t.*, u.phone, u.email, u.full_name from wallet_transactions t left join users u on u.id = t.user_id
        ${filter} order by t.created_at desc, t.rowid desc limit ${ADMIN_HISTORY_LIMIT}`,
@@ -344,11 +359,12 @@ export async function adminWallet(env: Env, url: URL): Promise<AdminWallet> {
   ]);
   return {
     enabled,
-    settings: settings.results.map(toSetting),
+    maxXof,
+    stations: stations.results.map((s) => ({ id: s.id, name: s.name, greenCredit: !!s.green_credit })),
     totals: {
       balancesXof: totals?.balances ?? 0,
       wallets: totals?.wallets ?? 0,
-      feesXof: totals?.fees ?? 0,
+      toppedUpXof: totals?.topped_up ?? 0,
       transactions: totals?.transactions ?? 0,
     },
     transactions: rows.results.map(
@@ -375,25 +391,48 @@ export async function setWalletEnabled(env: Env, admin: Profile, enabled: boolea
   ]);
 }
 
-export async function saveFeeSetting(env: Env, admin: Profile, input: WalletFeeSetting) {
-  const s = validFeeSetting(input);
-  if (!s) throw new ApiError("bad_request");
+/** POST /api/admin/wallet/max { maxXof }: the highest balance a customer may hold (0 = no limit). */
+export async function setCreditMax(env: Env, admin: Profile, request: Request) {
+  const { maxXof } = await readJson<{ maxXof?: unknown }>(request);
+  const value = Number(maxXof);
+  if (!Number.isInteger(value) || value < 0 || value > 10_000_000) throw new ApiError("bad_request");
   const now = nowIso();
   await env.DB.batch([
     env.DB.prepare(
-      `update wallet_fee_settings set fixed_xof = ?, percent = ?, min_xof = ?, max_xof = ?, daily_xof = ?, monthly_xof = ?,
-         is_active = ?, updated_by = ?, updated_at = ? where product = ?`,
-    ).bind(s.fixedXof, s.percent, s.minXof, s.maxXof, s.dailyXof, s.monthlyXof, s.isActive ? 1 : 0, admin.id, now, s.product),
-    auditWallet(env, admin.id, "update", `fees:${s.product}`, { ...s }),
+      `insert into app_settings (key, value, updated_by, updated_at) values ('green_credit_max_xof', ?1, ?2, ?3)
+       on conflict (key) do update set value = ?1, updated_by = ?2, updated_at = ?3`,
+    ).bind(String(value), admin.id, now),
+    auditWallet(env, admin.id, "update", "green_credit_max_xof", { maxXof: value }),
   ]);
 }
 
-/** Admin correction (spec 1.4.11): one ledger row; a subtraction can never make a balance negative. */
+/** POST /api/admin/stations/:id/green-credit { enabled }: designates a station that loads and accepts Green Credit. */
+export async function setStationGreenCredit(env: Env, admin: Profile, stationId: string, request: Request) {
+  const { enabled } = await readJson<{ enabled?: unknown }>(request);
+  if (typeof enabled !== "boolean") throw new ApiError("bad_request");
+  const db = env.DB;
+  const s = await db.prepare("select green_credit from stations where id = ?").bind(stationId).first<{ green_credit: number }>();
+  if (!s) throw new ApiError("not_found", 404);
+  if (!!s.green_credit === enabled) return { ok: true };
+  await db.batch([
+    db.prepare("update stations set green_credit = ? where id = ?").bind(enabled ? 1 : 0, stationId),
+    db
+      .prepare("insert into audit_log (at, actor, table_name, action, row_id, station_id, changes) values (?, ?, 'stations', 'update', ?, ?, ?)")
+      .bind(nowIso(), admin.id, stationId, stationId, JSON.stringify({ green_credit: [!!s.green_credit, enabled] })),
+  ]);
+  return { ok: true };
+}
+
+/**
+ * Admin correction (spec 1.4.11), or a cash refund (the customer got the money back, e.g. to
+ * close the account; the only way credit ever leaves as money): one ledger row; a subtraction
+ * can never make a balance negative.
+ */
 export async function adjustBalance(env: Env, admin: Profile, request: Request): Promise<WalletTransaction> {
   const input = await readJson<Partial<WalletAdjustInput>>(request);
   const amount = parseAmount(input.amountXof);
   if (amount === null) throw new ApiError("invalid_amount");
-  if (input.direction !== "add" && input.direction !== "subtract") throw new ApiError("bad_request");
+  if (input.direction !== "add" && input.direction !== "subtract" && input.direction !== "refund") throw new ApiError("bad_request");
   const remark = cleanRemark(input.remark);
   if (!remark) throw new ApiError("bad_request");
   const target = await findUser(env, input.contact);
@@ -408,7 +447,17 @@ export async function adjustBalance(env: Env, admin: Profile, request: Request):
         `insert into wallet_transactions (id, trx_id, user_id, type, attribute, amount_xof, fee_xof, total_xof, balance_after_xof,
            remark, admin_id, details, created_at)
          values (?1, ?2, ?3, 'admin_adjust', ?4, ?5, 0, ?5, (select balance_xof from wallets where user_id = ?3), ?6, ?7, ?8, ?9)`,
-      ).bind(id, newTrxId("admin_adjust"), target.id, sign > 0 ? "received" : "send", amount, remark, admin.id, JSON.stringify({ device: device(request) }), now),
+      ).bind(
+        id,
+        newTrxId("admin_adjust"),
+        target.id,
+        sign > 0 ? "received" : "send",
+        amount,
+        remark,
+        admin.id,
+        JSON.stringify({ device: device(request), ...(input.direction === "refund" ? { cashRefund: true } : {}) }),
+        now,
+      ),
       auditWallet(env, admin.id, "insert", id, { direction: input.direction, amount_xof: amount, remark }, target.id),
     ]);
   } catch (err) {
@@ -419,7 +468,7 @@ export async function adjustBalance(env: Env, admin: Profile, request: Request):
   return toTransaction(row!);
 }
 
-/** Blocks or unblocks a wallet: a frozen wallet cannot send or receive. */
+/** Blocks or unblocks a wallet: a frozen wallet can neither be loaded nor pay. */
 export async function setWalletFrozen(env: Env, admin: Profile, rawContact: unknown, frozen: boolean) {
   const target = await findUser(env, rawContact);
   const now = nowIso();

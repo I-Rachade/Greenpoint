@@ -7,12 +7,12 @@ import { useI18n } from "@/components/i18n-provider";
 import { parseContact } from "@/lib/contact";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
-import { parseAmount, type WalletAdjustInput, type WalletFeeSetting } from "@/lib/wallet";
+import { parseAmount, type AdminWallet, type WalletAdjustInput } from "@/lib/wallet";
 import { card, field, Loading, Pill, StaleNotice, Table, td, th, useAdminSnapshot, useDateTime, userLabel } from "./shared";
 
 type Message = { ok: boolean; text: string } | null;
 
-/** Backoffice "Portefeuille": module switch, totals, fees and limits, balance corrections and the ledger. */
+/** Backoffice "Green Credit": module switch, totals, balance limit, Green Credit stations, corrections and cash refunds, and the ledger. */
 export function WalletManager() {
   const { t, locale } = useI18n();
   const { backend, features } = useApp();
@@ -66,15 +66,16 @@ export function WalletManager() {
           </button>
         </section>
         <Kpi label={b.balances} value={xof(data.totals.balancesXof)} detail={format(b.wallets, { n: data.totals.wallets })} />
-        <Kpi label={b.fees} value={xof(data.totals.feesXof)} />
+        <Kpi label={b.toppedUp} value={xof(data.totals.toppedUpXof)} />
         <Kpi label={b.transactions} value={String(data.totals.transactions)} />
       </div>
       {!data.enabled && <p className="text-sm text-amber-700 dark:text-amber-300">{b.enableWarning}</p>}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {data.settings.map((s) => (
-          <FeeForm key={`${s.product}-${JSON.stringify(s)}`} setting={s} onSave={(next) => run(() => backend.saveWalletFees(next), b.saved)} />
-        ))}
+        <div className="space-y-4">
+          <MaxForm key={data.maxXof} maxXof={data.maxXof} onSave={(next) => run(() => backend.setCreditMax(next), b.saved)} />
+          <StationsForm stations={data.stations} onToggle={(id, on) => run(() => backend.setStationGreenCredit(id, on), b.saved)} />
+        </div>
         <AdjustForm
           onAdjust={(input) => run(() => backend.adjustWallet(input), (tx) => format(b.adjusted, { amount: xof(tx.balanceAfterXof) }))}
           onFreeze={(contact, frozen) => run(() => backend.setWalletFrozen(contact, frozen), frozen ? b.frozenDone : b.unfrozenDone)}
@@ -145,64 +146,65 @@ function Kpi({ label, value, detail }: { label: string; value: string; detail?: 
   );
 }
 
-function FeeForm({ setting, onSave }: { setting: WalletFeeSetting; onSave: (s: WalletFeeSetting) => Promise<boolean> }) {
+function MaxForm({ maxXof, onSave }: { maxXof: number; onSave: (maxXof: number) => Promise<boolean> }) {
   const { t } = useI18n();
   const b = t.backoffice.wallet;
-  const [s, setS] = useState(setting);
-  const ints: { key: "fixedXof" | "minXof" | "maxXof" | "dailyXof" | "monthlyXof"; label: string }[] = [
-    { key: "fixedXof", label: b.fixed },
-    { key: "minXof", label: b.min },
-    { key: "maxXof", label: b.max },
-    { key: "dailyXof", label: b.daily },
-    { key: "monthlyXof", label: b.monthly },
-  ];
+  const [value, setValue] = useState(String(maxXof));
   return (
     <form
       className={`${card} space-y-3`}
       onSubmit={(e: FormEvent) => {
         e.preventDefault();
-        void onSave(s);
+        void onSave(Math.max(0, Math.floor(Number(value) || 0)));
       }}
     >
-      <h2 className="font-semibold">
-        {b.feesTitle} · {b.products[s.product]}
-      </h2>
-      <div className="grid grid-cols-2 gap-3 text-sm">
-        <label className="space-y-1">
-          <span className="block text-zinc-600 dark:text-zinc-400">{b.percent}</span>
-          <input
-            className={`${field} w-full`}
-            type="number"
-            min={0}
-            max={50}
-            step={0.01}
-            value={s.percent}
-            onChange={(e) => setS({ ...s, percent: Number(e.target.value) })}
-          />
-        </label>
-        {ints.map(({ key, label }) => (
-          <label key={key} className="space-y-1">
-            <span className="block text-zinc-600 dark:text-zinc-400">{label}</span>
-            <input
-              className={`${field} w-full`}
-              type="number"
-              min={0}
-              step={1}
-              value={s[key]}
-              onChange={(e) => setS({ ...s, [key]: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
-            />
-          </label>
-        ))}
-      </div>
-      <p className="text-xs text-zinc-500">{b.zeroUnlimited}</p>
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={s.isActive} onChange={(e) => setS({ ...s, isActive: e.target.checked })} />
-        {b.active}
+      <h2 className="font-semibold">{b.maxTitle}</h2>
+      <label className="block space-y-1 text-sm">
+        <span className="block text-zinc-600 dark:text-zinc-400">{b.maxLabel}</span>
+        <input className={`${field} w-full`} type="number" min={0} step={1} value={value} onChange={(e) => setValue(e.target.value)} />
       </label>
+      <p className="text-xs text-zinc-500">{b.zeroUnlimited}</p>
       <button type="submit" className="rounded-full bg-gp-forest px-4 py-1.5 text-sm text-white">
         {b.save}
       </button>
     </form>
+  );
+}
+
+/** Which stations load and accept Green Credit (stations.green_credit). */
+function StationsForm({ stations, onToggle }: { stations: AdminWallet["stations"]; onToggle: (id: string, on: boolean) => Promise<boolean> }) {
+  const { t } = useI18n();
+  const b = t.backoffice.wallet;
+  const [busy, setBusy] = useState<string | null>(null);
+  return (
+    <section className={`${card} space-y-3`}>
+      <h2 className="font-semibold">{b.stationsTitle}</h2>
+      <p className="text-xs text-zinc-500">{b.stationsHint}</p>
+      {stations.length === 0 ? (
+        <p className="text-sm text-zinc-500">{b.noStations}</p>
+      ) : (
+        <ul className="divide-y divide-black/5 dark:divide-white/10">
+          {stations.map((x) => (
+            <li key={x.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+              <span className="min-w-0 truncate">{x.name}</span>
+              <label className="flex shrink-0 items-center gap-2">
+                <Pill tone={x.greenCredit ? "green" : "gray"}>{x.greenCredit ? b.stationOn : b.stationOff}</Pill>
+                <input
+                  type="checkbox"
+                  aria-label={x.name}
+                  checked={x.greenCredit}
+                  disabled={busy === x.id}
+                  onChange={(e) => {
+                    setBusy(x.id);
+                    void onToggle(x.id, e.target.checked).finally(() => setBusy(null));
+                  }}
+                />
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -221,7 +223,7 @@ function AdjustForm({
   const b = t.backoffice.wallet;
   const xof = (n: number) => formatXof(n, locale);
   const [contact, setContact] = useState("");
-  const [direction, setDirection] = useState<"add" | "subtract">("add");
+  const [direction, setDirection] = useState<WalletAdjustInput["direction"]>("add");
   const [amount, setAmount] = useState("");
   const [remark, setRemark] = useState("");
   const [busy, setBusy] = useState(false);
@@ -273,6 +275,8 @@ function AdjustForm({
 
   const adjust = pending?.kind === "adjust" ? pending.input : null;
   const after = adjust && typeof balance === "number" ? balance + (adjust.direction === "add" ? adjust.amountXof : -adjust.amountXof) : null;
+  const confirmTitle = { add: b.confirmCredit, subtract: b.confirmDebit, refund: b.confirmRefund };
+  const directionLabel = { add: b.add, subtract: b.subtract, refund: b.refund };
 
   return (
     <form
@@ -288,14 +292,15 @@ function AdjustForm({
         <span className="block text-zinc-600 dark:text-zinc-400">{b.contact}</span>
         <input className={`${field} w-full`} value={contact} onChange={(e) => setContact(e.target.value)} required />
       </label>
-      <div className="flex gap-4 text-sm">
-        {(["add", "subtract"] as const).map((d) => (
+      <div className="flex flex-wrap gap-4 text-sm">
+        {(["add", "subtract", "refund"] as const).map((d) => (
           <label key={d} className="flex items-center gap-1">
             <input type="radio" name="direction" checked={direction === d} onChange={() => setDirection(d)} />
-            {d === "add" ? b.add : b.subtract}
+            {directionLabel[d]}
           </label>
         ))}
       </div>
+      {direction === "refund" && <p className="text-xs text-zinc-500">{b.refundHint}</p>}
       <label className="block space-y-1 text-sm">
         <span className="block text-zinc-600 dark:text-zinc-400">{b.amount}</span>
         <input className={`${field} w-full`} value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ""))} inputMode="numeric" required />
@@ -324,11 +329,11 @@ function AdjustForm({
         open={!!pending}
         title={
           adjust
-            ? format(adjust.direction === "add" ? b.confirmCredit : b.confirmDebit, { amount: xof(adjust.amountXof) })
+            ? format(confirmTitle[adjust.direction], { amount: xof(adjust.amountXof) })
             : format(pending?.kind === "freeze" && pending.frozen ? b.confirmFreeze : b.confirmUnfreeze, { account })
         }
         confirmLabel={adjust ? b.adjust : pending?.kind === "freeze" && pending.frozen ? b.freeze : b.unfreeze}
-        danger={adjust ? adjust.direction === "subtract" : pending?.kind === "freeze" && pending.frozen}
+        danger={adjust ? adjust.direction !== "add" : pending?.kind === "freeze" && pending.frozen}
         busy={busy}
         onConfirm={() => void confirm()}
         onCancel={() => setPending(null)}

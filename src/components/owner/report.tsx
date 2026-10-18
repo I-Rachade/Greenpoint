@@ -63,6 +63,7 @@ function ReportContent({ report }: { report: OwnerReport }) {
           {pdr.thirdParty && <Amount label={r.chargesHosted} value={pdr.chargesXof} />}
           {pdr.thirdParty && pdr.swapsXof > 0 && <Amount label={r.swapsHosted} value={pdr.swapsXof} />}
           {pdr.thirdParty && pdr.cardsXof > 0 && <Amount label={r.cardsTopped} value={pdr.cardsXof} />}
+          {pdr.thirdParty && pdr.creditXof > 0 && <Amount label={r.creditTopped} value={pdr.creditXof} />}
           <Amount label={r.total} value={pdr.totalXof} strong />
         </dl>
         <p className="text-xs text-amber-900 dark:text-amber-100">{pdr.thirdParty ? r.forNoteThirdParty : r.forNote}</p>

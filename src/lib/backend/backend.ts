@@ -93,7 +93,7 @@ import type { BatteryEventInput, BatteryEventView, StationCounter, SwapEntry, Sw
 import type { ReviewInput, StationReview } from "../station-extras";
 import type { LatLng } from "../geo";
 import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "../station-cash";
-import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
+import type { AdminWallet, CounterCredit, CreditCode, CreditTopupInput, CreditTopupResult, WalletAdjustInput, WalletTransaction, WalletView } from "../wallet";
 
 /** Where a code goes: by SMS to the phone number or by e-mail. */
 export type CodeChannel = "sms" | "email";
@@ -192,6 +192,10 @@ export type BackendErrorCode =
   | "monthly_limit_exceeded"
   | "wallet_not_empty"
   | "topup_unavailable"
+  | "credit_code_invalid"
+  | "credit_not_accepted"
+  | "credit_limit_reached"
+  | "card_uses_credit"
   | "reward_unavailable"
   | "redemption_open"
   | "not_enough_points"
@@ -700,21 +704,22 @@ export interface Backend {
   /** Stores an image and returns its public URL (admins only). */
   uploadPromotionImage(file: File): Promise<string>;
 
-  // Wallet (see src/lib/wallet.ts)
-  /** Balance, fees, limits and history of the signed-in user. Fails with wallet_disabled while the module is off (admins may test). */
+  // Green Credit (see src/lib/wallet.ts)
+  /** Balance, limit, Green Credit stations and history of the signed-in user. Fails with wallet_disabled while the module is off (admins may test). */
   myWallet(): Promise<WalletView>;
-  /** Who would get money sent to this phone number or e-mail address. */
-  findWalletRecipient(contact: string): Promise<WalletRecipient>;
-  /** Sends money; the PIN is checked on the server. */
-  sendMoney(input: SendMoneyInput): Promise<WalletTransaction>;
-  /** Asks the person's Flooz/T-Money account for the money; the wallet is credited once the provider confirms. */
-  startTopup(input: TopupInput): Promise<WalletTopup>;
-  /** Asks again for the status of a top-up while the person confirms on the phone. */
-  refreshTopup(id: string): Promise<WalletTopup>;
-  /** Backoffice: switch, fees, totals and the ledger (admins only). */
+  /** The customer typed their PIN on their phone: the one-time code staff scan at the counter. */
+  createCreditCode(pin: string): Promise<CreditCode>;
+  /** Station staff: who a counter code belongs to and how much may still be loaded. */
+  checkCreditCode(stationId: string, code: string): Promise<CounterCredit>;
+  /** Station staff took the cash and load it on the customer's Green Credit. */
+  topUpCredit(stationId: string, input: CreditTopupInput): Promise<CreditTopupResult>;
+  /** Backoffice: switch, limit, stations, totals and the ledger (admins only). */
   adminWallet(filter?: { type?: string; userId?: string }): Promise<AdminWallet>;
   setWalletEnabled(enabled: boolean): Promise<void>;
-  saveWalletFees(setting: WalletFeeSetting): Promise<void>;
+  /** The highest balance a customer may hold (0 = no limit). */
+  setCreditMax(maxXof: number): Promise<void>;
+  /** Designates a station that loads and accepts Green Credit. */
+  setStationGreenCredit(stationId: string, enabled: boolean): Promise<void>;
   adjustWallet(input: WalletAdjustInput): Promise<WalletTransaction>;
   setWalletFrozen(contact: string, frozen: boolean): Promise<void>;
 
@@ -748,8 +753,11 @@ export interface Backend {
   myCharges(): Promise<ChargeSession[]>;
   /** The socket box behind a scanned QR code: station, price and each outlet with whether it can start now (no sign-in needed). */
   chargeOutlet(token: string): Promise<ChargeOutletInfo>;
-  /** The customer starts the outlet they picked on the scanned box (only where the backoffice allows QR charging on it). */
-  startOutletCharge(token: string, pointId: string): Promise<ChargeSession>;
+  /**
+   * The customer starts the outlet they picked on the scanned box, paid in advance from Green
+   * Credit (their PIN; only on our sockets at a Green Credit station where QR charging is on).
+   */
+  startOutletCharge(token: string, pointId: string, pin: string): Promise<ChargeSession>;
   /** The customer switches off a charge they started by QR code; the price is then final. */
   stopSelfCharge(id: string): Promise<ChargeSession>;
   /** Pays a stopped charge from the wallet; the PIN is checked on the server. */

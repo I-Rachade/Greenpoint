@@ -70,6 +70,8 @@ export interface CashLines {
   /** Drivers' cash settled at the station; negative when the station paid a driver out. */
   driversXof: number;
   cardsXof: number;
+  /** Green Credit loaded at the counter (0047). */
+  creditXof: number;
   totalXof: number;
 }
 
@@ -211,7 +213,7 @@ export function stationCash(input: StationCashInput, now: Date): StationCash {
   const nowIso = now.toISOString();
   // A closing covers up to and including its end: what happened at that instant is not counted twice.
   const open = (at: string) => (since === input.start ? at >= since : at > since) && at <= nowIso;
-  const lines: CashLines = { chargesXof: 0, swapsXof: 0, parcelsXof: 0, driversXof: 0, cardsXof: 0, totalXof: 0 };
+  const lines: CashLines = { chargesXof: 0, swapsXof: 0, parcelsXof: 0, driversXof: 0, cardsXof: 0, creditXof: 0, totalXof: 0 };
   let oldestOpenAt: string | null = null;
   for (const c of input.cash) {
     if (!open(c.at) || !c.amountXof) continue;

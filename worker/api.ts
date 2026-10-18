@@ -239,10 +239,19 @@ import { activeServices, decideService, listStationServices, requestService, req
 import { customerStation } from "../src/lib/station-services";
 import { DB_CUSTOMER, refuseNonCustomer, roleFromDb, roleToDb } from "./roles";
 import { claimFormerAccount, sendFormerAccountCode } from "./former-accounts";
-import { refreshTopup, startTopup } from "./wallet-topups";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
-import { adjustBalance, adminWallet, findRecipient, getWallet, saveFeeSetting, sendMoney, setWalletEnabled, setWalletFrozen } from "./wallet";
-import type { WalletFeeSetting } from "../src/lib/wallet";
+import {
+  adjustBalance,
+  adminWallet,
+  counterCredit,
+  createCreditCode,
+  getWallet,
+  setCreditMax,
+  setStationGreenCredit,
+  setWalletEnabled,
+  setWalletFrozen,
+  topUpCredit,
+} from "./wallet";
 import {
   adminGreenpoint,
   cancelRedemption,
@@ -707,7 +716,7 @@ async function staffStations(c: Ctx) {
   const user = await c.requireUser();
   // Station work is for staff, owners and admins (R2): everyone else 403.
   if (user.role !== "admin" && user.role !== "operator") throw new ApiError("forbidden", 403);
-  const [stations, active, owned] = await Promise.all([
+  const [stations, active, owned, creditIds] = await Promise.all([
     user.role === "admin"
       ? c.stations("where s.is_active = 1")
       : c.stations(
@@ -717,11 +726,14 @@ async function staffStations(c: Ctx) {
         ),
     activeServices(c.db),
     c.db.prepare("select operator_id from operator_owners where user_id = ?").bind(user.id).all<{ operator_id: string }>(),
+    c.db.prepare("select id from stations where green_credit = 1").all<{ id: string }>(),
   ]);
   const owner = new Set(owned.results.map((r) => r.operator_id));
+  const credit = new Set(creditIds.results.map((r) => r.id));
   return stations.map((s) => ({
     ...s,
     activeServices: [...(active.get(s.id) ?? [])],
+    greenCredit: credit.has(s.id),
     myRole: user.role === "admin" ? ("admin" as const) : owner.has(s.operatorId) ? ("owner" as const) : ("staff" as const),
   }));
 }
@@ -1966,10 +1978,9 @@ const ROUTES: [string, RegExp, Handler][] = [
   }],
   // Wallet (worker/wallet.ts)
   ["GET", /^\/api\/wallet$/, async (c) => getWallet(c.env, await c.requireUser())],
-  ["GET", /^\/api\/wallet\/recipient$/, async (c) => findRecipient(c.env, await c.requireUser(), c.url.searchParams.get("contact"))],
-  ["POST", /^\/api\/wallet\/send$/, async (c) => sendMoney(c.env, await c.requireUser(), c.request)],
-  ["POST", /^\/api\/wallet\/topups$/, async (c) => startTopup(c.env, await c.requireUser(), c.request)],
-  ["POST", /^\/api\/wallet\/topups\/([\w-]+)\/refresh$/, async (c, [id]) => refreshTopup(c.env, await customerUser(c), id)],
+  ["POST", /^\/api\/wallet\/code$/, async (c) => createCreditCode(c.env, await c.requireUser(), c.request)],
+  ["POST", /^\/api\/stations\/([\w-]+)\/green-credit\/check$/, async (c, [id]) => counterCredit(c.env, await c.requireUser(), c.actAt, id, c.request)],
+  ["POST", /^\/api\/stations\/([\w-]+)\/green-credit\/topup$/, async (c, [id]) => topUpCredit(c.env, await c.requireUser(), c.actAt, id, c.request)],
   ["GET", /^\/api\/admin\/wallet$/, async (c) => {
     await c.requireAdmin();
     return adminWallet(c.env, c.url);
@@ -1979,7 +1990,8 @@ const ROUTES: [string, RegExp, Handler][] = [
     const { enabled } = await readJson<{ enabled?: boolean }>(c.request);
     return setWalletEnabled(c.env, admin, !!enabled);
   }],
-  ["POST", /^\/api\/admin\/wallet\/fees$/, async (c) => saveFeeSetting(c.env, await c.requireAdmin(), await readJson<WalletFeeSetting>(c.request))],
+  ["POST", /^\/api\/admin\/wallet\/max$/, async (c) => setCreditMax(c.env, await c.requireAdmin(), c.request)],
+  ["POST", /^\/api\/admin\/stations\/([\w-]+)\/green-credit$/, async (c, [id]) => setStationGreenCredit(c.env, await c.requireAdmin(), id, c.request)],
   ["POST", /^\/api\/admin\/wallet\/adjust$/, async (c) => adjustBalance(c.env, await c.requireAdmin(), c.request)],
   ["POST", /^\/api\/admin\/wallet\/freeze$/, async (c) => {
     const admin = await c.requireAdmin();

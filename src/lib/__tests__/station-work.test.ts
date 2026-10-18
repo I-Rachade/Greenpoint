@@ -121,14 +121,18 @@ describe("DemoBackend station work", () => {
     await expect(backend.recordSwap(STATION, { requestId: rid(), customerType: "fleet", driverCode: "ABCDEFGH" })).rejects.toMatchObject({ code: "cash_only" });
   });
 
-  it("takes an app customer's swap from the wallet", async () => {
+  it("takes an app customer's swap from Green Credit with the code their phone shows", async () => {
     await as(backend, "customer", "+22890123456");
+    const { code } = await backend.createCreditCode("2580");
     await staffAt(backend, STATION);
     await as(backend, "operator", "+22890000002");
     setActiveStation(STATION);
-    const swap = await backend.recordSwap(STATION, { requestId: rid(), customerType: "app", contact: "90123456", pin: "2580", batteryIn: "SP-1", batteryOut: "SP-2" });
+    const swap = await backend.recordSwap(STATION, { requestId: rid(), customerType: "app", creditCode: code, batteryIn: "SP-1", batteryOut: "SP-2" });
     expect(swap).toMatchObject({ customerType: "app", payment: "wallet", amountXof: 500 });
-    await expect(backend.recordSwap(STATION, { requestId: rid(), customerType: "app", contact: "90000002", pin: "2580", batteryIn: "SP-3", batteryOut: "SP-4" })).rejects.toMatchObject({ code: "own_reservation" });
+    // The code is used once.
+    await expect(backend.recordSwap(STATION, { requestId: rid(), customerType: "app", creditCode: code, batteryIn: "SP-3", batteryOut: "SP-4" })).rejects.toMatchObject({
+      code: "credit_code_invalid",
+    });
   });
 });
 

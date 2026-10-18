@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { chargePrice, customerCode, type ChargeSession, type StationCharging } from "../src/lib/charging";
 import type { Profile } from "../src/lib/types";
 import { hashPin } from "./auth";
-import { payCash, payWithMobile, payWithWallet, myCharges, saveChargeTariff, stopCharge } from "./charging";
+import { creditFollowUp, payCash, payWithMobile, payWithWallet, myCharges, saveChargeTariff, settlePrepaidCharges, stopCharge } from "./charging";
 import { deleteDevice, ingest } from "./devices";
 import type { Env } from "./env";
 import { ApiError } from "./http";
@@ -59,6 +59,7 @@ async function setup() {
       ('other', 'partner', 'Partenaire', 6.14, 1.23, 'charging', 0, 0, '${now}');
     insert into station_status (station_id, free_slots, full_batteries, updated_at) values ('st', 2, 0, '${now}'), ('other', 1, 0, '${now}');
     insert into station_staff (station_id, user_id) values ('st', 'staff');
+    update stations set green_credit = 1 where id = 'st';
     insert into devices (external_id, station_id, vendor, link, outlets, last_seen_at, qr_token, created_at) values
       ('123456', 'st', 'Xingke', 'own_server', 2, '${now}', '${BOX_ST}', '${now}'),
       ('654321', 'other', 'Xingke', 'own_server', 1, '${now}', '${BOX_OTHER}', '${now}');
@@ -96,6 +97,11 @@ async function code(promise: Promise<unknown>): Promise<string> {
   } catch (err) {
     return err instanceof ApiError ? err.code : String(err);
   }
+}
+
+/** Green Credit on the customer's account (0047), so QR charges can start. */
+function fund(db: { exec(sql: string): void }, user = "kofi", balance = 1000) {
+  db.exec(`insert into wallets (user_id, balance_xof, created_at, updated_at) values ('${user}', ${balance}, 'x', 'x')`);
 }
 
 function walletReq(body: unknown) {
@@ -288,8 +294,8 @@ describe("paying in the app", () => {
   it("is offered for our socket at a partner's station: the money follows the socket (0039)", async () => {
     const { db, env } = await setup();
     db.exec(`insert into wallets (user_id, balance_xof, created_at, updated_at) values ('kofi', 1000, 'x', 'x')`);
-    // Staff work at one station (W2): this one now.
-    db.exec("update station_staff set station_id = 'other' where user_id = 'staff'");
+    // Staff work at one station (W2): this one now. Green Credit pays there once designated.
+    db.exec("update station_staff set station_id = 'other' where user_id = 'staff'; update stations set green_credit = 1 where id = 'other'");
     await stoppedCharge(env, 1000, "q1", "other");
     expect((await myCharges(env, KOFI))[0].payOptions).toEqual({ wallet: true, mobile: false });
   });
@@ -328,7 +334,7 @@ describe("charging by QR code", () => {
     return { status, data: { state: outlet.state, label: outlet.label, stationName: data.stationName } };
   };
   const selfStart = (env: Env, point: string, who = "kofi") =>
-    api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/outlets/${boxOf(point)}/start`, { pointId: point });
+    api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/outlets/${boxOf(point)}/start`, { pointId: point, pin: PIN });
   const selfStop = (env: Env, id: string, who = "kofi") => api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/${id}/stop`, {});
   const allow = (env: Env, point: string, enabled: boolean, who = "admin") => api<{ ok?: boolean; error?: string }>(env, who, "POST", `/api/admin/charging-points/${point}/qr`, { enabled });
 
@@ -351,31 +357,35 @@ describe("charging by QR code", () => {
     expect((await handleApi(new Request("https://app.poinderecharge.com/api/charging/points/p1"), env)).status).toBe(404);
   });
 
-  it("lets the customer start, follow, stop and pay a charge without staff", async () => {
+  it("lets the customer start, follow and stop a charge without staff, paid from Green Credit", async () => {
     const { db, env } = await setup();
+    fund(db);
     await allow(env, "p1", true);
     const started = await selfStart(env, "p1");
     expect(started.status).toBe(200);
     expect(started.data).toMatchObject({ status: "charging", customer: "Kofi M.", pointLabel: "3456-1", selfStarted: true });
     expect(db.prepare("select kind, outlet from device_commands").get()).toEqual({ kind: "start", outlet: 1 });
-    expect(db.prepare("select started_by, user_id from charging_sessions").get()).toEqual({ started_by: "kofi", user_id: "kofi" });
+    expect(db.prepare("select started_by, user_id, credit_limit_xof from charging_sessions").get()).toEqual({ started_by: "kofi", user_id: "kofi", credit_limit_xof: 1000 });
     // Busy for everyone now, and staff see the charge too.
     expect((await info(env, "p1")).data.state).toBe("busy");
     expect((await api<StationCharging>(env, "staff", "GET", "/api/stations/st/charging")).data.open).toHaveLength(1);
 
+    // One charge at a time.
+    await allow(env, "p2", true);
+    expect((await selfStart(env, "p2")).data.error).toBe("charge_unpaid");
     await read(env, [{ outlet: 1, status: "charging", power_watts: 180, energy_wh: 1000 }]);
     // Another customer cannot stop it.
     expect((await selfStop(env, started.data.id, "admin")).status).toBe(404);
     const stopped = await selfStop(env, started.data.id);
-    expect(stopped.data).toMatchObject({ status: "stopped", amountXof: 150, payOptions: { wallet: true } });
+    expect(stopped.data).toMatchObject({ amountXof: 150, payOptions: { wallet: false, mobile: false } });
     expect(db.prepare("select count(*) as n from device_commands where kind = 'stop'").get()).toEqual({ n: 1 });
+    // Paid in advance: never cash at the counter.
+    expect((await act(env, started.data.id, "pay")).data.error).toBe("charge_wrong_status");
 
-    // Unpaid: no second charge, anywhere.
-    await allow(env, "p2", true);
-    expect((await selfStart(env, "p2")).data.error).toBe("charge_unpaid");
-    // Cash at the counter still works.
-    expect((await act(env, started.data.id, "pay")).data.status).toBe("paid");
+    // The next start takes the ended charge from the credit first.
     expect((await selfStart(env, "p2")).status).toBe(200);
+    expect(db.prepare("select status, payment_method from charging_sessions where id = ?").get(started.data.id)).toEqual({ status: "paid", payment_method: "wallet" });
+    expect(db.prepare("select balance_xof from wallets where user_id = 'kofi'").get()).toEqual({ balance_xof: 850 });
   });
 
   it("cannot stop a charge staff started", async () => {
@@ -387,6 +397,8 @@ describe("charging by QR code", () => {
 
   it("refuses offline, busy and reserved outlets, and uses the customer's own reservation", async () => {
     const { db, env } = await setup();
+    fund(db);
+    fund(db, "admin");
     await allow(env, "p1", true);
     await allow(env, "p2", true);
     const later = new Date(Date.now() + 600_000).toISOString();
@@ -414,6 +426,7 @@ describe("charging by QR code", () => {
 
   it("needs the station's charging service", async () => {
     const { db, env } = await setup();
+    fund(db);
     await allow(env, "p1", true);
     db.exec("update station_services set unlocked = 0 where station_id = 'st' and service = 'charging'");
     expect((await selfStart(env, "p1")).data.error).toBe("service_not_offered");
@@ -426,10 +439,12 @@ describe("one QR code per socket box", () => {
   type Box = { label: string; stationName: string; outlets: { pointId: string; label: string; outlet: number; state: string; yours?: boolean }[]; error?: string };
   const box = (env: Env, token = BOX, who = "kofi") => api<Box>(env, who, "GET", `/api/charging/outlets/${token}`);
   const startAt = (env: Env, pointId: string, token = BOX, who = "kofi") =>
-    api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/outlets/${token}/start`, { pointId });
+    api<ChargeSession & { error?: string }>(env, who, "POST", `/api/charging/outlets/${token}/start`, { pointId, pin: PIN });
   const allow = (env: Env, point: string) => api(env, "admin", "POST", `/api/admin/charging-points/${point}/qr`, { enabled: true });
   async function boxes() {
     const t = await setup();
+    fund(t.db);
+    fund(t.db, "admin");
     t.db.exec(`update devices set qr_token = '${BOX}' where external_id = '123456'; update devices set qr_token = '${OTHER}' where external_id = '654321';`);
     await allow(t.env, "p1");
     await allow(t.env, "p2");
@@ -531,5 +546,59 @@ describe("one QR code per socket box", () => {
     const fresh = db.prepare("select qr_token from devices where external_id = 'A1B2C3D4E5F60708'").get() as { qr_token: string } | undefined;
     expect(fresh?.qr_token).toMatch(/^[0-9a-f]{32}$/);
     expect(fresh?.qr_token).not.toBe(renewed.data.qrToken);
+  });
+});
+
+describe("Green Credit pays QR charges (0047)", () => {
+  const startAt = (env: Env, pointId: string, token = BOX_ST, pin = PIN) =>
+    api<ChargeSession & { error?: string }>(env, "kofi", "POST", `/api/charging/outlets/${token}/start`, { pointId, pin });
+  const allow = (env: Env, point: string) => api(env, "admin", "POST", `/api/admin/charging-points/${point}/qr`, { enabled: true });
+  const box = (env: Env, token: string) => api<{ creditAccepted: boolean; balanceXof?: number; outlets: { state: string }[] }>(env, "kofi", "GET", `/api/charging/outlets/${token}`);
+
+  it("only on our sockets at a Green Credit station", async () => {
+    const { db, env } = await setup();
+    fund(db);
+    await allow(env, "p1");
+    await allow(env, "q1");
+    // The partner's station is no Green Credit station.
+    expect((await box(env, BOX_OTHER)).data).toMatchObject({ creditAccepted: false, outlets: [{ state: "disabled" }] });
+    expect((await startAt(env, "q1", BOX_OTHER)).data.error).toBe("credit_not_accepted");
+    // A point partner's socket at a Green Credit station is paid at the counter only.
+    db.exec(`insert into point_partners (id, name, created_at) values ('pp', 'Solaire Togo', 'x'); update devices set partner_id = 'pp' where external_id = '123456'`);
+    expect((await box(env, BOX_ST)).data.creditAccepted).toBe(false);
+    expect((await startAt(env, "p1")).data.error).toBe("credit_not_accepted");
+    expect(db.prepare("select count(*) as n from charging_sessions").get()).toEqual({ n: 0 });
+  });
+
+  it("needs the PIN and a credit that covers the minimum price", async () => {
+    const { db, env } = await setup();
+    await allow(env, "p1");
+    // No credit at all, then less than the 100 FCFA minimum.
+    expect((await startAt(env, "p1")).data.error).toBe("insufficient_balance");
+    fund(db, "kofi", 50);
+    expect((await box(env, BOX_ST)).data).toMatchObject({ creditAccepted: true, balanceXof: 50 });
+    expect((await startAt(env, "p1")).data.error).toBe("insufficient_balance");
+    db.exec("update wallets set balance_xof = 1000 where user_id = 'kofi'");
+    expect((await startAt(env, "p1", BOX_ST, "1111")).data.error).toBe("invalid_pin");
+    expect((await startAt(env, "p1")).status).toBe(200);
+  });
+
+  it("stops at the credit and takes at most the balance when the charge ends", async () => {
+    const { db, env } = await setup();
+    fund(db, "kofi", 120);
+    await allow(env, "p1");
+    const { data } = await startAt(env, "p1");
+    // 2 kWh cost 300 FCFA, more than the 120 FCFA credit: the socket is switched off.
+    await read(env, [{ outlet: 1, status: "charging", energy_wh: 2000 }]);
+    await creditFollowUp(env, "123456");
+    expect(db.prepare("select status from charging_sessions where id = ?").get(data.id)).toEqual({ status: "stopped" });
+    expect(db.prepare("select count(*) as n from device_commands where kind = 'stop'").get()).toEqual({ n: 1 });
+    await settlePrepaidCharges(env.DB, { userId: "kofi" });
+    await settlePrepaidCharges(env.DB, { userId: "kofi" });
+    expect(db.prepare("select status, payment_method from charging_sessions where id = ?").get(data.id)).toEqual({ status: "paid", payment_method: "wallet" });
+    expect(db.prepare("select balance_xof from wallets where user_id = 'kofi'").get()).toEqual({ balance_xof: 0 });
+    expect(db.prepare("select type, attribute, amount_xof, balance_after_xof from wallet_transactions").all()).toEqual([
+      { type: "charge", attribute: "send", amount_xof: 120, balance_after_xof: 0 },
+    ]);
   });
 });

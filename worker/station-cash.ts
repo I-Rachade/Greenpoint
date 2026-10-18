@@ -136,7 +136,7 @@ export async function cashOfStations(db: D1Database, ids: string[] | null, now =
   const list = JSON.stringify(stations.map((s) => s.id));
   const monthStart = monthStartOf(now);
   const from = stations.reduce((a, s) => (s.start < a ? s.start : a), monthStart);
-  const [charges, swaps, parcels, drivers, cards, chargeSales, swapSales, handovers] = await Promise.all([
+  const [charges, swaps, parcels, drivers, cards, credit, chargeSales, swapSales, handovers] = await Promise.all([
     db
       .prepare(`select station_id, paid_at as at, amount_xof as amount from charging_sessions where station_id in ${IN(1)} and status = 'paid' and payment_method = 'cash' and paid_at >= ?2`)
       .bind(list, from)
@@ -164,16 +164,25 @@ export async function cashOfStations(db: D1Database, ids: string[] | null, now =
       .prepare(`select station_id, created_at as at, amount_xof as amount from charge_card_transactions where type = 'topup' and amount_xof > 0 and station_id in ${IN(1)} and created_at >= ?2`)
       .bind(list, from)
       .all<{ station_id: string; at: string; amount: number }>(),
-    // The commission counts our sockets (a point partner's are settled with the partner) and our swaps, however paid.
+    // Green Credit loaded in cash at the counter (0047).
     db
-      .prepare(`select station_id, paid_at as at, amount_xof as amount from charging_sessions where station_id in ${IN(1)} and status = 'paid' and partner_id is null and paid_at >= ?2`)
+      .prepare(`select station_id, created_at as at, amount_xof as amount from wallet_transactions where type = 'topup' and station_id in ${IN(1)} and created_at >= ?2`)
+      .bind(list, from)
+      .all<{ station_id: string; at: string; amount: number }>(),
+    // The commission counts our sockets (a point partner's are settled with the partner) and our swaps, however paid,
+    // except with Green Credit: no commission on the credit, loaded or spent (0047).
+    db
+      .prepare(
+        `select station_id, paid_at as at, amount_xof as amount from charging_sessions
+          where station_id in ${IN(1)} and status = 'paid' and partner_id is null and payment_method <> 'wallet' and paid_at >= ?2`,
+      )
       .bind(list, from)
       .all<{ station_id: string; at: string; amount: number }>(),
     db
       .prepare(
         `select l.station_id, l.created_at as at, l.amount_xof as amount from swap_log l
          join stations s on s.id = l.station_id left join operators o on o.id = s.operator_id
-         where l.station_id in ${IN(1)} and l.payment <> 'none' and l.created_at >= ?2 and ${SWAP_OWNER_SQL} = 'poinderecharge'`,
+         where l.station_id in ${IN(1)} and l.payment not in ('none', 'wallet') and l.created_at >= ?2 and ${SWAP_OWNER_SQL} = 'poinderecharge'`,
       )
       .bind(list, from)
       .all<{ station_id: string; at: string; amount: number }>(),
@@ -194,6 +203,7 @@ export async function cashOfStations(db: D1Database, ids: string[] | null, now =
   push("parcelsXof", parcels.results);
   push("driversXof", drivers.results);
   push("cardsXof", cards.results);
+  push("creditXof", credit.results);
   const sales = byStation([...chargeSales.results, ...swapSales.results]);
   const handoversOf = byStation(handovers.results);
 

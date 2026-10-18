@@ -154,7 +154,7 @@ export async function ownerReport(c: OwnerCtx, stationId: string | null, days: R
   const { ids, thirdParty } = await backofficeStations(c, stationId);
   const list = JSON.stringify(ids);
   const from = periodStart(days);
-  const [swaps, charges, parcels, drivers, staff, actions, cards] = await Promise.all([
+  const [swaps, charges, parcels, drivers, staff, actions, cards, credit] = await Promise.all([
     c.db
       .prepare(
         `select l.created_at as at, l.payment, l.amount_xof, coalesce(o.is_own, 0) as is_own, ${SWAP_OWNER_SQL} as owner from swap_log l
@@ -202,6 +202,15 @@ export async function ownerReport(c: OwnerCtx, stationId: string | null, days: R
         `select coalesce(sum(t.amount_xof), 0) as total from charge_card_transactions t join stations s on s.id = t.station_id
          left join operators o on o.id = s.operator_id
          where t.type = 'topup' and t.amount_xof > 0 and t.station_id in ${IN(1)} and t.created_at >= ?2 and coalesce(o.is_own, 0) = 0`,
+      )
+      .bind(list, from)
+      .first<{ total: number }>(),
+    // Green Credit loaded in cash at a partner's counter: poinderecharge's credit (0047).
+    c.db
+      .prepare(
+        `select coalesce(sum(t.amount_xof), 0) as total from wallet_transactions t join stations s on s.id = t.station_id
+         left join operators o on o.id = s.operator_id
+         where t.type = 'topup' and t.station_id in ${IN(1)} and t.created_at >= ?2 and coalesce(o.is_own, 0) = 0`,
       )
       .bind(list, from)
       .first<{ total: number }>(),
@@ -253,6 +262,7 @@ export async function ownerReport(c: OwnerCtx, stationId: string | null, days: R
   revenue.totalXof = revenue.cashXof + revenue.swapAppXof + revenue.swapFleetXof + revenue.chargeAppXof;
   const driversXof = drivers?.total ?? 0;
   const cardsXof = cards?.total ?? 0;
+  const creditXof = credit?.total ?? 0;
 
   // People: swaps and charges they did, and every station action they logged.
   const people = new Map<string, StaffStats>();
@@ -277,7 +287,16 @@ export async function ownerReport(c: OwnerCtx, stationId: string | null, days: R
     from,
     perDay,
     revenue,
-    poinderecharge: { parcelsXof, driversXof, chargesXof, swapsXof, cardsXof, totalXof: parcelsXof + driversXof + chargesXof + swapsXof + cardsXof, thirdParty },
+    poinderecharge: {
+      parcelsXof,
+      driversXof,
+      chargesXof,
+      swapsXof,
+      cardsXof,
+      creditXof,
+      totalXof: parcelsXof + driversXof + chargesXof + swapsXof + cardsXof + creditXof,
+      thirdParty,
+    },
     hours,
     staff: [...people.values()].map((p) => ({ ...p, person: p.person || "?" })).sort((a, b) => b.swaps + b.charges + b.actions - (a.swaps + a.charges + a.actions)),
   };

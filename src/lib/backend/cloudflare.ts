@@ -21,7 +21,7 @@ import type {
   GreenpointRewardInput,
   GreenpointView,
 } from "../greenpoint";
-import type { AdminWallet, SendMoneyInput, TopupInput, WalletAdjustInput, WalletFeeSetting, WalletRecipient, WalletTopup, WalletTransaction, WalletView } from "../wallet";
+import type { AdminWallet, CounterCredit, CreditCode, CreditTopupInput, CreditTopupResult, WalletAdjustInput, WalletTransaction, WalletView } from "../wallet";
 import type {
   AbandonReason,
   AdminDrivers,
@@ -172,6 +172,10 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "monthly_limit_exceeded",
   "wallet_not_empty",
   "topup_unavailable",
+  "credit_code_invalid",
+  "credit_not_accepted",
+  "credit_limit_reached",
+  "card_uses_credit",
   "provider_unavailable",
   "reward_unavailable",
   "redemption_open",
@@ -1346,24 +1350,18 @@ export class CloudflareBackend implements Backend {
     return this.call<WalletView>("GET", "/api/wallet");
   }
 
-  findWalletRecipient(contact: string) {
-    return this.call<WalletRecipient>("GET", `/api/wallet/recipient?contact=${encodeURIComponent(contact)}`);
+  createCreditCode(pin: string) {
+    return this.call<CreditCode>("POST", "/api/wallet/code", { pin });
   }
 
-  async sendMoney(input: SendMoneyInput) {
-    const tx = await this.call<WalletTransaction>("POST", "/api/wallet/send", input);
+  checkCreditCode(stationId: string, code: string) {
+    return this.call<CounterCredit>("POST", `/api/stations/${encodeURIComponent(stationId)}/green-credit/check`, { code });
+  }
+
+  async topUpCredit(stationId: string, input: CreditTopupInput) {
+    const result = await this.call<CreditTopupResult>("POST", `/api/stations/${encodeURIComponent(stationId)}/green-credit/topup`, input);
     this.changed();
-    return tx;
-  }
-
-  startTopup(input: TopupInput) {
-    return this.call<WalletTopup>("POST", "/api/wallet/topups", input);
-  }
-
-  async refreshTopup(id: string) {
-    const topup = await this.call<WalletTopup>("POST", `/api/wallet/topups/${encodeURIComponent(id)}/refresh`);
-    if (topup.status === "succeeded") this.changed();
-    return topup;
+    return result;
   }
 
   adminWallet(filter: { type?: string; userId?: string } = {}) {
@@ -1379,8 +1377,13 @@ export class CloudflareBackend implements Backend {
     this.changed();
   }
 
-  async saveWalletFees(setting: WalletFeeSetting) {
-    await this.call("POST", "/api/admin/wallet/fees", setting);
+  async setCreditMax(maxXof: number) {
+    await this.call("POST", "/api/admin/wallet/max", { maxXof });
+    this.changed();
+  }
+
+  async setStationGreenCredit(stationId: string, enabled: boolean) {
+    await this.call("POST", `/api/admin/stations/${encodeURIComponent(stationId)}/green-credit`, { enabled });
     this.changed();
   }
 
@@ -1465,8 +1468,8 @@ export class CloudflareBackend implements Backend {
     return this.call<ChargeOutletInfo>("GET", `/api/charging/outlets/${encodeURIComponent(token)}`);
   }
 
-  async startOutletCharge(token: string, pointId: string) {
-    const s = await this.call<ChargeSession>("POST", `/api/charging/outlets/${encodeURIComponent(token)}/start`, { pointId });
+  async startOutletCharge(token: string, pointId: string, pin: string) {
+    const s = await this.call<ChargeSession>("POST", `/api/charging/outlets/${encodeURIComponent(token)}/start`, { pointId, pin });
     this.changed();
     return s;
   }

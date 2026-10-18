@@ -1,66 +1,36 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
-import { canScanQr, QrScanner } from "@/components/parcels/qr-scanner";
 import { QrImage } from "@/components/parcels/qr-image";
 import { BackendError } from "@/lib/backend";
-import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
+import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
-import {
-  checkLimits,
-  guessTopupNetwork,
-  parseAmount,
-  parseReceivePayload,
-  quoteFee,
-  remaining,
-  TOPUP_MAX_XOF,
-  TOPUP_MIN_XOF,
-  TOPUP_NETWORK_LABEL,
-  type TopupNetwork,
-  type WalletTopup,
-  type WalletTransaction,
-  type WalletView,
-} from "@/lib/wallet";
+import { creditCodePayload, formatCreditCode, type CreditCode, type WalletTransaction, type WalletView } from "@/lib/wallet";
 import { useApp } from "../app-provider";
-import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
 import { LoadFailed, OfflineNotice } from "../load-state";
-import { CountUp, SuccessCheck } from "../ui";
+import { CountUp } from "../ui";
 
 const input = "w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-base dark:border-white/20 dark:bg-zinc-900";
 const button = "rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-50";
 
-type Tab = "topup" | "send" | "receive" | "history";
-
-/** "Portefeuille": balance, top up with Flooz/T-Money, send money with the PIN, receive by QR code, history. Same page in the web app and the mobile apps. */
+/**
+ * "Green Credit": the balance, the counter code (PIN on the customer's own phone, then a
+ * one-time code staff scan to load the credit or take a swap from it), where it works, and
+ * the history. Same page in the web app and the mobile apps. Charges by QR code take the PIN
+ * on the outlet page (charge-at-point.tsx).
+ */
 export function WalletPanel() {
   const { t, locale } = useI18n();
   const { backend } = useApp();
   const { data, error, reload } = useLiveQuery(() => backend.myWallet());
-  const [tab, setTab] = useState<Tab | null>(null);
-  // Back from the card provider's page: /portefeuille?topup=<id>.
-  const [returnedTopup] = useState(() => (typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("topup")));
-  useEffect(() => {
-    if (returnedTopup) window.history.replaceState(null, "", window.location.pathname);
-  }, [returnedTopup]);
-  // Lives here, not in the "Recharger" tab, so switching tabs keeps waiting for the payment.
-  const topup = useTopup(returnedTopup, reload);
 
   if (error instanceof BackendError && error.code === "wallet_disabled") {
     return <p className="p-6 text-sm text-gp-muted">{t.errors.wallet_disabled}</p>;
   }
   // A failed refresh keeps the balance on screen (with a notice); only nothing at all shows the error.
   if (!data) return error ? <LoadFailed error={error} onRetry={reload} /> : <p className="p-6 text-sm text-gp-muted">{t.loading}</p>;
-
-  // An empty wallet opens on "Recharger", so the first thing people see is how to put money in.
-  const current = tab ?? (returnedTopup || data.balanceXof === 0 ? "topup" : "send");
-  const tabs: { id: Tab; label: string }[] = [
-    { id: "topup", label: t.wallet.topup },
-    { id: "send", label: t.wallet.send },
-    { id: "receive", label: t.wallet.receive },
-    { id: "history", label: t.wallet.history },
-  ];
 
   return (
     <div className="mx-auto w-full max-w-md space-y-4 p-4 sm:p-6">
@@ -70,391 +40,77 @@ export function WalletPanel() {
       <section className="rounded-2xl bg-gp-forest p-5 text-white">
         <div className="text-xs uppercase tracking-wide opacity-80">{t.wallet.balance}</div>
         <CountUp value={data.balanceXof} format={(n) => formatXof(n, locale)} className="mt-1 block text-3xl font-bold" />
+        {data.maxXof > 0 && <div className="mt-1 text-xs opacity-80">{format(t.wallet.max, { max: formatXof(data.maxXof, locale) })}</div>}
         {data.frozen && <div className="mt-2 text-sm font-medium text-amber-200">{t.wallet.frozen}</div>}
-        {data.balanceXof === 0 && current !== "topup" && (
-          <button type="button" onClick={() => setTab("topup")} className="mt-3 rounded-full bg-white px-4 py-1.5 text-sm font-medium text-gp-forest">
-            {t.wallet.topup}
-          </button>
-        )}
       </section>
-      <div role="tablist" className="flex gap-1 rounded-full bg-zinc-100 p-1 text-sm dark:bg-zinc-800">
-        {tabs.map((x) => (
-          <button
-            key={x.id}
-            type="button"
-            role="tab"
-            aria-selected={current === x.id}
-            onClick={() => setTab(x.id)}
-            className={`flex-1 rounded-full px-3 py-1.5 ${current === x.id ? "bg-white font-medium shadow dark:bg-zinc-950" : "text-gp-muted"}`}
-          >
-            {x.label}
-          </button>
-        ))}
-      </div>
-      {current === "topup" && <TopupForm wallet={data} {...topup} />}
-      {current === "send" && <SendForm wallet={data} onDone={() => setTab("history")} />}
-      {current === "receive" && <Receive code={data.receiveCode} />}
-      {current === "history" && <History items={data.transactions} />}
+      <p className="text-sm text-gp-muted">{data.balanceXof === 0 ? t.wallet.emptyHint : t.wallet.rules}</p>
+      {!data.frozen && <CounterCode onUsed={reload} />}
+      <Stations wallet={data} />
+      <section className="space-y-2">
+        <h2 className="font-semibold">{t.wallet.history}</h2>
+        <History items={data.transactions} />
+      </section>
     </div>
   );
 }
 
-const TOPUP_PRESETS = [1_000, 2_000, 5_000, 10_000];
-const POLL_MS = 4_000;
-const POLL_MAX = 45; // three minutes, about how long a Flooz/T-Money request stays open on the phone
-/** The top-up still waiting for the phone or card page, so leaving the page and coming back resumes it. */
-const PENDING_KEY = "gp.wallet.pendingTopup";
-
-function readPending(): string | null {
-  try {
-    return window.sessionStorage.getItem(PENDING_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function writePending(id: string | null) {
-  try {
-    if (id) window.sessionStorage.setItem(PENDING_KEY, id);
-    else window.sessionStorage.removeItem(PENDING_KEY);
-  } catch {
-    // Private mode or blocked storage: waiting still works while the page stays open.
-  }
-}
-
-/** The current top-up and the polling for it while it is pending. */
-function useTopup(returnedTopup: string | null, onDone: () => void) {
+/** The PIN, then the one-time code for the counter, with its countdown. */
+function CounterCode({ onUsed }: { onUsed: () => void }) {
+  const { t } = useI18n();
   const { backend } = useApp();
-  const [topup, setTopupState] = useState<WalletTopup | null>(null);
-  const setTopup: Dispatch<SetStateAction<WalletTopup | null>> = useCallback((next) => {
-    setTopupState((cur) => {
-      const value = typeof next === "function" ? next(cur) : next;
-      writePending(value?.status === "pending" ? value.id : null);
-      return value;
-    });
-  }, []);
-
-  // Back from the card page, or back on the page while a payment was waiting: show where it stands.
-  useEffect(() => {
-    const id = returnedTopup ?? readPending();
-    if (!id) return;
-    backend.refreshTopup(id).then(
-      (next) => {
-        setTopup(next);
-        if (next.status === "succeeded") onDone();
-      },
-      () => {},
-    );
-  }, [backend, returnedTopup, onDone, setTopup]);
-
-  // While the person confirms on the phone, ask for the status every few seconds.
-  const pendingId = topup?.status === "pending" ? topup.id : null;
-  useEffect(() => {
-    if (!pendingId) return;
-    let tries = 0;
-    const timer = window.setInterval(() => {
-      tries++;
-      backend.refreshTopup(pendingId).then(
-        (next) => {
-          if (next.status !== "pending" || tries >= POLL_MAX) window.clearInterval(timer);
-          if (next.status !== "pending") {
-            setTopup(next);
-            if (next.status === "succeeded") onDone();
-          }
-        },
-        () => tries >= POLL_MAX && window.clearInterval(timer),
-      );
-    }, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [backend, pendingId, onDone, setTopup]);
-
-  return { topup, setTopup, onDone };
-}
-
-function TopupForm({
-  wallet,
-  topup,
-  setTopup,
-  onDone,
-}: {
-  wallet: WalletView;
-  topup: WalletTopup | null;
-  setTopup: Dispatch<SetStateAction<WalletTopup | null>>;
-  onDone: () => void;
-}) {
-  const { t, locale } = useI18n();
-  const { backend, profile } = useApp();
   const errorMessage = useErrorMessage();
-  const [amountText, setAmountText] = useState("");
-  const [phone, setPhone] = useState(profile?.phone ?? "");
-  const methods: TopupNetwork[] = [...(wallet.topupAvailable ? (["tmoney", "flooz"] as const) : []), ...(wallet.cardTopupAvailable ? (["card"] as const) : [])];
-  const [network, setNetwork] = useState<TopupNetwork>(wallet.topupAvailable ? guessTopupNetwork(profile?.phone) : "card");
+  const now = useNow(1_000);
+  const [pin, setPin] = useState("");
+  const [code, setCode] = useState<CreditCode | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const xof = (n: number) => formatXof(n, locale);
-  const amount = parseAmount(amountText);
-  const card = network === "card";
-  const notMultipleOf5 = card && amount !== null && amount % 5 !== 0;
-  const inRange = amount !== null && amount >= TOPUP_MIN_XOF && amount <= TOPUP_MAX_XOF && !notMultipleOf5;
+  const left = code ? Math.max(0, Math.floor((new Date(code.expiresAt).getTime() - now.getTime()) / 1000)) : 0;
 
-  if (methods.length === 0) return <p className="rounded-lg border border-black/10 p-3 text-sm dark:border-white/10">{t.wallet.topupUnavailable}</p>;
+  // While the code is on screen, the balance follows what staff do with it.
+  useEffect(() => {
+    if (!code) return;
+    const id = window.setInterval(onUsed, 5_000);
+    return () => window.clearInterval(id);
+  }, [code, onUsed]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!amount || !inRange) return;
     setBusy(true);
     setError(null);
-    setTopup(null);
     try {
-      const started = await backend.startTopup({ amountXof: amount, network, phone: card ? undefined : phone.trim() });
-      setTopup(started);
-      // Cards are paid on the provider's page, which sends the person back to /portefeuille?topup=<id>.
-      if (started.checkoutUrl) window.location.assign(started.checkoutUrl);
+      setCode(await backend.createCreditCode(pin));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
+      setPin("");
       setBusy(false);
     }
   }
 
-  async function checkNow() {
-    if (!topup) return;
-    const next = await backend.refreshTopup(topup.id).catch(() => topup);
-    setTopup(next);
-    if (next.status === "succeeded") onDone();
-  }
-
-  const label = (n: TopupNetwork) => TOPUP_NETWORK_LABEL[n];
-  return (
-    <form onSubmit={submit} className="space-y-4">
-      <h2 className="font-semibold">{t.wallet.topupTitle}</h2>
-      {wallet.balanceXof === 0 && !topup && <p className="text-sm text-gp-muted">{t.wallet.emptyHint}</p>}
-      <label className="block space-y-1">
-        <span className="text-sm font-medium">{t.wallet.topupAmount}</span>
-        <input className={input} value={amountText} onChange={(e) => setAmountText(e.target.value.replace(/[^\d\s]/g, ""))} inputMode="numeric" required />
-        <span className="block text-xs text-gp-muted">{format(t.wallet.topupLimits, { min: xof(TOPUP_MIN_XOF), max: xof(TOPUP_MAX_XOF) })}</span>
-        {notMultipleOf5 && <span className="block text-xs text-red-600">{t.wallet.topupMultipleOf5}</span>}
-      </label>
-      <div className="flex flex-wrap gap-2">
-        {TOPUP_PRESETS.map((n) => (
-          <button key={n} type="button" onClick={() => setAmountText(String(n))} className="rounded-full border border-black/15 px-3 py-1 text-sm dark:border-white/20">
-            {xof(n)}
-          </button>
-        ))}
-      </div>
-      <fieldset className="space-y-1">
-        <legend className="text-sm font-medium">{t.wallet.topupNetwork}</legend>
-        <div className="flex gap-2">
-          {methods.map((n) => (
-            <button
-              key={n}
-              type="button"
-              aria-pressed={network === n}
-              onClick={() => setNetwork(n)}
-              className={`flex-1 rounded-lg border px-3 py-2 text-sm ${network === n ? "border-gp-green-dark bg-gp-green/10 font-medium" : "border-black/15 dark:border-white/20"}`}
-            >
-              {label(n)}
-            </button>
-          ))}
+  if (code) {
+    const expired = left === 0;
+    return (
+      <section className="flex flex-col items-center gap-3 rounded-xl border border-black/10 p-4 text-center dark:border-white/10">
+        <h2 className="font-semibold">{t.wallet.codeTitle}</h2>
+        <div className={expired ? "opacity-30" : ""}>
+          <QrImage text={creditCodePayload(code.code)} label={t.wallet.codeTitle} size={200} />
         </div>
-      </fieldset>
-      {!wallet.topupAvailable && <p className="text-xs text-gp-muted">{t.wallet.topupUnavailable}</p>}
-      {!wallet.cardTopupAvailable && <p className="text-xs text-gp-muted">{t.wallet.topupCardUnavailable}</p>}
-      {card ? (
-        <p className="text-sm text-gp-muted">{t.wallet.topupCardHint}</p>
-      ) : (
-        <label className="block space-y-1">
-          <span className="text-sm font-medium">{t.wallet.topupPhone}</span>
-          <input
-            className={input}
-            value={phone}
-            onChange={(e) => {
-              setPhone(e.target.value);
-              if (/^\+228\d{8}$/.test(e.target.value.replace(/\s/g, ""))) setNetwork(guessTopupNetwork(e.target.value.replace(/\s/g, "")));
-            }}
-            inputMode="tel"
-            autoComplete="tel"
-            placeholder="+228 90 00 00 00"
-            required
-          />
-        </label>
-      )}
-      <button type="submit" className={`${button} w-full`} disabled={busy || !inRange || (!card && !phone.trim()) || topup?.status === "pending"}>
-        {format(t.wallet.topupConfirm, { amount: amount ? xof(amount) : "" })}
-      </button>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      {topup?.status === "pending" && (
-        <div className="space-y-2 rounded-lg bg-amber-100 p-3 text-sm text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">
-          <p>{topup.network === "card" ? t.wallet.topupCardReturn : format(t.wallet.topupWaiting, { amount: xof(topup.amountXof), network: label(topup.network) })}</p>
-          <button type="button" onClick={() => void checkNow()} className="underline">
-            {t.wallet.topupCheck}
-          </button>
-        </div>
-      )}
-      {topup?.status === "succeeded" && (
-        <div role="status" className="flex items-center gap-3">
-          <SuccessCheck size={40} className="shrink-0" />
-          <p className="text-sm text-gp-green-dark dark:text-gp-green">{format(t.wallet.topupDone, { amount: xof(topup.amountXof) })}</p>
-        </div>
-      )}
-      {topup && topup.status !== "pending" && topup.status !== "succeeded" && (
-        <p className="text-sm text-red-600">{format(t.wallet.topupFailed, { status: t.wallet.topupStatus[topup.status] })}</p>
-      )}
-    </form>
-  );
-}
-
-function newKey(): string {
-  return crypto.randomUUID();
-}
-
-function SendForm({ wallet, onDone }: { wallet: WalletView; onDone: () => void }) {
-  const { t, locale } = useI18n();
-  const { backend } = useApp();
-  const errorMessage = useErrorMessage();
-  const [contact, setContact] = useState("");
-  /** The checked recipient and the number or address it was checked for. */
-  const [recipient, setRecipient] = useState<{ contact: string; label: string } | null>(null);
-  // What is in the field now, so a check answered after the person changed it is ignored.
-  const contactRef = useRef("");
-  const [reviewing, setReviewing] = useState(false);
-  const [amountText, setAmountText] = useState("");
-  const [remark, setRemark] = useState("");
-  const [pin, setPin] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  const [scanning, setScanning] = useState(false);
-  // One key per payment the person means to make: a retry after a network error reuses it.
-  const [key, setKey] = useState(newKey);
-
-  const xof = (n: number) => formatXof(n, locale);
-  const s = wallet.transfer;
-  const amount = parseAmount(amountText);
-  const quote = amount ? quoteFee(amount, s) : null;
-  const problem = amount ? checkLimits(amount, s, wallet.usage) : null;
-  const left = remaining(s, wallet.usage);
-  // Money only goes to a recipient checked for exactly what is in the field now.
-  const verified = recipient !== null && recipient.contact === contact.trim() ? recipient : null;
-  const ready = !!verified && !!quote && !problem && !wallet.frozen && pin.length === 4 && quote.payableXof <= wallet.balanceXof;
-
-  function changeContact(value: string) {
-    contactRef.current = value;
-    setContact(value);
-    setRecipient(null);
-  }
-
-  async function check(value = contact) {
-    const wanted = value.trim();
-    setRecipient(null);
-    setMessage(null);
-    if (!wanted) return;
-    try {
-      const found = await backend.findWalletRecipient(wanted);
-      if (contactRef.current.trim() === wanted) setRecipient({ contact: wanted, label: found.label });
-    } catch (err) {
-      if (contactRef.current.trim() === wanted) setMessage({ ok: false, text: errorMessage(err) });
-    }
-  }
-
-  // The form only opens the review; the PIN is sent once the person confirms there.
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    if (ready) setReviewing(true);
-  }
-
-  async function send() {
-    if (!amount || !quote || !verified) return;
-    setBusy(true);
-    setMessage(null);
-    try {
-      const tx = await backend.sendMoney({ contact: verified.contact, amountXof: amount, pin, idempotencyKey: key, remark: remark || null });
-      setMessage({ ok: true, text: format(t.wallet.sent, { amount: xof(tx.amountXof), name: tx.counterparty ?? "", trx: tx.trxId }) });
-      changeContact("");
-      setAmountText("");
-      setRemark("");
-      setPin("");
-      setKey(newKey());
-      window.setTimeout(onDone, 2500);
-    } catch (err) {
-      setMessage({ ok: false, text: errorMessage(err) });
-      // A refusal is final: the next attempt is a new payment. After a network error the key stays.
-      if (err instanceof BackendError && err.code !== "unknown") setKey(newKey());
-      setPin("");
-    } finally {
-      setBusy(false);
-      setReviewing(false);
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="space-y-4">
-      <label className="block space-y-1">
-        <span className="text-sm font-medium">{t.wallet.recipient}</span>
-        <div className="flex gap-2">
-          <input
-            className={input}
-            value={contact}
-            onChange={(e) => changeContact(e.target.value)}
-            onBlur={() => void check()}
-            inputMode="email"
-            autoComplete="off"
-            placeholder="+228 90 00 00 00"
-            required
-          />
-          <button type="button" onClick={() => void check()} className="whitespace-nowrap rounded-full border border-black/15 px-3 text-sm dark:border-white/20">
-            {t.wallet.check}
-          </button>
-        </div>
-        <span className="block text-xs text-gp-muted">{t.wallet.recipientHint}</span>
-      </label>
-      {canScanQr() && !scanning && (
-        <button type="button" onClick={() => setScanning(true)} className="text-sm text-gp-green-dark underline dark:text-gp-green">
-          {t.wallet.scan}
+        <div className="font-mono text-2xl font-semibold tracking-widest">{formatCreditCode(code.code)}</div>
+        <p className={`text-sm ${expired ? "text-red-600" : "text-gp-muted"}`}>
+          {expired ? t.wallet.codeExpired : format(t.wallet.codeValid, { time: `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` })}
+        </p>
+        <button type="button" onClick={() => setCode(null)} className="text-sm font-medium text-gp-green-dark underline dark:text-gp-green">
+          {expired ? t.wallet.newCode : t.wallet.close}
         </button>
-      )}
-      {scanning && (
-        <QrScanner
-          onClose={() => setScanning(false)}
-          onResult={(text) => {
-            setScanning(false);
-            const scanned = parseReceivePayload(text);
-            changeContact(scanned);
-            void check(scanned);
-          }}
-        />
-      )}
-      {verified ? (
-        <p className="rounded-lg bg-gp-green/10 p-2 text-sm">{format(t.wallet.recipientIs, { name: verified.label })}</p>
-      ) : (
-        contact.trim() && <p className="text-xs text-gp-muted">{t.wallet.verifyFirst}</p>
-      )}
+      </section>
+    );
+  }
 
-      <label className="block space-y-1">
-        <span className="text-sm font-medium">{t.wallet.amount}</span>
-        <input className={input} value={amountText} onChange={(e) => setAmountText(e.target.value.replace(/[^\d\s]/g, ""))} inputMode="numeric" required />
-        <span className="block text-xs text-gp-muted">
-          {format(t.wallet.limits, { min: xof(s.minXof), max: s.maxXof ? xof(s.maxXof) : "–" })}
-          {left.todayXof !== null && ` · ${format(t.wallet.remainingToday, { amount: xof(left.todayXof) })}`}
-          {left.monthXof !== null && ` · ${format(t.wallet.remainingMonth, { amount: xof(left.monthXof) })}`}
-        </span>
-      </label>
-      {quote && (
-        <dl className="grid grid-cols-2 gap-1 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10">
-          <dt className="text-gp-muted">{t.wallet.fee}</dt>
-          <dd className="text-right">{xof(quote.feeXof)}</dd>
-          <dt className="font-medium">{t.wallet.total}</dt>
-          <dd className="text-right font-medium">{xof(quote.payableXof)}</dd>
-        </dl>
-      )}
-      {problem && <p className="text-sm text-red-600">{t.errors[problem]}</p>}
-      {quote && !problem && quote.payableXof > wallet.balanceXof && <p className="text-sm text-red-600">{t.errors.insufficient_balance}</p>}
-
-      <label className="block space-y-1">
-        <span className="text-sm font-medium">{t.wallet.remark}</span>
-        <input className={input} value={remark} onChange={(e) => setRemark(e.target.value)} maxLength={120} />
-      </label>
-      <label className="block space-y-1">
-        <span className="text-sm font-medium">{t.wallet.pin}</span>
+  return (
+    <form onSubmit={submit} className="space-y-3 rounded-xl border border-black/10 p-4 dark:border-white/10">
+      <h2 className="font-semibold">{t.wallet.counter}</h2>
+      <p className="text-sm text-gp-muted">{t.wallet.counterHint}</p>
+      <div className="flex gap-2">
         <input
           className={`${input} tracking-[0.4em]`}
           value={pin}
@@ -462,61 +118,35 @@ function SendForm({ wallet, onDone }: { wallet: WalletView; onDone: () => void }
           inputMode="numeric"
           type="password"
           autoComplete="off"
+          aria-label={t.wallet.pin}
+          placeholder={t.wallet.pin}
           required
         />
-      </label>
-      <button
-        type="submit"
-        className={`${button} w-full`}
-        disabled={busy || !ready}
-      >
-        {format(t.wallet.confirm, { amount: amount ? xof(amount) : "" })}
-      </button>
-      {message && <p className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>{message.text}</p>}
-      <ConfirmSheet
-        open={reviewing && !!verified && !!quote}
-        title={t.wallet.reviewTitle}
-        confirmLabel={format(t.wallet.confirm, { amount: amount ? xof(amount) : "" })}
-        busy={busy}
-        onConfirm={() => void send()}
-        onCancel={() => setReviewing(false)}
-      >
-        {verified && quote && amount && (
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-            <dt className="text-gp-muted">{t.wallet.reviewTo}</dt>
-            <dd className="text-right font-medium">
-              {verified.label}
-              <span className="block text-sm font-normal text-gp-muted">{verified.contact}</span>
-            </dd>
-            <dt className="text-gp-muted">{t.wallet.reviewAmount}</dt>
-            <dd className="text-right">{xof(amount)}</dd>
-            {quote.feeXof > 0 && (
-              <>
-                <dt className="text-gp-muted">{t.wallet.fee}</dt>
-                <dd className="text-right">{xof(quote.feeXof)}</dd>
-              </>
-            )}
-            <dt className="font-semibold">{t.wallet.total}</dt>
-            <dd className="text-right font-semibold">{xof(quote.payableXof)}</dd>
-          </dl>
-        )}
-      </ConfirmSheet>
+        <button type="submit" className={`${button} shrink-0`} disabled={busy || pin.length !== 4}>
+          {t.wallet.showCode}
+        </button>
+      </div>
+      {error && <p className="text-sm text-red-600">{error}</p>}
     </form>
   );
 }
 
-function Receive({ code }: { code: string | null }) {
+function Stations({ wallet }: { wallet: WalletView }) {
   const { t } = useI18n();
-  if (!code) return null;
-  const contact = parseReceivePayload(code);
   return (
-    <section className="flex flex-col items-center gap-3 rounded-xl border border-black/10 p-4 text-center dark:border-white/10">
-      <QrImage text={code} label={t.wallet.receive} size={220} />
-      <div>
-        <div className="text-xs uppercase tracking-wide text-gp-muted">{t.wallet.yourContact}</div>
-        <div className="font-mono text-lg font-semibold">{contact}</div>
-      </div>
-      <p className="text-sm text-gp-muted">{t.wallet.receiveText}</p>
+    <section className="space-y-2">
+      <h2 className="font-semibold">{t.wallet.stations}</h2>
+      {wallet.stations.length === 0 ? (
+        <p className="text-sm text-gp-muted">{t.wallet.noStations}</p>
+      ) : (
+        <ul className="flex flex-wrap gap-2">
+          {wallet.stations.map((s) => (
+            <li key={s.id} className="rounded-full bg-gp-green/10 px-3 py-1 text-sm">
+              {s.name}
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
@@ -533,7 +163,7 @@ function History({ items }: { items: WalletTransaction[] }) {
           x.type === "admin_adjust"
             ? t.wallet.byAdmin
             : x.type === "topup"
-              ? format(t.wallet.viaNetwork, { name: x.counterparty ?? "" })
+              ? format(t.wallet.topupAt, { name: x.counterparty ?? "" })
               : x.type === "charge"
                 ? format(t.wallet.chargeAt, { name: x.counterparty ?? "" })
               : x.type === "trip"

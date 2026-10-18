@@ -345,13 +345,16 @@ describe("owner backoffice (staff get none)", () => {
   });
 
   it("settles revenue by service and day, and keeps poinderecharge's cash apart (W12)", async () => {
-    const { env } = await withActivity();
+    const { env, db } = await withActivity();
+    // Green Credit loaded in cash at kara's counter (0047): poinderecharge's cash too.
+    db.exec(`insert into wallet_transactions (id, trx_id, user_id, type, attribute, amount_xof, fee_xof, total_xof, balance_after_xof, station_id, created_at)
+               values ('w1', 'AM11111111', 'ama', 'topup', 'received', 1000, 0, 1000, 1000, 'kara', '${new Date().toISOString()}')`);
     const r = (await call<OwnerReport>(env, "kossi", "GET", "/api/owner/report?days=7")).body;
     expect(r.days).toBe(7);
     // The partner's station only hosts the sockets (0039): its charges are not its revenue.
     expect(r.revenue).toEqual({ swapCashXof: 400, swapAppXof: 400, swapFleetXof: 0, chargeCashXof: 0, chargeAppXof: 0, cashXof: 400, totalXof: 800 });
     // Parcel cash (the cancelled one was refunded), the driver's cash and the charges paid in cash: for poinderecharge, not revenue.
-    expect(r.poinderecharge).toEqual({ parcelsXof: 700, driversXof: 2000, chargesXof: 300, swapsXof: 0, cardsXof: 0, totalXof: 3000, thirdParty: true });
+    expect(r.poinderecharge).toEqual({ parcelsXof: 700, driversXof: 2000, chargesXof: 300, swapsXof: 0, cardsXof: 0, creditXof: 1000, totalXof: 4000, thirdParty: true });
     const today = r.perDay[r.perDay.length - 1];
     expect(today).toMatchObject({ swaps: 2, charges: 2, parcels: 2, swapXof: 800, chargeXof: 500 });
     expect(r.perDay).toHaveLength(7);

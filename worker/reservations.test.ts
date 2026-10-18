@@ -60,6 +60,7 @@ async function setup() {
     -- Without staff, a phone number keeps a station reservable (isUnattended in station-extras.ts).
     update stations set phone = '+22822000001' where id in ('solo', 'cnt');
     insert into wallets (user_id, balance_xof, created_at, updated_at) values ('ama', 2000, 'x', 'x');
+    update stations set green_credit = 1 where id = 'be';
     insert into devices (external_id, station_id, vendor, link, outlets, last_seen_at, created_at) values ('123456', 'ch', 'Xingke', 'own_server', 3, '${now}', '${now}');
     insert into charging_points (id, station_id, label, status, device_id, outlet, last_seen_at, created_at) values
       ('p1', 'ch', '3456-1', 'free', '123456', 1, '${now}', '${now}'),
@@ -218,7 +219,9 @@ describe("staff jump from the reservation into the flow", () => {
     const { env, db } = await setup();
     const r = (await reserve(env, "ama", { stationId: "be", kind: "swap", target: "ov" })).body;
     expect((await call(env, "afi", "POST", `/api/reservations/${r.id}/complete`, { pickupCode: r.pickupCode })).body).toEqual({ error: "swap_required" });
-    const base = { customerType: "app", reservationId: r.id, pickupCode: r.pickupCode, pin: PIN, batteryIn: "OV-1", batteryOut: "OV-2" };
+    // Paid from Green Credit: the one-time code Ama's phone shows after her PIN (0047).
+    const creditCode = (await call<{ code: string }>(env, "ama", "POST", "/api/wallet/code", { pin: PIN })).body.code;
+    const base = { customerType: "app", reservationId: r.id, pickupCode: r.pickupCode, creditCode, batteryIn: "OV-1", batteryOut: "OV-2" };
     expect((await swap(env, "afi", "be", { ...base, batteryTypeId: "spiro" })).body).toEqual({ error: "battery_type_mismatch" });
     expect((await swap(env, "afi", "solo", base)).status).toBe(403);
     const requestId = rid();

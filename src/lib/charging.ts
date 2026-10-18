@@ -73,6 +73,8 @@ export interface ChargeSession {
   selfStarted?: boolean;
   /** The charging card that started it and pays it from its credit. */
   card?: string;
+  /** Paid from Green Credit: the most it may cost (the balance when it started); it stops there and pays itself. */
+  creditLimitXof?: number;
 }
 
 // Charging by QR code: one sticker per socket box links to /recharge?o=<token>; the customer
@@ -99,6 +101,10 @@ export interface ChargeOutletInfo {
   stationName: string;
   tariff: ChargeTariff;
   outlets: ChargeOutletSocket[];
+  /** Green Credit pays here: a socket of ours at a Green Credit station (0047). */
+  creditAccepted: boolean;
+  /** The signed-in customer's Green Credit; absent when signed out. */
+  balanceXof?: number;
 }
 
 const POINT_PATH = "/recharge";

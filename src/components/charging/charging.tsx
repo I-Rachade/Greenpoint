@@ -239,7 +239,10 @@ export function StaffCharging({ station, customer }: { station: StationView; cus
                       </button>
                     )}
                     {charge.status === "stopped" && charge.card && charge.amountXof > 0 && <p className="text-xs text-zinc-500">{ch.cardPaid}</p>}
-                    {charge.status === "stopped" && !charge.card && charge.amountXof > 0 && (
+                    {charge.status === "stopped" && !charge.card && charge.creditLimitXof !== undefined && charge.amountXof > 0 && (
+                      <p className="text-xs text-zinc-500">{ch.creditPaid}</p>
+                    )}
+                    {charge.status === "stopped" && !charge.card && charge.creditLimitXof === undefined && charge.amountXof > 0 && (
                       <button type="button" disabled={busy} onClick={() => setConfirm({ kind: "cash", id: charge.id })} className={`${button} min-h-11 flex-1`}>
                         {ch.collectCash} · {xof(charge.amountXof)}
                       </button>
@@ -405,6 +408,8 @@ function CardCounter({ station, onTopUp }: { station: StationView; onTopUp: () =
           </p>
           {found.blocked ? (
             <p className="text-sm text-red-600">{cc.blocked}</p>
+          ) : found.linked ? (
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.errors.card_uses_credit}</p>
           ) : (
             <div className="flex gap-2">
               <input
@@ -464,6 +469,8 @@ function PayInApp({ charge, onDone }: { charge: ChargeSession; onDone: () => voi
   const amount = formatXof(charge.amountXof, locale);
 
   if (charge.status !== "stopped" || charge.amountXof <= 0) return null;
+  // Paid in advance: taken from the card or the Green Credit when the charge ends.
+  if (charge.card || charge.creditLimitXof !== undefined) return <p className="text-sm text-zinc-500">{charge.card ? ch.cardPaid : ch.creditPaid}</p>;
   if (!options.wallet && !options.mobile) return <p className="text-sm">{format(ch.payCashOnly, { amount })}</p>;
 
   async function run(action: () => Promise<unknown>) {

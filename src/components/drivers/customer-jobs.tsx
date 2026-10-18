@@ -26,7 +26,6 @@ import { SizePicker } from "../parcels/size-picker";
 import { useI18n } from "../i18n-provider";
 import { Button, CountUp, formatRemaining, useReducedMotion, useToast } from "../ui";
 import { DriverTracking } from "./driver-tracking";
-import { TripPaymentChoice } from "./trip-payment";
 import { input, JobStatusPill, Notice, primary, secondary, small, useFcfa, useJobRoute } from "./shared";
 
 const HomePicker = dynamic(() => import("./home-picker").then((m) => m.HomePicker), { ssr: false });
@@ -237,7 +236,8 @@ export function BookCourier({
   const [pickup, setPickup] = useState(emptyHome);
   const [dropoff, setDropoff] = useState<DropoffPoint>(emptyDropoff);
   const [form, setForm] = useState(emptyForm);
-  const [payWith, setPayWith] = useState<TripPayment>("cash");
+  // Green Credit pays energy only (0047): trips are paid in cash to the driver.
+  const payWith: TripPayment = "cash";
   // Three steps: where to collect, where to deliver, then the parcel and the price.
   const [step, setStep] = useState(0);
   // +1 going forward, -1 going back: which side the next step slides in from.
@@ -345,7 +345,6 @@ export function BookCourier({
                 hidePrice
               />
               {payWith === "cash" && <p className="text-xs text-gp-muted">{t.phase1b.courier.priceHint}</p>}
-              <TripPaymentChoice fare={fare} value={payWith} onChange={setPayWith} />
             </>
           )}
           <Notice error={error} notice="" />
@@ -383,7 +382,8 @@ export function BookDelivery({ parcel, station, info }: { parcel: Parcel; statio
   const errorMessage = useErrorMessage();
   const [open, setOpen] = useState(false);
   const [home, setHome] = useState(useEmptyHome());
-  const [payWith, setPayWith] = useState<TripPayment>("cash");
+  // Green Credit pays energy only (0047): trips are paid in cash to the driver.
+  const payWith: TripPayment = "cash";
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const pinned = home.lat !== 0 || home.lng !== 0;
@@ -417,7 +417,6 @@ export function BookDelivery({ parcel, station, info }: { parcel: Parcel; statio
       <p className="text-gp-muted">{t.drivers.customer.deliverIntro}</p>
       <HomeFields value={home} onChange={setHome} />
       {fare !== null && <p className="font-semibold">{format(t.drivers.customer.deliverFare, { n: fare })}</p>}
-      <TripPaymentChoice fare={fare} value={payWith} onChange={setPayWith} />
       <p className="text-xs text-gp-muted">{t.drivers.customer.deliverHint}</p>
       <div className="flex flex-wrap gap-2">
         <button type="submit" className={primary} disabled={busy || !pinned || !inServiceArea(home)}>

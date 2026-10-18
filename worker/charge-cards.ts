@@ -1,12 +1,14 @@
 import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, validTopup, type ChargeCard, type CounterCard } from "../src/lib/charge-cards";
 import type { Profile } from "../src/lib/types";
-import { findCustomer, stationTariff } from "./charging";
+import { findCustomer, linkedCardCredit, socketIsOurs, stationTariff } from "./charging";
 import { ApiError, nowIso, readJson, uuid } from "./http";
 
 // Charging cards with their own credit (schema: migrations/0042_charge_cards.sql). A swipe
 // reaches us as the OCPP idTag of Authorize and StartTransaction (worker/ocpp.ts); a card with
 // enough credit opens a charge (openCardCharge in worker/charging.ts), which is stopped when
 // the credit is used up (cardStops) and paid from the card when it ends (settleCardCharges).
+// A card linked to an account pays with the account's Green Credit instead (0047), and like
+// Green Credit only on a socket of ours: a point partner's socket refuses every card.
 
 /**
  * The number a card is stored under: its own if known, else the stored spelling of the same
@@ -49,7 +51,9 @@ export async function swipeCard(db: D1Database, externalId: string, rawTag: stri
   const running = await db.prepare("select 1 from charging_sessions where charge_card = ? and status = 'charging'").bind(tag).first();
   if (running) return { status: "ConcurrentTx", tag, userId };
   const device = await db.prepare("select station_id from devices where external_id = ?").bind(externalId).first<{ station_id: string }>();
-  const minimum = device ? Math.max(5, (await stationTariff(db, device.station_id)).minXof) : 5;
+  if (!device || !(await socketIsOurs(db, externalId))) return { status: "Blocked", tag, userId };
+  if (userId) return { status: (await linkedCardCredit(db, userId, device.station_id)) !== null ? "Accepted" : "Blocked", tag, userId };
+  const minimum = Math.max(5, (await stationTariff(db, device.station_id)).minXof);
   return { status: card.balance_xof >= minimum ? "Accepted" : "Blocked", tag, userId };
 }
 
@@ -76,8 +80,8 @@ export function cardBooking(
   ];
 }
 
-function counterCard(r: { id_tag: string; label: string | null; blocked: number; balance_xof: number }): CounterCard {
-  return { idTag: r.id_tag, label: r.label, blocked: !!r.blocked, balanceXof: r.balance_xof };
+function counterCard(r: { id_tag: string; user_id?: string | null; label: string | null; blocked: number; balance_xof: number }): CounterCard {
+  return { idTag: r.id_tag, label: r.label, blocked: !!r.blocked, balanceXof: r.balance_xof, ...(r.user_id ? { linked: true } : {}) };
 }
 
 async function loadCard(db: D1Database, rawTag: string) {
@@ -121,6 +125,8 @@ export async function topUpCard(db: D1Database, user: Profile, isStaffOf: StaffC
   if (!validTopup(amount)) throw new ApiError("bad_request");
   const card = await loadCard(db, rawTag);
   if (card.blocked) throw new ApiError("card_blocked", 409);
+  // A linked card pays with the account's Green Credit, loaded with the customer's code (0047).
+  if (card.user_id) throw new ApiError("card_uses_credit", 409);
   await db.batch([
     ...cardBooking(db, { tag: card.id_tag, type: "topup", amountXof: amount, stationId, by: user.id }),
     db

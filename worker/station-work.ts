@@ -38,14 +38,13 @@ import type { Profile } from "../src/lib/types";
 import { periodStart, reportPeriod } from "../src/lib/owner-backoffice";
 import { swapOwnerOf, type SwapOwner } from "../src/lib/station-cash";
 import { newTrxId, personLabel } from "../src/lib/wallet";
-import { verifyPin } from "./auth";
 import type { Env } from "./env";
 import { featuresOf } from "./features";
 import { earnStatement } from "./greenpoint";
 import { ApiError, nowIso, uuid } from "./http";
 import { DB_CUSTOMER, DB_DRIVER } from "./roles";
 import { requireService } from "./services";
-import { walletAccess } from "./wallet";
+import { creditCodeOwner, isCreditStation, spendCreditCode, walletAccess } from "./wallet";
 import { checkPickupCode, heldBatteriesSql, stillActive, type ReservationRow } from "./reservations";
 import { resolveSwapBattery, swapBatteryStatements, swapType } from "./batteries";
 import { batteryNumbersRequired } from "../src/lib/batteries";
@@ -496,6 +495,14 @@ async function findCustomer(db: D1Database, raw: unknown, staffId: string): Prom
   return row;
 }
 
+/** The customer behind a Green Credit counter code (shown after the PIN on their phone, 0047); only customers. */
+async function creditCustomer(db: D1Database, raw: unknown, staffId: string): Promise<Customer> {
+  const { user } = await creditCodeOwner(db, raw);
+  if (user.id === staffId) throw new ApiError("own_reservation");
+  if (user.role !== DB_CUSTOMER) throw new ApiError("not_a_customer", 409);
+  return { id: user.id, role: user.role ?? "", phone: user.phone, email: user.email, full_name: user.full_name };
+}
+
 /**
  * A fleet driver by the signed pass their app shows (W7, R10, src/lib/drivers.ts): the
  * signature must be ours and not expired, the account an active driver account, and the
@@ -566,6 +573,9 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     }
     customer = await db.prepare("select id, role, phone, email, full_name from users where id = ?").bind(reservation.user_id).first<Customer>();
     if (!customer) throw new ApiError("recipient_not_found", 404);
+  } else if (type === "app" && input.payment !== "cash" && !features.lite) {
+    // Paid from Green Credit: the customer's one-time code, shown after the PIN on their phone (0047).
+    customer = await creditCustomer(db, input.creditCode ?? input.contact, actor.user.id);
   } else if (type === "app") {
     customer = await findCustomer(db, input.contact, actor.user.id);
   } else if (type === "first_purchase" && input.contact) {
@@ -594,8 +604,10 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     amount = station.price_battery_xof ?? 0;
   } else if (type === "app" && input.payment !== "cash") {
     if (features.lite) throw new ApiError("cash_only", 409);
-    // App payments only where the swap is ours (our stations, shop stations: 0045), cash elsewhere.
+    // App payments only where the swap is ours (our stations, shop stations: 0045), cash elsewhere,
+    // and only at a Green Credit station (0047).
     if (owner !== "poinderecharge") throw new ApiError("payment_not_offered", 409);
+    if (!(await isCreditStation(db, stationId))) throw new ApiError("credit_not_accepted", 409);
     payment = "wallet";
     if (!station.price_battery_xof) throw new ApiError("swap_price_missing", 409);
     amount = station.price_battery_xof;
@@ -708,13 +720,20 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
   }
   if (payment === "wallet" && customer) {
     await walletAccess(c.env, { id: customer.id, phone: customer.phone, email: customer.email, fullName: customer.full_name, role: "customer" });
-    // The customer types their PIN at the counter.
-    await verifyPin(c.env, customer.id, input.pin);
+    // The customer typed their PIN on their own phone: the code it showed is used once, with the swap.
+    const code = await creditCodeOwner(db, input.creditCode ?? (reservation ? null : input.contact));
+    if (code.user.id !== customer.id) throw new ApiError("credit_code_invalid");
+    const used = spendCreditCode(db, code.hash, stationId, "swap", now);
+    // The code first; a code another request used meanwhile breaks the balance check and with it the whole swap.
+    statements.unshift(
+      used.statement,
+      db.prepare(`update wallets set balance_xof = -1 where user_id = ? and not ${used.usedSql}`).bind(customer.id),
+    );
     const wallet = await db.prepare("select balance_xof, status from wallets where user_id = ?").bind(customer.id).first<{ balance_xof: number; status: string }>();
     if (wallet?.status === "frozen") throw new ApiError("wallet_frozen", 403);
     if (!wallet || wallet.balance_xof < amount) throw new ApiError("insufficient_balance");
     const trxId = newTrxId("charge");
-    const mine = "exists (select 1 from swap_log where request_id = ?)";
+    const mine = `exists (select 1 from swap_log where request_id = ?) and ${used.usedSql}`;
     statements.push(
       db.prepare(`update swap_log set wallet_trx_id = ? where request_id = ?`).bind(trxId, input.requestId),
       db.prepare(`update wallets set balance_xof = balance_xof - ?, updated_at = ? where user_id = ? and ${mine}`).bind(amount, now, customer.id, input.requestId),
@@ -723,7 +742,7 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
           `insert into wallet_transactions (id, trx_id, user_id, type, attribute, amount_xof, fee_xof, total_xof, balance_after_xof,
              counterparty_label, remark, idempotency_key, details, created_at)
            select ?1, ?2, ?3, 'charge', 'send', ?4, 0, ?4, (select balance_xof from wallets where user_id = ?3), ?5, ?6, ?7, ?8, ?9
-           where exists (select 1 from swap_log where request_id = ?10)`,
+           where exists (select 1 from swap_log where request_id = ?10) and ${used.usedSql}`,
         )
         .bind(uuid(), trxId, customer.id, amount, station.name, "Échange de batterie", `swap:${input.requestId}`, JSON.stringify({ swap: swapId }), now, input.requestId),
     );
@@ -732,7 +751,14 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
   try {
     await db.batch(statements);
   } catch (err) {
-    if (/CHECK constraint failed/i.test(String(err)) && payment === "wallet") throw new ApiError("insufficient_balance");
+    if (/CHECK constraint failed/i.test(String(err)) && payment === "wallet") {
+      const code = input.creditCode ?? (reservation ? null : input.contact);
+      const stillOpen = await creditCodeOwner(db, code).then(
+        () => true,
+        () => false,
+      );
+      throw new ApiError(stillOpen ? "insufficient_balance" : "credit_code_invalid");
+    }
     if (!isUnique(err)) throw err;
   }
   const row = await swapByRequest(db, input.requestId);
