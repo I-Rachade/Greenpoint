@@ -12,7 +12,8 @@ export type Amenity =
   | "wifi"
   | "phone_charging"
   | "shop"
-  | "parking";
+  | "parking"
+  | "repair";
 
 export const AMENITIES: Amenity[] = [
   "seating",
@@ -25,6 +26,7 @@ export const AMENITIES: Amenity[] = [
   "phone_charging",
   "shop",
   "parking",
+  "repair",
 ];
 
 /** Amenities that make a station a place to rest while the battery charges. */

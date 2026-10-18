@@ -17,6 +17,7 @@ import {
   ToiletIcon,
   UmbrellaIcon,
   WifiIcon,
+  WrenchIcon,
 } from "./icons";
 import { parseOpeningSchedule, todayHours, type Weekday } from "@/lib/opening-hours";
 import { useI18n } from "./i18n-provider";
@@ -34,6 +35,7 @@ export const AMENITY_ICONS: Record<Amenity, typeof StarIcon> = {
   phone_charging: PhoneBoltIcon,
   shop: StoreIcon,
   parking: ParkingIcon,
+  repair: WrenchIcon,
 };
 
 /**

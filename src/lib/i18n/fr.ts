@@ -2869,6 +2869,7 @@ export const fr = {
       phone_charging: "Recharge téléphone",
       shop: "Boutique",
       parking: "Parking",
+      repair: "Atelier de réparation",
     },
     reviews: {
       title: "Avis",

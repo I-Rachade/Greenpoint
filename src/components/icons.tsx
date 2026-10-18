@@ -395,6 +395,13 @@ export const ParkingIcon = (p: IconProps) => (
   </Svg>
 );
 
+/** A wrench, for a repair workshop. */
+export const WrenchIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M14.5 4.5a4.5 4.5 0 0 0-4.3 5.8L4.5 16a2.1 2.1 0 0 0 3 3l5.7-5.7a4.5 4.5 0 0 0 5.8-4.3l-2.7 2.7-2.7-.7-.7-2.7 2.7-2.7a4.5 4.5 0 0 0-1.1-.1Z" />
+  </Svg>
+);
+
 /** A cargo tricycle: one wheel in front, a loading box over the two behind. */
 export const CargoTricycleIcon = (p: IconProps) => (
   <Svg {...p}>

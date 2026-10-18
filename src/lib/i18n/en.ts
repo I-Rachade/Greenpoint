@@ -2869,6 +2869,7 @@ export const en: Dictionary = {
       phone_charging: "Phone charging",
       shop: "Shop",
       parking: "Parking",
+      repair: "Repair workshop",
     },
     reviews: {
       title: "Reviews",
