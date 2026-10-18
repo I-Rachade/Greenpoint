@@ -573,7 +573,7 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     }
     customer = await db.prepare("select id, role, phone, email, full_name from users where id = ?").bind(reservation.user_id).first<Customer>();
     if (!customer) throw new ApiError("recipient_not_found", 404);
-  } else if (type === "app" && input.payment !== "cash" && !features.lite) {
+  } else if (type === "app" && input.payment !== "cash") {
     // Paid from Green Credit: the customer's one-time code, shown after the PIN on their phone (0047).
     customer = await creditCustomer(db, input.creditCode ?? input.contact, actor.user.id);
   } else if (type === "app") {
@@ -595,7 +595,7 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     out: batteryOut ? await resolveSwapBattery(db, batteryOut, batteryType) : null,
     in: batteryIn ? await resolveSwapBattery(db, batteryIn, batteryType) : null,
   };
-  // Who the swap belongs to (0045), kept on the log row; how it is paid (Lite: cash only).
+  // Who the swap belongs to (0045), kept on the log row; how it is paid (Green Credit in Lite too).
   const owner = swapOwnerOf(!!station.is_own, station.swap_owner);
   let payment: SwapPayment;
   let amount: number;
@@ -603,7 +603,6 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     payment = "fleet";
     amount = station.price_battery_xof ?? 0;
   } else if (type === "app" && input.payment !== "cash") {
-    if (features.lite) throw new ApiError("cash_only", 409);
     // App payments only where the swap is ours (our stations, shop stations: 0045), cash elsewhere,
     // and only at a Green Credit station (0047).
     if (owner !== "poinderecharge") throw new ApiError("payment_not_offered", 409);

@@ -9,7 +9,7 @@ import {
   formatKwh,
   type ChargeSession,
 } from "@/lib/charging";
-import { MAX_CARD_TOPUP_XOF, validTopup, type CounterCard } from "@/lib/charge-cards";
+import type { CounterCard } from "@/lib/charge-cards";
 import { displayStatus } from "@/lib/iot/charging-points";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
@@ -320,7 +320,7 @@ export function StaffCharging({ station, customer }: { station: StationView; cus
           </p>
         )}
       </ConfirmSheet>
-      <CardCounter station={station} onTopUp={reload} />
+      <CardCounter station={station} />
       {data && (
         <div className="space-y-2 border-t border-black/10 pt-3 dark:border-white/10">
           <div className="text-sm font-medium">{ch.today}</div>
@@ -344,8 +344,12 @@ export function StaffCharging({ station, customer }: { station: StationView; cus
   );
 }
 
-/** Station staff: a charging card's credit, and topping it up with the cash the customer hands over. */
-function CardCounter({ station, onTopUp }: { station: StationView; onTopUp: () => void }) {
+/**
+ * Station staff: whose account a charging card belongs to and the Green Credit it pays with.
+ * Cards are not topped up here: the customer loads their Green Credit with their one-time QR
+ * code (Green Credit page), and an unlinked card charges nothing until an admin links it.
+ */
+function CardCounter({ station }: { station: StationView }) {
   const { t, locale } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
@@ -353,11 +357,8 @@ function CardCounter({ station, onTopUp }: { station: StationView; onTopUp: () =
   const xof = (n: number) => formatXof(n, locale);
   const [tag, setTag] = useState("");
   const [found, setFound] = useState<CounterCard | null>(null);
-  const [amount, setAmount] = useState("");
-  const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  const value = Number(amount);
+  const [message, setMessage] = useState<string | null>(null);
 
   async function check(e: FormEvent) {
     e.preventDefault();
@@ -367,26 +368,9 @@ function CardCounter({ station, onTopUp }: { station: StationView; onTopUp: () =
     try {
       setFound(await backend.counterCard(station.id, tag.trim()));
     } catch (err) {
-      setMessage({ ok: false, text: errorMessage(err) });
+      setMessage(errorMessage(err));
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function topUp() {
-    if (!found) return;
-    setBusy(true);
-    try {
-      const card = await backend.topUpCard(station.id, found.idTag, value);
-      setFound(card);
-      setAmount("");
-      setMessage({ ok: true, text: format(cc.done, { tag: card.idTag, amount: xof(card.balanceXof) }) });
-      onTopUp();
-    } catch (err) {
-      setMessage({ ok: false, text: errorMessage(err) });
-    } finally {
-      setBusy(false);
-      setConfirming(false);
     }
   }
 
@@ -412,46 +396,21 @@ function CardCounter({ station, onTopUp }: { station: StationView; onTopUp: () =
         </button>
       </form>
       {found && (
-        <div className="space-y-2 rounded-lg bg-zinc-100 px-3 py-2 dark:bg-zinc-900">
-          <p className={`text-sm font-medium ${found.balanceXof < 0 ? "text-red-600" : ""}`}>
-            {format(cc.credit, { tag: found.label ? `${found.idTag} (${found.label})` : found.idTag, amount: xof(found.balanceXof) })}
-          </p>
-          {found.blocked ? (
-            <p className="text-sm text-red-600">{cc.blocked}</p>
-          ) : found.linked ? (
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.errors.card_uses_credit}</p>
+        <div className="space-y-1 rounded-lg bg-zinc-100 px-3 py-2 dark:bg-zinc-900">
+          {found.linked ? (
+            <>
+              <p className={`text-sm font-medium ${found.balanceXof < 0 ? "text-red-600" : ""}`}>
+                {format(cc.credit, { tag: found.idTag, customer: found.customer ?? "", amount: xof(found.balanceXof) })}
+              </p>
+              <p className="text-xs text-zinc-500">{cc.loadWithQr}</p>
+            </>
           ) : (
-            <div className="flex gap-2">
-              <input
-                className={input}
-                type="number"
-                inputMode="numeric"
-                min={5}
-                max={MAX_CARD_TOPUP_XOF}
-                step={5}
-                placeholder={cc.amount}
-                aria-label={cc.amount}
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-              />
-              <button type="button" disabled={busy || !validTopup(value)} onClick={() => setConfirming(true)} className={`${button} shrink-0`}>
-                {cc.topUp}
-              </button>
-            </div>
+            <p className="text-sm text-red-600">{format(cc.notLinked, { tag: found.idTag })}</p>
           )}
+          {found.blocked && <p className="text-sm text-red-600">{cc.blocked}</p>}
         </div>
       )}
-      {message && <p className={`text-sm ${message.ok ? "text-gp-green-dark dark:text-gp-green" : "text-red-600"}`}>{message.text}</p>}
-      <ConfirmSheet
-        open={confirming && !!found}
-        title={found ? format(cc.confirmTitle, { amount: xof(value), tag: found.idTag }) : ""}
-        confirmLabel={cc.confirm}
-        busy={busy}
-        onConfirm={() => void topUp()}
-        onCancel={() => setConfirming(false)}
-      >
-        <p>{format(cc.confirmBody, { amount: xof(value) })}</p>
-      </ConfirmSheet>
+      {message && <p className="text-sm text-red-600">{message}</p>}
     </div>
   );
 }

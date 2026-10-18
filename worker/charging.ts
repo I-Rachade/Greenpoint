@@ -1010,8 +1010,10 @@ export async function openCardCharge(db: D1Database, deviceId: string, outlet: n
   if (!(await socketIsOurs(db, deviceId))) return false;
   const tariff = await tariffFor(db, p.station_id, !!p.ev_id);
   const label = p.ev_name ?? p.label;
-  const creditLimit = card.userId ? await linkedCardCredit(db, card.userId, p.station_id, tariff) : null;
-  if (card.userId && creditLimit === null) return false;
+  // Only a card linked to an account charges (swipeCard), on the account's Green Credit.
+  if (!card.userId) return false;
+  const creditLimit = await linkedCardCredit(db, card.userId, p.station_id, tariff);
+  if (creditLimit === null) return false;
   const now = nowIso();
   const held = await db
     .prepare("select 1 from reservations where kind = 'charging_point' and target in (?1, ?4) and status = 'active' and expires_at > ?2 and user_id is not ?3")

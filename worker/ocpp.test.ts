@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hashPin } from "./auth";
-import { adjustChargeCard, cardTopupsSince, deleteChargeCard, listChargeCards, saveChargeCard, setChargeCardBlocked, topUpCard } from "./charge-cards";
+import { adjustChargeCard, deleteChargeCard, listChargeCards, saveChargeCard, setChargeCardBlocked } from "./charge-cards";
 import { settleCardCharges, startSelfCharge, stopSelfCharge } from "./charging";
 import { createDevice, startOutlet, stopOutlet } from "./devices";
 import type { Env } from "./env";
@@ -361,12 +361,16 @@ describe("OCPP charges by card", () => {
   const ADMIN = { id: "admin", phone: "+22890000001", email: null, fullName: "Admin", role: "admin" } as const;
   const KOFI = { id: "kofi", phone: "+22896123456", email: null, fullName: "Kofi", role: "customer" } as const;
   const CARD = "04A3F21B7C";
-  const staff = async () => true;
 
+  /** Kofi has 300 FCFA of Green Credit; the station takes Green Credit (0047). */
   async function withCard() {
     const s = await setup();
     const now = new Date().toISOString();
-    s.db.exec(`insert into users (id, phone, full_name, role, created_at) values ('kofi', '${KOFI.phone}', 'Kofi', 'rider', '${now}');`);
+    s.db.exec(`
+      insert into users (id, phone, full_name, role, created_at) values ('kofi', '${KOFI.phone}', 'Kofi', 'rider', '${now}');
+      update stations set green_credit = 1;
+      insert into wallets (user_id, balance_xof, created_at, updated_at) values ('kofi', 300, '${now}', '${now}');
+    `);
     await handleOcppCall(s.d1, ID, "BootNotification", { chargePointVendor: "V", chargePointModel: "M" });
     await handleOcppCall(s.d1, ID, "StatusNotification", { connectorId: 1, status: "Available", errorCode: "NoError" });
     await handleOcppCall(s.d1, ID, "StatusNotification", { connectorId: 2, status: "Available", errorCode: "NoError" });
@@ -374,7 +378,6 @@ describe("OCPP charges by card", () => {
   }
   const post = (body: object) => new Request("https://x", { method: "POST", body: JSON.stringify(body) });
   const save = (d1: D1Database, idTag: string, contact?: string) => saveChargeCard(d1, ADMIN, post({ idTag, contact, label: "Kofi" }));
-  const topUp = (d1: D1Database, idTag: string, amountXof: number) => topUpCard(d1, ADMIN, staff, "st", idTag, post({ amountXof }));
   const adjust = (d1: D1Database, idTag: string, amountXof: number, reason = "gift") => adjustChargeCard(d1, ADMIN, idTag, post({ amountXof, reason }));
   const swipe = (d1: D1Database, idTag: string) => handleOcppCall(d1, ID, "Authorize", { idTag });
   const start = (d1: D1Database, idTag: string, connectorId = 1) =>
@@ -384,7 +387,7 @@ describe("OCPP charges by card", () => {
     }>;
   const meter = (d1: D1Database, transactionId: number, wh: number) =>
     handleOcppCall(d1, ID, "MeterValues", { connectorId: 1, transactionId, meterValue: [{ timestamp: new Date().toISOString(), sampledValue: [{ value: String(wh) }] }] });
-  const balance = (db: ReturnType<typeof fakeD1>["db"], tag = CARD) => (db.prepare("select balance_xof from charge_cards where id_tag = ?").get(tag) as { balance_xof: number }).balance_xof;
+  const wallet = (db: ReturnType<typeof fakeD1>["db"]) => (db.prepare("select balance_xof from wallets where user_id = 'kofi'").get() as { balance_xof: number }).balance_xof;
   const sessions = (db: ReturnType<typeof fakeD1>["db"]) =>
     db.prepare("select user_id, status, energy_wh, order_no, stopped_by, amount_xof, payment_method from charging_sessions order by started_at").all();
 
@@ -396,88 +399,79 @@ describe("OCPP charges by card", () => {
     expect(await ocppFollowUps(d1, ID, "Heartbeat")).toEqual([]);
   });
 
-  it("list a card after its first swipe, with no credit, and refuse it", async () => {
+  it("list a card after its first swipe, with no account, and refuse it, even with an old card credit", async () => {
     const { db, d1 } = await withCard();
     expect(await swipe(d1, "04:a3:f2:1b:7c")).toEqual({ idTagInfo: { status: "Blocked" } });
     expect((await start(d1, CARD)).idTagInfo.status).toBe("Blocked");
     expect(await listChargeCards(d1)).toEqual([expect.objectContaining({ idTag: CARD, balanceXof: 0, customer: null, lastDevice: ID })]);
+    // A credit put on the card before cards had to be linked buys nothing.
+    await adjust(d1, CARD, 500);
+    expect(await swipe(d1, CARD)).toEqual({ idTagInfo: { status: "Blocked" } });
     expect(sessions(db)).toEqual([]);
   });
 
-  it("charge on the card's credit, stop when it is used up and pay from the card once", async () => {
-    const { db, d1 } = await withCard();
-    await swipe(d1, CARD);
-    await expect(topUp(d1, "NOPE", 200)).rejects.toMatchObject({ code: "card_unknown" });
-    await expect(topUp(d1, CARD, 3)).rejects.toMatchObject({ code: "bad_request" });
-    expect(await topUp(d1, "04 a3 f2 1b 7c", 200)).toEqual({ idTag: CARD, label: null, blocked: false, balanceXof: 200 });
-    expect(await cardTopupsSince(d1, "st", new Date(Date.now() - 60_000).toISOString())).toBe(200);
+  it("need an account to save a card; one account has several cards", async () => {
+    const { d1 } = await withCard();
+    await expect(save(d1, CARD)).rejects.toMatchObject({ code: "card_needs_account" });
+    await expect(save(d1, CARD, "+22899999999")).rejects.toMatchObject({ code: "recipient_not_found" });
+    await save(d1, CARD, KOFI.phone);
+    await save(d1, "CARD2", KOFI.phone);
+    expect((await listChargeCards(d1)).map((c) => [c.idTag, c.customer?.id])).toEqual(
+      expect.arrayContaining([
+        [CARD, "kofi"],
+        ["CARD2", "kofi"],
+      ]),
+    );
+  });
 
+  it("charge a linked card on the account's Green Credit, stop when it is used up and pay once", async () => {
+    const { db, d1 } = await withCard();
+    await save(d1, CARD, KOFI.phone);
     expect(await swipe(d1, CARD)).toEqual({ idTagInfo: { status: "Accepted" } });
     const tx = await start(d1, CARD);
     expect(tx.idTagInfo.status).toBe("Accepted");
-    expect(sessions(db)).toEqual([expect.objectContaining({ user_id: null, status: "charging", order_no: CARD })]);
+    expect(sessions(db)).toEqual([expect.objectContaining({ user_id: "kofi", status: "charging", order_no: CARD })]);
     // A second swipe while it runs is refused.
     expect(await swipe(d1, CARD)).toEqual({ idTagInfo: { status: "ConcurrentTx" } });
 
-    // 0.7 kWh at 150 FCFA: 105 of 200, keeps charging.
-    await meter(d1, tx.transactionId, 5700);
-    expect(await ocppFollowUps(d1, ID, "MeterValues")).toEqual([]);
-    // 1.4 kWh: 210, the credit is used up and the charge point is told to stop, once a minute at most.
-    await meter(d1, tx.transactionId, 6400);
-    const stops = await ocppFollowUps(d1, ID, "MeterValues");
-    expect(stops).toEqual([expect.objectContaining({ action: "RemoteStopTransaction", payload: { transactionId: tx.transactionId } })]);
-    expect(db.prepare("select kind, created_by from device_commands where id = ?").get(stops[0].commandId)).toEqual({ kind: "stop", created_by: "card" });
-    expect(sessions(db)).toEqual([expect.objectContaining({ status: "stopped", stopped_by: "card" })]);
-    expect(await ocppFollowUps(d1, ID, "MeterValues")).toEqual([]);
-
-    // The stop came late: 1.5 kWh, 225 FCFA, the card goes below 0 and starts nothing until topped up.
-    await handleOcppCall(d1, ID, "StopTransaction", { transactionId: tx.transactionId, meterStop: 6500, timestamp: new Date().toISOString(), reason: "Remote" });
-    expect(sessions(db)).toEqual([expect.objectContaining({ status: "paid", energy_wh: 1500, amount_xof: 225, payment_method: "card" })]);
-    expect(balance(db)).toBe(-25);
+    // 2.1 kWh at 150 FCFA: 315, more than the 300 of Green Credit: the charge point is told to stop.
+    await meter(d1, tx.transactionId, 7100);
+    expect(await ocppFollowUps(d1, ID, "MeterValues")).toEqual([expect.objectContaining({ action: "RemoteStopTransaction", payload: { transactionId: tx.transactionId } })]);
+    await handleOcppCall(d1, ID, "StopTransaction", { transactionId: tx.transactionId, meterStop: 7100, timestamp: new Date().toISOString(), reason: "Remote" });
     await settleCardCharges(d1, ID);
-    await handleOcppCall(d1, ID, "StatusNotification", { connectorId: 1, status: "Available", errorCode: "NoError" });
-    expect(db.prepare("select type, amount_xof, balance_after_xof from charge_card_transactions order by created_at, type desc").all()).toEqual([
-      { type: "topup", amount_xof: 200, balance_after_xof: 200 },
-      { type: "charge", amount_xof: -225, balance_after_xof: -25 },
-    ]);
+    expect(sessions(db)).toEqual([expect.objectContaining({ status: "paid", payment_method: "wallet" })]);
+    expect(wallet(db)).toBe(0);
+    // The card itself keeps no credit.
+    expect((await listChargeCards(d1))[0]).toMatchObject({ balanceXof: 0 });
     expect(await swipe(d1, CARD)).toEqual({ idTagInfo: { status: "Blocked" } });
   });
 
-  it("cancel a card charge that took no energy, at no cost", async () => {
+  it("refuse a blocked card, one whose outlet is taken, and a second charge on the same account", async () => {
     const { db, d1 } = await withCard();
-    await swipe(d1, CARD);
-    await topUp(d1, CARD, 500);
-    const tx = await start(d1, CARD);
-    await handleOcppCall(d1, ID, "StopTransaction", { transactionId: tx.transactionId, meterStop: 5000, timestamp: new Date().toISOString() });
-    expect(sessions(db)).toEqual([expect.objectContaining({ status: "cancelled", amount_xof: null })]);
-    expect(balance(db)).toBe(500);
-  });
-
-  it("refuse a blocked card and one whose outlet is taken; link a customer if wanted", async () => {
-    const { db, d1 } = await withCard();
-    await save(d1, CARD);
-    await save(d1, "CARD2");
-    await expect(adjust(d1, CARD, 500, " ")).rejects.toMatchObject({ code: "bad_request" });
-    await adjust(d1, CARD, 500);
-    await adjust(d1, "CARD2", 500);
+    const now = new Date().toISOString();
+    db.exec(`
+      update wallets set balance_xof = 5000;
+      insert into users (id, phone, full_name, role, created_at) values ('ama', '+22897000000', 'Ama', 'rider', '${now}');
+      insert into wallets (user_id, balance_xof, created_at, updated_at) values ('ama', 5000, '${now}', '${now}');
+    `);
+    await save(d1, CARD, KOFI.phone);
+    await save(d1, "CARD2", KOFI.phone);
+    await save(d1, "CARD3", "+22897000000");
     expect((await start(d1, "CARD2", 1)).idTagInfo.status).toBe("Accepted");
-    expect((await start(d1, CARD, 1)).idTagInfo.status).toBe("Invalid");
+    // The account's other card waits until this charge is paid: its Green Credit is spoken for.
+    expect((await start(d1, CARD, 2)).idTagInfo.status).toBe("Blocked");
+    expect((await start(d1, "CARD3", 1)).idTagInfo.status).toBe("Invalid");
     await setChargeCardBlocked(d1, ADMIN, CARD, post({ blocked: true }));
     expect((await start(d1, CARD, 2)).idTagInfo.status).toBe("Blocked");
-    await expect(topUp(d1, CARD, 100)).rejects.toMatchObject({ code: "card_blocked" });
-    expect(balance(db)).toBe(500);
-
-    await expect(save(d1, CARD, "+22899999999")).rejects.toMatchObject({ code: "recipient_not_found" });
-    await save(d1, CARD, KOFI.phone);
-    expect((await listChargeCards(d1)).find((c) => c.idTag === CARD)).toMatchObject({ customer: { id: "kofi" }, blocked: true, balanceXof: 500 });
+    expect((await listChargeCards(d1)).find((c) => c.idTag === CARD)).toMatchObject({ customer: { id: "kofi" }, blocked: true });
   });
 
   it("refuse our own remote start tags, and delete only a card without credit", async () => {
     const { db, d1 } = await withCard();
-    await expect(save(d1, "PDR123")).rejects.toMatchObject({ code: "card_invalid" });
+    await expect(save(d1, "PDR123", KOFI.phone)).rejects.toMatchObject({ code: "card_invalid" });
     expect(await swipe(d1, "PDR123")).toEqual({ idTagInfo: { status: "Invalid" } });
     await expect(deleteChargeCard(d1, ADMIN, CARD)).rejects.toMatchObject({ code: "card_unknown" });
-    await save(d1, CARD);
+    await save(d1, CARD, KOFI.phone);
     await adjust(d1, CARD, 100);
     await expect(deleteChargeCard(d1, ADMIN, CARD)).rejects.toMatchObject({ code: "card_has_balance" });
     await adjust(d1, CARD, -100, "refund");
@@ -494,18 +488,24 @@ describe("M1 card numbers", () => {
   it("find a card by its printed decimal number when the charge point sends the chip id in hex, either byte order", async () => {
     const { db, d1 } = await setup();
     // Printed 2745839105 = 0xA3AA2E01; read back to front: 012EAAA3.
-    await saveChargeCard(d1, ADMIN, post({ idTag: "2745839105" }));
-    await adjustChargeCard(d1, ADMIN, "2745839105", post({ amountXof: 500, reason: "first top-up" }));
+    const now = new Date().toISOString();
+    db.exec(`
+      insert into users (id, phone, full_name, role, created_at) values ('kofi', '+22896123456', 'Kofi', 'rider', '${now}');
+      update stations set green_credit = 1;
+      insert into wallets (user_id, balance_xof, created_at, updated_at) values ('kofi', 500, '${now}', '${now}');
+    `);
+    await saveChargeCard(d1, ADMIN, post({ idTag: "2745839105", contact: "+22896123456" }));
     expect(await handleOcppCall(d1, ID, "Authorize", { idTag: "A3AA2E01" })).toEqual({ idTagInfo: { status: "Accepted" } });
     expect(await handleOcppCall(d1, ID, "Authorize", { idTag: "012eaaa3" })).toEqual({ idTagInfo: { status: "Accepted" } });
     expect(db.prepare("select id_tag, last_device_id from charge_cards").all()).toEqual([{ id_tag: "2745839105", last_device_id: ID }]);
   });
 
-  it("find a card swiped in hex by the number staff type at the counter", async () => {
+  it("link a card swiped in hex by the number printed on it", async () => {
     const { d1 } = await setup();
+    const now = new Date().toISOString();
+    await d1.prepare("insert into users (id, phone, full_name, role, created_at) values ('kofi', '+22896123456', 'Kofi', 'rider', ?)").bind(now).run();
     await handleOcppCall(d1, ID, "Authorize", { idTag: "012EAAA3" });
-    const card = await topUpCard(d1, ADMIN, async () => true, "st", "2745839105", post({ amountXof: 1000 }));
-    expect(card).toMatchObject({ idTag: "012EAAA3", balanceXof: 1000 });
-    expect(await listChargeCards(d1)).toHaveLength(1);
+    await saveChargeCard(d1, ADMIN, post({ idTag: "2745839105", contact: "+22896123456" }));
+    expect(await listChargeCards(d1)).toEqual([expect.objectContaining({ idTag: "012EAAA3", customer: expect.objectContaining({ id: "kofi" }) })]);
   });
 });

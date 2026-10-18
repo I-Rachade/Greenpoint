@@ -377,10 +377,9 @@ describe("swaps (W7, R6, R9, R10)", () => {
     expect((await call(env, "kofi", "GET", "/api/driver/pass")).status).toBe(403);
   });
 
-  it("takes only cash in the Lite version (W8, R9)", async () => {
+  it("takes no fleet swaps in the Lite version, but cash and Green Credit (W8, R9)", async () => {
     const { env } = await setup();
     await setLiteEnabled(env, { id: "admin", phone: null, email: null, fullName: null, role: "admin" }, true);
-    expect((await swap(env, "afi", "be", { customerType: "app", contact: "90000005", pin: PIN })).body).toEqual({ error: "cash_only" });
     expect((await swap(env, "afi", "be", { customerType: "fleet", driverCode: KOFI_CODE })).body).toEqual({ error: "cash_only" });
     expect((await swap(env, "afi", "be", { customerType: "cash" })).status).toBe(200);
     expect((await swap(env, "afi", "be", { customerType: "app", contact: "90000005", payment: "cash" })).status).toBe(200);

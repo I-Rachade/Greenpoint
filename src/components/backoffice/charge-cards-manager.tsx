@@ -13,9 +13,10 @@ type Message = { ok: boolean; text: string } | null;
 const smallBtn = "rounded-full border border-black/15 px-3 py-1 text-xs font-medium dark:border-white/20";
 
 /**
- * Backoffice "Recharges" > charging cards: add a card by its number (typed, or taken from a
- * card swiped at a socket), optionally for a customer, see and correct its credit, block a
- * lost card, delete one without credit. Staff top cards up at the station counter.
+ * Backoffice "Recharges" > charging cards: link a card to a customer's account by its number
+ * (typed, or taken from a card swiped at a socket); an account may have several cards, all
+ * paying with its Green Credit. Block a lost card, refund an old card credit, delete a card
+ * without credit. Cards are not topped up: the customer loads Green Credit with their QR code.
  */
 export function ChargeCardsManager() {
   const { t, locale } = useI18n();
@@ -47,7 +48,7 @@ export function ChargeCardsManager() {
     e.preventDefault();
     const tag = idTag.trim().toUpperCase();
     void run(async () => {
-      await backend.saveChargeCard({ idTag: tag, contact: contact.trim() || null, label: label.trim() || null });
+      await backend.saveChargeCard({ idTag: tag, contact: contact.trim(), label: label.trim() || null });
       setIdTag("");
       setContact("");
       setLabel("");
@@ -85,7 +86,7 @@ export function ChargeCardsManager() {
         </label>
         <label className="space-y-1 text-xs">
           <span className="block text-zinc-500">{c.contact}</span>
-          <input className={`${field} w-56`} value={contact} onChange={(e) => setContact(e.target.value)} />
+          <input className={`${field} w-56`} required value={contact} onChange={(e) => setContact(e.target.value)} />
         </label>
         <label className="space-y-1 text-xs">
           <span className="block text-zinc-500">{c.label}</span>
@@ -148,7 +149,7 @@ export function ChargeCardsManager() {
                   </form>
                 )}
               </td>
-              <td className={td}>{x.customer ? userLabel(x.customer) : <span className="text-zinc-500">{c.noCustomer}</span>}</td>
+              <td className={td}>{x.customer ? userLabel(x.customer) : <span className="text-red-600">{c.noCustomer}</span>}</td>
               <td className={td}>{x.lastSwipedAt ? format(c.swiped, { when: when(x.lastSwipedAt), device: x.lastDevice ?? "?" }) : c.neverSwiped}</td>
               <td className={td}>{x.blocked ? <Pill tone="red">{c.blocked}</Pill> : <Pill tone="green">{c.active}</Pill>}</td>
               <td className={`${td} whitespace-nowrap text-right`}>
@@ -156,17 +157,20 @@ export function ChargeCardsManager() {
                   <button type="button" className={smallBtn} onClick={() => pick(x)}>
                     {c.edit}
                   </button>
-                  <button
-                    type="button"
-                    className={smallBtn}
-                    onClick={() => {
-                      setAdjusting(adjusting === x.idTag ? null : x.idTag);
-                      setAmount("");
-                      setReason("");
-                    }}
-                  >
-                    {c.adjust}
-                  </button>
+                  {/* Only an old card credit is left to correct or refund (cards are no longer topped up). */}
+                  {(x.balanceXof !== 0 || adjusting === x.idTag) && (
+                    <button
+                      type="button"
+                      className={smallBtn}
+                      onClick={() => {
+                        setAdjusting(adjusting === x.idTag ? null : x.idTag);
+                        setAmount("");
+                        setReason("");
+                      }}
+                    >
+                      {c.adjust}
+                    </button>
+                  )}
                   <button type="button" className={smallBtn} onClick={() => void run(() => backend.setChargeCardBlocked(x.idTag, !x.blocked))}>
                     {x.blocked ? c.unblock : c.block}
                   </button>

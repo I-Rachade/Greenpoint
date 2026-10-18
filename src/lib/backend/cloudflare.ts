@@ -175,7 +175,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "credit_code_invalid",
   "credit_not_accepted",
   "credit_limit_reached",
-  "card_uses_credit",
+  "card_needs_account",
   "provider_unavailable",
   "reward_unavailable",
   "redemption_open",
@@ -1532,7 +1532,4 @@ export class CloudflareBackend implements Backend {
     return this.call<CounterCard>("GET", `/api/stations/${encodeURIComponent(stationId)}/charge-cards/${encodeURIComponent(idTag)}`);
   }
 
-  topUpCard(stationId: string, idTag: string, amountXof: number) {
-    return this.call<CounterCard>("POST", `/api/stations/${encodeURIComponent(stationId)}/charge-cards/${encodeURIComponent(idTag)}/topup`, { amountXof });
-  }
 }

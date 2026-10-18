@@ -1,7 +1,8 @@
-import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, validTopup, type ChargeCard, type CounterCard } from "../src/lib/charge-cards";
+import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, type ChargeCard, type CounterCard } from "../src/lib/charge-cards";
 import type { Profile } from "../src/lib/types";
-import { findCustomer, linkedCardCredit, socketIsOurs, stationTariff } from "./charging";
+import { findCustomer, linkedCardCredit, socketIsOurs } from "./charging";
 import { ApiError, nowIso, readJson, uuid } from "./http";
+import { cardOwnerCredit } from "./wallet";
 
 // Charging cards with their own credit (schema: migrations/0042_charge_cards.sql). A swipe
 // reaches us as the OCPP idTag of Authorize and StartTransaction (worker/ocpp.ts); a card with
@@ -9,6 +10,10 @@ import { ApiError, nowIso, readJson, uuid } from "./http";
 // the credit is used up (cardStops) and paid from the card when it ends (settleCardCharges).
 // A card linked to an account pays with the account's Green Credit instead (0047), and like
 // Green Credit only on a socket of ours: a point partner's socket refuses every card.
+// Since the card rule of October 2026, a card charges only once it is linked to an account:
+// one account may have several cards, all paying with its Green Credit, which is loaded with
+// the customer's one-time QR code only (worker/wallet.ts topUpCredit). Cards are no longer
+// topped up; an old card credit can only be corrected or refunded by an admin.
 
 /**
  * The number a card is stored under: its own if known, else the stored spelling of the same
@@ -29,9 +34,9 @@ export type CardStatus = "Accepted" | "Blocked" | "ConcurrentTx" | "Invalid";
 
 /**
  * A card was swiped at a charge point: whether it may charge. Remembers the swipe, and adds
- * a card seen for the first time with no credit, so its number shows in the backoffice and
- * at the counter. A card charges when it is not blocked, has no other charge running, and
- * its credit covers the minimum price of the charge point's station (at least 5 FCFA).
+ * a card seen for the first time, so its number shows in the backoffice to be linked to an
+ * account. A card charges when it is linked to an account, not blocked, has no other charge
+ * running, and the account's Green Credit covers the minimum price (linkedCardCredit).
  */
 export async function swipeCard(db: D1Database, externalId: string, rawTag: string): Promise<{ status: CardStatus; tag: string | null; userId: string | null }> {
   const clean = cleanCardTag(rawTag);
@@ -52,9 +57,8 @@ export async function swipeCard(db: D1Database, externalId: string, rawTag: stri
   if (running) return { status: "ConcurrentTx", tag, userId };
   const device = await db.prepare("select station_id from devices where external_id = ?").bind(externalId).first<{ station_id: string }>();
   if (!device || !(await socketIsOurs(db, externalId))) return { status: "Blocked", tag, userId };
-  if (userId) return { status: (await linkedCardCredit(db, userId, device.station_id)) !== null ? "Accepted" : "Blocked", tag, userId };
-  const minimum = Math.max(5, (await stationTariff(db, device.station_id)).minXof);
-  return { status: card.balance_xof >= minimum ? "Accepted" : "Blocked", tag, userId };
+  if (!userId) return { status: "Blocked", tag, userId };
+  return { status: (await linkedCardCredit(db, userId, device.station_id)) !== null ? "Accepted" : "Blocked", tag, userId };
 }
 
 /**
@@ -110,30 +114,9 @@ type StaffCheck = (user: Profile, stationId: string) => Promise<boolean>;
 /** GET /api/stations/:id/charge-cards/:tag: a card's credit, for staff at the counter. */
 export async function counterCardInfo(db: D1Database, user: Profile, isStaffOf: StaffCheck, stationId: string, rawTag: string): Promise<CounterCard> {
   if (!(await isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
-  return counterCard(await loadCard(db, rawTag));
-}
-
-/**
- * POST /api/stations/:id/charge-cards/:tag/topup { amountXof }: staff took the cash and put
- * it on the card. Only a card that was swiped once or added in the backoffice, so a typo
- * never creates one; it goes into the station's takings in cash.
- */
-export async function topUpCard(db: D1Database, user: Profile, isStaffOf: StaffCheck, stationId: string, rawTag: string, request: Request): Promise<CounterCard> {
-  if (!(await isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
-  const { amountXof } = await readJson<{ amountXof?: unknown }>(request);
-  const amount = Number(amountXof);
-  if (!validTopup(amount)) throw new ApiError("bad_request");
   const card = await loadCard(db, rawTag);
-  if (card.blocked) throw new ApiError("card_blocked", 409);
-  // A linked card pays with the account's Green Credit, loaded with the customer's code (0047).
-  if (card.user_id) throw new ApiError("card_uses_credit", 409);
-  await db.batch([
-    ...cardBooking(db, { tag: card.id_tag, type: "topup", amountXof: amount, stationId, by: user.id }),
-    db
-      .prepare("insert into audit_log (at, actor, table_name, action, row_id, station_id, user_id, changes) values (?, ?, 'charge_cards', 'update', ?, ?, ?, ?)")
-      .bind(nowIso(), user.id, card.id_tag, stationId, card.user_id, JSON.stringify({ topup: amount, balance: [card.balance_xof, card.balance_xof + amount] })),
-  ]);
-  return counterCard(await loadCard(db, card.id_tag));
+  // A linked card shows the account's Green Credit, which it pays with (loaded with the customer's QR code only).
+  return card.user_id ? { ...counterCard(card), ...(await cardOwnerCredit(db, card.user_id)) } : counterCard(card);
 }
 
 /** Cash put on cards at this station since `since`, for the station's takings. */
@@ -201,7 +184,9 @@ export async function saveChargeCard(db: D1Database, admin: Profile, request: Re
   const contact = typeof body.contact === "string" ? body.contact.trim() : "";
   const customer = contact ? await findCustomer(db, contact) : null;
   if (contact && !customer) throw new ApiError("recipient_not_found", 404);
-  const userId = customer?.id ?? null;
+  // Every card belongs to an account: it pays with that account's Green Credit.
+  if (!customer) throw new ApiError("card_needs_account");
+  const userId = customer.id;
   const label = typeof body.label === "string" && body.label.trim() ? body.label.trim().slice(0, 60) : null;
   const before = await db.prepare("select user_id, label from charge_cards where id_tag = ?").bind(tag).first<{ user_id: string | null; label: string | null }>();
   await db.batch([
