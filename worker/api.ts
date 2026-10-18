@@ -240,7 +240,7 @@ import { activeServices, decideService, listStationServices, requestService, req
 import { customerStation } from "../src/lib/station-services";
 import { DB_CUSTOMER, refuseNonCustomer, roleFromDb, roleToDb } from "./roles";
 import { claimFormerAccount, sendFormerAccountCode } from "./former-accounts";
-import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
+import { myPayments, paymentCallback, refreshPayment } from "./payments";
 import {
   adjustBalance,
   adminWallet,
@@ -2002,7 +2002,6 @@ const ROUTES: [string, RegExp, Handler][] = [
     return setWalletFrozen(c.env, admin, contact, !!frozen);
   }],
   ["GET", /^\/api\/payments\/mine$/, async (c) => myPayments(c.env, await customerUser(c))],
-  ["POST", /^\/api\/payments$/, async (c) => startPayment(c.env, await customerUser(c), c.request)],
   ["POST", /^\/api\/payments\/([\w-]+)\/refresh$/, async (c, [id]) => refreshPayment(c.env, await customerUser(c), id)],
   // greenpoint (worker/greenpoint.ts)
   ["GET", /^\/api\/greenpoint$/, async (c) => myGreenpoint(c.env, await c.requireUser())],

@@ -7,7 +7,7 @@ import {
   providerFromEnv,
   safeEqual,
 } from "./payment-providers";
-import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
+import { myPayments, paymentCallback, refreshPayment, startChargePayment } from "./payments";
 import type { Profile } from "../src/lib/types";
 import { fakeD1 } from "./test-d1";
 
@@ -45,7 +45,9 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-const start = (env: Env, body: unknown, user = CUSTOMER) => startPayment(env, user, post("/api/payments", body));
+/** A finished charge of 500 FCFA at the own station, paid with Flooz/T-Money (the caller in charging.ts checked it). */
+const start = (env: Env, body: { network?: unknown; phone?: unknown }, user = CUSTOMER) =>
+  startChargePayment(env, user, { sessionId: "charge-1", stationId: "own", amountXof: 500 }, body);
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -143,60 +145,34 @@ describe("safeEqual", () => {
 
 // --- Worker routes on D1 -----------------------------------------------------------
 
-describe("startPayment", () => {
-  it("charges the station's price, not anything from the app, and logs it", async () => {
+describe("startChargePayment", () => {
+  it("charges the amount the charge costs and logs it", async () => {
     const { db, env } = setup();
-    const payment = await start(env, { reservationId: "res-battery", network: "flooz", phone: "96 12 34 56", amountXof: 5 });
-    expect(payment).toMatchObject({ reservationId: "res-battery", amountXof: 500, network: "flooz", status: "pending" });
+    const payment = await start(env, { network: "flooz", phone: "96 12 34 56" });
+    expect(payment).toMatchObject({ amountXof: 500, network: "flooz", status: "pending" });
     const row = db.prepare("select * from payments").get() as Record<string, unknown>;
-    expect(row).toMatchObject({ phone: "+22896123456", provider: "mock", user_id: "customer-1" });
+    expect(row).toMatchObject({ phone: "+22896123456", provider: "mock", user_id: "customer-1", charging_session_id: "charge-1", reservation_id: null });
     expect(row.provider_reference).toMatch(/^mock_pdr_/);
     expect(db.prepare("select table_name, action from audit_log").all()).toEqual([{ table_name: "payments", action: "insert" }]);
   });
 
-  it("refuses a second open payment for the same reservation", async () => {
+  it("refuses a second open payment for the same charge", async () => {
     const { env } = setup();
-    await start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" });
-    await expect(start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" })).rejects.toMatchObject({
-      code: "payment_exists",
-    });
+    await start(env, { network: "flooz", phone: "96123456" });
+    await expect(start(env, { network: "flooz", phone: "96123456" })).rejects.toMatchObject({ code: "payment_exists" });
   });
 
-  it("only takes payments at own stations with a price", async () => {
-    const { db, env } = setup();
-    await expect(start(env, { reservationId: "res-foreign", network: "flooz", phone: "96123456" }, OTHER)).rejects.toMatchObject({
-      code: "payment_not_offered",
-    });
-    db.exec("update stations set price_battery_xof = null where id = 'own'");
-    await expect(start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" })).rejects.toMatchObject({
-      code: "payment_not_offered",
-    });
-  });
-
-  it("rejects other customers' and inactive reservations, bad networks and foreign numbers", async () => {
-    const { db, env } = setup();
-    await expect(start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" }, OTHER)).rejects.toMatchObject({
-      code: "not_found",
-    });
-    await expect(start(env, { reservationId: "res-battery", network: "orange", phone: "96123456" })).rejects.toMatchObject({
-      code: "bad_request",
-    });
-    await expect(start(env, { reservationId: "res-battery", network: "flooz", phone: "+33612345678" })).rejects.toMatchObject({
-      code: "phone_not_allowed",
-    });
-    db.exec("update reservations set status = 'cancelled' where id = 'res-battery'");
-    await expect(start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" })).rejects.toMatchObject({
-      code: "reservation_not_active",
-    });
+  it("rejects bad networks and foreign numbers", async () => {
+    const { env } = setup();
+    await expect(start(env, { network: "orange", phone: "96123456" })).rejects.toMatchObject({ code: "bad_request" });
+    await expect(start(env, { network: "flooz", phone: "+33612345678" })).rejects.toMatchObject({ code: "phone_not_allowed" });
   });
 
   it("marks the payment failed when the provider refuses, so the customer can try again", async () => {
     const { db, env } = setup();
-    await expect(start(env, { reservationId: "res-battery", network: "flooz", phone: "96123450" })).rejects.toMatchObject({
-      code: "provider_unavailable",
-    });
+    await expect(start(env, { network: "flooz", phone: "96123450" })).rejects.toMatchObject({ code: "provider_unavailable" });
     expect(db.prepare("select status, failure_reason from payments").get()).toEqual({ status: "failed", failure_reason: "mock_declined" });
-    const retry = await start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" });
+    const retry = await start(env, { network: "flooz", phone: "96123456" });
     expect(retry.status).toBe("pending");
   });
 });
@@ -204,7 +180,7 @@ describe("startPayment", () => {
 describe("refreshPayment and myPayments", () => {
   it("asks the provider and only shows the customer's own payments", async () => {
     const { env } = setup();
-    const payment = await start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" });
+    const payment = await start(env, { network: "flooz", phone: "96123456" });
     await expect(refreshPayment(env, OTHER, payment.id)).rejects.toMatchObject({ code: "not_found" });
     const refreshed = await refreshPayment(env, CUSTOMER, payment.id);
     expect(refreshed.status).toBe("succeeded");
@@ -217,14 +193,9 @@ describe("refreshPayment and myPayments", () => {
 describe("account deletion", () => {
   it("keeps the payment but forgets who paid and from which number", async () => {
     const { db, env } = setup();
-    await start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" });
+    await start(env, { network: "flooz", phone: "96123456" });
     db.exec("delete from reservations where user_id = 'customer-1'; delete from users where id = 'customer-1'");
-    expect(db.prepare("select user_id, phone, reservation_id, amount_xof from payments").get()).toEqual({
-      user_id: null,
-      phone: null,
-      reservation_id: null,
-      amount_xof: 500,
-    });
+    expect(db.prepare("select user_id, phone, amount_xof from payments").get()).toEqual({ user_id: null, phone: null, amount_xof: 500 });
   });
 });
 
@@ -235,7 +206,7 @@ describe("paymentCallback", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     const { db, env } = setup({ PAYMENTS_PROVIDER: "paygate", PAYGATE_AUTH_TOKEN: "token" });
-    const payment = await start(env, { reservationId: "res-battery", network: "tmoney", phone: "90123456" });
+    const payment = await start(env, { network: "tmoney", phone: "90123456" });
     const { identifier } = db.prepare("select identifier from payments").get() as { identifier: string };
     return { db, env, payment, identifier, fetchMock };
   }
