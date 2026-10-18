@@ -267,9 +267,22 @@ export function demoReviews(now: Date): DemoReview[] {
   ];
 }
 
-/** Electric car chargers: two assigned to stations, one waiting to be assigned. */
+/** The connected outlet of the Grand Marché car charger (a one-outlet OCPP box, DEMO-EV01). */
+export const DEMO_EV_POINT: ChargingPoint = {
+  id: "cp-DEMO-EV01-1",
+  stationId: "st-grand-marche",
+  label: "EV01-1",
+  status: "free",
+  deviceId: "DEMO-EV01",
+  outlet: 1,
+  powerWatts: 0,
+  lastSeenAt: null,
+  qrStart: true,
+};
+
+/** Electric car chargers: one connected (paid in the app), one only listed, one waiting to be assigned. */
 export const DEMO_EV_CHARGERS: EvCharger[] = [
-  { id: "ev-grand-marche-1", name: "Borne VE 1", connector: "type2", powerKw: 22, stationId: "st-grand-marche", isActive: true },
-  { id: "ev-agoe-1", name: "Borne rapide Agoè", connector: "ccs2", powerKw: 60, stationId: "st-agoe", isActive: true },
-  { id: "ev-stock-1", name: "Borne VE 3", connector: "type2", powerKw: 7.4, stationId: null, isActive: true },
+  { id: "ev-grand-marche-1", name: "Borne VE 1", connector: "type2", powerKw: 22, stationId: "st-grand-marche", isActive: true, pointId: DEMO_EV_POINT.id },
+  { id: "ev-agoe-1", name: "Borne rapide Agoè", connector: "ccs2", powerKw: 60, stationId: "st-agoe", isActive: true, pointId: null },
+  { id: "ev-stock-1", name: "Borne VE 3", connector: "type2", powerKw: 7.4, stationId: null, isActive: true, pointId: null },
 ];

@@ -591,6 +591,34 @@ describe("outlet QR codes", () => {
   });
 });
 
+describe("DemoBackend car chargers (0048)", () => {
+  it("shows the connected charger on its station, starts it by QR code at the car price, and keeps its outlet off the motorbike places", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890123456", DEMO_CODE, "2580", "admin");
+    const station = (await backend.listStations()).find((s) => s.id === STATION)!;
+    const car = station.evChargers!.find((c) => c.point)!;
+    expect(car).toMatchObject({ name: "Borne VE 1", point: { qrStart: true, status: "free" } });
+    expect(station.chargingPoints!.some((p) => p.id === car.point!.id)).toBe(false);
+
+    const device = (await backend.listDevices()).find((d) => d.points.some((p) => p.id === car.point!.id))!;
+    const info = await backend.chargeOutlet(device.qrToken!);
+    expect(info.tariff).toEqual({ kwhXof: 200, minXof: 500 });
+    expect(info.outlets[0]).toMatchObject({ label: "Borne VE 1", ev: { name: "Borne VE 1", connector: "type2", powerKw: 22 } });
+    const charge = await backend.startOutletCharge(device.qrToken!, car.point!.id, "2580");
+    expect(charge).toMatchObject({ pointLabel: "Borne VE 1", tariff: { kwhXof: 200, minXof: 500 } });
+
+    // The admin sets a car price apart from the motorbike one; the charger can be unlinked.
+    await backend.saveChargeTariff({ ev: true, stationId: null, kwhXof: 250, minXof: 600 });
+    const admin = await backend.adminCharging();
+    expect(admin).toMatchObject({ defaultTariff: { kwhXof: 150, minXof: 100 }, evTariff: { kwhXof: 250, minXof: 600 } });
+    expect(admin.stations.find((s) => s.id === STATION)).toMatchObject({ evChargers: 1 });
+    const charger = (await backend.listEvChargers()).find((c) => c.id === car.id)!;
+    await expect(backend.saveEvCharger(null, { ...charger, name: "Autre", pointId: charger.pointId })).rejects.toMatchObject({ code: "outlet_busy" });
+    await backend.saveEvCharger(charger.id, { ...charger, pointId: null });
+    expect((await backend.listStations()).find((s) => s.id === STATION)!.evChargers!.find((c) => c.id === car.id)!.point).toBeUndefined();
+  });
+});
+
 describe("DemoBackend point partners", () => {
   it("gives a socket to a partner, whose linked customer account then sees it", async () => {
     const backend = new DemoBackend();

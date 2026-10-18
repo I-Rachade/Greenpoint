@@ -18,6 +18,8 @@ export interface ChargeTariff {
 
 /** Network default until the backoffice changes it (also seeded by 0025_charging_sessions.sql). */
 export const DEFAULT_CHARGE_TARIFF: ChargeTariff = { kwhXof: 150, minXof: 100 };
+/** Network price of a car charge until the backoffice sets one (app_settings.ev_tariff, 0048). */
+export const DEFAULT_EV_TARIFF: ChargeTariff = { kwhXof: 200, minXof: 500 };
 
 /** FCFA amounts are whole francs in steps of 5 (as the payment providers require). */
 export function roundUpTo5(xof: number): number {
@@ -37,6 +39,8 @@ export function validTariff(t: ChargeTariff): boolean {
 
 /** What the backoffice saves: the network default (`stationId` null) or a station's own price (null = default). */
 export interface ChargeTariffInput {
+  /** The price of car chargers (0048) instead of motorbike outlets. */
+  ev?: boolean;
   stationId: string | null;
   kwhXof: number | null;
   minXof: number | null;
@@ -92,6 +96,8 @@ export interface ChargeOutletSocket {
   state: ChargePointState;
   /** The signed-in customer's own reservation holds this outlet: it is free for them. */
   yours?: boolean;
+  /** A car charger connected through this outlet (ev_chargers.point_id, 0048). */
+  ev?: { name: string; connector: string; powerKw: number };
 }
 
 /** The socket box behind a scanned QR code: one sticker, the customer picks an outlet. */
@@ -150,6 +156,8 @@ export function validBoxToken(token: string): boolean {
 /** Staff view of a station: the charges running or waiting for payment, and today's takings. */
 export interface StationCharging {
   tariff: ChargeTariff;
+  /** The price of the station's connected car chargers (0048). */
+  evTariff: ChargeTariff;
   open: ChargeSession[];
   today: ChargeSession[];
   takings: { cashXof: number; appXof: number; count: number };
@@ -158,7 +166,19 @@ export interface StationCharging {
 /** Backoffice: tariffs and the latest charges. */
 export interface AdminCharging {
   defaultTariff: ChargeTariff;
-  stations: { id: string; name: string; kwhXof: number | null; minXof: number | null; outlets: number }[];
+  /** Network price of car chargers (0048). */
+  evTariff: ChargeTariff;
+  stations: {
+    id: string;
+    name: string;
+    kwhXof: number | null;
+    minXof: number | null;
+    outlets: number;
+    /** The station's own car price (null = network default) and its connected car chargers. */
+    evKwhXof: number | null;
+    evMinXof: number | null;
+    evChargers: number;
+  }[];
   sessions: ChargeSession[];
   totals: { paidXof: number; energyWh: number; count: number };
 }

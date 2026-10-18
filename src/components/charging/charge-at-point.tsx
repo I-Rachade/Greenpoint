@@ -153,19 +153,23 @@ function BoxCard({ token, outlet }: { token: string; outlet: number | null }) {
   const xof = (n: number) => formatXof(n, locale);
   const balance = info.balanceXof ?? 0;
   const enough = balance >= info.tariff.minXof;
+  // A car charger linked to this box (0048): shown by its name, plug and power, at the car price.
+  const car = info.outlets.length > 0 && info.outlets.every((o) => o.ev) ? info.outlets[0].ev : undefined;
+  const plug = (c: string) => t.backoffice.evChargers.connectors[c as keyof typeof t.backoffice.evChargers.connectors] ?? c;
   return (
     <section className="space-y-3 rounded-2xl border border-gp-border bg-gp-surface p-4 shadow-sm dark:border-white/10">
       <div>
         <div className="text-sm text-zinc-600 dark:text-zinc-400">{info.stationName}</div>
-        <h2 className="text-xl font-semibold">{format(q.box, { label: info.label })}</h2>
+        <h2 className="text-xl font-semibold">{car ? `🚗 ${car.name}` : format(q.box, { label: info.label })}</h2>
+        {car && <div className="text-sm text-zinc-600 dark:text-zinc-400">{format(q.car, { plug: plug(car.connector), power: car.powerKw })}</div>}
       </div>
-      <p className="text-sm">{format(t.charging.tariff, { kwh: info.tariff.kwhXof, min: info.tariff.minXof })}</p>
+      <p className="text-sm">{format(car ? t.charging.evTariff : t.charging.tariff, { kwh: info.tariff.kwhXof, min: info.tariff.minXof })}</p>
       {!info.creditAccepted && (
         <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
           {q.creditNotAccepted}
         </p>
       )}
-      {info.creditAccepted && <p className="text-sm">{free.length ? q.pick : q.noneFree}</p>}
+      {info.creditAccepted && <p className="text-sm">{free.length ? (car ? q.carPlug : q.pick) : q.noneFree}</p>}
       {outlet && free.length > 0 && !free.some((o) => o.outlet === outlet) && info.outlets.some((o) => o.outlet === outlet) && (
         <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
           {format(q.socketTaken, { n: outlet })}
@@ -187,7 +191,7 @@ function BoxCard({ token, outlet }: { token: string; outlet: number | null }) {
                   selected ? "ring-4 ring-gp-yellow" : ""
                 }`}
               >
-                <span className="block text-base font-semibold">{format(q.socket, { n: o.outlet })}</span>
+                <span className="block text-base font-semibold">{o.ev ? o.ev.name : format(q.socket, { n: o.outlet })}</span>
                 <span className={`block text-xs font-medium ${selectable ? STATE_TONE.free : ""}`}>{o.yours ? q.yours : q.tile[o.state]}</span>
               </button>
             </li>
@@ -212,7 +216,7 @@ function BoxCard({ token, outlet }: { token: string; outlet: number | null }) {
                 placeholder={q.creditPin}
               />
               <button type="button" disabled={busy || pin.length !== 4} onClick={() => void start(choice)} className={button}>
-                {format(q.startOn, { n: choice.outlet })}
+                {car ? q.start : format(q.startOn, { n: choice.outlet })}
               </button>
             </>
           ) : (

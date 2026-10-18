@@ -85,6 +85,7 @@ import {
   handleDeviceEvents,
   listDevices,
   liveFreePointsSql,
+  notEvPointSql,
   onlineSince,
   startOutlet,
   stopOutlet,
@@ -615,9 +616,11 @@ async function reserve(c: Ctx, input: { stationId?: unknown; kind?: unknown; typ
         and ${liveFreePointsSql("?3", "?8")} - (select count(*) from reservations r where r.station_id = ?3 and r.kind = 'charging_point' and r.status = 'active'
               and r.expires_at > ?5 and not ${evTargetSql("r")}) > 0`;
     } else {
-      // A car charger: active at this station, held by nobody (chargers report no status).
+      // A car charger: active at this station, held by nobody; a connected one (0048) also free and reporting.
       await requireService(c.db, stationId, "ev");
-      free = `exists (select 1 from ev_chargers where id = ?9 and station_id = ?3 and is_active = 1) and ${notHeld}`;
+      free = `exists (select 1 from ev_chargers e where e.id = ?9 and e.station_id = ?3 and e.is_active = 1
+                and (e.point_id is null or exists (select 1 from charging_points p where p.id = e.point_id and p.status = 'free' and p.last_seen_at > ?8)))
+        and ${notHeld}`;
     }
     target = wanted;
   } else {
@@ -897,7 +900,7 @@ function stationRow(input: StationInput) {
 
 /** Charging places of station ?{station}: its connected outlets. */
 const CONNECTED_OUTLETS_SQL = (station: string) =>
-  `(select count(*) from charging_points where station_id = ${station} and device_id is not null)`;
+  `(select count(*) from charging_points where station_id = ${station} and device_id is not null and ${notEvPointSql("charging_points")})`;
 
 /**
  * Creates or updates a station, and its parcel depot when the input has one. A station must

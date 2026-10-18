@@ -455,7 +455,10 @@ export function StationDetail({ station, distance, onChanged }: Props) {
               </p>
               {evChargers.length > 0 && (
                 <ul className="mt-2 divide-y divide-gp-border text-sm dark:divide-white/10">
-                  {evChargers.map((c) => (
+                  {evChargers.map((c) => {
+                    // A charger linked to a connected outlet (0048): its live state, and it is paid in the app.
+                    const shown = c.point ? displayStatus({ ...c.point, stationId: station.id, label: c.name, powerWatts: 0 }, now) : null;
+                    return (
                     <li key={c.id} className="flex items-center justify-between gap-3 py-1.5">
                       <span className="min-w-0">
                         {format(t.station.ev.charger, {
@@ -463,13 +466,19 @@ export function StationDetail({ station, distance, onChanged }: Props) {
                           connector: t.backoffice.evChargers.connectors[c.connector],
                           power: c.powerKw,
                         })}
+                        {shown && (
+                          <span className="block text-xs text-gp-muted">
+                            {t.station.outletStatus[shown]}
+                            {c.point?.qrStart ? ` · ${t.station.ev.payInApp}` : ""}
+                          </span>
+                        )}
                       </span>
                       {c.reserved ? (
                         <span className="shrink-0 rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-800 dark:text-amber-300">{t.reserveFlow.reserved}</span>
                       ) : profile && !unattended ? (
                         <button
                           type="button"
-                          disabled={busy || !!activeHere || !evFree || !station.status.isOpen}
+                          disabled={busy || !!activeHere || !evFree || !station.status.isOpen || (shown !== null && shown !== "free")}
                           onClick={() => void reserve("charging_point", c.id)}
                           className="min-h-11 shrink-0 rounded-xl bg-gp-green-dark px-3 text-xs font-semibold text-white hover:bg-gp-forest disabled:opacity-40"
                         >
@@ -477,7 +486,8 @@ export function StationDetail({ station, distance, onChanged }: Props) {
                         </button>
                       ) : null}
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               )}
             </div>

@@ -48,12 +48,20 @@ export function onlineSince(): string {
  */
 export function liveFreePointsSql(station: string, since: string): string {
   return `(select count(*) from charging_points where station_id = ${station} and device_id is not null
-            and status = 'free' and last_seen_at > ${since})`;
+            and status = 'free' and last_seen_at > ${since} and ${notEvPointSql("charging_points")})`;
 }
 
 /** Whether station ?{station} has connected outlets; then they replace the staff counter. */
 export function hasConnectedPointsSql(station: string): string {
-  return `exists (select 1 from charging_points where station_id = ${station} and device_id is not null)`;
+  return `exists (select 1 from charging_points where station_id = ${station} and device_id is not null and ${notEvPointSql("charging_points")})`;
+}
+
+/**
+ * SQL: outlet `alias` is a motorbike place, not the outlet of a connected car charger
+ * (ev_chargers.point_id, 0048), which counts as the car charger only.
+ */
+export function notEvPointSql(alias: string): string {
+  return `not exists (select 1 from ev_chargers ev_p where ev_p.point_id = ${alias}.id)`;
 }
 
 interface PointRow {
@@ -71,7 +79,10 @@ interface PointRow {
 /** Charging points per station, for the station list. */
 export async function chargingPointsByStation(db: D1Database): Promise<Map<string, ChargingPoint[]>> {
   const { results } = await db
-    .prepare("select id, station_id, label, status, device_id, outlet, power_watts, last_seen_at, qr_start from charging_points order by label")
+    .prepare(
+      `select id, station_id, label, status, device_id, outlet, power_watts, last_seen_at, qr_start from charging_points
+        where ${notEvPointSql("charging_points")} order by label`,
+    )
     .all<PointRow>();
   const byStation = new Map<string, ChargingPoint[]>();
   for (const p of results) {
@@ -232,7 +243,8 @@ export function recountFreeSlots(db: D1Database, stationId: string) {
 export function syncChargingSlots(db: D1Database, stationId: string): D1PreparedStatement[] {
   return [
     db
-      .prepare("update stations set charging_slots = (select count(*) from charging_points where station_id = ?1 and device_id is not null) where id = ?1")
+      .prepare(`update stations set charging_slots = (select count(*) from charging_points where station_id = ?1 and device_id is not null
+         and ${notEvPointSql("charging_points")}) where id = ?1`)
       .bind(stationId),
     db
       .prepare("update station_status set free_slots = min(free_slots, (select charging_slots from stations where id = ?1)) where station_id = ?1")
