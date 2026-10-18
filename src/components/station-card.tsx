@@ -8,7 +8,7 @@ import { format } from "@/lib/i18n/format";
 import { useFavorites } from "@/lib/prefs";
 import { brandFullBatteries, stationBrands } from "@/lib/battery-types";
 import { chargesEvs } from "@/lib/ev-chargers";
-import { hasRestArea } from "@/lib/station-extras";
+import { hasRestArea, isUnattended } from "@/lib/station-extras";
 import { offersParcels } from "@/lib/station-points";
 import type { StationView } from "@/lib/types";
 import { BatteryIcon, BenchIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, HeartIcon, NavigateIcon, PinIcon } from "./icons";
@@ -138,8 +138,13 @@ export function StationCard({
 }) {
   const { t } = useI18n();
   const hours = useTodayHoursLabel();
+  const unattended = isUnattended(station);
   return (
-    <div className="relative rounded-3xl border border-gp-border bg-gp-surface p-3 shadow-sm transition-shadow hover:shadow-md dark:border-white/10">
+    <div
+      className={`relative rounded-3xl border border-gp-border bg-gp-surface p-3 shadow-sm transition-shadow hover:shadow-md dark:border-white/10 ${
+        unattended ? "opacity-60 grayscale" : ""
+      }`}
+    >
       <div className="flex gap-3">
         <div className="relative h-24 w-28 shrink-0 overflow-hidden rounded-2xl bg-gp-green/10 sm:w-32">
           <StationPhoto station={station} className="h-full w-full" />
@@ -176,6 +181,11 @@ export function StationCard({
             <RestBadge station={station} />
             <EvBadge station={station} />
             {station.isSolar && <SolarBadge />}
+            {unattended && (
+              <span className="inline-flex items-center whitespace-nowrap rounded-full bg-zinc-500/15 px-2.5 py-0.5 text-xs font-semibold text-gp-muted dark:text-zinc-400">
+                {t.stationLook.unattended}
+              </span>
+            )}
           </div>
           <StockLine station={station} className="mt-1.5 text-gp-forest dark:text-zinc-200" />
         </div>

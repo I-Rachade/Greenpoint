@@ -16,6 +16,7 @@ import type {
 import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { OwnerLive, OwnerReport, ReportPeriod } from "../owner-backoffice";
 import type { EvCharger, EvChargerInput } from "../ev-chargers";
+import type { RepairCenter, RepairCenterInput } from "../repair-centers";
 import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "../parcels";
@@ -114,6 +115,7 @@ export type BackendErrorCode =
   | "already_reserved"
   | "station_not_found"
   | "station_closed"
+  | "station_unattended"
   | "service_not_offered"
   | "none_available"
   | "daily_limit"
@@ -282,6 +284,8 @@ export interface Backend {
 
   // Stations (public)
   listStations(): Promise<StationView[]>;
+  /** Active repair workshops away from stations, shown on the map (repair-centers.ts). */
+  listRepairCenters(): Promise<RepairCenter[]>;
   /** Calls `onChange` whenever station data may have changed. Returns an unsubscribe function. */
   subscribe(onChange: () => void): () => void;
 
@@ -412,6 +416,11 @@ export interface Backend {
   /** Adds a charger (`id` null) or changes one, including the station it is assigned to. */
   saveEvCharger(id: string | null, input: EvChargerInput): Promise<void>;
   deleteEvCharger(id: string): Promise<void>;
+  /** Every repair workshop, including switched-off ones (admins only). */
+  adminRepairCenters(): Promise<RepairCenter[]>;
+  /** Adds a workshop (`id` null) or changes one. */
+  saveRepairCenter(id: string | null, input: RepairCenterInput): Promise<void>;
+  deleteRepairCenter(id: string): Promise<void>;
 
   // Backoffice (admins only; see src/lib/admin)
   adminSnapshot(): Promise<AdminSnapshot>;

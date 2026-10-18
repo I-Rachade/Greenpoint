@@ -26,6 +26,7 @@ import {
   UsersIcon,
   WalletIcon,
   WifiIcon,
+  WrenchIcon,
 } from "@/components/icons";
 import type { Dictionary } from "@/lib/i18n/fr";
 
@@ -80,6 +81,7 @@ export const ADMIN_NAV: { group: GroupKey; links: { href: string; key: NavKey }[
       { href: "/admin/devices", key: "devices" },
       { href: "/admin/proprietaires", key: "pointPartners" },
       { href: "/admin/ev-chargers", key: "evChargers" },
+      { href: "/admin/repair-centers", key: "repairCenters" },
       { href: "/admin/partners", key: "partners" },
     ],
   },
@@ -108,6 +110,7 @@ const NAV_ICON: Record<NavKey, ComponentType<SVGProps<SVGSVGElement> & { size?: 
   devices: WifiIcon,
   pointPartners: PlugIcon,
   evChargers: CarIcon,
+  repairCenters: WrenchIcon,
   partners: GlobeIcon,
 };
 

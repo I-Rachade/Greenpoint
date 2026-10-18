@@ -12,7 +12,8 @@ export type Amenity =
   | "wifi"
   | "phone_charging"
   | "shop"
-  | "parking";
+  | "parking"
+  | "repair";
 
 export const AMENITIES: Amenity[] = [
   "seating",
@@ -25,6 +26,7 @@ export const AMENITIES: Amenity[] = [
   "phone_charging",
   "shop",
   "parking",
+  "repair",
 ];
 
 /** Amenities that make a station a place to rest while the battery charges. */
@@ -42,6 +44,14 @@ export const MAIN_ACTIVITIES: MainActivity[] = ["charging", "swap", "ev", "resta
 /** A known main activity, or null (automatic). */
 export function cleanMainActivity(value: unknown): MainActivity | null {
   return typeof value === "string" && (MAIN_ACTIVITIES as string[]).includes(value) ? (value as MainActivity) : null;
+}
+
+/**
+ * A station nobody answers for: no phone number and no staff assigned. It is shown greyed out
+ * and cannot be reserved (reserve() in worker/api.ts refuses with "station_unattended").
+ */
+export function isUnattended(station: { phone: string | null; hasStaff?: boolean }): boolean {
+  return !station.phone?.trim() && station.hasStaff === false;
 }
 
 /** Photos a station may have; the first one is the cover. */

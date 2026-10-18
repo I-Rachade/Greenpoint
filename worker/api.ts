@@ -1,10 +1,12 @@
 import { offersCharging, offersSwap, withinOpeningHours } from "../src/lib/availability";
 import { depotPoints, hasAnyPoint } from "../src/lib/station-points";
-import { cleanAmenities, cleanMainActivity, cleanPhotos, type ReviewInput } from "../src/lib/station-extras";
+import { cleanAmenities, cleanMainActivity, cleanPhotos, isUnattended, type ReviewInput } from "../src/lib/station-extras";
 import { deleteReview, saveReview, stationReviews } from "./reviews";
 import type { BatteryTypeInput } from "../src/lib/battery-types";
 import type { EvChargerInput } from "../src/lib/ev-chargers";
 import { deleteEvCharger, evChargersByStation, listEvChargers, saveEvCharger } from "./ev-chargers";
+import type { RepairCenterInput } from "../src/lib/repair-centers";
+import { deleteRepairCenter, listRepairCenters, saveRepairCenter } from "./repair-centers";
 import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements } from "./battery-types";
 import { batteryDetail, listBatteries, lookupBattery, registerBatteries, setBatteryStatus } from "./batteries";
 import type { BatteryStatusInput, RegisterBatteriesInput } from "../src/lib/batteries";
@@ -296,6 +298,7 @@ interface StationRow {
   updated_at: string | null;
   reserved_slots: number;
   reserved_batteries: number;
+  staff_count?: number;
   /** Missing before migration 0013. */
   has_battery?: number;
   /** Missing before migration 0019. */
@@ -364,6 +367,7 @@ function toStationView(r: StationRow): StationView & { isActive: boolean } {
     amenities: cleanAmenities(parseJson(r.amenities)),
     mainActivity: cleanMainActivity(r.main_activity),
     rating: { average: r.rating_avg ? Math.round(r.rating_avg * 10) / 10 : 0, count: r.rating_count ?? 0 },
+    hasStaff: (r.staff_count ?? 1) > 0,
   };
 }
 
@@ -399,7 +403,8 @@ const STATION_SELECT = `
             and r.kind = 'charging_point' and not ${evTargetSql("r")}) as reserved_slots,
          (select count(*) from reservations r where r.station_id = s.id and r.status = 'active' and r.expires_at > ?1 and r.kind = 'swap') as reserved_batteries,
          (select avg(rating) from station_reviews sr where sr.station_id = s.id) as rating_avg,
-         (select count(*) from station_reviews sr where sr.station_id = s.id) as rating_count
+         (select count(*) from station_reviews sr where sr.station_id = s.id) as rating_count,
+         (select count(*) from station_staff sf where sf.station_id = s.id) as staff_count
   from stations s
   left join operators o on o.id = s.operator_id
   left join station_status st on st.station_id = s.id
@@ -614,6 +619,8 @@ async function reserve(c: Ctx, input: { stationId?: unknown; kind?: unknown; typ
     free = `(select free_slots from station_status where station_id = ?3)
       - (select count(*) from reservations where station_id = ?3 and kind = 'charging_point' and target is null and status = 'active' and expires_at > ?5) > 0`;
   }
+  // No phone and no staff: nobody answers for the hold, so the station is greyed out in the app.
+  if (isUnattended(station)) throw new ApiError("station_unattended");
 
   const id = uuid();
   const code = randomDigits(4);
@@ -1639,6 +1646,7 @@ type Handler = (c: Ctx, params: string[]) => Promise<unknown>;
 
 const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/stations$/, (c) => publicStations(c)],
+  ["GET", /^\/api\/repair-centers$/, (c) => listRepairCenters(c.db, true)],
   ["GET", /^\/api\/operators$/, (c) => listOperators(c)],
   ["GET", /^\/api\/stations\/([\w-]+)\/reviews$/, async (c, [id]) => stationReviews(c.db, id, await c.user())],
   [
@@ -1838,6 +1846,24 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/admin\/batteries$/, async (c) => registerBatteries(c, await readJson<RegisterBatteriesInput>(c.request))],
   ["PATCH", /^\/api\/admin\/batteries\/([\w-]+)$/, async (c, [id]) => setBatteryStatus(c, id, await readJson<BatteryStatusInput>(c.request))],
   ["GET", /^\/api\/admin\/ev-chargers$/, async (c) => (await c.requireAdmin(), listEvChargers(c.db))],
+  ["GET", /^\/api\/admin\/repair-centers$/, async (c) => (await c.requireAdmin(), listRepairCenters(c.db, false))],
+  [
+    "POST",
+    /^\/api\/admin\/repair-centers$/,
+    async (c) => {
+      const admin = await c.requireAdmin();
+      const { id, input } = await readJson<{ id: string | null; input: RepairCenterInput }>(c.request);
+      return saveRepairCenter(c, admin.id, id ? String(id) : null, input);
+    },
+  ],
+  [
+    "DELETE",
+    /^\/api\/admin\/repair-centers\/([\w-]+)$/,
+    async (c, [id]) => {
+      const admin = await c.requireAdmin();
+      return deleteRepairCenter(c, admin.id, id);
+    },
+  ],
   [
     "POST",
     /^\/api\/admin\/ev-chargers$/,
@@ -2391,6 +2417,7 @@ export const API_ROUTES: readonly (readonly [string, RegExp])[] = ROUTES.map(([m
  */
 export const OPEN_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/stations",
+  "GET /api/repair-centers",
   "GET /api/operators",
   "GET /api/stations/:id/reviews",
   "GET /api/me",

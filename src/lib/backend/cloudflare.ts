@@ -5,6 +5,7 @@ import type { ChargeCard, ChargeCardInput, CounterCard } from "../charge-cards";
 import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
 import type { OwnerLive, OwnerReport, ReportPeriod } from "../owner-backoffice";
 import type { EvCharger, EvChargerInput } from "../ev-chargers";
+import type { RepairCenter, RepairCenterInput } from "../repair-centers";
 import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "../parcels";
@@ -105,6 +106,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "already_reserved",
   "station_not_found",
   "station_closed",
+  "station_unattended",
   "service_not_offered",
   "none_available",
   "daily_limit",
@@ -314,6 +316,10 @@ export class CloudflareBackend implements Backend {
 
   listStations() {
     return this.call<StationView[]>("GET", "/api/stations");
+  }
+
+  listRepairCenters() {
+    return this.call<RepairCenter[]>("GET", "/api/repair-centers");
   }
 
   subscribe(onChange: () => void) {
@@ -580,6 +586,20 @@ export class CloudflareBackend implements Backend {
 
   async deleteEvCharger(id: string) {
     await this.call("DELETE", `/api/admin/ev-chargers/${encodeURIComponent(id)}`);
+    this.changed();
+  }
+
+  adminRepairCenters() {
+    return this.call<RepairCenter[]>("GET", "/api/admin/repair-centers");
+  }
+
+  async saveRepairCenter(id: string | null, input: RepairCenterInput) {
+    await this.call("POST", "/api/admin/repair-centers", { id, input });
+    this.changed();
+  }
+
+  async deleteRepairCenter(id: string) {
+    await this.call("DELETE", `/api/admin/repair-centers/${encodeURIComponent(id)}`);
     this.changed();
   }
 
