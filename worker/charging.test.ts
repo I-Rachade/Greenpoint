@@ -59,7 +59,7 @@ async function setup() {
       ('other', 'partner', 'Partenaire', 6.14, 1.23, 'charging', 0, 0, '${now}');
     insert into station_status (station_id, free_slots, full_batteries, updated_at) values ('st', 2, 0, '${now}'), ('other', 1, 0, '${now}');
     insert into station_staff (station_id, user_id) values ('st', 'staff');
-    update stations set green_credit = 1 where id = 'st';
+    update stations set green_credit = 1, phone = '+22822000001' where id = 'st';
     insert into devices (external_id, station_id, vendor, link, outlets, last_seen_at, qr_token, created_at) values
       ('123456', 'st', 'Xingke', 'own_server', 2, '${now}', '${BOX_ST}', '${now}'),
       ('654321', 'other', 'Xingke', 'own_server', 1, '${now}', '${BOX_OTHER}', '${now}');

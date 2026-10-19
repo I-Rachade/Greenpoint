@@ -139,9 +139,18 @@ export async function creditMax(db: D1Database): Promise<number> {
   return Number.isInteger(n) && n > 0 ? n : 0;
 }
 
+/**
+ * Green Credit belongs to what is poinderecharge's own: our stations, and shop stations whose
+ * battery swap is ours (0045), and partner stations with a socket of ours (0039). Only those may be
+ * designated, and only those accept it.
+ */
+const OURS_SQL =
+  "(coalesce(o.is_own, 0) = 1 or s.swap_owner = 'poinderecharge' or exists (select 1 from devices d where d.station_id = s.id and d.partner_id is null))";
+const CREDIT_STATION_SQL = `select s.id, s.name from stations s left join operators o on o.id = s.operator_id where s.green_credit = 1 and ${OURS_SQL}`;
+
 /** The active stations that load and accept Green Credit. */
 async function creditStations(db: D1Database): Promise<GreenCreditStation[]> {
-  const { results } = await db.prepare("select id, name from stations where green_credit = 1 and is_active = 1 order by name").all<GreenCreditStation>();
+  const { results } = await db.prepare(`${CREDIT_STATION_SQL} and s.is_active = 1 order by s.name`).all<GreenCreditStation>();
   return results;
 }
 
@@ -162,7 +171,7 @@ export async function refuseWhileCreditCharging(db: D1Database, userId: string) 
 
 /** Whether this station loads and accepts Green Credit (designated in the backoffice). */
 export async function isCreditStation(db: D1Database, stationId: string): Promise<boolean> {
-  return !!(await db.prepare("select 1 from stations where id = ? and green_credit = 1").bind(stationId).first());
+  return !!(await db.prepare(`${CREDIT_STATION_SQL} and s.id = ?`).bind(stationId).first());
 }
 
 // Users ------------------------------------------------------------------------
@@ -439,8 +448,13 @@ export async function setStationGreenCredit(env: Env, admin: Profile, stationId:
   const { enabled } = await readJson<{ enabled?: unknown }>(request);
   if (typeof enabled !== "boolean") throw new ApiError("bad_request");
   const db = env.DB;
-  const s = await db.prepare("select green_credit from stations where id = ?").bind(stationId).first<{ green_credit: number }>();
+  const s = await db
+    .prepare(`select s.green_credit, ${OURS_SQL} as ours from stations s left join operators o on o.id = s.operator_id where s.id = ?`)
+    .bind(stationId)
+    .first<{ green_credit: number; ours: number }>();
   if (!s) throw new ApiError("not_found", 404);
+  // A partner's station cannot take Green Credit: it is spent only on what is ours.
+  if (enabled && !s.ours) throw new ApiError("credit_not_accepted", 409);
   if (!!s.green_credit === enabled) return { ok: true };
   await db.batch([
     db.prepare("update stations set green_credit = ? where id = ?").bind(enabled ? 1 : 0, stationId),
