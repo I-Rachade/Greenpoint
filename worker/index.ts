@@ -1,4 +1,5 @@
 import { handleApi } from "./api";
+import { recountSilentFreeSlots } from "./devices";
 import { runDispatch } from "./drivers";
 import type { Env } from "./env";
 import { parcelsEnabled } from "./features";
@@ -56,7 +57,8 @@ export default {
    * Crons in wrangler.jsonc: every minute partner webhooks and driver offers
    * (worker/drivers.ts), daily parcel reminders and returns. Nothing runs while
    * its module is switched off; parcels catch up once the module is back on.
-   * At 10:00 the minute cron also tells the admins which stations did not close their cash.
+   * The minute cron also takes silent sockets out of the free places.
+ * At 10:00 the minute cron also tells the admins which stations did not close their cash.
    */
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
@@ -67,6 +69,7 @@ export default {
       }),
     );
     if (controller.cron !== DAILY_CRON) ctx.waitUntil(runDispatch(env).catch((err) => console.error("dispatch", err)));
+    if (controller.cron !== DAILY_CRON) ctx.waitUntil(recountSilentFreeSlots(env.DB).catch((err) => console.error("free slots", err)));
     const at = new Date(controller.scheduledTime);
     if (controller.cron !== DAILY_CRON && at.getUTCHours() === CASH_DEADLINE_HOUR && at.getUTCMinutes() === 0) {
       ctx.waitUntil(runCashAlerts(env, at).catch((err) => console.error("cash alerts", err)));
