@@ -274,14 +274,20 @@ export function StaffCharging({ station, customer }: { station: StationView; cus
                     {p.ev && <span aria-hidden>🚗 </span>}
                     <span className="font-medium">{p.label}</span> {p.ev && <span className="text-xs text-zinc-500">({p.ev})</span>} · {t.station.outletStatus[shown]}
                   </span>
+                  {/* An outlet switched on without a charge here (e.g. an admin's test in the backoffice) is busy too: the server refuses (charge_busy). */}
                   {starting !== p.id && (
-                    <button type="button" disabled={shown === "offline" || shown === "fault"} onClick={() => setStarting(p.id)} className={button}>
+                    <button
+                      type="button"
+                      disabled={shown === "offline" || shown === "fault" || shown === "charging"}
+                      onClick={() => setStarting(p.id)}
+                      className={button}
+                    >
                       {ch.start}
                     </button>
                   )}
                 </div>
               )}
-              {starting === p.id && !charge && (
+              {starting === p.id && !charge && shown !== "charging" && (
                 <StartForm
                   station={station}
                   pointId={p.id}

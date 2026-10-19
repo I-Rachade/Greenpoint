@@ -5,7 +5,7 @@ import { useState } from "react";
 import { isHolding, offersCharging } from "@/lib/availability";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { displayStatus, isConnected } from "@/lib/iot/charging-points";
+import { displayStatus, isConnected, isOffline } from "@/lib/iot/charging-points";
 import { reservationKind } from "@/lib/reservations";
 import type { Reservation, StationView } from "@/lib/types";
 import { useApp } from "../app-provider";
@@ -167,14 +167,21 @@ function FromReservation({ station }: { station: StationView }) {
   return <ReservationCharge station={station} reservation={r} onDone={() => setFinished(true)} initialCode={params.get("code") ?? ""} />;
 }
 
-/** Free charging places, counted by staff (as on the station page before). */
+/**
+ * Free charging places, counted by staff (as on the station page before). With connected
+ * outlets, an offline one is no place: the total counts the reporting ones only.
+ */
 function FreeSlots({ station }: { station: StationView }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const value = station.status.freeSlots;
-  const max = station.chargingSlots;
+  const now = useNow();
+  // A car charger's outlet counts as the car charger, not as a motorbike place.
+  const evPoints = new Set((station.evChargers ?? []).map((c) => c.point?.id));
+  const places = (station.chargingPoints ?? []).filter((p) => isConnected(p) && !evPoints.has(p.id));
+  const max = places.length ? places.filter((p) => !isOffline(p, now)).length : station.chargingSlots;
+  const value = Math.min(station.status.freeSlots, max);
   const set = (n: number) =>
     backend.updateStatus(station.id, { freeSlots: n }).then(
       () => toast(t.work.saved),

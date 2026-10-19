@@ -2,14 +2,18 @@ import { deviceKeyError, toIngestOutlets } from "../src/lib/iot/device-events";
 import {
   commandStatus,
   parseXingkeCallback,
+  xingkeAuthorizeResponse,
+  xingkeCardEvent,
   xingkeDedupKey,
   xingkeEffect,
+  xingkeTransactionId,
   XingkeCallbackError,
   type XingkeCallback,
   type XingkeCommand,
 } from "../src/lib/iot/xingke-cloud";
-import { chargeStartFailed, chargeStopFailed, creditFollowUp } from "./charging";
-import { ingest, recountFreeSlots } from "./devices";
+import { swipeCard } from "./charge-cards";
+import { chargeStartFailed, chargeStopFailed, creditFollowUp, openCardCharge } from "./charging";
+import { ingest, recountFreeSlots, startCardOutlet } from "./devices";
 import type { Env } from "./env";
 import { ApiError, nowIso } from "./http";
 
@@ -92,9 +96,10 @@ const ok = () => Response.json({ code: "OK" });
  *   POST /api/devices/xingke
  *   Authorization: Bearer <XINGKE_CALLBACK_TOKEN>
  * Device events from the vendor platform. Answers {"code":"OK"} once an event is
- * stored, also for repeats, so the platform stops retrying (section 4.1).
+ * stored, also for repeats, so the platform stops retrying (section 4.1). What follows
+ * (answering a card, stopping a charge) runs through `defer` after the answer, if given.
  */
-export async function handleXingkeCallback(request: Request, env: Env): Promise<Response> {
+export async function handleXingkeCallback(request: Request, env: Env, defer?: (work: Promise<unknown>) => void): Promise<Response> {
   if (request.method !== "POST") return Response.json({ code: "METHOD_NOT_ALLOWED" }, { status: 405 });
   const denied = deviceKeyError(request, env.XINGKE_CALLBACK_TOKEN);
   if (denied) return Response.json({ code: denied.status === 401 ? "UNAUTHORIZED" : "SERVICE_UNAVAILABLE" }, { status: denied.status });
@@ -118,8 +123,15 @@ export async function handleXingkeCallback(request: Request, env: Env): Promise<
   if (seen) return ok();
   await applyCallback(env.DB, cb, body);
   await env.DB.prepare("insert or ignore into device_callbacks (key, received_at) values (?, ?)").bind(key, nowIso()).run();
-  // Green Credit charges: stopped when the credit is used up, paid once they ended (0047).
-  await creditFollowUp(env, cb.deviceId);
+  // After the acknowledgement when the Worker lets us (`defer`): the platform waits at most
+  // 3 seconds for it, and our card answer is a request to that same platform.
+  const followUp = (async () => {
+    await cardFollowUp(env, cb);
+    // Green Credit charges: stopped when the credit is used up, paid once they ended (0047).
+    await creditFollowUp(env, cb.deviceId);
+  })();
+  if (defer) defer(followUp);
+  else await followUp;
   return ok();
 }
 
@@ -128,7 +140,7 @@ async function applyCallback(db: D1Database, cb: XingkeCallback, body: unknown) 
   const effect = xingkeEffect(cb);
 
   if (!effect || effect.online === false) {
-    // Card events and unknown actions are only kept; we have no card accounts.
+    // Card events (answered in cardFollowUp) and unknown actions are only kept.
     await db
       .prepare("insert into device_messages (external_id, received_at, payload) values (?, ?, ?)")
       .bind(deviceId, nowIso(), JSON.stringify(body))
@@ -175,4 +187,127 @@ async function applyCallback(db: D1Database, cb: XingkeCallback, body: unknown) 
   }
   // Unknown devices are stored by ingest and acknowledged, so the platform does not retry for 24 hours.
   await ingest(db)(deviceId, outlets, body, { allOutlets: effect.allOutlets });
+}
+
+// Cards -------------------------------------------------------------------------------
+
+/** A card charge whose start was not sent this long after the swipe is given up (the device never got our answer). */
+const CARD_START_WINDOW_MS = 120_000;
+
+/**
+ * Card charging on Xingke sockets (sections 8 and 16), with the same cards as OCPP charge points
+ * (swipeCard in worker/charge-cards.ts: linked to an account, paying with its Green Credit):
+ * 1. CardPresented: we answer with AuthorizeResponse within its 30 seconds, Accepted with the
+ *    credit as balance or Invalid. A balance inquiry may be for the whole device (no outlet,
+ *    API 1.2). For StartCharging the card's charge opens at once on that outlet with a new
+ *    transactionId, so a second swipe or another customer cannot take it.
+ * 2. CommandResult of that answer: "Sent", or "Unknown" (DELIVERY_UNCERTAIN, what the platform
+ *    reports today, as it gets no receipt from the device), so we start the outlet with
+ *    startSource "Card" (the platform never starts by itself). An answer refused with
+ *    PROFILE_UNCONFIRMED or whose send timed out starts the outlet at once. "Failed", another
+ *    refusal, or no result within CARD_START_WINDOW_MS cancels the charge at no cost.
+ * Then it runs like a Green Credit charge: stopped when the credit is used up and paid once it
+ * ended (creditFollowUp). Never throws: the event is stored and acknowledged either way.
+ */
+async function cardFollowUp(env: Env, cb: XingkeCallback) {
+  const deviceId = cb.deviceId.toUpperCase();
+  try {
+    // First, so a card left with an unstarted charge by an earlier swipe can charge again.
+    await dropUnstartedCardCharges(env.DB, deviceId);
+    if (cb.action === "CardPresented") await answerCard(env, cb);
+    else if (cb.action === "CommandResult" && cb.data.requestAction === "AuthorizeResponse") await cardAnswerDelivered(env, cb);
+    await dropUnstartedCardCharges(env.DB, deviceId);
+  } catch (err) {
+    console.error("xingke card", deviceId, cb.messageId, err);
+  }
+}
+
+async function answerCard(env: Env, cb: XingkeCallback) {
+  const card = xingkeCardEvent(cb);
+  // An expired event is only kept (section 16): no answer, no charge.
+  if (!card || Date.parse(card.expiresAt) <= Date.now()) return;
+  const db = env.DB;
+  const deviceId = cb.deviceId.toUpperCase();
+  const swipe = await swipeCard(db, deviceId, card.idTag);
+  let credit = swipe.status === "Accepted" && swipe.tag && swipe.creditXof !== undefined ? swipe.creditXof : null;
+  const order = xingkeTransactionId();
+  const outlet = card.intent === "StartCharging" ? card.connectorId : undefined;
+  if (credit !== null && outlet) {
+    const opened = await openCardCharge(db, deviceId, outlet, { tag: swipe.tag!, userId: swipe.userId }, order);
+    if (!opened) credit = null;
+  }
+  const charging = credit !== null && !!outlet;
+  // The platform's own id for the device, as it called us.
+  const answer = xingkeAuthorizeResponse(card, credit);
+  const result = await sendXingkeCommand(env, cb.deviceId, answer);
+  // Kept with the device's events, so a card the device showed nothing for can be traced.
+  await db
+    .prepare("insert into device_messages (external_id, received_at, payload) values (?, ?, ?)")
+    .bind(deviceId, nowIso(), JSON.stringify({ sent: answer, result }))
+    .run();
+  if (!charging || result.ok) return;
+  // The platform has not confirmed card authorization for this device (section 6.3), or our
+  // send timed out: no CommandResult may follow, so the outlet is started directly, as for an
+  // app start. A late CommandResult then finds the charge started and does nothing.
+  if (result.uncertain || result.code === "PROFILE_UNCONFIRMED") return startCardCharge(env, deviceId, outlet, order);
+  // Refused for sure: the device will not wait for a start.
+  await chargeStartFailed(db, deviceId, outlet, order);
+}
+
+async function startCardCharge(env: Env, deviceId: string, outlet: number, order: string) {
+  try {
+    await startCardOutlet(env, deviceId, outlet, order, "card");
+  } catch (err) {
+    // Refused by the platform (e.g. device offline): stored on the command.
+    console.error("xingke card start", deviceId, order, err);
+    await chargeStartFailed(env.DB, deviceId, outlet, order);
+  }
+}
+
+/** The card charge opened by answerCard on this outlet that has not been started yet. */
+async function unstartedCardCharge(db: D1Database, deviceId: string, outlet: number) {
+  return db
+    .prepare(
+      `select order_no from charging_sessions cs
+        where cs.device_id = ? and cs.outlet = ? and cs.status = 'charging' and cs.charge_card is not null and cs.seen_charging = 0 and cs.energy_wh = 0
+          and not exists (select 1 from device_commands d where d.external_id = cs.device_id and d.kind = 'start' and d.order_no = cs.order_no)`,
+    )
+    .bind(deviceId, outlet)
+    .first<{ order_no: string }>();
+}
+
+async function cardAnswerDelivered(env: Env, cb: XingkeCallback) {
+  const db = env.DB;
+  const deviceId = cb.deviceId.toUpperCase();
+  // The answer reuses the card event's messageId, so the event tells which outlet it was for.
+  const event = await db
+    .prepare(
+      `select payload from device_messages where external_id = ? and received_at > ?
+          and json_extract(payload, '$.action') = 'CardPresented' and json_extract(payload, '$.messageId') = ?
+        order by id desc limit 1`,
+    )
+    .bind(deviceId, new Date(Date.now() - CARD_START_WINDOW_MS).toISOString(), cb.messageId)
+    .first<{ payload: string }>();
+  const card = event && xingkeCardEvent(parseXingkeCallback(JSON.parse(event.payload)));
+  const outlet = card?.intent === "StartCharging" ? card.connectorId : undefined;
+  if (!outlet) return;
+  const charge = await unstartedCardCharge(db, deviceId, outlet);
+  if (!charge) return;
+  const status = cb.data.status;
+  if (status === "Failed") return chargeStartFailed(db, deviceId, outlet, charge.order_no);
+  if (status !== "Sent" && status !== "Unknown") return;
+  await startCardCharge(env, deviceId, outlet, charge.order_no);
+}
+
+/** Cancels card charges whose start was never sent (the device did not confirm our answer in time). */
+async function dropUnstartedCardCharges(db: D1Database, deviceId: string) {
+  const { results } = await db
+    .prepare(
+      `select outlet, order_no from charging_sessions cs
+        where cs.device_id = ? and cs.status = 'charging' and cs.charge_card is not null and cs.seen_charging = 0 and cs.energy_wh = 0 and cs.started_at < ?
+          and not exists (select 1 from device_commands d where d.external_id = cs.device_id and d.kind = 'start' and d.order_no = cs.order_no)`,
+    )
+    .bind(deviceId, new Date(Date.now() - CARD_START_WINDOW_MS).toISOString())
+    .all<{ outlet: number; order_no: string }>();
+  for (const r of results) await chargeStartFailed(db, deviceId, r.outlet, r.order_no);
 }

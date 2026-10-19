@@ -238,6 +238,20 @@ export function recountFreeSlots(db: D1Database, stationId: string) {
 }
 
 /**
+ * Recounts every station with connected outlets (minute cron): an outlet that falls silent
+ * sends nothing, so its place leaves the counter once DEVICE_OFFLINE_MINUTES have passed.
+ */
+export async function recountSilentFreeSlots(db: D1Database) {
+  await db
+    .prepare(
+      `update station_status set free_slots = ${liveFreePointsSql("station_status.station_id", "?1")}, updated_at = ?2
+       where ${hasConnectedPointsSql("station_status.station_id")} and free_slots != ${liveFreePointsSql("station_status.station_id", "?1")}`,
+    )
+    .bind(onlineSince(), nowIso())
+    .run();
+}
+
+/**
  * A station's charging places are its connected outlets: sets charging_slots to their
  * number and keeps the staff counter within it.
  */
@@ -452,6 +466,13 @@ export async function startOutlet(env: Env, rawId: string, outlet: number, actor
     .bind(target.externalId, outlet, order, line, actor, nowIso())
     .run();
   return { order };
+}
+
+/** Switches a Xingke cloud outlet on for the card charge `order` (worker/xingke.ts), until full. */
+export async function startCardOutlet(env: Env, externalId: string, outlet: number, order: string, actor: string) {
+  const target = await commandTarget(env.DB, externalId, outlet);
+  if (target.route !== "xingke_cloud") throw new ApiError("bad_request");
+  await sendCloud(env, target, outlet, "start", xingkeStartRequest(xingkeMessageId("start"), outlet, order, undefined, "Card"), actor);
 }
 
 /** Switches an outlet off, ending its last started charge. */

@@ -2765,7 +2765,7 @@ export const fr = {
       scan: "Scanner un code",
       scanHint: "Démarrer une recharge",
       show: "Montrer mon QR-Code",
-      showHint: "Retrait, réservation ou identifiant",
+      showHint: "Retrait, réservation, Green Credit ou identifiant",
       parcel: "Retrait de colis",
       parcelHint: "Montrez ce code au guichet de {station} pour retirer votre colis.",
       reservation: "Réservation",
