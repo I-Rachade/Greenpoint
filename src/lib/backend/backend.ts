@@ -21,7 +21,7 @@ import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
-import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
+import type { AdminOperator, MyStaffInvite, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
 import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "../point-partners";
 import type { Promotion, PromotionInput } from "../promo";
 import type {
@@ -241,6 +241,7 @@ export type BackendErrorCode =
   | "invite_account_not_empty"
   | "invite_pending"
   | "invite_not_found"
+  | "invite_limit"
   | "already_in_fleet"
   | "account_exists"
   | "parcel_not_in_run"
@@ -366,8 +367,19 @@ export interface Backend {
   // Operator accounts (see src/lib/operators.ts)
   /** The operators the signed-in person runs, their stations and staff. */
   ownerView(): Promise<OwnerView>;
-  /** Makes the account with this phone number or e-mail address staff of one of the operator's stations. */
-  ownerAddStaff(stationId: string, contact: string): Promise<void>;
+  /**
+   * Invites the person with this phone number or e-mail address to work at one of the operator's
+   * stations (migration 0050). The same answer whether an account has the contact or not; the
+   * person becomes staff only by accepting (acceptStaffInvite).
+   */
+  ownerInviteStaff(stationId: string, contact: string): Promise<void>;
+  /** The owner takes back a staff invite nobody answered yet. */
+  ownerRevokeStaffInvite(inviteId: string): Promise<void>;
+  /** Open staff invites for the signed-in person's phone number or e-mail address (empty when signed out). */
+  myStaffInvites(): Promise<MyStaffInvite[]>;
+  /** The invited person becomes staff of the station (the checks of an assignment run now). */
+  acceptStaffInvite(inviteId: string): Promise<void>;
+  declineStaffInvite(inviteId: string): Promise<void>;
   ownerRemoveStaff(stationId: string, userId: string): Promise<void>;
   ownerSaveStation(stationId: string, input: OwnerStationInput): Promise<void>;
   /** Moves a staff member to another station of the owner (staff work at one station only, W2). */

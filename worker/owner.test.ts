@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AdminReservationPage } from "../src/lib/admin/types";
-import type { OwnerView } from "../src/lib/operators";
+import type { MyStaffInvite, OwnerView } from "../src/lib/operators";
 import type { OwnerLive, OwnerReport } from "../src/lib/owner-backoffice";
 import type { BatteryEventView, StationCounter } from "../src/lib/station-work";
 import { handleApi } from "./api";
@@ -76,6 +76,13 @@ async function call<T = unknown>(env: Env, as: string | null, method: string, pa
   return { status: res.status, body: (await res.json()) as T };
 }
 
+/** The owner invites, the person accepts their newest open staff invite (migration 0050). */
+async function inviteAndAccept(env: Env, owner: string, stationId: string, contact: string, person: string) {
+  expect((await call(env, owner, "POST", "/api/owner/staff", { stationId, contact })).status).toBe(200);
+  const invites = (await call<MyStaffInvite[]>(env, person, "GET", "/api/staff-invites")).body;
+  return call(env, person, "POST", `/api/staff-invites/${invites[invites.length - 1].id}/accept`);
+}
+
 const count = (db: DatabaseSync, sql: string) => (db.prepare(sql).get() as { n: number }).n;
 const parcelInput = (to = "lome") => ({
   senderPhone: "91 00 00 00",
@@ -88,8 +95,8 @@ const parcelInput = (to = "lome") => ({
 describe("staff at exactly one station (W2, R15)", () => {
   it("refuses a second station with 409 and moves the person instead", async () => {
     const { env, db } = await setup();
-    expect((await call(env, "yao", "POST", "/api/owner/staff", { stationId: "lome", contact: "90000004" })).body).toEqual({ error: "staff_other_station" });
-    expect((await call(env, "yao", "POST", "/api/owner/staff", { stationId: "be", contact: "90000004" })).status).toBe(200); // already there: nothing to do
+    expect((await inviteAndAccept(env, "yao", "lome", "90000004", "afi")).body).toEqual({ error: "staff_other_station" });
+    expect((await inviteAndAccept(env, "yao", "be", "90000004", "afi")).status).toBe(200); // already there: nothing to do
     expect((await call(env, "afi", "POST", "/api/owner/staff/move", { userId: "afi", stationId: "lome" })).status).toBe(403); // staff: no backoffice
     expect((await call(env, "yao", "POST", "/api/owner/staff/move", { userId: "afi", stationId: "kara" })).status).toBe(403); // not Yao's station
     expect((await call(env, "kossi", "POST", "/api/owner/staff/move", { userId: "afi", stationId: "kara" })).status).toBe(403); // not Kossi's staff
@@ -106,10 +113,11 @@ describe("staff at exactly one station (W2, R15)", () => {
   it("makes a customer staff only with nothing open, and never an owner", async () => {
     const { env, db } = await setup();
     // Kofi has money in the wallet (R15).
-    expect((await call(env, "yao", "POST", "/api/owner/staff", { stationId: "lome", contact: "90000007" })).body).toEqual({ error: "role_change_blocked" });
-    expect((await call(env, "yao", "POST", "/api/owner/staff", { stationId: "lome", contact: "90000003" })).body).toEqual({ error: "has_other_role" });
-    expect((await call(env, "yao", "POST", "/api/owner/staff", { stationId: "lome", contact: "90000008" })).body).toEqual({ error: "has_other_role" });
-    expect((await call(env, "yao", "POST", "/api/owner/staff", { stationId: "lome", contact: "90000006" })).status).toBe(200);
+    // The checks run when the invited person accepts (migration 0050).
+    expect((await inviteAndAccept(env, "yao", "lome", "90000007", "kofi")).body).toEqual({ error: "role_change_blocked" });
+    expect((await inviteAndAccept(env, "yao", "lome", "90000003", "kossi")).body).toEqual({ error: "has_other_role" });
+    expect((await inviteAndAccept(env, "yao", "lome", "90000008", "edem")).body).toEqual({ error: "has_other_role" });
+    expect((await inviteAndAccept(env, "yao", "lome", "90000006", "ama")).status).toBe(200);
     expect(db.prepare("select role from users where id = 'ama'").get()).toEqual({ role: "operator" });
   });
 

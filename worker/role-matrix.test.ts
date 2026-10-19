@@ -71,6 +71,7 @@ const POLICY: Record<string, Role[]> = {
   "DELETE /api/owner/staff": OWNER,
   "POST /api/owner/stations/:id": OWNER,
   "POST /api/owner/staff/move": OWNER,
+  "POST /api/owner/staff-invites/:id/revoke": OWNER,
   "POST /api/owner/reassignments/:id/resolve": OWNER,
   "GET /api/owner/live": OWNER,
   "GET /api/owner/report": OWNER,
@@ -236,6 +237,9 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/merchant-invites": ALL, // empty when signed out
   "POST /api/merchant-invites/:id/accept": SIGNED, // an invite to the caller's own number
   "POST /api/merchant-invites/:id/decline": SIGNED,
+  "GET /api/staff-invites": ALL, // empty when signed out
+  "POST /api/staff-invites/:id/accept": SIGNED, // an invite to the caller's own phone number or e-mail address
+  "POST /api/staff-invites/:id/decline": SIGNED,
   "GET /api/merchant-assignments": APPROVER,
   "POST /api/merchant-assignments/:id/:id": APPROVER,
   "GET /api/driver/shops": DRIVER,
@@ -393,5 +397,6 @@ describe("R2: route × role matrix", () => {
       if (status !== 401) wrong.push(`${name}: ${status}`);
     }
     expect(wrong).toEqual([]);
-  });
+    // One fresh database copy per route: slow on a busy machine, like the test above.
+  }, 60_000);
 });

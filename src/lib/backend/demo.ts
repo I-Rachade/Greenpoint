@@ -296,7 +296,17 @@ import {
   type GreenpointRewardInput,
   type GreenpointView,
 } from "../greenpoint";
-import { OPERATOR_NAME_MAX, validPrice, type AdminOperator, type OperatorInput, type OwnerStationInput, type OwnerView } from "../operators";
+import {
+  OPERATOR_NAME_MAX,
+  STAFF_INVITE_DAYS,
+  STAFF_INVITE_LIMIT,
+  validPrice,
+  type AdminOperator,
+  type MyStaffInvite,
+  type OperatorInput,
+  type OwnerStationInput,
+  type OwnerView,
+} from "../operators";
 import {
   POINT_PARTNER_NAME_MAX,
   type AdminPointPartner,
@@ -499,6 +509,8 @@ interface DemoState {
   merchantMembers?: DemoMember[];
   /** Employee invites, newest first (merchant_invites). */
   merchantInvites?: DemoMerchantInvite[];
+  /** Staff invites, oldest first (staff_invites, 0050). */
+  staffInvites?: DemoStaffInvite[];
   /** Favorite and assigned drivers of the shops (merchant_drivers). */
   merchantDrivers?: DemoMerchantDriver[];
   /** Check-ins of assigned drivers, newest first (merchant_checkins). */
@@ -534,6 +546,19 @@ interface DemoMember {
 
 interface DemoMerchantInvite extends MerchantInvite {
   merchantId: string;
+  userId: string | null;
+}
+
+/** As table staff_invites (0050): made for a phone number or e-mail address, account or not. */
+interface DemoStaffInvite {
+  id: string;
+  stationId: string;
+  contact: string;
+  invitedBy: string;
+  status: "pending" | "accepted" | "declined" | "revoked" | "expired";
+  createdAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
   userId: string | null;
 }
 
@@ -2543,7 +2568,7 @@ export class DemoBackend implements Backend {
   private withStaff(state: DemoState, stationId: string, userId: string): DemoState {
     const staff = state.staff ?? DEMO_STAFF;
     const user = (state.users ?? demoUsers(new Date())).find((u) => u.id === userId);
-    if (user?.role === "fleet_manager" || user?.role === "driver") throw new BackendError("has_other_role");
+    if (user?.role === "fleet_manager" || user?.role === "driver" || user?.role === "merchant") throw new BackendError("has_other_role");
     if (!user) throw new BackendError("account_not_found");
     const current = staff.find((a) => a.userId === userId);
     if (current?.stationId === stationId) return state;
@@ -2680,6 +2705,16 @@ export class DemoBackend implements Backend {
           createdAt: r.createdAt,
           ...this.label(state, r.userId),
         })),
+      // The contact as the owner typed it, masked; never the name of an account that has it.
+      invites: this.staffInvitesOf(state)
+        .filter((i) => i.status === "pending" && ids.has(i.stationId))
+        .map((i) => ({
+          id: i.id,
+          stationId: i.stationId,
+          label: personLabel({ fullName: null, phone: i.contact.includes("@") ? null : i.contact, email: i.contact.includes("@") ? i.contact : null }),
+          createdAt: i.createdAt,
+          expiresAt: i.expiresAt,
+        })),
       prices: stations.map((s) => ({
         stationId: s.id,
         swapXof: swapPrice(state, s),
@@ -2689,10 +2724,116 @@ export class DemoBackend implements Backend {
     };
   }
 
-  async ownerAddStaff(stationId: string, contact: string) {
+  // Staff invites (as worker/api.ts, migration 0050) ------------------------------------
+
+  /** Open invites whose time ran out are 'expired' (expireStaffInvites in worker/api.ts). */
+  private staffInvitesOf(state: DemoState): DemoStaffInvite[] {
+    const now = new Date().toISOString();
+    return (state.staffInvites ?? []).map((i) => (i.status === "pending" && i.expiresAt <= now ? { ...i, status: "expired" as const, decidedAt: i.expiresAt } : i));
+  }
+
+  /** The same answer whether an account has the contact or not; the checks run on accepting. */
+  async ownerInviteStaff(stationId: string, rawContact: string) {
     const state = this.load();
-    this.requireOwnerOf(state, stationId);
-    this.save(this.withStaff(state, stationId, this.accountByContact(state, contact).id));
+    const profile = this.requireOwnerOf(state, stationId);
+    const contact = parseContact(rawContact ?? "");
+    if (!contact) throw new BackendError((rawContact ?? "").includes("@") ? "invalid_contact" : "phone_not_allowed");
+    if (!this.activeStations(state).some((s) => s.id === stationId)) throw new BackendError("station_not_found");
+    const invites = this.staffInvitesOf(state);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + STAFF_INVITE_DAYS * 86_400_000).toISOString();
+    const open = invites.find((i) => i.stationId === stationId && i.contact === contact.value && i.status === "pending");
+    // Inviting again gives the open invite a new expiry.
+    if (open) return this.save({ ...state, staffInvites: invites.map((i) => (i === open ? { ...i, expiresAt } : i)) });
+    if (invites.filter((i) => i.stationId === stationId && i.status === "pending").length >= STAFF_INVITE_LIMIT) throw new BackendError("invite_limit");
+    const invite: DemoStaffInvite = {
+      id: crypto.randomUUID(),
+      stationId,
+      contact: contact.value,
+      invitedBy: profile.id,
+      status: "pending",
+      createdAt: now.toISOString(),
+      expiresAt,
+      decidedAt: null,
+      userId: null,
+    };
+    this.save(withAudit({ ...state, staffInvites: [...invites, invite] }, { table: "staff_invites", action: "insert", rowId: invite.id, stationId, changes: { contact: contact.value } }));
+  }
+
+  async ownerRevokeStaffInvite(inviteId: string) {
+    const state = this.load();
+    this.requireAnyOwner(state);
+    const invites = this.staffInvitesOf(state);
+    const invite = invites.find((i) => i.id === inviteId);
+    if (!invite) throw new BackendError("invite_not_found");
+    this.requireOwnerOf(state, invite.stationId);
+    if (invite.status !== "pending") throw new BackendError("invite_not_found");
+    const now = new Date().toISOString();
+    this.save(
+      withAudit(
+        { ...state, staffInvites: invites.map((i) => (i.id === inviteId ? { ...i, status: "revoked" as const, decidedAt: now } : i)) },
+        { table: "staff_invites", action: "update", rowId: inviteId, stationId: invite.stationId, changes: { status: ["pending", "revoked"] } },
+      ),
+    );
+  }
+
+  async myStaffInvites(): Promise<MyStaffInvite[]> {
+    const state = this.load();
+    const profile = state.profile;
+    if (!profile || (!profile.phone && !profile.email)) return [];
+    const stations = this.activeStations(state);
+    return this.staffInvitesOf(state)
+      .filter((i) => i.status === "pending" && (i.contact === profile.phone || i.contact === profile.email) && stations.some((s) => s.id === i.stationId))
+      .map((i) => {
+        const station = stations.find((s) => s.id === i.stationId)!;
+        return { id: i.id, stationName: station.name, operatorName: state.operators.find((o) => o.id === station.operatorId)?.name ?? "", expiresAt: i.expiresAt };
+      });
+  }
+
+  /** The open invite for the signed-in account's contact, at an active station its inviter still runs. */
+  private staffInviteForMe(state: DemoState, profile: Profile, inviteId: string): DemoStaffInvite {
+    const invite = this.staffInvitesOf(state).find((i) => i.id === inviteId);
+    const station = invite && this.activeStations(state).find((s) => s.id === invite.stationId);
+    const inviter = invite && (state.users ?? demoUsers(new Date())).find((u) => u.id === invite.invitedBy);
+    const stillRuns = !!station && (inviter?.role === "admin" || (!!inviter && ownedOperators(state, inviter.id).includes(station.operatorId)));
+    if (!invite || invite.status !== "pending" || !stillRuns || (invite.contact !== profile.phone && invite.contact !== profile.email)) throw new BackendError("invite_not_found");
+    return invite;
+  }
+
+  /** As acceptStaffInvite in worker/api.ts: the checks of an assignment (withStaff) run now. */
+  async acceptStaffInvite(inviteId: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const invite = this.staffInviteForMe(state, profile, inviteId);
+    const now = new Date().toISOString();
+    const staffed = this.withStaff(state, invite.stationId, profile.id);
+    const role = (staffed.users ?? []).find((u) => u.id === profile.id)?.role ?? profile.role;
+    const invites = this.staffInvitesOf(state).map((i) =>
+      i.id === invite.id
+        ? { ...i, status: "accepted" as const, decidedAt: now, userId: profile.id }
+        : i.status === "pending" && (i.contact === profile.phone || i.contact === profile.email)
+          ? { ...i, status: "expired" as const, decidedAt: now }
+          : i,
+    );
+    this.save(
+      withAudit(
+        { ...staffed, staffInvites: invites, profile: staffed.profile ? { ...staffed.profile, role } : staffed.profile },
+        { table: "staff_invites", action: "update", rowId: invite.id, stationId: invite.stationId, userId: profile.id, changes: { status: ["pending", "accepted"] } },
+      ),
+    );
+  }
+
+  async declineStaffInvite(inviteId: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const invite = this.staffInviteForMe(state, profile, inviteId);
+    const now = new Date().toISOString();
+    this.save(
+      withAudit(
+        { ...state, staffInvites: this.staffInvitesOf(state).map((i) => (i.id === invite.id ? { ...i, status: "declined" as const, decidedAt: now, userId: profile.id } : i)) },
+        { table: "staff_invites", action: "update", rowId: invite.id, stationId: invite.stationId, userId: profile.id, changes: { status: ["pending", "declined"] } },
+      ),
+    );
   }
 
   async ownerRemoveStaff(stationId: string, userId: string) {

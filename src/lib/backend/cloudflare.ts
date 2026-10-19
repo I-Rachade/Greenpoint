@@ -10,7 +10,7 @@ import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
-import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
+import type { AdminOperator, MyStaffInvite, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
 import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "../point-partners";
 import type { Promotion, PromotionInput } from "../promo";
 import type {
@@ -481,8 +481,27 @@ export class CloudflareBackend implements Backend {
     return this.call<OwnerView>("GET", "/api/owner");
   }
 
-  async ownerAddStaff(stationId: string, contact: string) {
+  async ownerInviteStaff(stationId: string, contact: string) {
     await this.call("POST", "/api/owner/staff", { stationId, contact });
+  }
+
+  ownerRevokeStaffInvite(inviteId: string) {
+    return this.act("POST", `/api/owner/staff-invites/${encodeURIComponent(inviteId)}/revoke`);
+  }
+
+  myStaffInvites() {
+    return this.call<MyStaffInvite[]>("GET", "/api/staff-invites");
+  }
+
+  async acceptStaffInvite(inviteId: string) {
+    await this.act("POST", `/api/staff-invites/${encodeURIComponent(inviteId)}/accept`);
+    // The account is a staff account now: the menu follows the role.
+    const profile = await this.getProfile();
+    this.authListeners.forEach((fn) => fn(profile));
+  }
+
+  declineStaffInvite(inviteId: string) {
+    return this.act("POST", `/api/staff-invites/${encodeURIComponent(inviteId)}/decline`);
   }
 
   async ownerRemoveStaff(stationId: string, userId: string) {

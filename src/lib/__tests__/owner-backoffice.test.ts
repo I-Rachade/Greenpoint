@@ -73,7 +73,8 @@ describe("DemoBackend owner backoffice (phase 8, as the Worker)", () => {
     expect(view.reassignments.map((r) => r.stationId).sort()).toEqual(["st-agoe", "st-be", "st-tokoin", "st-universite"]);
     expect(view.reassignments[0]).toMatchObject({ userId: "demo-operator", currentStationId: "st-grand-marche" });
 
-    await expect(backend.ownerAddStaff("st-tokoin", "90000002")).rejects.toMatchObject({ code: "staff_other_station" });
+    // The admin's direct assignment follows the one-station rule (the owner's route only invites).
+    await expect(backend.assignStaff("st-tokoin", "demo-operator")).rejects.toMatchObject({ code: "staff_other_station" });
     await backend.ownerMoveStaff("demo-operator", "st-tokoin");
     const moved = await backend.ownerView();
     expect(moved.staff.filter((s) => s.userId === "demo-operator").map((s) => s.stationId)).toEqual(["st-tokoin"]);
@@ -86,6 +87,46 @@ describe("DemoBackend owner backoffice (phase 8, as the Worker)", () => {
     await expect(backend.setUserRole("demo-operator", "customer")).rejects.toMatchObject({ code: "role_change_blocked" });
     await backend.ownerRemoveStaff("st-tokoin", "demo-operator");
     expect((await backend.adminSnapshot()).users.find((u) => u.id === "demo-operator")?.role).toBe("customer");
+  });
+
+  it("makes staff by invitation only, whether or not the contact has an account (0050)", async () => {
+    await as("admin", "+22890000001");
+    // The same answer for a contact without an account and for one with an account.
+    await backend.ownerInviteStaff("st-tokoin", "90 00 00 77");
+    await backend.ownerInviteStaff("st-tokoin", "90000002");
+    expect((await backend.ownerView()).invites.map((i) => i.label)).toEqual(["+228 90 •• •• 77", "+228 90 •• •• 02"]);
+    // The account that signs up with the number sees the invite; someone else does not.
+    await as("customer", "+22890000078");
+    expect(await backend.myStaffInvites()).toEqual([]);
+    await as("customer", "+22890000077");
+    const [invite] = await backend.myStaffInvites();
+    expect(invite).toMatchObject({ stationName: expect.any(String) });
+    await backend.acceptStaffInvite(invite.id);
+    expect((await backend.getProfile())?.role).toBe("operator");
+    expect(await backend.myStaffInvites()).toEqual([]);
+    // The staff member at another station: the checks run on accepting.
+    await as("operator", "+22890000002");
+    const [forOperator] = await backend.myStaffInvites();
+    await expect(backend.acceptStaffInvite(forOperator.id)).rejects.toMatchObject({ code: "staff_other_station" });
+    await backend.declineStaffInvite(forOperator.id);
+    await as("admin", "+22890000001");
+    const view = await backend.ownerView();
+    expect(view.invites).toEqual([]);
+    expect(view.staff.some((s) => s.stationId === "st-tokoin" && s.label === "+228 90 •• •• 77")).toBe(true);
+  });
+
+  it("lets the owner cancel invites, and ends them after 7 days", async () => {
+    await as("admin", "+22890000001");
+    await backend.ownerInviteStaff("st-tokoin", "90000077");
+    await backend.ownerInviteStaff("st-be", "90000077");
+    const [first, second] = (await backend.ownerView()).invites;
+    await backend.ownerRevokeStaffInvite(first.id);
+    await expect(backend.ownerRevokeStaffInvite(first.id)).rejects.toMatchObject({ code: "invite_not_found" });
+    vi.setSystemTime(new Date("2026-10-22T12:00:01Z"));
+    expect((await backend.ownerView()).invites).toEqual([]);
+    await as("customer", "+22890000077");
+    expect(await backend.myStaffInvites()).toEqual([]);
+    await expect(backend.acceptStaffInvite(second.id)).rejects.toMatchObject({ code: "invite_not_found" });
   });
 
   it("gives staff no backoffice and customers no station work (R2)", async () => {
