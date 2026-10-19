@@ -256,6 +256,7 @@ import {
   counterCredit,
   createCreditCode,
   getWallet,
+  setChargeHold,
   setCreditMax,
   setStationGreenCredit,
   setWalletEnabled,
@@ -2242,6 +2243,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     return setWalletEnabled(c.env, admin, !!enabled);
   }],
   ["POST", /^\/api\/admin\/wallet\/max$/, async (c) => setCreditMax(c.env, await c.requireAdmin(), c.request)],
+  ["POST", /^\/api\/admin\/wallet\/charge-hold$/, async (c) => setChargeHold(c.env, await c.requireAdmin(), c.request)],
   ["POST", /^\/api\/admin\/stations\/([\w-]+)\/green-credit$/, async (c, [id]) => setStationGreenCredit(c.env, await c.requireAdmin(), id, c.request)],
   ["POST", /^\/api\/admin\/wallet\/adjust$/, async (c) => adjustBalance(c.env, await c.requireAdmin(), c.request)],
   ["POST", /^\/api\/admin\/wallet\/freeze$/, async (c) => {

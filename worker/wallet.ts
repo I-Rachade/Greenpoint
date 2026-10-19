@@ -163,6 +163,20 @@ export async function creditMax(db: D1Database): Promise<number> {
   return Number.isInteger(n) && n > 0 ? n : 0;
 }
 
+/** What a Green Credit charge holds at most when no admin set it (app_settings.green_credit_charge_hold_xof). */
+export const CHARGE_HOLD_DEFAULT_XOF = 3000;
+const CHARGE_HOLD_MAX_XOF = 10_000_000;
+
+/**
+ * The most a Green Credit charge takes from the credit when it starts (its limit), set in the
+ * backoffice: the rest of the balance stays free for a battery swap meanwhile.
+ */
+export async function chargeHoldCap(db: D1Database): Promise<number> {
+  const row = await db.prepare("select value from app_settings where key = 'green_credit_charge_hold_xof'").first<{ value: string }>();
+  const n = Number(row?.value);
+  return Number.isInteger(n) && n > 0 ? n : CHARGE_HOLD_DEFAULT_XOF;
+}
+
 /**
  * Green Credit belongs to what is poinderecharge's own: our stations, and shop stations whose
  * battery swap is ours (0045), and partner stations with a socket of ours (0039). Only those may be
@@ -403,9 +417,10 @@ export async function adminWallet(env: Env, url: URL): Promise<AdminWallet> {
     params.push(userId);
   }
   const filter = where.length ? `where ${where.join(" and ")}` : "";
-  const [enabled, maxXof, stations, totals, rows] = await Promise.all([
+  const [enabled, maxXof, chargeHoldXof, stations, totals, rows] = await Promise.all([
     walletEnabled(env.DB),
     creditMax(env.DB),
+    chargeHoldCap(env.DB),
     env.DB.prepare("select id, name, green_credit from stations where is_active = 1 order by name").all<{ id: string; name: string; green_credit: number }>(),
     env.DB.prepare(
       `select (select coalesce(sum(balance_xof), 0) from wallets) as balances,
@@ -423,6 +438,7 @@ export async function adminWallet(env: Env, url: URL): Promise<AdminWallet> {
   return {
     enabled,
     maxXof,
+    chargeHoldXof,
     stations: stations.results.map((s) => ({ id: s.id, name: s.name, greenCredit: !!s.green_credit })),
     totals: {
       balancesXof: totals?.balances ?? 0,
@@ -466,6 +482,21 @@ export async function setCreditMax(env: Env, admin: Profile, request: Request) {
        on conflict (key) do update set value = ?1, updated_by = ?2, updated_at = ?3`,
     ).bind(String(value), admin.id, now),
     auditWallet(env, admin.id, "update", "green_credit_max_xof", { maxXof: value }),
+  ]);
+}
+
+/** POST /api/admin/wallet/charge-hold { chargeHoldXof }: the most a Green Credit charge holds of the credit. */
+export async function setChargeHold(env: Env, admin: Profile, request: Request) {
+  const { chargeHoldXof } = await readJson<{ chargeHoldXof?: unknown }>(request);
+  const value = Number(chargeHoldXof);
+  if (!Number.isInteger(value) || value < 1 || value > CHARGE_HOLD_MAX_XOF) throw new ApiError("bad_request");
+  const now = nowIso();
+  await env.DB.batch([
+    env.DB.prepare(
+      `insert into app_settings (key, value, updated_by, updated_at) values ('green_credit_charge_hold_xof', ?1, ?2, ?3)
+       on conflict (key) do update set value = ?1, updated_by = ?2, updated_at = ?3`,
+    ).bind(String(value), admin.id, now),
+    auditWallet(env, admin.id, "update", "green_credit_charge_hold_xof", { chargeHoldXof: value }),
   ]);
 }
 

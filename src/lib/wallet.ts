@@ -164,6 +164,8 @@ export interface AdminWallet {
   enabled: boolean;
   /** Highest balance a customer may hold (0 = no limit). */
   maxXof: number;
+  /** The most a Green Credit charge holds of the credit (its limit); the rest stays free for a swap. */
+  chargeHoldXof: number;
   /** Every active station, with whether it is a Green Credit station. */
   stations: (GreenCreditStation & { greenCredit: boolean })[];
   totals: {

@@ -749,6 +749,8 @@ export interface Backend {
   setWalletEnabled(enabled: boolean): Promise<void>;
   /** The highest balance a customer may hold (0 = no limit). */
   setCreditMax(maxXof: number): Promise<void>;
+  /** The most a Green Credit charge holds of the customer's credit (at least 1 FCFA). */
+  setChargeHold(chargeHoldXof: number): Promise<void>;
   /** Designates a station that loads and accepts Green Credit. */
   setStationGreenCredit(stationId: string, enabled: boolean): Promise<void>;
   adjustWallet(input: WalletAdjustInput): Promise<WalletTransaction>;

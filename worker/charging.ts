@@ -28,7 +28,7 @@ import { requireService, serviceActive } from "./services";
 import { cardBooking, cardTopupsSince } from "./charge-cards";
 import { cardStopReached } from "../src/lib/charge-cards";
 import { mobilePaymentOffered, startChargePayment, type Payment } from "./payments";
-import { accountSpendsCredit, creditCodeOwner, isCreditStation, OPEN_CREDIT_CHARGE_SQL, refuseWhileCreditCharging, spendCreditCode, walletAccess } from "./wallet";
+import { accountSpendsCredit, chargeHoldCap, creditCodeOwner, isCreditStation, OPEN_CREDIT_CHARGE_SQL, refuseWhileCreditCharging, spendCreditCode, walletAccess } from "./wallet";
 import { withCounterCodeTry } from "./code-tries";
 import { checkPickupCode, evTargetSql, stillActive, type ReservationRow } from "./reservations";
 
@@ -961,7 +961,8 @@ async function qrPointState(db: D1Database, p: QrPointRow, userId: string | null
  * The customer switches one outlet on themselves (startOutletCharge, after scanning the box's
  * QR code) and pays in advance from Green Credit (0047): the PIN typed on their phone, a socket
  * of ours at a Green Credit station, a credit that covers at least the station's minimum price.
- * The charge may cost at most the balance; it stops there (creditStops) and the price is taken
+ * The charge holds the balance up to the backoffice's cap (chargeHoldFrom) and may cost at most
+ * that; it stops there (creditStops) and the price is taken
  * from the credit when it ends (settlePrepaidCharges). Only on a live free outlet nobody else
  * holds, and only with no other charge of the customer running or waiting for payment.
  */
@@ -992,14 +993,15 @@ async function selfCharge(env: Env, user: Profile, p: QrPointRow, pin: unknown):
   const wallet = await db.prepare("select balance_xof, status from wallets where user_id = ?").bind(user.id).first<{ balance_xof: number; status: string }>();
   if (wallet?.status === "frozen") throw new ApiError("wallet_frozen", 403);
   const tariff = await tariffFor(db, p.station_id, !!p.ev_id);
-  const balance = wallet?.balance_xof ?? 0;
-  if (balance < Math.max(tariff.minXof, MIN_PREPAID_XOF)) throw new ApiError("insufficient_balance");
+  // The charge holds at most the backoffice's cap of the credit; the rest stays free meanwhile.
+  const limit = await chargeHoldFrom(db, wallet?.balance_xof ?? 0);
+  if (limit < Math.max(tariff.minXof, MIN_PREPAID_XOF)) throw new ApiError("insufficient_balance");
   return openCharge(env, { id: p.id, station_id: p.station_id, label: p.label, device_id: p.device_id!, outlet: p.outlet!, ev_id: p.ev_id, ev_name: p.ev_name }, {
     customerId: user.id,
     actorId: user.id,
     reservation: null,
     alone: true,
-    creditLimitXof: balance,
+    creditLimitXof: limit,
   });
 }
 
@@ -1103,6 +1105,16 @@ async function closeEmptyCharges(db: D1Database, userId: string) {
 
 /** The least a prepaid charge may start with (a card's or the credit's balance), in FCFA. */
 const MIN_PREPAID_XOF = 5;
+
+/**
+ * What a Green Credit charge takes from a balance of `balanceXof` when it starts, and so may cost
+ * at most (its credit_limit_xof): the balance, up to the cap set in the backoffice
+ * (app_settings.green_credit_charge_hold_xof), so a battery swap meanwhile can spend the rest.
+ */
+async function chargeHoldFrom(db: D1Database, balanceXof: number): Promise<number> {
+  return Math.max(0, Math.min(balanceXof, await chargeHoldCap(db)));
+}
+
 /** A Green Credit charge stopped this long ago has its final energy (sockets without OCPP). */
 const SETTLE_AFTER_MS = 60_000;
 
@@ -1117,7 +1129,7 @@ export async function socketIsOurs(db: D1Database, deviceId: string): Promise<bo
 
 /**
  * What a card linked to an account may spend now: the account's Green Credit at a Green Credit
- * station, when the account may use Green Credit (a customer's, with the module on: the same
+ * station, up to the charge hold cap (chargeHoldFrom), when the account may use Green Credit (a customer's, with the module on: the same
  * rule as walletAccess for a QR charge), the credit is not frozen and no other Green Credit
  * charge of the account is running or waiting to be paid (0047). Null when it may not charge.
  */
@@ -1130,7 +1142,8 @@ export async function linkedCardCredit(db: D1Database, userId: string, stationId
   ]);
   if (!wallet || wallet.status === "frozen" || open) return null;
   const minimum = Math.max(MIN_PREPAID_XOF, (tariff ?? (await stationTariff(db, stationId))).minXof);
-  return wallet.balance_xof >= minimum ? wallet.balance_xof : null;
+  const limit = await chargeHoldFrom(db, wallet.balance_xof);
+  return limit >= minimum ? limit : null;
 }
 
 /**
@@ -1138,7 +1151,7 @@ export async function linkedCardCredit(db: D1Database, userId: string, stationId
  * event, after swipeCard in worker/charge-cards.ts accepted it): opens the card's charge on that outlet,
  * the card owner's if it has one (then it shows in their app and can be stopped there). A card
  * linked to an account pays with the account's Green Credit (0047): the charge may cost at most
- * the balance. Nothing is sent here: an OCPP charge point already switched on, a Xingke socket
+ * the balance, up to the charge hold cap (chargeHoldFrom). Nothing is sent here: an OCPP charge point already switched on, a Xingke socket
  * is started once the device got our answer (worker/xingke.ts). `order` is the charge's id for
  * the device (Xingke transactionId); the card number otherwise. False when the outlet
  * cannot take it: unknown outlet, a point partner's socket, station without charging, outlet

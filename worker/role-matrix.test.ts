@@ -120,6 +120,7 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/admin/wallet": ADMIN,
   "POST /api/admin/wallet/enabled": ADMIN,
   "POST /api/admin/wallet/max": ADMIN,
+  "POST /api/admin/wallet/charge-hold": ADMIN,
   "POST /api/admin/stations/:id/green-credit": ADMIN,
   "POST /api/admin/wallet/adjust": ADMIN,
   "POST /api/admin/wallet/freeze": ADMIN,

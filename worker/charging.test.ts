@@ -787,7 +787,7 @@ describe("car chargers linked to a connected outlet (0048)", () => {
     db.exec("update station_services set unlocked = 0 where station_id = 'st' and service = 'charging'");
     const started = await startAt(env, "e1");
     expect(started.status).toBe(200);
-    expect(started.data).toMatchObject({ pointLabel: "Borne VE 1", tariff: { kwhXof: 200, minXof: 500 }, creditLimitXof: 5000 });
+    expect(started.data).toMatchObject({ pointLabel: "Borne VE 1", tariff: { kwhXof: 200, minXof: 500 }, creditLimitXof: 3000 });
     expect(db.prepare("select kind, outlet from device_commands").get()).toMatchObject({ kind: "start", outlet: 1 });
     // The car charger needs the "ev" service.
     db.exec("update station_services set unlocked = 0 where station_id = 'st' and service = 'ev'");

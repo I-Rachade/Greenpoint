@@ -1421,6 +1421,11 @@ export class CloudflareBackend implements Backend {
     this.changed();
   }
 
+  async setChargeHold(chargeHoldXof: number) {
+    await this.call("POST", "/api/admin/wallet/charge-hold", { chargeHoldXof });
+    this.changed();
+  }
+
   async setStationGreenCredit(stationId: string, enabled: boolean) {
     await this.call("POST", `/api/admin/stations/${encodeURIComponent(stationId)}/green-credit`, { enabled });
     this.changed();

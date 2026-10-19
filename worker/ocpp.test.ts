@@ -348,13 +348,14 @@ describe("OCPP charges by QR code", () => {
     };
     expect(start.idTagInfo.status).toBe("Accepted");
     await handleOcppCall(d1, ID, "StopTransaction", { transactionId: start.transactionId, meterStop: 1400, timestamp: new Date().toISOString() });
-    // The energy is final: the price is booked from the 5000 FCFA held when it started, the rest comes back (0052).
+    // The energy is final: the price is booked from the 3000 FCFA held when it started (the
+    // charge hold cap, of the 5000 FCFA balance), the rest comes back (0052).
     const paid = db.prepare("select status, energy_wh, amount_xof from charging_sessions").get() as { status: string; energy_wh: number; amount_xof: number };
     expect(paid).toMatchObject({ status: "paid", energy_wh: 400 });
     expect(paid.amount_xof).toBeGreaterThan(0);
     expect(db.prepare("select type, attribute, status, amount_xof, balance_after_xof from wallet_transactions order by rowid").all()).toEqual([
-      { type: "charge", attribute: "send", status: "success", amount_xof: 5000, balance_after_xof: 0 },
-      { type: "charge", attribute: "received", status: "success", amount_xof: 5000 - paid.amount_xof, balance_after_xof: 5000 - paid.amount_xof },
+      { type: "charge", attribute: "send", status: "success", amount_xof: 3000, balance_after_xof: 2000 },
+      { type: "charge", attribute: "received", status: "success", amount_xof: 3000 - paid.amount_xof, balance_after_xof: 5000 - paid.amount_xof },
     ]);
   });
 });
@@ -557,8 +558,8 @@ describe("charging hardening (0052)", () => {
     await saveChargeCard(d1, ADMIN, post({ idTag: CARD, contact: KOFI.phone }));
     const tx1 = await start(d1, CARD, 5000);
     expect(tx1.idTagInfo.status).toBe("Accepted");
-    // The credit is held when the charge starts.
-    expect(db.prepare("select balance_xof from wallets").get()).toEqual({ balance_xof: 0 });
+    // The credit is held when the charge starts, up to the charge hold cap (3000 FCFA by default).
+    expect(db.prepare("select balance_xof from wallets").get()).toEqual({ balance_xof: 2000 });
     await meter(d1, tx1.transactionId, 5600);
     // A lower reading is no new count on OCPP: the energy stays.
     await meter(d1, tx1.transactionId, 5300);

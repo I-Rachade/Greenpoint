@@ -434,7 +434,7 @@ describe("Green Credit held by a charge (0052)", () => {
     if (charge.status === 200 && paid.status !== 200) expect(paid.body).toEqual({ error: "insufficient_balance" });
   });
 
-  it("refuses a swap while a charge holds the whole credit, and a charge after a swap holds what is left", async () => {
+  it("refuses a swap while a charge holds the whole credit (below the cap), and a charge after a swap holds what is left", async () => {
     const { db, env } = await withSocket();
     expect((await selfStart(env)).status).toBe(200);
     expect(credit(db)).toBe(0);
@@ -445,6 +445,37 @@ describe("Green Credit held by a charge (0052)", () => {
     expect((await swap(other.env, "afi", "be", { customerType: "app", creditCode: await creditCode(other.env, "ama") })).status).toBe(200);
     expect((await selfStart(other.env)).status).toBe(200);
     expect([credit(other.db), held(other.db)]).toEqual([0, 1500]);
+  });
+
+  it("holds at most the backoffice's cap, so a swap during the charge spends the rest", async () => {
+    const { db, env } = await withSocket();
+    db.exec("update wallets set balance_xof = 10000 where user_id = 'ama'");
+    const started = await selfStart(env);
+    expect(started.status).toBe(200);
+    // 3000 FCFA by default (app_settings.green_credit_charge_hold_xof): the charge stops there.
+    expect(db.prepare("select credit_limit_xof, credit_held_xof from charging_sessions").get()).toEqual({ credit_limit_xof: 3000, credit_held_xof: 3000 });
+    expect([credit(db), held(db)]).toEqual([7000, 3000]);
+    // A battery swap meanwhile is paid from the 7000 FCFA still free.
+    expect((await swap(env, "afi", "be", { customerType: "app", creditCode: await creditCode(env, "ama") })).status).toBe(200);
+    expect([credit(db), held(db), swapped(db)]).toEqual([6500, 3000, 500]);
+  });
+
+  it("applies a cap the admin changed to the next charge, and only an admin may change it", async () => {
+    const { db, env } = await withSocket();
+    db.exec("update wallets set balance_xof = 10000 where user_id = 'ama'");
+    for (const who of ["ama", "afi", "yao", "edem"]) {
+      expect((await call(env, who, "POST", "/api/admin/wallet/charge-hold", { chargeHoldXof: 9000 })).status).toBe(403);
+    }
+    expect((await call(env, "admin", "POST", "/api/admin/wallet/charge-hold", { chargeHoldXof: 0 })).status).toBe(400);
+    expect((await call(env, "admin", "POST", "/api/admin/wallet/charge-hold", { chargeHoldXof: 4500 })).status).toBe(200);
+    expect((await call<{ chargeHoldXof: number }>(env, "admin", "GET", "/api/admin/wallet")).body.chargeHoldXof).toBe(4500);
+    const first = await selfStart(env);
+    expect(db.prepare("select credit_held_xof from charging_sessions where id = ?").get(first.body.id!)).toEqual({ credit_held_xof: 4500 });
+    expect(credit(db)).toBe(5500);
+    // A cap below the outlet's minimum price refuses the charge, as a too small balance does.
+    db.exec("update charging_sessions set status = 'cancelled'");
+    expect((await call(env, "admin", "POST", "/api/admin/wallet/charge-hold", { chargeHoldXof: 50 })).status).toBe(200);
+    expect((await selfStart(env)).body).toEqual({ error: "insufficient_balance" });
   });
 });
 

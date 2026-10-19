@@ -41,13 +41,14 @@ export type CardStatus = "Accepted" | "Blocked" | "ConcurrentTx" | "Invalid";
  * account. A card charges when it is linked to an account, not blocked, has no other charge
  * running, and the account may spend its Green Credit and it covers the minimum price
  * (linkedCardCredit: a customer's account with the module on, never a driver's, staff's,
- * merchant's or fleet manager's), which it then may spend (`creditXof`).
+ * merchant's or fleet manager's), which it then may spend (`creditXof`: the balance up to the
+ * charge hold cap, the charge's limit); `balanceXof` is the whole balance, for a balance inquiry.
  */
 export async function swipeCard(
   db: D1Database,
   externalId: string,
   rawTag: string,
-): Promise<{ status: CardStatus; tag: string | null; userId: string | null; creditXof?: number }> {
+): Promise<{ status: CardStatus; tag: string | null; userId: string | null; creditXof?: number; balanceXof?: number }> {
   const clean = cleanCardTag(rawTag);
   if (!clean) return { status: "Invalid", tag: null, userId: null };
   const tag = await storedTag(db, clean);
@@ -68,7 +69,9 @@ export async function swipeCard(
   if (!device || !(await socketIsOurs(db, externalId))) return { status: "Blocked", tag, userId };
   if (!userId) return { status: "Blocked", tag, userId };
   const credit = await linkedCardCredit(db, userId, device.station_id);
-  return credit !== null ? { status: "Accepted", tag, userId, creditXof: credit } : { status: "Blocked", tag, userId };
+  if (credit === null) return { status: "Blocked", tag, userId };
+  const wallet = await db.prepare("select balance_xof from wallets where user_id = ?").bind(userId).first<{ balance_xof: number }>();
+  return { status: "Accepted", tag, userId, creditXof: credit, balanceXof: wallet?.balance_xof ?? credit };
 }
 
 /**

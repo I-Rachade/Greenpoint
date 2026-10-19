@@ -72,7 +72,24 @@ export function WalletManager() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">
-          <MaxForm key={data.maxXof} maxXof={data.maxXof} onSave={(next) => run(() => backend.setCreditMax(next), b.saved)} />
+          <AmountForm
+            key={`max-${data.maxXof}`}
+            title={b.maxTitle}
+            label={b.maxLabel}
+            hint={b.zeroUnlimited}
+            min={0}
+            amount={data.maxXof}
+            onSave={(next) => run(() => backend.setCreditMax(next), b.saved)}
+          />
+          <AmountForm
+            key={`hold-${data.chargeHoldXof}`}
+            title={b.chargeHoldTitle}
+            label={b.chargeHoldLabel}
+            hint={b.chargeHoldHint}
+            min={1}
+            amount={data.chargeHoldXof}
+            onSave={(next) => run(() => backend.setChargeHold(next), b.saved)}
+          />
           <StationsForm stations={data.stations} onToggle={(id, on) => run(() => backend.setStationGreenCredit(id, on), b.saved)} />
         </div>
         <AdjustForm
@@ -145,24 +162,39 @@ function Kpi({ label, value, detail }: { label: string; value: string; detail?: 
   );
 }
 
-function MaxForm({ maxXof, onSave }: { maxXof: number; onSave: (maxXof: number) => Promise<boolean> }) {
+/** One amount setting in FCFA: the balance limit (green_credit_max_xof) or the charge hold (green_credit_charge_hold_xof). */
+function AmountForm({
+  title,
+  label,
+  hint,
+  min,
+  amount,
+  onSave,
+}: {
+  title: string;
+  label: string;
+  hint: string;
+  min: number;
+  amount: number;
+  onSave: (amount: number) => Promise<boolean>;
+}) {
   const { t } = useI18n();
   const b = t.backoffice.wallet;
-  const [value, setValue] = useState(String(maxXof));
+  const [value, setValue] = useState(String(amount));
   return (
     <form
       className={`${card} space-y-3`}
       onSubmit={(e: FormEvent) => {
         e.preventDefault();
-        void onSave(Math.max(0, Math.floor(Number(value) || 0)));
+        void onSave(Math.max(min, Math.floor(Number(value) || 0)));
       }}
     >
-      <h2 className="font-semibold">{b.maxTitle}</h2>
+      <h2 className="font-semibold">{title}</h2>
       <label className="block space-y-1 text-sm">
-        <span className="block text-zinc-600 dark:text-zinc-400">{b.maxLabel}</span>
-        <input className={`${field} w-full`} type="number" min={0} step={1} value={value} onChange={(e) => setValue(e.target.value)} />
+        <span className="block text-zinc-600 dark:text-zinc-400">{label}</span>
+        <input className={`${field} w-full`} type="number" min={min} step={1} value={value} onChange={(e) => setValue(e.target.value)} />
       </label>
-      <p className="text-xs text-zinc-500">{b.zeroUnlimited}</p>
+      <p className="text-xs text-zinc-500">{hint}</p>
       <button type="submit" className="rounded-full bg-gp-forest px-4 py-1.5 text-sm text-white">
         {b.save}
       </button>

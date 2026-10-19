@@ -833,6 +833,10 @@ export const fr = {
       maxTitle: "Plafond par client",
       maxLabel: "Solde maximum (FCFA)",
       zeroUnlimited: "0 = sans limite",
+      chargeHoldTitle: "Réserve par recharge",
+      chargeHoldLabel: "Montant maximum réservé (FCFA)",
+      chargeHoldHint:
+        "Une recharge payée en Green Credit (QR code ou carte) réserve au plus ce montant du crédit et s'arrête quand elle l'atteint. Le reste du solde peut servir pendant ce temps, par exemple pour un échange de batterie.",
       save: "Enregistrer",
       saved: "Enregistré.",
       stationsTitle: "Stations Green Credit",

@@ -686,6 +686,8 @@ interface DemoWallet {
   creditStations?: string[];
   /** Highest balance (0 = no limit). */
   maxXof?: number;
+  /** The most a Green Credit charge holds (app_settings.green_credit_charge_hold_xof). */
+  chargeHoldXof?: number;
   /** Counter codes shown after the PIN (credit_codes). */
   codes?: { code: string; userId: string; expiresAt: string; used: boolean }[];
 }
@@ -694,6 +696,8 @@ interface DemoWallet {
 export const DEMO_WALLET_START = 25_000;
 /** The demo's balance limit, as migration 0047. */
 const DEMO_CREDIT_MAX = 50_000;
+/** What a Green Credit charge holds at most when no admin set it, as CHARGE_HOLD_DEFAULT_XOF in worker/wallet.ts. */
+const DEMO_CHARGE_HOLD = 3000;
 
 /** Signs the demo's driver passes (app_settings.driver_pass_secret on Cloudflare). */
 const DEMO_PASS_SECRET = "demo-driver-pass";
@@ -7476,6 +7480,10 @@ export class DemoBackend implements Backend {
     return this.wallet(state).maxXof ?? DEMO_CREDIT_MAX;
   }
 
+  private chargeHold(state: DemoState): number {
+    return this.wallet(state).chargeHoldXof ?? DEMO_CHARGE_HOLD;
+  }
+
   async myWallet(): Promise<WalletView> {
     const state = this.load();
     const profile = this.walletAccess(state);
@@ -7576,6 +7584,7 @@ export class DemoBackend implements Backend {
     return {
       enabled: w.enabled,
       maxXof: this.creditMax(state),
+      chargeHoldXof: this.chargeHold(state),
       stations: state.stations.map((x) => ({ id: x.id, name: x.name, greenCredit: credit.has(x.id) })),
       totals: {
         balancesXof: [...ids].reduce((n, id) => n + this.balance(w, id), 0),
@@ -7633,6 +7642,18 @@ export class DemoBackend implements Backend {
     this.requireAdmin(state);
     if (!Number.isInteger(maxXof) || maxXof < 0 || maxXof > 10_000_000) throw new BackendError("unknown", "bad_request");
     this.save(withAudit({ ...state, wallet: { ...this.wallet(state), maxXof } }, { table: "wallets", action: "update", rowId: "green_credit_max_xof", changes: { maxXof } }));
+  }
+
+  async setChargeHold(chargeHoldXof: number) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!Number.isInteger(chargeHoldXof) || chargeHoldXof < 1 || chargeHoldXof > 10_000_000) throw new BackendError("unknown", "bad_request");
+    this.save(
+      withAudit(
+        { ...state, wallet: { ...this.wallet(state), chargeHoldXof } },
+        { table: "wallets", action: "update", rowId: "green_credit_charge_hold_xof", changes: { chargeHoldXof } },
+      ),
+    );
   }
 
   async setStationGreenCredit(stationId: string, enabled: boolean) {
@@ -8282,8 +8303,9 @@ export class DemoBackend implements Backend {
     }
     const w = this.wallet(state);
     if (w.frozen.includes(profile.id)) throw new BackendError("wallet_frozen");
-    const balance = this.balance(w, profile.id);
-    if (balance < Math.max(info.tariff.minXof, 5)) throw new BackendError("insufficient_balance");
+    // As chargeHoldFrom() in worker/charging.ts: the charge may cost the balance up to the cap.
+    const limit = Math.min(this.balance(w, profile.id), this.chargeHold(state));
+    if (limit < Math.max(info.tariff.minXof, 5)) throw new BackendError("insufficient_balance");
     const used = this.reservationToUse(state, profile.id, info.stationId, pointId, info.ev);
     const reservations = used ? state.reservations.map((r) => (r.id === used.id ? { ...r, status: "completed" as const } : r)) : state.reservations;
     const charge: DemoCharge = {
@@ -8307,7 +8329,7 @@ export class DemoBackend implements Backend {
       paymentMethod: null,
       paidAt: null,
       greenpoints: 0,
-      creditLimitXof: balance,
+      creditLimitXof: limit,
     };
     this.save({ ...state, reservations, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
     return this.chargeView(charge);

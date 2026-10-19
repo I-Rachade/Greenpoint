@@ -833,6 +833,10 @@ export const en: Dictionary = {
       maxTitle: "Limit per customer",
       maxLabel: "Highest balance (FCFA)",
       zeroUnlimited: "0 = no limit",
+      chargeHoldTitle: "Hold per charge",
+      chargeHoldLabel: "Maximum amount held (FCFA)",
+      chargeHoldHint:
+        "A charge paid with Green Credit (QR code or card) holds at most this amount of the credit and stops when it reaches it. The rest of the balance can be spent meanwhile, for a battery swap for example.",
       save: "Save",
       saved: "Saved.",
       stationsTitle: "Green Credit stations",
