@@ -258,6 +258,18 @@ describe("card charging through the Xingke cloud", () => {
     expect(db.prepare("select balance_xof from wallets where user_id = 'kofi'").get()).toEqual({ balance_xof: 0 });
   });
 
+  it("lets a card charge hold at most the charge hold cap of the credit, and tells the device so", async () => {
+    const { db, env } = await cardSetup(10_000);
+    // A balance inquiry still shows the whole credit.
+    await swipe(env, "BalanceInquiry");
+    expect(sent[0].data).toMatchObject({ status: "Accepted", balance: 1_000_000 });
+    await swipe(env, "StartCharging");
+    // 3000 FCFA by default (app_settings.green_credit_charge_hold_xof): the device stops there.
+    expect(sent[1].data).toMatchObject({ status: "Accepted", balance: 300_000 });
+    expect(db.prepare("select credit_limit_xof, credit_held_xof from charging_sessions").get()).toEqual({ credit_limit_xof: 3000, credit_held_xof: 3000 });
+    expect(db.prepare("select balance_xof from wallets where user_id = 'kofi'").get()).toEqual({ balance_xof: 7000 });
+  });
+
   it("refuses a second start while the card charges, and a card without enough credit", async () => {
     const { db, env } = await cardSetup();
     await answered(env, await swipe(env, "StartCharging"), "Sent");

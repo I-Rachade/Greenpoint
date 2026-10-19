@@ -197,6 +197,25 @@ describe("Green Credit counter codes", () => {
     expect((await adminWallet(env, new URL("https://x/api/admin/wallet"))).totals).toMatchObject({ balancesXof: 5_000, toppedUpXof: 5_000 });
   });
 
+  it("lets only our stations and shop stations with our swap take Green Credit", async () => {
+    const { db, env } = setup();
+    const now = new Date().toISOString();
+    db.exec(`
+      insert into operators (id, name, is_own, created_at) values ('partner', 'Partenaire', 0, '${now}');
+      insert into stations (id, operator_id, name, lat, lng, kind, battery_capacity, created_at) values
+        ('theirs', 'partner', 'Chez eux', 6.15, 1.24, 'swap', 4, '${now}'),
+        ('shop', 'partner', 'Boutique', 6.16, 1.25, 'swap', 4, '${now}');
+      update stations set swap_owner = 'poinderecharge' where id = 'shop';
+    `);
+    expect(await code(setStationGreenCredit(env, ADMIN, "theirs", req({ enabled: true })))).toBe("credit_not_accepted");
+    expect(await code(setStationGreenCredit(env, ADMIN, "shop", req({ enabled: true })))).toBe("ok");
+    // A flag set before the rule (or by hand) does not make a partner's station accept it.
+    db.exec("update stations set green_credit = 1 where id = 'theirs'");
+    const { code: c } = await newCode(env, KOFI);
+    expect(await code(topUpCredit(env, STAFF, async () => true, "theirs", req({ code: c, amountXof: 1_000 })))).toBe("credit_not_accepted");
+    expect((await getWallet(env, KOFI)).stations.map((s) => s.id).sort()).toEqual(["shop", "st"]);
+  });
+
   it("refuses a station an admin has not designated, an expired code and a load above the limit", async () => {
     const { db, env } = setup();
     const staffEverywhere = async () => true;
@@ -234,9 +253,25 @@ describe("linked card at the counter", () => {
     const now = new Date().toISOString();
     db.prepare("insert into charge_cards (id_tag, user_id, created_at) values ('1592637480', 'kofi', ?), ('2745839105', null, ?)").run(now, now);
     await credit(env, KOFI.phone!, 1_200);
+    // Never swiped here: only whether it is linked or blocked, not whose it is nor the credit.
+    expect(await counterCardInfo(env.DB, STAFF, isStaffOf, "st", "1592637480")).toEqual({ idTag: "1592637480", label: null, blocked: false, linked: true });
+    // Swiped at a charge point of this station within the last 24 hours: the owner and the credit.
+    db.exec(`insert into devices (external_id, station_id, vendor, link, outlets, created_at) values ('123456', 'st', 'Xingke', 'own_server', 1, '${now}')`);
+    db.prepare("update charge_cards set last_swiped_at = ?, last_device_id = '123456'").run(now);
     expect(await counterCardInfo(env.DB, STAFF, isStaffOf, "st", "1592637480")).toEqual({ idTag: "1592637480", label: null, blocked: false, linked: true, customer: "Kofi M.", balanceXof: 1_200 });
     expect(await counterCardInfo(env.DB, STAFF, isStaffOf, "st", "2745839105")).toEqual({ idTag: "2745839105", label: null, blocked: false, balanceXof: 0 });
+    // A swipe two days ago no longer shows anything.
+    db.prepare("update charge_cards set last_swiped_at = ?").run(new Date(Date.now() - 48 * 3_600_000).toISOString());
+    expect(await counterCardInfo(env.DB, STAFF, isStaffOf, "st", "1592637480")).not.toHaveProperty("customer");
     expect(await code(counterCardInfo(env.DB, AMA, isStaffOf, "st", "1592637480"))).toBe("forbidden");
+  });
+
+  it("stops staff who try out card numbers", async () => {
+    const { db, env } = setup();
+    db.prepare("insert into charge_cards (id_tag, user_id, created_at) values ('1592637480', 'kofi', ?)").run(new Date().toISOString());
+    for (let i = 0; i < 10; i++) expect(await code(counterCardInfo(env.DB, STAFF, isStaffOf, "st", `55500${i}`))).toBe("card_unknown");
+    // Locked for a while, even for a real card.
+    expect(await code(counterCardInfo(env.DB, STAFF, isStaffOf, "st", "1592637480"))).toBe("code_locked");
   });
 });
 

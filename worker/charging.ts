@@ -28,7 +28,8 @@ import { requireService, serviceActive } from "./services";
 import { cardBooking, cardTopupsSince } from "./charge-cards";
 import { cardStopReached } from "../src/lib/charge-cards";
 import { mobilePaymentOffered, startChargePayment, type Payment } from "./payments";
-import { isCreditStation, walletAccess } from "./wallet";
+import { accountSpendsCredit, chargeHoldCap, creditCodeOwner, isCreditStation, OPEN_CREDIT_CHARGE_SQL, refuseWhileCreditCharging, spendCreditCode, walletAccess } from "./wallet";
+import { withCounterCodeTry } from "./code-tries";
 import { checkPickupCode, evTargetSql, stillActive, type ReservationRow } from "./reservations";
 
 // Charging at a connected socket, run by station staff (plan: planung/laden-vor-ort-plan.md,
@@ -71,6 +72,9 @@ interface SessionRow {
   charge_card: string | null;
   /** Paid from Green Credit (QR code or a card linked to the account): the most it may cost (0047). */
   credit_limit_xof: number | null;
+  /** Taken from the credit when the charge started, and its transaction number (0052); null: an older charge. */
+  credit_held_xof: number | null;
+  credit_hold_trx: string | null;
 }
 
 const SESSION_SELECT = `
@@ -186,14 +190,18 @@ const EV_OF_POINT = (alias: string) =>
 // Readings from the socket ----------------------------------------------------------
 
 /**
- * Applies one outlet reading to the charge open on that charging point, if any:
- * - energy: the socket reports the energy of its current charge; readings are summed as
- *   deltas, and a reading below the last one (the socket started a new count) adds in full;
+ * Applies one outlet reading to the charge running on that charging point, if any:
+ * - energy: an OCPP charge point reports the energy since the transaction's meterStart, which
+ *   only grows, so the highest reading is the charge's energy. Other sockets (Xingke, LoRa)
+ *   report the energy of their current order, which starts again at 0 for a new order: their
+ *   readings are summed as deltas, and a reading below the last one (a new count) adds in full;
  * - "charging" marks that the outlet really draws power;
  * - once it did, "free", "done" or "fault" ends the charge (battery full, unplugged, fault).
- * Paid and cancelled charges no longer change, and a stopped one no longer once the next charge
- * runs on the outlet. A reading that names its charge (`transactionId`, Xingke cloud) only
- * applies to that charge. All SET expressions read the old row.
+ * A stopped charge changes only through a reading that names it (`transactionId`: the Xingke
+ * cloud's order, or the OCPP transaction, ocpp_transaction_id since 0052), so a later charge
+ * nobody opened (an outlet an admin switched on, a refused card that still draws power) never
+ * lands on the previous customer's charge. Paid and cancelled charges never change. A reading
+ * that names a charge only applies to that charge. All SET expressions read the old row.
  */
 export function chargeReadingStatement(
   db: D1Database,
@@ -202,22 +210,102 @@ export function chargeReadingStatement(
   energyWh: number | undefined,
   now: string,
   transactionId?: string,
+  ocpp = false,
 ) {
+  // Both spellings are fixed here, never typed by anyone.
+  const named = ocpp ? "cast(ocpp_transaction_id as text)" : "order_no";
+  const energy = ocpp
+    ? "max(energy_wh, ?2)"
+    : "energy_wh + case when ?2 >= coalesce(last_reading_wh, 0) then ?2 - coalesce(last_reading_wh, 0) else ?2 end";
   return db
     .prepare(
       `update charging_sessions set
-         energy_wh = case when ?2 is null then energy_wh
-                          else energy_wh + case when ?2 >= coalesce(last_reading_wh, 0) then ?2 - coalesce(last_reading_wh, 0) else ?2 end end,
+         energy_wh = case when ?2 is null then energy_wh else ${energy} end,
          last_reading_wh = coalesce(?2, last_reading_wh),
          seen_charging = case when ?3 = 'charging' then 1 else seen_charging end,
          status = case when status = 'charging' and seen_charging = 1 and ?3 in ('free', 'done', 'fault') then 'stopped' else status end,
          stopped_at = case when status = 'charging' and seen_charging = 1 and ?3 in ('free', 'done', 'fault') then ?4 else stopped_at end
-       where charging_point_id = ?1 and status in ('charging', 'stopped')
-         and (status = 'charging' or not exists (select 1 from charging_sessions n where n.charging_point_id = ?1 and n.status = 'charging'))
-         and (?5 is null or order_no = ?5 or (order_no is null and status = 'charging'))`,
+       where charging_point_id = ?1
+         and ((status = 'charging' and (?5 is null or ${named} = ?5 or ${named} is null))
+              or (status = 'stopped' and ?5 is not null and ${named} = ?5))`,
     )
     .bind(pointId, energyWh ?? null, status ?? null, now, transactionId ?? null);
 }
+
+// Green Credit holds ------------------------------------------------------------------------
+
+type HoldRow = { id: string; user_id: string | null; credit_held_xof: number | null; credit_hold_trx: string | null };
+
+/**
+ * Takes a Green Credit charge's limit from the credit when it starts (0052): the debit and its
+ * "charge" booking (status pending, details.hold), only if the charge row `sessionId` was
+ * written by the same batch. A credit spent meanwhile breaks the balance check and with it the
+ * whole batch, so the charge does not start.
+ */
+function holdStatements(db: D1Database, hold: { sessionId: string; userId: string; amountXof: number; trxId: string; stationName: string | null }, now: string) {
+  const written = "exists (select 1 from charging_sessions where id = ? and credit_hold_trx = ?)";
+  return [
+    db.prepare(`update wallets set balance_xof = balance_xof - ?, updated_at = ? where user_id = ? and ${written}`).bind(hold.amountXof, now, hold.userId, hold.sessionId, hold.trxId),
+    db
+      .prepare(
+        `insert into wallet_transactions (id, trx_id, user_id, type, attribute, status, amount_xof, fee_xof, total_xof, balance_after_xof,
+           counterparty_label, details, created_at)
+         select ?1, ?2, ?3, 'charge', 'send', 'pending', ?4, 0, ?4, (select balance_xof from wallets where user_id = ?3), ?5, ?6, ?7
+          where exists (select 1 from charging_sessions where id = ?8 and credit_hold_trx = ?2)`,
+      )
+      .bind(uuid(), hold.trxId, hold.userId, hold.amountXof, hold.stationName, JSON.stringify({ chargingSession: hold.sessionId, hold: true }), now, hold.sessionId),
+  ];
+}
+
+/**
+ * Gives back what is left of a charge's hold once `paidXof` of it is spent (0: all of it, the
+ * charge was cancelled), when `guard` holds: the credit and a "charge" booking 'received' under
+ * the hold's number, then the hold booking is closed (success, or rejected when nothing was
+ * spent). The open hold booking makes each part apply once, also when two runs race.
+ */
+function releaseHold(db: D1Database, s: HoldRow & { station_name?: string | null }, paidXof: number, guard: { sql: string; params: unknown[] }) {
+  if (!s.credit_hold_trx || !s.user_id || s.credit_held_xof === null) return [];
+  const back = Math.max(0, s.credit_held_xof - paidXof);
+  const now = nowIso();
+  const open = "exists (select 1 from wallet_transactions where trx_id = ? and attribute = 'send' and status = 'pending')";
+  const statements: D1PreparedStatement[] = [];
+  if (back > 0) {
+    statements.push(
+      db
+        .prepare(`update wallets set balance_xof = balance_xof + ?, updated_at = ? where user_id = ? and ${open} and ${guard.sql}`)
+        .bind(back, now, s.user_id, s.credit_hold_trx, ...guard.params),
+      db
+        .prepare(
+          `insert into wallet_transactions (id, trx_id, user_id, type, attribute, amount_xof, fee_xof, total_xof, balance_after_xof,
+             counterparty_label, details, created_at)
+           select ?, ?, ?, 'charge', 'received', ?, 0, ?, (select balance_xof from wallets where user_id = ?), ?, ?, ?
+            where ${open} and ${guard.sql}`,
+        )
+        .bind(
+          uuid(),
+          s.credit_hold_trx,
+          s.user_id,
+          back,
+          back,
+          s.user_id,
+          s.station_name ?? null,
+          JSON.stringify({ chargingSession: s.id, holdRefund: true, priceXof: paidXof }),
+          now,
+          s.credit_hold_trx,
+          ...guard.params,
+        ),
+    );
+  }
+  statements.push(
+    db
+      .prepare(`update wallet_transactions set status = ? where trx_id = ? and attribute = 'send' and status = 'pending' and ${guard.sql}`)
+      .bind(paidXof > 0 ? "success" : "rejected", s.credit_hold_trx, ...guard.params),
+  );
+  return statements;
+}
+
+/** Guard for releaseHold: the charge is cancelled (then the whole hold comes back). */
+const isCancelled = (id: string) => ({ sql: "(select status from charging_sessions where id = ?) = 'cancelled'", params: [id] });
 
 /**
  * The socket refused to start (Xingke CommandResult "Failed"): the charge it opened took no
@@ -227,16 +315,18 @@ export function chargeReadingStatement(
 export async function chargeStartFailed(db: D1Database, deviceId: string, outlet: number, order: string) {
   const s = await db
     .prepare(
-      `select id, station_id, user_id from charging_sessions
+      `select id, station_id, user_id, credit_held_xof, credit_hold_trx from charging_sessions
         where device_id = ? and outlet = ? and status = 'charging' and energy_wh = 0 and (order_no = ? or order_no is null)`,
     )
     .bind(deviceId, outlet, order)
-    .first<{ id: string; station_id: string; user_id: string | null }>();
+    .first<HoldRow & { station_id: string }>();
   if (!s) return;
   const now = nowIso();
   await db.batch([
     db.prepare("update charging_sessions set status = 'cancelled', stopped_at = ? where id = ? and status = 'charging' and energy_wh = 0").bind(now, s.id),
     auditIfChanged(db, null, s, { status: ["charging", "cancelled"], reason: "start_refused" }),
+    // A Green Credit charge gives its hold back (0052).
+    ...releaseHold(db, s, 0, isCancelled(s.id)),
     db
       .prepare(
         `update reservations set status = 'active', charging_point_id = null
@@ -282,16 +372,17 @@ export async function chargeStopFailed(db: D1Database, deviceId: string, outlet:
 export async function cancelRefusedStart(db: D1Database, externalId: string, outlet: number, order: string) {
   const s = await db
     .prepare(
-      `select id, station_id, charging_point_id, user_id, started_at from charging_sessions
+      `select id, station_id, charging_point_id, user_id, started_at, credit_held_xof, credit_hold_trx from charging_sessions
        where device_id = ? and outlet = ? and status = 'charging' and seen_charging = 0 and energy_wh = 0 and (order_no is null or order_no = ?)`,
     )
     .bind(externalId, outlet, order)
-    .first<{ id: string; station_id: string; charging_point_id: string | null; user_id: string | null; started_at: string }>();
+    .first<HoldRow & { station_id: string; charging_point_id: string | null; started_at: string }>();
   if (!s) return;
   const now = nowIso();
   await db.batch([
     db.prepare("update charging_sessions set status = 'cancelled', stopped_at = ? where id = ? and status = 'charging' and seen_charging = 0").bind(now, s.id),
     auditIfChanged(db, null, s, { status: ["charging", "cancelled"], reason: "start_refused" }),
+    ...releaseHold(db, s, 0, isCancelled(s.id)),
     // The reservation this charge completed (openCharge links it to the outlet), if still valid.
     db
       .prepare(
@@ -312,28 +403,32 @@ export async function hasOpenCharge(db: D1Database, pointId: string): Promise<bo
 
 // Station staff --------------------------------------------------------------------
 
-export async function findCustomer(db: D1Database, raw: unknown): Promise<{ id: string } | null> {
+export async function findCustomer(db: D1Database, raw: unknown): Promise<{ id: string; role: string } | null> {
   const text = contactFromCode(String(raw ?? ""));
   if (!text) return null;
   const contact = parseContact(text);
   if (!contact) throw new ApiError(text.includes("@") ? "invalid_contact" : "phone_not_allowed");
   const row = await db
-    .prepare(`select id from users where ${contact.kind === "phone" ? "phone" : "email"} = ?`)
+    .prepare(`select id, role from users where ${contact.kind === "phone" ? "phone" : "email"} = ?`)
     .bind(contact.value)
-    .first<{ id: string }>();
+    .first<{ id: string; role: string }>();
   if (!row) throw new ApiError("recipient_not_found", 404);
   return row;
 }
 
 /**
- * POST /api/stations/:id/charging { pointId, contact? | reservationId + pickupCode }: switches
+ * POST /api/stations/:id/charging { pointId, creditCode? | reservationId + pickupCode }: switches
  * an outlet on for a customer. From a reservation (staff open it from the reservation list,
  * outlet prefilled, another free one can be chosen): the code is checked (locked after 5
  * wrong ones) and starting the charge completes the reservation, exactly once.
+ * Without a reservation the charge is someone's only with their one-time counter code (shown in
+ * their app after the PIN, worker/wallet.ts), used once by the start; a typed phone number or
+ * e-mail no longer names the customer, as anyone could then bill a charge to another account.
+ * Without a code the charge is an anonymous cash charge.
  */
 export async function startCharge(env: Env, user: Profile, isStaffOf: StaffCheck, stationId: string, request: Request): Promise<ChargeSession> {
   if (!(await isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
-  const body = await readJson<{ pointId?: unknown; contact?: unknown; reservationId?: unknown; pickupCode?: unknown }>(request);
+  const body = await readJson<{ pointId?: unknown; contact?: unknown; creditCode?: unknown; reservationId?: unknown; pickupCode?: unknown }>(request);
   const db = env.DB;
   const point = await db
     .prepare(`select id, station_id, label, status, device_id, outlet, last_seen_at, ${EV_OF_POINT("charging_points")} from charging_points where id = ?`)
@@ -369,10 +464,21 @@ export async function startCharge(env: Env, user: Profile, isStaffOf: StaffCheck
     if (!stillActive(reservation)) throw new ApiError("reservation_not_active");
     await checkPickupCode(db, reservation, body.pickupCode);
   }
-  const customer = reservation ? { id: reservation.user_id } : await findCustomer(db, body.contact);
+  let customerId = reservation?.user_id ?? null;
+  let creditCode: string | undefined;
+  const typed = typeof body.creditCode === "string" ? body.creditCode.trim() : "";
+  if (!reservation && typed) {
+    // Staff type someone else's code: many wrong ones stop them for a while (worker/code-tries.ts).
+    const owner = await withCounterCodeTry(db, user.id, "credit", () => creditCodeOwner(db, typed));
+    customerId = owner.user.id;
+    creditCode = owner.hash;
+  } else if (!reservation && typeof body.contact === "string" && body.contact.trim()) {
+    // An older app still sends the phone number: say so rather than start an anonymous charge.
+    throw new ApiError("credit_code_required");
+  }
   // Staff never charge for themselves through the counter (greenpoints, cash).
-  if (customer?.id === user.id) throw new ApiError("own_reservation");
-  return openCharge(env, point as OutletPoint, { customerId: customer?.id ?? null, actorId: user.id, reservation });
+  if (customerId === user.id) throw new ApiError("own_reservation");
+  return openCharge(env, point as OutletPoint, { customerId, actorId: user.id, reservation, creditCode });
 }
 
 /** An outlet to switch on; ev_id/ev_name: the car charger connected through it (0048). */
@@ -387,7 +493,7 @@ type OutletPoint = { id: string; station_id: string; label: string; device_id: s
 async function openCharge(
   env: Env,
   point: OutletPoint,
-  who: { customerId: string | null; actorId: string; reservation: ReservationRow | null; alone?: boolean; creditLimitXof?: number },
+  who: { customerId: string | null; actorId: string; reservation: ReservationRow | null; alone?: boolean; creditLimitXof?: number; creditCode?: string },
 ): Promise<ChargeSession> {
   const db = env.DB;
   const stationId = point.station_id;
@@ -399,6 +505,20 @@ async function openCharge(
   const id = uuid();
   const row = { id, station_id: stationId, user_id: who.customerId };
   const statements: D1PreparedStatement[] = [];
+  // The customer's counter code is used once, by this start: the charge row needs it (startCharge).
+  const code = who.creditCode ? spendCreditCode(db, who.creditCode, stationId, "charge", now) : null;
+  if (code) statements.push(code.statement);
+  // A Green Credit charge takes its limit from the credit now (0052).
+  const hold =
+    who.creditLimitXof !== undefined && who.customerId
+      ? {
+          sessionId: id,
+          userId: who.customerId,
+          amountXof: who.creditLimitXof,
+          trxId: newTrxId("charge"),
+          stationName: (await db.prepare("select name from stations where id = ?").bind(stationId).first<{ name: string }>())?.name ?? null,
+        }
+      : null;
   if (reservation) {
     // The reservation first: the charge only starts if this request completed it.
     statements.push(
@@ -411,9 +531,10 @@ async function openCharge(
     db
       .prepare(
         `insert into charging_sessions (id, station_id, charging_point_id, device_id, outlet, point_label, user_id, kwh_xof, min_xof, started_by, started_at,
-           credit_limit_xof)
-         select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?14 where (?12 = 0 or changes() > 0)
-            and (?13 = 0 or not exists (select 1 from charging_sessions where user_id = ?7 and status in ('charging', 'stopped')))`,
+           credit_limit_xof, credit_held_xof, credit_hold_trx)
+         select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?14, ?15, ?16 where (?12 = 0 or changes() > 0)
+            and (?13 = 0 or not exists (select 1 from charging_sessions where user_id = ?7 and status in ('charging', 'stopped')))
+            ${code ? `and ${code.usedSql}` : ""}`,
       )
       // alone: in the same write as the check, so two starts sent at once cannot both pass it.
       .bind(
@@ -431,7 +552,10 @@ async function openCharge(
         reservation ? 1 : 0,
         who.alone ? 1 : 0,
         who.creditLimitXof ?? null,
+        hold?.amountXof ?? null,
+        hold?.trxId ?? null,
       ),
+    ...(hold ? holdStatements(db, hold, now) : []),
     // Old values of the previous charge must not show as this one's.
     db.prepare("update charging_points set power_watts = null, energy_wh = null where id = ? and exists (select 1 from charging_sessions where id = ?)").bind(point.id, id),
     db
@@ -475,10 +599,12 @@ async function openCharge(
     await db.batch(statements);
   } catch (err) {
     if (/UNIQUE/i.test(String(err))) throw new ApiError("charge_busy", 409);
+    // The credit was spent meanwhile (a swap at the same time): the hold breaks the balance check.
+    if (hold && /CHECK constraint failed/i.test(String(err))) throw new ApiError("insufficient_balance");
     throw err;
   }
   if (!(await db.prepare("select 1 from charging_sessions where id = ?").bind(id).first())) {
-    throw who.alone ? new ApiError("charge_unpaid", 409) : new ApiError("reservation_not_active");
+    throw code ? new ApiError("credit_code_invalid") : who.alone ? new ApiError("charge_unpaid", 409) : new ApiError("reservation_not_active");
   }
   try {
     const { order } = await startOutlet(env, point.device_id, point.outlet, actor);
@@ -488,6 +614,9 @@ async function openCharge(
     await db.batch([
       db.prepare("update charging_sessions set status = 'cancelled', stopped_at = ?, stopped_by = ? where id = ?").bind(nowIso(), actor, id),
       audit(db, actor, "update", row, { status: ["charging", "cancelled"], reason: "start_failed" }),
+      ...(hold
+        ? releaseHold(db, { id, user_id: hold.userId, credit_held_xof: hold.amountXof, credit_hold_trx: hold.trxId, station_name: hold.stationName }, 0, isCancelled(id))
+        : []),
       ...(reservation
         ? [db.prepare("update reservations set status = 'active', charging_point_id = null where id = ? and status = 'completed'").bind(reservation.id)]
         : []),
@@ -546,6 +675,7 @@ export async function cancelCharge(env: Env, user: Profile, isStaffOf: StaffChec
   await env.DB.batch([
     env.DB.prepare("update charging_sessions set status = 'cancelled' where id = ? and status = 'stopped' and energy_wh = 0").bind(id),
     auditIfChanged(env.DB, user.id, s, { status: ["stopped", "cancelled"] }),
+    ...releaseHold(env.DB, s, 0, isCancelled(id)),
   ]);
   return toSession(await loadSession(env.DB, id));
 }
@@ -559,7 +689,7 @@ export async function cancelCharge(env: Env, user: Profile, isStaffOf: StaffChec
 async function bookPayment(
   db: D1Database,
   s: SessionRow,
-  pay: { method: ChargePaymentMethod; amountXof: number; ref: string; by: string | null },
+  pay: { method: ChargePaymentMethod; amountXof: number; ref: string; by: string | null; earnWh?: number },
   extra: D1PreparedStatement[] = [],
 ): Promise<boolean> {
   const now = nowIso();
@@ -568,7 +698,8 @@ async function bookPayment(
         userId: s.user_id,
         stationId: s.station_id,
         sessionId: s.id,
-        energyWh: s.energy_wh,
+        // Greenpoints for what was paid: a Green Credit charge that ran past its credit earns on the paid part only.
+        energyWh: pay.earnWh ?? s.energy_wh,
         paidRef: pay.ref,
         createdBy: pay.by,
       })
@@ -586,6 +717,12 @@ async function bookPayment(
     ...(earned ? [earned.statement] : []),
   ]);
   return paid.meta.changes > 0;
+}
+
+/** The energy a payment of `paidXof` for a charge of `priceXof` stands for, for its greenpoints. */
+export function earnedEnergy(energyWh: number, paidXof: number, priceXof: number): number {
+  if (priceXof <= 0 || paidXof <= 0) return 0;
+  return paidXof >= priceXof ? energyWh : Math.floor((energyWh * paidXof) / priceXof);
 }
 
 /** POST …/pay: staff took the cash. */
@@ -687,6 +824,7 @@ export async function payWithWallet(env: Env, user: Profile, id: string, request
   const key = String(input.idempotencyKey ?? "");
   if (!/^[\w-]{8,64}$/.test(key)) throw new ApiError("bad_request");
   await verifyPin(env, user.id, input.pin);
+  await refuseWhileCreditCharging(env.DB, user.id);
   const wallet = await env.DB.prepare("select balance_xof, status from wallets where user_id = ?")
     .bind(user.id)
     .first<{ balance_xof: number; status: string }>();
@@ -701,6 +839,8 @@ export async function payWithWallet(env: Env, user: Profile, id: string, request
   // makes the whole batch fail when the money is no longer there.
   const mine = "(select payment_ref from charging_sessions where id = ?) = ?";
   const extra = [
+    // A Green Credit charge started meanwhile holds the credit: the payment fails as a whole.
+    db.prepare(`update wallets set balance_xof = -1 where user_id = ?1 and ${OPEN_CREDIT_CHARGE_SQL.replace("?", "?1")}`).bind(user.id),
     db.prepare(`update wallets set balance_xof = balance_xof - ?, updated_at = ? where user_id = ? and ${mine}`).bind(amount, now, user.id, s.id, trxId),
     db
       .prepare(
@@ -821,7 +961,8 @@ async function qrPointState(db: D1Database, p: QrPointRow, userId: string | null
  * The customer switches one outlet on themselves (startOutletCharge, after scanning the box's
  * QR code) and pays in advance from Green Credit (0047): the PIN typed on their phone, a socket
  * of ours at a Green Credit station, a credit that covers at least the station's minimum price.
- * The charge may cost at most the balance; it stops there (creditStops) and the price is taken
+ * The charge holds the balance up to the backoffice's cap (chargeHoldFrom) and may cost at most
+ * that; it stops there (creditStops) and the price is taken
  * from the credit when it ends (settlePrepaidCharges). Only on a live free outlet nobody else
  * holds, and only with no other charge of the customer running or waiting for payment.
  */
@@ -852,14 +993,15 @@ async function selfCharge(env: Env, user: Profile, p: QrPointRow, pin: unknown):
   const wallet = await db.prepare("select balance_xof, status from wallets where user_id = ?").bind(user.id).first<{ balance_xof: number; status: string }>();
   if (wallet?.status === "frozen") throw new ApiError("wallet_frozen", 403);
   const tariff = await tariffFor(db, p.station_id, !!p.ev_id);
-  const balance = wallet?.balance_xof ?? 0;
-  if (balance < Math.max(tariff.minXof, MIN_PREPAID_XOF)) throw new ApiError("insufficient_balance");
+  // The charge holds at most the backoffice's cap of the credit; the rest stays free meanwhile.
+  const limit = await chargeHoldFrom(db, wallet?.balance_xof ?? 0);
+  if (limit < Math.max(tariff.minXof, MIN_PREPAID_XOF)) throw new ApiError("insufficient_balance");
   return openCharge(env, { id: p.id, station_id: p.station_id, label: p.label, device_id: p.device_id!, outlet: p.outlet!, ev_id: p.ev_id, ev_name: p.ev_name }, {
     customerId: user.id,
     actorId: user.id,
     reservation: null,
     alone: true,
-    creditLimitXof: balance,
+    creditLimitXof: limit,
   });
 }
 
@@ -946,13 +1088,15 @@ export async function renewOutletQr(env: Env, admin: Profile, externalId: string
 /** A stopped charge that took no energy has nothing to pay: it is closed, not held against the customer. */
 async function closeEmptyCharges(db: D1Database, userId: string) {
   const { results: empty } = await db
-    .prepare("select id, station_id, user_id from charging_sessions where user_id = ? and status = 'stopped' and energy_wh = 0")
+    .prepare("select id, station_id, user_id, credit_held_xof, credit_hold_trx from charging_sessions where user_id = ? and status = 'stopped' and energy_wh = 0")
     .bind(userId)
-    .all<{ id: string; station_id: string; user_id: string | null }>();
+    .all<HoldRow & { station_id: string }>();
   for (const e of empty) {
     await db.batch([
       db.prepare("update charging_sessions set status = 'cancelled' where id = ? and status = 'stopped' and energy_wh = 0").bind(e.id),
       auditIfChanged(db, userId, e, { status: ["stopped", "cancelled"], reason: "no_energy" }),
+      // A Green Credit charge that took nothing gives all of its hold back (0052).
+      ...releaseHold(db, e, 0, isCancelled(e.id)),
     ]);
   }
 }
@@ -961,6 +1105,16 @@ async function closeEmptyCharges(db: D1Database, userId: string) {
 
 /** The least a prepaid charge may start with (a card's or the credit's balance), in FCFA. */
 const MIN_PREPAID_XOF = 5;
+
+/**
+ * What a Green Credit charge takes from a balance of `balanceXof` when it starts, and so may cost
+ * at most (its credit_limit_xof): the balance, up to the cap set in the backoffice
+ * (app_settings.green_credit_charge_hold_xof), so a battery swap meanwhile can spend the rest.
+ */
+async function chargeHoldFrom(db: D1Database, balanceXof: number): Promise<number> {
+  return Math.max(0, Math.min(balanceXof, await chargeHoldCap(db)));
+}
+
 /** A Green Credit charge stopped this long ago has its final energy (sockets without OCPP). */
 const SETTLE_AFTER_MS = 60_000;
 
@@ -975,18 +1129,21 @@ export async function socketIsOurs(db: D1Database, deviceId: string): Promise<bo
 
 /**
  * What a card linked to an account may spend now: the account's Green Credit at a Green Credit
- * station, when the credit is not frozen and no other Green Credit charge of the account is
- * running or waiting to be paid (0047). Null when it may not charge.
+ * station, up to the charge hold cap (chargeHoldFrom), when the account may use Green Credit (a customer's, with the module on: the same
+ * rule as walletAccess for a QR charge), the credit is not frozen and no other Green Credit
+ * charge of the account is running or waiting to be paid (0047). Null when it may not charge.
  */
 export async function linkedCardCredit(db: D1Database, userId: string, stationId: string, tariff?: ChargeTariff): Promise<number | null> {
   if (!(await isCreditStation(db, stationId))) return null;
+  if (!(await accountSpendsCredit(db, userId))) return null;
   const [wallet, open] = await Promise.all([
     db.prepare("select balance_xof, status from wallets where user_id = ?").bind(userId).first<{ balance_xof: number; status: string }>(),
     db.prepare("select 1 from charging_sessions where user_id = ? and credit_limit_xof is not null and status in ('charging', 'stopped')").bind(userId).first(),
   ]);
   if (!wallet || wallet.status === "frozen" || open) return null;
   const minimum = Math.max(MIN_PREPAID_XOF, (tariff ?? (await stationTariff(db, stationId))).minXof);
-  return wallet.balance_xof >= minimum ? wallet.balance_xof : null;
+  const limit = await chargeHoldFrom(db, wallet.balance_xof);
+  return limit >= minimum ? limit : null;
 }
 
 /**
@@ -994,7 +1151,7 @@ export async function linkedCardCredit(db: D1Database, userId: string, stationId
  * event, after swipeCard in worker/charge-cards.ts accepted it): opens the card's charge on that outlet,
  * the card owner's if it has one (then it shows in their app and can be stopped there). A card
  * linked to an account pays with the account's Green Credit (0047): the charge may cost at most
- * the balance. Nothing is sent here: an OCPP charge point already switched on, a Xingke socket
+ * the balance, up to the charge hold cap (chargeHoldFrom). Nothing is sent here: an OCPP charge point already switched on, a Xingke socket
  * is started once the device got our answer (worker/xingke.ts). `order` is the charge's id for
  * the device (Xingke transactionId); the card number otherwise. False when the outlet
  * cannot take it: unknown outlet, a point partner's socket, station without charging, outlet
@@ -1030,14 +1187,18 @@ export async function openCardCharge(
   if (held) return false;
   const id = uuid();
   const actor = card.userId ?? `card:${card.tag}`;
+  // The card's limit is taken from the account's credit now, as for a QR charge (0052).
+  const station = await db.prepare("select name from stations where id = ?").bind(p.station_id).first<{ name: string }>();
+  const hold = { sessionId: id, userId: card.userId, amountXof: creditLimit, trxId: newTrxId("charge"), stationName: station?.name ?? null };
   const statements = [
     db
       .prepare(
         `insert into charging_sessions (id, station_id, charging_point_id, device_id, outlet, point_label, order_no, user_id, kwh_xof, min_xof, started_by, started_at,
-           charge_card, credit_limit_xof)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?14, ?8, ?9, ?10, ?11, ?12, ?7, ?13)`,
+           charge_card, credit_limit_xof, credit_held_xof, credit_hold_trx)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?15, ?8, ?9, ?10, ?11, ?12, ?7, ?13, ?13, ?14)`,
       )
-      .bind(id, p.station_id, p.id, deviceId, outlet, label, card.tag, card.userId, tariff.kwhXof, tariff.minXof, actor, now, creditLimit, order),
+      .bind(id, p.station_id, p.id, deviceId, outlet, label, card.tag, card.userId, tariff.kwhXof, tariff.minXof, actor, now, creditLimit, hold.trxId, order),
+    ...holdStatements(db, hold, now),
     // Old values of the previous charge must not show as this one's.
     db.prepare("update charging_points set power_watts = null, energy_wh = null where id = ?").bind(p.id),
     audit(db, actor, "insert", { id, station_id: p.station_id, user_id: card.userId }, {
@@ -1063,10 +1224,20 @@ export async function openCardCharge(
   try {
     await db.batch(statements);
   } catch (err) {
-    if (/UNIQUE/i.test(String(err))) return false;
+    // UNIQUE: a charge is already open on the outlet; CHECK: the credit was spent meanwhile.
+    if (/UNIQUE|CHECK constraint failed/i.test(String(err))) return false;
     throw err;
   }
   return true;
+}
+
+/**
+ * A card was blocked (lost or stolen): its running charge is stopped now, like a stop in the
+ * app, and paid as usual when it ends. Never throws: blocking must not fail because of it.
+ */
+export async function stopCardCharges(env: Env, tag: string, actor: string) {
+  const { results } = await env.DB.prepare(`${SESSION_SELECT} where cs.charge_card = ? and cs.status = 'charging'`).bind(tag).all<SessionRow>();
+  for (const s of results) await stopSession(env, s, actor).catch((err) => console.error("blocked card stop", s.id, err));
 }
 
 /** The prepaid charges of a device: a card's (its balance) or Green Credit's (the limit set when it started). */
@@ -1190,6 +1361,7 @@ export async function settlePrepaidCharges(db: D1Database, filter: { deviceId?: 
       await db.batch([
         db.prepare("update charging_sessions set status = 'cancelled' where id = ? and status = 'stopped' and energy_wh = 0").bind(s.id),
         auditIfChanged(db, null, s, { status: ["stopped", "cancelled"], reason: "no_energy" }),
+        ...releaseHold(db, s, 0, isCancelled(s.id)),
       ]);
       continue;
     }
@@ -1207,8 +1379,24 @@ export async function settlePrepaidCharges(db: D1Database, filter: { deviceId?: 
   }
 }
 
-/** Takes an ended Green Credit charge from the customer's credit, at most the balance. */
+/**
+ * Takes an ended Green Credit charge from the customer's credit. Since 0052 the money was taken
+ * when it started: the price is booked, at most the hold (the credit never goes below 0, a late
+ * stop costs poinderecharge the difference), and the rest comes back in the same batch. Older
+ * charges take the price from the balance now, at most the balance.
+ */
 async function payFromCredit(db: D1Database, s: SessionRow, price: number) {
+  if (s.credit_hold_trx && s.credit_held_xof !== null) {
+    const amount = Math.min(price, s.credit_held_xof);
+    const ref = uuid();
+    await bookPayment(
+      db,
+      s,
+      { method: "wallet", amountXof: amount, ref, by: null, earnWh: earnedEnergy(s.energy_wh, amount, price) },
+      releaseHold(db, s, amount, { sql: "(select payment_ref from charging_sessions where id = ?) = ?", params: [s.id, ref] }),
+    );
+    return;
+  }
   const wallet = await db.prepare("select balance_xof from wallets where user_id = ?").bind(s.user_id).first<{ balance_xof: number }>();
   const amount = Math.max(0, Math.min(price, wallet?.balance_xof ?? 0));
   const trxId = newTrxId("charge");
@@ -1239,7 +1427,7 @@ async function payFromCredit(db: D1Database, s: SessionRow, price: number) {
         ]
       : [];
   try {
-    await bookPayment(db, s, { method: "wallet", amountXof: amount, ref: trxId, by: null }, extra);
+    await bookPayment(db, s, { method: "wallet", amountXof: amount, ref: trxId, by: null, earnWh: earnedEnergy(s.energy_wh, amount, price) }, extra);
   } catch (err) {
     // Spent meanwhile by another payment: the next run takes what is left.
     if (!/CHECK constraint failed/i.test(String(err))) throw err;

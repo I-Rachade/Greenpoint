@@ -96,6 +96,32 @@ describe("fleet managers", () => {
     expect((await fleetView(t.admin)).drivers).toHaveLength(3);
   });
 
+  it("shows a manager only open trips their drivers fit, without the door until one has it", async () => {
+    const t = setup();
+    await setDriverManager(t.admin, "d1", "91 00 00 01"); // moto only
+    t.openJob("big", "XL");
+    t.openJob("small");
+    const now = new Date().toISOString();
+    t.db.exec(`insert into delivery_jobs (id, kind, status, home_lat, home_lng, home_note, home_phone, dropoff_lat, dropoff_lng, dropoff_note, size, distance_m, fare_fcfa, created_at)
+      values ('door', 'courier', 'open', 6.175432, 1.215678, 'Portail bleu, 2e maison', '+22892000001', 6.2004, 1.1906, 'Chez Afi', 'S', 3000, 1000, '${now}')`);
+    const mgr = t.ctx(manager("mgr"));
+    const view = await fleetView(mgr);
+    expect(view.openJobs.map((j) => j.id).sort()).toEqual(["door", "small"]);
+    const door = view.openJobs.find((j) => j.id === "door")!;
+    expect(door.home).toEqual({ lat: 6.175, lng: 1.216, note: "", phone: "" });
+    expect(door.dropoff).toEqual({ lat: 6.2, lng: 1.191, note: "" });
+    // No active vehicle, no open trips.
+    t.db.exec("update fleet_vehicles set is_active = 0 where id = 'v1'");
+    expect((await fleetView(mgr)).openJobs).toEqual([]);
+    t.db.exec("update fleet_vehicles set is_active = 1 where id = 'v1'");
+    // Once their driver has it, the manager sees where to go (still not the customer's phone).
+    await fleetAssign(mgr, "door", "d1");
+    const job = (await fleetView(mgr)).drivers.find((d) => d.userId === "d1")?.job;
+    expect(job?.home).toMatchObject({ lat: 6.175432, note: "Portail bleu, 2e maison", phone: "" });
+    // An admin still sees every open trip.
+    expect((await fleetView(t.admin)).openJobs.map((j) => j.id).sort()).toEqual(["big", "small"]);
+  });
+
   it("hands an open trip to one of the manager's drivers, who confirms as usual", async () => {
     const t = setup();
     await setDriverManager(t.admin, "d1", "91 00 00 01");

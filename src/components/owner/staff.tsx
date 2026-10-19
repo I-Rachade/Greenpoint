@@ -7,15 +7,21 @@ import { useI18n } from "@/components/i18n-provider";
 import { Badge, Button, Input, useToast } from "@/components/ui";
 import { useErrorMessage } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { OperatorStaff, OwnerView, StaffReassignment } from "@/lib/operators";
+import type { OperatorStaff, OwnerView, StaffInvite, StaffReassignment } from "@/lib/operators";
 import type { StationView } from "@/lib/types";
+import { useLongDate } from "../merchants/shared";
 import { Section, useWhen } from "./shared";
 
-type Pending = { kind: "remove"; person: OperatorStaff } | { kind: "move"; person: OperatorStaff; to: string } | null;
+type Pending =
+  | { kind: "remove"; person: OperatorStaff }
+  | { kind: "move"; person: OperatorStaff; to: string }
+  | { kind: "cancel"; invite: StaffInvite }
+  | null;
 
 /**
- * Staff work at exactly one station (W2): add someone to a station, move them to another
- * station of the owner, or remove them. Below, the list to re-staff from migration 0033.
+ * Staff work at exactly one station (W2): invite someone to a station (they become staff once
+ * they accept, migration 0050), move them to another station of the owner, or remove them.
+ * Above, the list to re-staff from migration 0033.
  */
 export function StaffView({ view, stations, onChanged }: { view: OwnerView; stations: StationView[]; onChanged: () => void }) {
   const { t } = useI18n();
@@ -44,12 +50,24 @@ export function StaffView({ view, stations, onChanged }: { view: OwnerView; stat
 
   async function confirm() {
     if (!pending) return;
-    const p = pending.person;
-    const ok =
-      pending.kind === "remove"
-        ? await run(() => backend.ownerRemoveStaff(p.stationId, p.userId), format(o.removed, { user: p.label, station: name(p.stationId) }))
-        : await run(() => backend.ownerMoveStaff(p.userId, pending.to), format(o.added, { user: p.label, station: name(pending.to) }));
+    let ok: boolean;
+    if (pending.kind === "cancel") {
+      const invite = pending.invite;
+      ok = await run(() => backend.ownerRevokeStaffInvite(invite.id), o.invites.cancelled);
+    } else {
+      const p = pending.person;
+      ok =
+        pending.kind === "remove"
+          ? await run(() => backend.ownerRemoveStaff(p.stationId, p.userId), format(o.removed, { user: p.label, station: name(p.stationId) }))
+          : await run(() => backend.ownerMoveStaff(p.userId, pending.to), format(o.added, { user: p.label, station: name(pending.to) }));
+    }
     if (ok) setPending(null);
+  }
+
+  function sheetTitle(p: NonNullable<Pending>): string {
+    if (p.kind === "cancel") return format(o.invites.confirmCancel, { user: p.invite.label, station: name(p.invite.stationId) });
+    if (p.kind === "move") return format(o.moveConfirm, { user: p.person.label, station: name(p.to) });
+    return format(o.confirmRemove, { user: p.person.label, station: name(p.person.stationId) });
   }
 
   return (
@@ -60,28 +78,23 @@ export function StaffView({ view, stations, onChanged }: { view: OwnerView; stat
           key={s.id}
           station={s}
           staff={view.staff.filter((p) => p.stationId === s.id)}
+          invites={view.invites.filter((i) => i.stationId === s.id)}
           others={view.stations.filter((x) => x.id !== s.id)}
           busy={busy}
-          onAdd={(contact) => run(() => backend.ownerAddStaff(s.id, contact), format(o.added, { user: contact.trim(), station: s.name }))}
+          onInvite={(contact) => run(() => backend.ownerInviteStaff(s.id, contact), format(o.invited, { user: contact.trim(), station: s.name }))}
           onAsk={setPending}
         />
       ))}
       <ConfirmSheet
         open={!!pending}
-        title={
-          pending?.kind === "move"
-            ? format(o.moveConfirm, { user: pending.person.label, station: name(pending.to) })
-            : pending
-              ? format(o.confirmRemove, { user: pending.person.label, station: name(pending.person.stationId) })
-              : ""
-        }
-        confirmLabel={pending?.kind === "move" ? o.move : o.remove}
-        danger={pending?.kind === "remove"}
+        title={pending ? sheetTitle(pending) : ""}
+        confirmLabel={pending?.kind === "move" ? o.move : pending?.kind === "cancel" ? o.invites.cancel : o.remove}
+        danger={pending?.kind === "remove" || pending?.kind === "cancel"}
         busy={busy}
         onConfirm={() => void confirm()}
         onCancel={() => setPending(null)}
       >
-        <p>{pending?.kind === "move" ? o.moveHint : o.removeHint}</p>
+        {pending?.kind !== "cancel" && <p>{pending?.kind === "move" ? o.moveHint : o.removeHint}</p>}
       </ConfirmSheet>
     </div>
   );
@@ -90,26 +103,29 @@ export function StaffView({ view, stations, onChanged }: { view: OwnerView; stat
 function StationStaff({
   station,
   staff,
+  invites,
   others,
   busy,
-  onAdd,
+  onInvite,
   onAsk,
 }: {
   station: StationView;
   staff: OperatorStaff[];
+  invites: StaffInvite[];
   others: StationView[];
   busy: boolean;
-  onAdd: (contact: string) => Promise<boolean>;
+  onInvite: (contact: string) => Promise<boolean>;
   onAsk: (p: Pending) => void;
 }) {
   const { t } = useI18n();
   const o = t.owner;
+  const longDate = useLongDate();
   const [contact, setContact] = useState("");
   const [moveTo, setMoveTo] = useState<Record<string, string>>({});
 
-  async function add(e: FormEvent) {
+  async function invite(e: FormEvent) {
     e.preventDefault();
-    if (await onAdd(contact)) setContact("");
+    if (await onInvite(contact)) setContact("");
   }
 
   return (
@@ -151,14 +167,32 @@ function StationStaff({
           ))}
         </ul>
       )}
-      <form onSubmit={add} className="space-y-1">
+      {invites.length > 0 && (
+        <div className="space-y-1">
+          <h3 className="text-sm font-semibold">{o.invites.title}</h3>
+          <ul className="divide-y divide-black/5 text-sm dark:divide-white/10">
+            {invites.map((i) => (
+              <li key={i.id} className="flex flex-wrap items-center gap-2 py-2">
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium">{i.label}</span>
+                  <span className="block text-xs text-gp-muted">{format(o.invites.until, { date: longDate(i.expiresAt) })}</span>
+                </span>
+                <Button variant="ghost" className="text-red-600" disabled={busy} onClick={() => onAsk({ kind: "cancel", invite: i })}>
+                  {o.invites.cancel}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <form onSubmit={invite} className="space-y-1">
         <label htmlFor={`add-${station.id}`} className="text-sm">
           {o.staffContact}
         </label>
         <div className="flex gap-2">
           <Input id={`add-${station.id}`} required value={contact} onChange={(e) => setContact(e.target.value)} autoComplete="off" />
           <Button type="submit" busy={busy}>
-            {o.add}
+            {o.invite}
           </Button>
         </div>
         <p className="text-xs text-gp-muted">{o.staffHint}</p>

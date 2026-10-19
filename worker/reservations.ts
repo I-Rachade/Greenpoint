@@ -10,6 +10,7 @@ import {
 } from "../src/lib/reservations";
 import type { Reservation, ReservationType } from "../src/lib/types";
 import { personLabel } from "../src/lib/wallet";
+import { withCodeTry } from "./code-tries";
 import { ApiError, nowIso } from "./http";
 
 export interface ReservationRow {
@@ -81,6 +82,38 @@ export const heldBatteriesSql = (station: string, key: string, now: string) =>
   `(select count(*) from reservations hr where hr.station_id = ${station} and hr.kind = 'swap' and hr.status = 'active'
      and hr.expires_at > ${now} and coalesce(hr.target, '') = ${key})`;
 
+/**
+ * SQL: what station ?{station} offers to reservations of `kind`. Swap counts its full batteries;
+ * charging its connected outlets and car chargers, or its places when no outlet is connected.
+ */
+export function holdStockSql(kind: "swap" | "charging_point", station: string): string {
+  return kind === "swap"
+    ? `case when exists (select 1 from station_battery_types where station_id = ${station})
+         then (select coalesce(sum(full_batteries), 0) from station_battery_types where station_id = ${station})
+         else coalesce((select full_batteries from station_status where station_id = ${station}), 0) end`
+    : `(select count(*) from charging_points cp where cp.station_id = ${station} and cp.device_id is not null
+          and not exists (select 1 from ev_chargers ev_p where ev_p.point_id = cp.id))
+       + (select count(*) from ev_chargers where station_id = ${station} and is_active = 1)
+       + case when exists (select 1 from charging_points where station_id = ${station} and device_id is not null) then 0
+           else (select charging_slots from stations where id = ${station}) end`;
+}
+
+/** SQL: active reservations of `kind` at station ?{station} at time ?{now}. */
+export const heldOfKindSql = (kind: "swap" | "charging_point", station: string, now: string) =>
+  `(select count(*) from reservations hs where hs.station_id = ${station} and hs.kind = '${kind}' and hs.status = 'active' and hs.expires_at > ${now})`;
+
+/** The most reservations of a kind a station with `stock` may carry at once. */
+export const HOLD_ROOM_SQL = (stock: string) => `max(1, ((${stock}) + 1) / 2)`;
+
+/**
+ * SQL: reservations of `kind` at station ?{station} hold less than half (rounded up, at least
+ * one) of its stock at time ?{now}, so a few throwaway accounts cannot block a whole station;
+ * the rest stays for walk-in customers (review 2026-10-19, point 8).
+ */
+export function holdRoomSql(kind: "swap" | "charging_point", station: string, now: string): string {
+  return `${heldOfKindSql(kind, station, now)} < ${HOLD_ROOM_SQL(holdStockSql(kind, station))}`;
+}
+
 /** Whether the reservation is active and not past its expiry. */
 export function stillActive(r: Pick<ReservationRow, "status" | "expires_at">): boolean {
   return r.status === "active" && r.expires_at > nowIso();
@@ -92,18 +125,14 @@ export function stillActive(r: Pick<ReservationRow, "status" | "expires_at">): b
  * takes no code (429), so its 4 digits cannot be tried through (as parcels).
  */
 export async function checkPickupCode(db: D1Database, r: Pick<ReservationRow, "id" | "station_id" | "pickup_code">, raw: unknown): Promise<void> {
-  const since = new Date(Date.now() - RESERVATION_CODE_LOCK_MINUTES * 60_000).toISOString();
-  const failures = await db
-    .prepare("select count(*) as n from reservation_code_failures where reservation_id = ? and at > ?")
-    .bind(r.id, since)
-    .first<{ n: number }>();
-  if ((failures?.n ?? 0) >= RESERVATION_MAX_CODE_FAILURES) throw new ApiError("code_locked", 429);
-  if (r.pickup_code === String(raw ?? "").trim()) return;
-  await db.batch([
-    db.prepare("insert into reservation_code_failures (reservation_id, station_id, at) values (?, ?, ?)").bind(r.id, r.station_id, nowIso()),
-    db.prepare("delete from reservation_code_failures where at < ?").bind(new Date(Date.now() - 86_400_000).toISOString()),
-  ]);
-  throw new ApiError("wrong_pickup_code");
+  // Counted per reservation; only a wrong code keeps its try (worker/code-tries.ts).
+  await withCodeTry(
+    db,
+    { table: "reservation_code_failures", key: ["reservation_id", r.id], extra: [["station_id", r.station_id]], maxTries: RESERVATION_MAX_CODE_FAILURES, lockMinutes: RESERVATION_CODE_LOCK_MINUTES },
+    async () => {
+      if (r.pickup_code !== String(raw ?? "").trim()) throw new ApiError("wrong_pickup_code");
+    },
+  );
 }
 
 /** Active holds per station and target (`kind:target`), for the station list. */

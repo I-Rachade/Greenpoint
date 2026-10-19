@@ -1,0 +1,9 @@
+# Security headers for the pages and files Cloudflare serves from ./out (Workers static assets).
+# /api/* answers from the Worker and is not covered here. Next.js puts its page data in inline
+# scripts, hence 'unsafe-inline'; everything else is limited to this site, the map tiles and
+# Cloudflare Turnstile (src/components/turnstile.tsx). Photos may come from any https address.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://tiles.openfreemap.org https://challenges.cloudflare.com; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(self), geolocation=(self), microphone=()

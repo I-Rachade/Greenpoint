@@ -23,6 +23,7 @@ import {
 import type { FleetVehicleType } from "../src/lib/drivers";
 import { VEHICLE_TYPES, type Profile, type ReservationType, type VehicleType } from "../src/lib/types";
 import { personLabel } from "../src/lib/wallet";
+import { withCounterCodeTry } from "./code-tries";
 import type { Env } from "./env";
 import { ApiError, nowIso, randomDigits, readJson, uuid } from "./http";
 import { notCustomerRole } from "./roles";
@@ -381,40 +382,55 @@ export async function confirmRedemption(env: Env, user: Profile, isStaffOf: Staf
   if (!(await isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
   const { code } = await readJson<{ code?: string }>(request);
   const db = env.DB;
-  const r = await db
-    .prepare(
-      `select d.*, r.title as reward_title from greenpoint_redemptions d join greenpoint_rewards r on r.id = d.reward_id
-       where d.code = ? and d.status = 'open'`,
-    )
-    .bind(String(code ?? "").trim())
-    .first<RedemptionRow>();
-  if (!r || r.expires_at <= nowIso()) throw new ApiError("invalid_code");
+  // Codes are 6 digits: a staff member typing many wrong ones is stopped (worker/code-tries.ts).
+  const r = await withCounterCodeTry(db, user.id, "greenpoint", async () => {
+    const row = await db
+      .prepare(
+        `select d.*, r.title as reward_title from greenpoint_redemptions d join greenpoint_rewards r on r.id = d.reward_id
+         where d.code = ? and d.status = 'open'`,
+      )
+      .bind(String(code ?? "").trim())
+      .first<RedemptionRow>();
+    if (!row || row.expires_at <= nowIso()) throw new ApiError("invalid_code");
+    return row;
+  });
   if (r.user_id === user.id) throw new ApiError("own_reservation");
   const { points } = await totals(db, r.user_id);
   if (points < r.cost_points) throw new ApiError("not_enough_points");
-  // One batch, so the code, the points and the stock change together. The ledger row and the
-  // stock only follow this staff member's own update (used_by and used_at), so a parallel
-  // confirmation of the same code takes nothing twice.
+  // One batch, so the code, the points and the stock change together. The ledger row comes
+  // first, with an id made for this request; the code and the stock only follow that row, so a
+  // parallel confirmation of the same code takes nothing twice (not even by the same staff
+  // member in the same millisecond, which used_by and used_at cannot tell apart).
   const now = nowIso();
-  const [used] = await db.batch([
+  const entry = uuid();
+  const [, used] = await db.batch([
     db
-      .prepare("update greenpoint_redemptions set status = 'used', used_at = ?, used_by = ?, station_id = ? where id = ? and status = 'open'")
-      .bind(now, user.id, stationId, r.id),
-    db
+      // Only while the code is open and the reward still on offer: in stock, active and not past its end.
       .prepare(
         `insert into greenpoint_ledger (id, user_id, kind, co2_grams, points, station_id, redemption_id, created_by, created_at)
-         select ?, user_id, 'redeem', 0, -cost_points, ?, id, ?, ? from greenpoint_redemptions
-         where id = ? and status = 'used' and used_by = ? and used_at = ?`,
+         select ?1, d.user_id, 'redeem', 0, -d.cost_points, ?2, d.id, ?3, ?4 from greenpoint_redemptions d
+          where d.id = ?5 and d.status = 'open'
+            and exists (select 1 from greenpoint_rewards g where g.id = d.reward_id and g.is_active = 1
+                          and (g.stock is null or g.stock > 0) and (g.valid_until is null or g.valid_until > ?4))`,
       )
-      .bind(uuid(), stationId, user.id, now, r.id, user.id, now),
+      .bind(entry, stationId, user.id, now, r.id),
     db
       .prepare(
-        `update greenpoint_rewards set stock = stock - 1 where stock > 0 and id =
-         (select reward_id from greenpoint_redemptions where id = ? and status = 'used' and used_by = ? and used_at = ?)`,
+        `update greenpoint_redemptions set status = 'used', used_at = ?1, used_by = ?2, station_id = ?3 where id = ?4 and status = 'open'
+           and exists (select 1 from greenpoint_ledger where id = ?5)`,
       )
-      .bind(r.id, user.id, now),
+      .bind(now, user.id, stationId, r.id, entry),
+    db
+      .prepare(
+        `update greenpoint_rewards set stock = stock - 1 where stock > 0 and id = (select reward_id from greenpoint_redemptions where id = ?1)
+           and exists (select 1 from greenpoint_ledger where id = ?2)`,
+      )
+      .bind(r.id, entry),
   ]);
-  if (!used.meta.changes) throw new ApiError("invalid_code");
+  if (!used.meta.changes) {
+    const still = await db.prepare("select 1 from greenpoint_redemptions where id = ? and status = 'open'").bind(r.id).first();
+    throw new ApiError(still ? "reward_unavailable" : "invalid_code");
+  }
   const rider = await db.prepare("select id, phone, email, full_name from users where id = ?").bind(r.user_id).first<UserRow>();
   return { person: rider ? label(rider) : "?", co2Grams: 0, points: -r.cost_points, rewardTitle: r.reward_title };
 }

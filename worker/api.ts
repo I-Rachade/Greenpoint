@@ -1,3 +1,4 @@
+import { captchaSiteKey, checkCaptcha, countIpRequest } from "./ip-limits";
 import { offersCharging, offersSwap, withinOpeningHours } from "../src/lib/availability";
 import { depotPoints, hasAnyPoint } from "../src/lib/station-points";
 import { cleanAmenities, cleanMainActivity, cleanPhotos, isUnattended, type ReviewInput } from "../src/lib/station-extras";
@@ -16,6 +17,9 @@ import {
   checkPickupCode,
   evTargetSql,
   heldBatteriesSql,
+  heldOfKindSql,
+  holdRoomSql,
+  holdStockSql,
   heldTargetsByStation,
   RESERVATION_SELECT,
   stillActive,
@@ -38,7 +42,10 @@ import type { CodeChannel } from "../src/lib/backend/backend";
 import { parseContact } from "../src/lib/contact";
 import {
   OPERATOR_NAME_MAX,
+  STAFF_INVITE_DAYS,
+  STAFF_INVITE_LIMIT,
   type AdminOperator,
+  type MyStaffInvite,
   type OperatorInput,
   type OperatorPerson,
   type OwnerStationInput,
@@ -48,7 +55,7 @@ import {
 import { cleanOpeningHours } from "../src/lib/opening-hours";
 import { reportPeriod } from "../src/lib/owner-backoffice";
 import { ownerLive, ownerReport } from "./owner";
-import { closeCashDay, decideHandover, ownerCash, saveStationCashSettings } from "./station-cash";
+import { closeCashDay, decideHandover, myStationCash, ownerCash, saveStationCashSettings } from "./station-cash";
 import type { HandoverInput, StationCashSettings } from "../src/lib/station-cash";
 import { normalizeTogoPhone } from "../src/lib/phone";
 import { personLabel } from "../src/lib/wallet";
@@ -123,11 +130,13 @@ import {
   abandonJob,
   acceptJob,
   adminDrivers,
+  approveProof,
   applyDriver,
   arriveAtDoor,
   assignJob,
   boardRide,
   reportPosition,
+  rejectProof,
   askPayout,
   bookDelivery,
   bookPickup,
@@ -135,6 +144,7 @@ import {
   bookCourier,
   cancelJob,
   collectPickup,
+  confirmCourierReceipt,
   customerThingsOpen,
   declineJob,
   deliverJob,
@@ -247,6 +257,7 @@ import {
   counterCredit,
   createCreditCode,
   getWallet,
+  setChargeHold,
   setCreditMax,
   setStationGreenCredit,
   setWalletEnabled,
@@ -414,7 +425,8 @@ const STATION_SELECT = `
          (select count(*) from reservations r where r.station_id = s.id and r.status = 'active' and r.expires_at > ?1 and r.kind = 'swap') as reserved_batteries,
          (select avg(rating) from station_reviews sr where sr.station_id = s.id) as rating_avg,
          (select count(*) from station_reviews sr where sr.station_id = s.id) as rating_count,
-         (select count(*) from station_staff sf where sf.station_id = s.id) as staff_count
+         (select count(*) from station_staff sf where sf.station_id = s.id)
+           + (select count(*) from operator_owners oo where oo.operator_id = s.operator_id) as staff_count
   from stations s
   left join operators o on o.id = s.operator_id
   left join station_status st on st.station_id = s.id
@@ -550,6 +562,8 @@ async function reserve(c: Ctx, input: { stationId?: unknown; kind?: unknown; typ
   const user = await c.requireUser();
   // Only riders reserve; staff, drivers' fleet managers and admins do not (role matrix).
   if (user.role !== "customer") throw new ApiError("forbidden", 403);
+  // A confirmed phone number: e-mail accounts are free to make, so they alone cannot hold stock (point 8).
+  if (!user.phone) throw new ApiError("phone_required");
   const stationId = String(input?.stationId ?? "");
   const kind = kindFrom(input?.kind ?? input?.type);
   if (!kind) throw new ApiError("bad_request");
@@ -633,6 +647,13 @@ async function reserve(c: Ctx, input: { stationId?: unknown; kind?: unknown; typ
   }
   // No phone and no staff: nobody answers for the hold, so the station is greyed out in the app.
   if (isUnattended(station)) throw new ApiError("station_unattended");
+  // Reservations take at most half of the station's stock; the insert checks it again. When
+  // everything is held already, the usual answer (none available) says it better.
+  const hold = await c.db
+    .prepare(`select ${heldOfKindSql(kind, "?1", "?2")} as held, ${holdStockSql(kind, "?1")} as stock`)
+    .bind(stationId, now)
+    .first<{ held: number; stock: number }>();
+  if (hold && hold.held >= Math.max(1, Math.ceil(hold.stock / 2)) && hold.held < hold.stock) throw new ApiError("hold_limit");
 
   const id = uuid();
   const code = randomDigits(4);
@@ -646,7 +667,7 @@ async function reserve(c: Ctx, input: { stationId?: unknown; kind?: unknown; typ
       .prepare(
         `insert into reservations (id, user_id, station_id, type, kind, target, charging_point_id, status, created_at, expires_at, pickup_code)
          select ?1, ?2, ?3, ?4, ?10, ?9, ?11, 'active', ?5, ?6, ?7
-         where ${free}`,
+         where ${free} and ${holdRoomSql(kind, "?3", "?5")}`,
       )
       .bind(
         id,
@@ -755,6 +776,8 @@ async function updateStatus(
 ): Promise<{ cancelled: number }> {
   const { user } = await stationActor(c, stationId);
   if (patch.fullBatteries !== undefined || patch.typeBatteries !== undefined) throw new ApiError("bad_request");
+  // "false" as text would open the station.
+  if (patch.isOpen !== undefined && typeof patch.isOpen !== "boolean") throw new ApiError("bad_request");
   const before = await c.db
     .prepare("select is_open, free_slots from station_status where station_id = ?")
     .bind(stationId)
@@ -894,8 +917,17 @@ function stationRow(input: StationInput) {
     opening_hours: cleanOpeningHours(input.openingHours) ?? (() => {
       throw new ApiError("opening_hours_invalid");
     })(),
-    phone: input.phone ? String(input.phone) : null,
+    phone: stationPhone(input.phone),
   };
+}
+
+/** A station's phone: empty, or a real Togolese number, so "has a phone" (isUnattended) means one can call. */
+function stationPhone(raw: unknown): string | null {
+  const text = String(raw ?? "").trim();
+  if (!text) return null;
+  const phone = normalizeTogoPhone(text);
+  if (!phone) throw new ApiError("phone_not_allowed");
+  return phone;
 }
 
 /** Charging places of station ?{station}: its connected outlets. */
@@ -1192,11 +1224,10 @@ async function unassignStaff(c: Ctx, stationId: string, userId: string) {
 }
 
 /**
- * Makes the account staff of one station (W2: exactly one; a second station is refused with
- * 409, the person is moved instead). Owners run their stations through operator_owners and
- * are never staff. A customer becomes staff only with nothing open (R15).
+ * The checks before an account becomes staff of a station (addStaff, and accepting a staff
+ * invite): true when it already is staff there, an error when it may not become staff.
  */
-async function addStaff(c: Ctx, actorId: string, stationId: string, userId: string) {
+async function checkStaffable(c: Ctx, stationId: string, userId: string): Promise<boolean> {
   await refuseOtherRole(c, userId);
   const row = await c.db
     .prepare(
@@ -1207,10 +1238,20 @@ async function addStaff(c: Ctx, actorId: string, stationId: string, userId: stri
     .bind(userId)
     .first<{ role: string; phone: string | null; station_id: string | null; owner: number }>();
   if (!row) throw new ApiError("account_not_found", 404);
-  if (row.station_id === stationId) return;
+  if (row.station_id === stationId) return true;
   if (row.station_id) throw new ApiError("staff_other_station", 409);
   if (row.owner) throw new ApiError("has_other_role", 409);
   if (row.role === DB_CUSTOMER && (await customerThingsOpen(c.db, userId, row.phone))) throw new ApiError("role_change_blocked", 409);
+  return false;
+}
+
+/**
+ * Makes the account staff of one station (W2: exactly one; a second station is refused with
+ * 409, the person is moved instead). Owners run their stations through operator_owners and
+ * are never staff. A customer becomes staff only with nothing open (R15).
+ */
+async function addStaff(c: Ctx, actorId: string, stationId: string, userId: string) {
+  if (await checkStaffable(c, stationId, userId)) return;
   try {
     await c.db.prepare("insert into station_staff (station_id, user_id) values (?, ?)").bind(stationId, userId).run();
   } catch (err) {
@@ -1338,7 +1379,8 @@ async function ownerView(c: Ctx): Promise<OwnerView> {
   if (user.role !== "operator" && user.role !== "admin") throw new ApiError("forbidden", 403);
   const admin = user.role === "admin";
   const mine = admin ? "(select id from operators)" : "(select operator_id from operator_owners where user_id = ?1)";
-  const [operators, staff, reassignments, prices] = await Promise.all([
+  await expireStaffInvites(c.db);
+  const [operators, staff, reassignments, prices, invites] = await Promise.all([
     c.db
       .prepare(`select id, name, is_own from operators where id in ${mine} order by name`)
       .bind(...(admin ? [] : [user.id]))
@@ -1364,6 +1406,13 @@ async function ownerView(c: Ctx): Promise<OwnerView> {
       .prepare(`select id, price_battery_xof, charge_kwh_xof, charge_min_xof from stations where is_active = 1 and operator_id in ${mine}`)
       .bind(...(admin ? [] : [user.id]))
       .all<{ id: string; price_battery_xof: number | null; charge_kwh_xof: number | null; charge_min_xof: number | null }>(),
+    c.db
+      .prepare(
+        `select i.id, i.station_id, i.contact, i.created_at, i.expires_at from staff_invites i join stations s on s.id = i.station_id
+         where i.status = 'pending' and s.is_active = 1 and s.operator_id in ${mine} order by i.created_at`,
+      )
+      .bind(...(admin ? [] : [user.id]))
+      .all<{ id: string; station_id: string; contact: string; created_at: string; expires_at: string }>(),
   ]);
   if (!operators.results.length && !admin) throw new ApiError("forbidden", 403);
   return {
@@ -1377,14 +1426,204 @@ async function ownerView(c: Ctx): Promise<OwnerView> {
       createdAt: r.created_at,
       ...person(r),
     })),
+    // The contact as the owner typed it, masked; never the name of an account that has it.
+    invites: invites.results.map((i) => ({
+      id: i.id,
+      stationId: i.station_id,
+      label: personLabel({ fullName: null, phone: i.contact.includes("@") ? null : i.contact, email: i.contact.includes("@") ? i.contact : null }),
+      createdAt: i.created_at,
+      expiresAt: i.expires_at,
+    })),
     prices: prices.results.map((p) => ({ stationId: p.id, swapXof: p.price_battery_xof, chargeKwhXof: p.charge_kwh_xof, chargeMinXof: p.charge_min_xof })),
   };
 }
 
-async function ownerAddStaff(c: Ctx, stationId: string, contact: unknown) {
+// Staff invites (0050) -------------------------------------------------------
+
+interface StaffInviteRow {
+  id: string;
+  station_id: string;
+  contact: string;
+  invited_by: string;
+  status: "pending" | "accepted" | "declined" | "revoked" | "expired";
+  created_at: string;
+  expires_at: string;
+}
+
+/** Open invites whose time ran out become 'expired' (on every read, like fleet and shop invites). */
+function expireStaffInvites(db: D1Database) {
+  return db.prepare("update staff_invites set status = 'expired', decided_at = ?1 where status = 'pending' and expires_at <= ?1").bind(nowIso()).run();
+}
+
+/**
+ * POST /api/owner/staff { stationId, contact }: invites the person with this phone number or
+ * e-mail address to work at the station; only accepting makes them staff. The owner gets the
+ * same answer whether an account has the contact or not, so nobody can probe for accounts
+ * here; the checks of addStaff run when the person accepts. Inviting the same contact again
+ * gives the open invite a new expiry. An admin assigns staff directly (/api/admin/staff).
+ */
+async function ownerInviteStaff(c: Ctx, stationId: string, rawContact: unknown) {
   const owner = await requireOwnerOf(c, stationId);
-  const account = await findAccount(c, contact);
-  await addStaff(c, owner.id, stationId, account.id);
+  const text = String(rawContact ?? "");
+  const contact = parseContact(text);
+  if (!contact) throw new ApiError(text.includes("@") ? "invalid_contact" : "phone_not_allowed");
+  const station = await c.db.prepare("select name from stations where id = ? and is_active = 1").bind(stationId).first<{ name: string }>();
+  if (!station) throw new ApiError("station_not_found", 404);
+  await expireStaffInvites(c.db);
+  const now = nowIso();
+  const expires = new Date(Date.now() + STAFF_INVITE_DAYS * 86_400_000).toISOString();
+  const renewed = await c.db
+    .prepare("update staff_invites set expires_at = ? where station_id = ? and contact = ? and status = 'pending'")
+    .bind(expires, stationId, contact.value)
+    .run();
+  if (renewed.meta.changes) return;
+  const id = uuid();
+  let changes = 0;
+  try {
+    // The limit in the same statement as the insert, so two invites at once cannot pass it together.
+    const res = await c.db
+      .prepare(
+        `insert into staff_invites (id, station_id, contact, invited_by, status, created_at, expires_at)
+         select ?1, ?2, ?3, ?4, 'pending', ?5, ?6
+         where (select count(*) from staff_invites where station_id = ?2 and status = 'pending') < ?7`,
+      )
+      .bind(id, stationId, contact.value, owner.id, now, expires, STAFF_INVITE_LIMIT)
+      .run();
+    changes = res.meta.changes;
+  } catch (err) {
+    // The same invite sent twice at once: it is there, which is what was asked.
+    if (/UNIQUE/i.test(String(err))) return;
+    throw err;
+  }
+  if (!changes) throw new ApiError("invite_limit", 409);
+  await c.audit(owner.id, "staff_invites", "insert", id, { contact: contact.value }, { stationId }).run();
+  // Only an existing account can be told; the owner's answer above does not depend on it.
+  const account = await c.db
+    .prepare(`select id from users where ${contact.kind === "phone" ? "phone" : "email"} = ?`)
+    .bind(contact.value)
+    .first<{ id: string }>();
+  if (account) {
+    await notifyUser(c.env, account.id, {
+      subject: `Invitation : ${station.name}`,
+      text: `poinderecharge : vous êtes invité(e) à travailler à la station ${station.name}. Acceptez ou refusez dans votre compte : https://app.poinderecharge.com/compte`,
+    });
+  }
+}
+
+/** POST /api/owner/staff-invites/:id/revoke: the owner takes back an invite nobody answered yet. */
+async function ownerRevokeStaffInvite(c: Ctx, id: string) {
+  await requireAnyOwner(c);
+  await expireStaffInvites(c.db);
+  const row = await c.db.prepare("select station_id, status from staff_invites where id = ?").bind(id).first<{ station_id: string; status: string }>();
+  if (!row) throw new ApiError("invite_not_found", 404);
+  const owner = await requireOwnerOf(c, row.station_id);
+  if (row.status !== "pending") throw new ApiError("invite_not_found", 404);
+  await c.db.batch([
+    c.db.prepare("update staff_invites set status = 'revoked', decided_at = ? where id = ? and status = 'pending'").bind(nowIso(), id),
+    c.audit(owner.id, "staff_invites", "update", id, { status: ["pending", "revoked"] }, { stationId: row.station_id }),
+  ]);
+}
+
+/** SQL for invite i at station s: whoever invited still runs the station (an admin, or an owner of its operator). */
+const INVITER_RUNS_STATION = `(exists (select 1 from users where id = i.invited_by and role = 'admin')
+  or exists (select 1 from operator_owners where operator_id = s.operator_id and user_id = i.invited_by))`;
+
+/** GET /api/staff-invites: open staff invites for the signed-in person's phone number or e-mail address. */
+async function myStaffInvites(c: Ctx): Promise<MyStaffInvite[]> {
+  const user = await c.user();
+  if (!user || (!user.phone && !user.email)) return [];
+  await expireStaffInvites(c.db);
+  const { results } = await c.db
+    .prepare(
+      `select i.id, i.expires_at, s.name as station_name, o.name as operator_name
+       from staff_invites i join stations s on s.id = i.station_id join operators o on o.id = s.operator_id
+       where i.contact in (?1, ?2) and i.status = 'pending' and s.is_active = 1 and ${INVITER_RUNS_STATION}
+       order by i.created_at`,
+    )
+    .bind(user.phone, user.email)
+    .all<{ id: string; expires_at: string; station_name: string; operator_name: string }>();
+  return results.map((r) => ({ id: r.id, stationName: r.station_name, operatorName: r.operator_name, expiresAt: r.expires_at }));
+}
+
+/**
+ * The open invite with this id, made for the signed-in account's phone number or e-mail
+ * address, at an active station its inviter still runs (404 otherwise, also for an invite
+ * meant for someone else).
+ */
+async function staffInviteForMe(c: Ctx, user: Profile, id: string): Promise<StaffInviteRow> {
+  await expireStaffInvites(c.db);
+  const row = await c.db
+    .prepare(
+      `select i.* from staff_invites i join stations s on s.id = i.station_id
+       where i.id = ?1 and i.status = 'pending' and s.is_active = 1 and ${INVITER_RUNS_STATION}`,
+    )
+    .bind(String(id ?? ""))
+    .first<StaffInviteRow>();
+  if (!row || (row.contact !== user.phone && row.contact !== user.email)) throw new ApiError("invite_not_found", 404);
+  return row;
+}
+
+/**
+ * POST /api/staff-invites/:id/accept: the invited person becomes staff of the station, with
+ * every check of addStaff (one station, no owner, no other role, a customer with nothing open).
+ * One batch: the staff row only while the invite is open and the account may still be staff,
+ * the invite and the role only once the staff row is there.
+ */
+async function acceptStaffInvite(c: Ctx, id: string) {
+  const user = await c.requireUser();
+  const invite = await staffInviteForMe(c, user, id);
+  const stationId = invite.station_id;
+  const already = await checkStaffable(c, stationId, user.id);
+  const now = nowIso();
+  let res: D1Result[];
+  try {
+    res = await c.db.batch([
+      ...(already
+        ? []
+        : [
+            c.db
+              .prepare(
+                `insert into station_staff (station_id, user_id)
+                 select ?1, ?2 where exists (select 1 from staff_invites where id = ?3 and status = 'pending' and expires_at > ?4)
+                   and exists (select 1 from users where id = ?2 and role in (?5, 'operator', 'admin'))
+                   and not exists (select 1 from operator_owners where user_id = ?2)`,
+              )
+              .bind(stationId, user.id, invite.id, now, DB_CUSTOMER),
+          ]),
+      c.db
+        .prepare(
+          `update staff_invites set status = 'accepted', decided_at = ?1, user_id = ?2
+           where id = ?3 and status = 'pending' and exists (select 1 from station_staff where station_id = ?4 and user_id = ?2)`,
+        )
+        .bind(now, user.id, invite.id, stationId),
+      // The role follows the assignment (as promoteToOperator), only with the staff row in place.
+      c.db
+        .prepare("update users set role = 'operator' where id = ?1 and role = ?2 and exists (select 1 from station_staff where station_id = ?3 and user_id = ?1)")
+        .bind(user.id, DB_CUSTOMER, stationId),
+      resolveReassignments(c, invite.invited_by, user.id, stationId),
+      // Staff work at one station: the person's other open staff invites end here.
+      c.db
+        .prepare("update staff_invites set status = 'expired', decided_at = ?1 where contact in (?2, ?3) and status = 'pending' and id <> ?4")
+        .bind(now, user.phone, user.email, invite.id),
+      c.audit(user.id, "staff_invites", "update", invite.id, { status: ["pending", "accepted"] }, { stationId, userId: user.id }),
+      ...(already ? [] : [c.audit(user.id, "station_staff", "insert", `${stationId}:${user.id}`, { invite: invite.id, invited_by: invite.invited_by }, { stationId, userId: user.id })]),
+    ]);
+  } catch (err) {
+    // Assigned elsewhere in the meantime (unique index station_staff_one_station): nothing was written.
+    if (/UNIQUE/i.test(String(err))) throw new ApiError("staff_other_station", 409);
+    throw err;
+  }
+  if (!res[already ? 0 : 1].meta.changes) throw new ApiError("invite_not_found", 404);
+}
+
+/** POST /api/staff-invites/:id/decline: the invited person says no. */
+async function declineStaffInvite(c: Ctx, id: string) {
+  const user = await c.requireUser();
+  const invite = await staffInviteForMe(c, user, id);
+  await c.db.batch([
+    c.db.prepare("update staff_invites set status = 'declined', decided_at = ?, user_id = ? where id = ? and status = 'pending'").bind(nowIso(), user.id, invite.id),
+    c.audit(user.id, "staff_invites", "update", invite.id, { status: ["pending", "declined"] }, { stationId: invite.station_id, userId: user.id }),
+  ]);
 }
 
 async function ownerRemoveStaff(c: Ctx, stationId: string, userId: string) {
@@ -1412,7 +1651,7 @@ async function ownerSaveStation(c: Ctx, stationId: string, input: OwnerStationIn
   };
   const after = {
     opening_hours: hours,
-    phone: String(input?.phone ?? "").trim().slice(0, 40) || null,
+    phone: stationPhone(input?.phone),
     price_battery_xof: price("swapXof", before.price_battery_xof),
     charge_kwh_xof: price("chargeKwhXof", before.charge_kwh_xof),
     charge_min_xof: price("chargeMinXof", before.charge_min_xof),
@@ -1682,13 +1921,17 @@ const ROUTES: [string, RegExp, Handler][] = [
     },
   ],
   ["GET", /^\/api\/me$/, (c) => c.user()],
+  // The Turnstile site key for the login form, null while Turnstile is off (worker/ip-limits.ts).
+  ["GET", /^\/api\/auth\/captcha$/, async (c) => ({ siteKey: captchaSiteKey(c.env) })],
   // Auth bodies name the phone number or e-mail address "contact"; "phone" is the
   // older name, still sent by app versions released before e-mail login.
   [
     "POST",
     /^\/api\/auth\/send$/,
     async (c) => {
-      const body = await readJson<{ contact?: string; phone?: string }>(c.request);
+      const body = await readJson<{ contact?: string; phone?: string; captcha?: string }>(c.request);
+      await countIpRequest(c.db, c.request, "send");
+      await checkCaptcha(c.env, c.request, body.captcha);
       await sendCode(c.env, body.contact ?? body.phone ?? "");
       return { ok: true };
     },
@@ -1722,6 +1965,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/auth\/login$/,
     async (c) => {
       const body = await readJson<{ contact?: string; phone?: string; pin: string }>(c.request);
+      await countIpRequest(c.db, c.request, "login");
       return signIn(c.env, body.contact ?? body.phone ?? "", body.pin);
     },
   ],
@@ -1792,9 +2036,14 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/owner\/staff$/,
     async (c) => {
       const { stationId, contact } = await readJson<{ stationId: string; contact: string }>(c.request);
-      return ownerAddStaff(c, String(stationId), contact);
+      return ownerInviteStaff(c, String(stationId), contact);
     },
   ],
+  ["POST", /^\/api\/owner\/staff-invites\/([\w-]+)\/revoke$/, (c, [id]) => ownerRevokeStaffInvite(c, id)],
+  // The invited person: open staff invites for their phone number or e-mail address, accept or decline.
+  ["GET", /^\/api\/staff-invites$/, (c) => myStaffInvites(c)],
+  ["POST", /^\/api\/staff-invites\/([\w-]+)\/accept$/, (c, [id]) => acceptStaffInvite(c, id)],
+  ["POST", /^\/api\/staff-invites\/([\w-]+)\/decline$/, (c, [id]) => declineStaffInvite(c, id)],
   [
     "DELETE",
     /^\/api\/owner\/staff$/,
@@ -1942,7 +2191,8 @@ const ROUTES: [string, RegExp, Handler][] = [
   // Owner backoffice (worker/owner.ts): live queue and handovers, settlement and statistics.
   ["GET", /^\/api\/owner\/live$/, (c) => ownerLive(c, c.url.searchParams.get("stationId") || null)],
   ["GET", /^\/api\/owner\/report$/, (c) => ownerReport(c, c.url.searchParams.get("stationId") || null, reportPeriod(c.url.searchParams.get("days")))],
-  // Station cash (worker/station-cash.ts): what partner stations owe, their closings and the admin's confirmation.
+  // Station cash (worker/station-cash.ts): what partner stations (at own stations: staff members) owe, their closings and the admin's confirmation.
+  ["GET", /^\/api\/stations\/([\w-]+)\/cash$/, (c, [id]) => myStationCash(c, id)],
   ["GET", /^\/api\/owner\/cash$/, (c) => ownerCash(c, c.url.searchParams.get("stationId") || null)],
   ["POST", /^\/api\/owner\/cash\/handovers$/, async (c) => closeCashDay(c, await readJson<HandoverInput>(c.request))],
   [
@@ -1994,6 +2244,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     return setWalletEnabled(c.env, admin, !!enabled);
   }],
   ["POST", /^\/api\/admin\/wallet\/max$/, async (c) => setCreditMax(c.env, await c.requireAdmin(), c.request)],
+  ["POST", /^\/api\/admin\/wallet\/charge-hold$/, async (c) => setChargeHold(c.env, await c.requireAdmin(), c.request)],
   ["POST", /^\/api\/admin\/stations\/([\w-]+)\/green-credit$/, async (c, [id]) => setStationGreenCredit(c.env, await c.requireAdmin(), id, c.request)],
   ["POST", /^\/api\/admin\/wallet\/adjust$/, async (c) => adjustBalance(c.env, await c.requireAdmin(), c.request)],
   ["POST", /^\/api\/admin\/wallet\/freeze$/, async (c) => {
@@ -2050,7 +2301,7 @@ const ROUTES: [string, RegExp, Handler][] = [
   }],
   ["POST", /^\/api\/admin\/charge-cards$/, async (c) => saveChargeCard(c.db, await c.requireAdmin(), c.request)],
   ["POST", /^\/api\/admin\/charge-cards\/([^/]+)\/balance$/, async (c, [tag]) => adjustChargeCard(c.db, await c.requireAdmin(), tag, c.request)],
-  ["POST", /^\/api\/admin\/charge-cards\/([^/]+)\/block$/, async (c, [tag]) => setChargeCardBlocked(c.db, await c.requireAdmin(), tag, c.request)],
+  ["POST", /^\/api\/admin\/charge-cards\/([^/]+)\/block$/, async (c, [tag]) => setChargeCardBlocked(c.env, await c.requireAdmin(), tag, c.request)],
   ["DELETE", /^\/api\/admin\/charge-cards\/([^/]+)$/, async (c, [tag]) => deleteChargeCard(c.db, await c.requireAdmin(), tag)],
   ["GET", /^\/api\/admin\/greenpoint$/, async (c) => {
     await c.requireAdmin();
@@ -2097,7 +2348,10 @@ const ROUTES: [string, RegExp, Handler][] = [
   [
     "POST",
     /^\/api\/stations\/([\w-]+)\/parcels\/pickup$/,
-    async (c, [id]) => pickUpParcel(c, id, (await readJson<{ code: string }>(c.request)).code),
+    async (c, [id]) => {
+      const { code, trackingNo } = await readJson<{ code: string; trackingNo?: string }>(c.request);
+      return pickUpParcel(c, id, code, trackingNo);
+    },
   ],
   // Partner API bookings waiting for drop-off (worker/partners.ts)
   ["GET", /^\/api\/stations\/([\w-]+)\/bookings$/, (c, [id]) => stationBookings(c, id)],
@@ -2254,6 +2508,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     },
   ],
   ["POST", /^\/api\/jobs\/([\w-]+)\/cancel$/, (c, [id]) => cancelJob(c, id)],
+  ["POST", /^\/api\/jobs\/([\w-]+)\/confirm-receipt$/, (c, [id]) => confirmCourierReceipt(c, id)],
   ["GET", /^\/api\/stations\/([\w-]+)\/drivers$/, (c, [id]) => stationDrivers(c, id)],
   [
     "POST",
@@ -2296,6 +2551,8 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/admin\/jobs\/([\w-]+)\/assign$/,
     async (c, [id]) => assignJob(c, id, String((await readJson<{ driverId: string }>(c.request)).driverId)),
   ],
+  ["POST", /^\/api\/admin\/jobs\/([\w-]+)\/approve-proof$/, (c, [id]) => approveProof(c, id)],
+  ["POST", /^\/api\/admin\/jobs\/([\w-]+)\/reject-proof$/, (c, [id]) => rejectProof(c, id, () => readJson<{ reason?: unknown }>(c.request))],
   [
     "POST",
     /^\/api\/admin\/stations$/,
@@ -2435,6 +2692,7 @@ export const OPEN_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/operators",
   "GET /api/stations/:id/reviews",
   "GET /api/me",
+  "GET /api/auth/captcha",
   "POST /api/auth/send",
   "POST /api/auth/register",
   "POST /api/auth/register-fleet",
@@ -2449,6 +2707,7 @@ export const OPEN_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/parcels/mine",
   "GET /api/fleet-invites",
   "GET /api/merchant-invites",
+  "GET /api/staff-invites",
   "GET /api/jobs/mine",
   "GET /api/charging/outlets/:id",
 ]);
@@ -2469,7 +2728,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const c = new Ctx(env, request, url);
   try {
-    const mediaMatch = /^\/api\/media\/(promotions\/[\w-]+\.(?:png|jpg|webp|gif))$/.exec(url.pathname);
+    const mediaMatch = /^\/api\/media\/((?:promotions|stations)\/[\w-]+\.(?:png|jpg|webp|gif))$/.exec(url.pathname);
     if (mediaMatch && (request.method === "GET" || request.method === "HEAD")) return await media(c, mediaMatch[1]);
     // Called by the payment provider, answers in plain text (see worker/payments.ts).
     if (url.pathname === "/api/payments/callback" && request.method === "POST") return await paymentCallback(env, request);

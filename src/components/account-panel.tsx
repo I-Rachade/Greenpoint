@@ -23,6 +23,7 @@ import { managesFleet } from "@/lib/fleet";
 import { isDriverAccount } from "@/lib/drivers";
 import { isMerchantAccount } from "@/lib/merchants";
 import { MerchantInvitesCard } from "./merchants/merchant-invites";
+import { StaffInvitesCard } from "./staff-invites";
 
 const CODE_LENGTH = 6;
 const digits = (value: string) => value.replace(/\D/g, "").slice(0, CODE_LENGTH);
@@ -100,6 +101,8 @@ export function AccountPanel() {
 
           {/* A customer invited into a shop's team accepts or declines here (or on /marchand). */}
           <MerchantInvitesCard />
+          {/* Someone an owner invited to work at a station accepts or declines here (migration 0050). */}
+          <StaffInvitesCard />
 
           <MenuGroup title={a.menu} top={isStationStaff(profile) || driver || fleet || merchant ? undefined : <GreenpointHighlight />}>
             {driver && <MenuLink href="/chauffeur" icon={ScooterIcon} label={t.nav.driver} />}

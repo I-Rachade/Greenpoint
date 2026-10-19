@@ -29,6 +29,32 @@ export interface StaffReassignment extends OperatorPerson {
   createdAt: string;
 }
 
+/** Days a staff invite stays open (like fleet and shop invites). */
+export const STAFF_INVITE_DAYS = 7;
+/** Open staff invites per station at a time, so an owner cannot send them to everyone. */
+export const STAFF_INVITE_LIMIT = 20;
+
+/**
+ * An open invite to work at one of the owner's stations (migration 0050). It is made for the
+ * phone number or e-mail address the owner typed; the owner never learns whether an account
+ * has it. `label` is that contact, masked like staff labels.
+ */
+export interface StaffInvite {
+  id: string;
+  stationId: string;
+  label: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/** An open staff invite for the signed-in person's phone number or e-mail address. */
+export interface MyStaffInvite {
+  id: string;
+  stationName: string;
+  operatorName: string;
+  expiresAt: string;
+}
+
 /** Prices the owner sets for a station (FCFA); null = none (swap) or the network default (charging). */
 export interface StationPrices {
   stationId: string;
@@ -43,6 +69,8 @@ export interface OwnerView {
   stations: StationView[];
   staff: OperatorStaff[];
   reassignments: StaffReassignment[];
+  /** Open staff invites of the stations (oldest first). */
+  invites: StaffInvite[];
   prices: StationPrices[];
 }
 

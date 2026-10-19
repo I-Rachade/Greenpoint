@@ -305,7 +305,6 @@ export async function merchantView(c: ParcelCtx): Promise<MerchantView> {
   const empty = { live: [], members: [], invites: [], drivers: [], checkins: [], unpaid: [], addresses: [] };
   if (shop.status !== "approved") return { merchant: toInfo(shop, 0), isOwner, today, settings, ...empty };
   await expireInvites(c.db);
-  await dispatch(c);
   const [live, counts, used, addresses] = await Promise.all([
     c.db
       .prepare(`${JOB_SELECT} where j.merchant_id = ? and j.status in (${RUNNING.map(() => "?").join(", ")}) order by j.created_at desc limit 100`)

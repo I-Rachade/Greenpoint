@@ -1,3 +1,4 @@
+import { pruneIpRequests } from "./ip-limits";
 import { handleApi } from "./api";
 import { recountSilentFreeSlots } from "./devices";
 import { runDispatch } from "./drivers";
@@ -68,6 +69,7 @@ export default {
         await runPartnerEvents(env);
       }),
     );
+    if (controller.cron === DAILY_CRON) ctx.waitUntil(pruneIpRequests(env.DB).catch((err) => console.error("ip limits", err)));
     if (controller.cron !== DAILY_CRON) ctx.waitUntil(runDispatch(env).catch((err) => console.error("dispatch", err)));
     if (controller.cron !== DAILY_CRON) ctx.waitUntil(recountSilentFreeSlots(env.DB).catch((err) => console.error("free slots", err)));
     const at = new Date(controller.scheduledTime);

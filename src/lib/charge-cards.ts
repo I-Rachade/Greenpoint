@@ -34,7 +34,11 @@ export interface CounterCard {
   idTag: string;
   label: string | null;
   blocked: boolean;
-  balanceXof: number;
+  /**
+   * Missing, like the name and `customer`, unless the card was swiped at this station in the
+   * last 24 hours or is in a charge here (counterCardInfo in worker/charge-cards.ts).
+   */
+  balanceXof?: number;
   /**
    * Linked to a customer account: it pays with the account's Green Credit, loaded with the
    * customer's one-time QR code only (0047). `balanceXof` is then the account's.

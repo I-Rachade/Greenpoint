@@ -2,7 +2,7 @@
 
 import { useState, type ComponentType, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
-import type { DeliveryJob, DriverAtStation, JobDriver } from "@/lib/drivers";
+import { isDriverPassFormat, type DeliveryJob, type DriverAtStation, type JobDriver } from "@/lib/drivers";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { DriverPart } from "@/lib/parcel-sections";
@@ -69,6 +69,8 @@ function DriverAtCounter({
   const [parcel, setParcel] = useState("");
   const [scanning, setScanning] = useState(false);
   const b = found.balanceFcfa;
+  // Cash is settled only for the signed QR of the driver's app, never for the typed code (settleDriver).
+  const withPass = isDriverPassFormat(badge);
 
   async function act(action: () => Promise<unknown>, msg: string) {
     setError("");
@@ -146,7 +148,7 @@ function DriverAtCounter({
             {format(t.drivers.staff.receive, { no: found.receive.trackingNo ?? "" })}
           </button>
         )}
-        {b !== 0 && (
+        {b !== 0 && withPass && (
           <button
             type="button"
             className={secondary}
@@ -157,6 +159,7 @@ function DriverAtCounter({
           </button>
         )}
       </div>
+      {b !== 0 && !withPass && <p className="text-xs text-zinc-500">{t.drivers.staff.settleNeedsPass}</p>}
       <Notice error={error} notice="" />
       <ConfirmSheet
         open={settling}

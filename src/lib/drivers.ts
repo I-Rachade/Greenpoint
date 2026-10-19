@@ -305,6 +305,16 @@ export type DriverPassCheck =
   | { ok: true; code: string; fleet: string }
   | { ok: false; error: "driver_pass_invalid" | "driver_pass_expired" };
 
+/**
+ * True when the input looks like a signed pass, genuine or not: the prefix with more than the
+ * code after it (the old static QR is the prefix and the code alone). Such input is always
+ * checked as a pass, never read as the bare code inside it.
+ */
+export function isDriverPassFormat(input: string): boolean {
+  const text = input.trim().toUpperCase();
+  return text.startsWith(`${BADGE_PREFIX}:`) && text.slice(BADGE_PREFIX.length + 1).includes(":");
+}
+
 /** Checks a scanned pass: signature first, then the time. The caller checks driver and fleet. */
 export async function checkDriverPass(secret: string, input: string, now = Date.now()): Promise<DriverPassCheck> {
   const text = input.trim().toUpperCase();
@@ -477,6 +487,13 @@ export interface DeliveryJob {
    * (made when the driver takes the parcel). The driver hands over for this code or a photo.
    */
   handoverCode?: string;
+  /**
+   * Couriers finished with the photo alone, without the recipient's code: the driver's share
+   * waits ('pending') until the sender confirms receipt or an admin approves the photo; an
+   * admin may also reject it ('rejected', with proofRejectReason): the share is not booked.
+   */
+  proofReview?: "pending" | "approved" | "rejected";
+  proofRejectReason?: string;
 }
 
 export interface PickupBooking {

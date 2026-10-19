@@ -14,6 +14,9 @@ import { fakeD1 } from "./test-d1";
 const OWN_OPERATOR = "00000000-0000-4000-8000-000000000001";
 const CUSTOMER: Profile = { id: "customer-1", phone: "+22896123456", fullName: null, role: "customer" };
 const OTHER: Profile = { id: "customer-2", phone: "+22890123456", fullName: null, role: "customer" };
+// Only admins pay against the simulated provider (mobilePaymentOffered): the simulation's tests run as them.
+const TESTER: Profile = { ...CUSTOMER, role: "admin" };
+const OTHER_TESTER: Profile = { ...OTHER, role: "admin" };
 
 function setup(settings: Partial<Env> = {}) {
   const { db, d1 } = fakeD1();
@@ -45,7 +48,7 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-const start = (env: Env, body: unknown, user = CUSTOMER) => startPayment(env, user, post("/api/payments", body));
+const start = (env: Env, body: unknown, user = TESTER) => startPayment(env, user, post("/api/payments", body));
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -164,7 +167,7 @@ describe("startPayment", () => {
 
   it("only takes payments at own stations with a price", async () => {
     const { db, env } = setup();
-    await expect(start(env, { reservationId: "res-foreign", network: "flooz", phone: "96123456" }, OTHER)).rejects.toMatchObject({
+    await expect(start(env, { reservationId: "res-foreign", network: "flooz", phone: "96123456" }, OTHER_TESTER)).rejects.toMatchObject({
       code: "payment_not_offered",
     });
     db.exec("update stations set price_battery_xof = null where id = 'own'");
@@ -175,7 +178,7 @@ describe("startPayment", () => {
 
   it("rejects other customers' and inactive reservations, bad networks and foreign numbers", async () => {
     const { db, env } = setup();
-    await expect(start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" }, OTHER)).rejects.toMatchObject({
+    await expect(start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" }, OTHER_TESTER)).rejects.toMatchObject({
       code: "not_found",
     });
     await expect(start(env, { reservationId: "res-battery", network: "orange", phone: "96123456" })).rejects.toMatchObject({
@@ -188,6 +191,14 @@ describe("startPayment", () => {
     await expect(start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" })).rejects.toMatchObject({
       code: "reservation_not_active",
     });
+  });
+
+  it("never lets a customer pay against the simulation, which marks payments paid without money", async () => {
+    const { db, env } = setup();
+    await expect(start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" }, CUSTOMER)).rejects.toMatchObject({
+      code: "payment_not_offered",
+    });
+    expect(db.prepare("select count(*) as n from payments").get()).toEqual({ n: 0 });
   });
 
   it("marks the payment failed when the provider refuses, so the customer can try again", async () => {
@@ -211,6 +222,31 @@ describe("refreshPayment and myPayments", () => {
     expect(refreshed.paidAt).not.toBeNull();
     expect(await myPayments(env, CUSTOMER)).toHaveLength(1);
     expect(await myPayments(env, OTHER)).toHaveLength(0);
+  });
+});
+
+describe("provider switched since the payment", () => {
+  it("never settles a payment with the status of another provider than the one that took it", async () => {
+    const { db, env } = setup();
+    const payment = await start(env, { reservationId: "res-battery", network: "flooz", phone: "96123456" });
+    // Taken by PayGate, the Worker now simulating: the simulation would say paid.
+    db.exec("update payments set provider = 'paygate'");
+    expect((await refreshPayment(env, CUSTOMER, payment.id)).status).toBe("pending");
+    const { identifier } = db.prepare("select identifier from payments").get() as { identifier: string };
+    const res = await paymentCallback(env, post("/api/payments/callback?key=callback-secret", { identifier }));
+    expect(res.status).toBe(200);
+    expect(db.prepare("select status from payments").get()).toEqual({ status: "pending" });
+  });
+
+  it("leaves a real top-up pending while the Worker simulates", async () => {
+    const { db, env } = setup();
+    const now = new Date().toISOString();
+    db.exec(`insert into wallet_topups (id, identifier, user_id, amount_xof, network, phone, provider, created_at, updated_at)
+             values ('t1', 'pdw_1', 'customer-1', 5000, 'flooz', '+22896123456', 'paygate', '${now}', '${now}')`);
+    const res = await paymentCallback(env, post("/api/payments/callback?key=callback-secret", { identifier: "pdw_1" }));
+    expect(res.status).toBe(200);
+    expect(db.prepare("select status from wallet_topups").get()).toEqual({ status: "pending" });
+    expect(db.prepare("select count(*) as n from wallets where balance_xof > 0").get()).toEqual({ n: 0 });
   });
 });
 

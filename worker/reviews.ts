@@ -3,6 +3,7 @@
 import { cleanReview, shortName, type ReviewInput, type StationReview } from "../src/lib/station-extras";
 import type { Profile } from "../src/lib/types";
 import { ApiError, nowIso, uuid } from "./http";
+import { refuseNonCustomer } from "./roles";
 
 interface ReviewRow {
   id: string;
@@ -37,6 +38,8 @@ export async function stationReviews(db: D1Database, stationId: string, viewer: 
 
 /** Creates or replaces the signed-in customer's review of an active station. */
 export async function saveReview(db: D1Database, user: Profile, stationId: string, input: ReviewInput) {
+  // Customers rate stations; staff and owners would rate their own or a rival station.
+  refuseNonCustomer(user);
   const review = cleanReview(input);
   if (!review) throw new ApiError("invalid_review");
   const station = await db.prepare("select 1 from stations where id = ? and is_active = 1").bind(stationId).first();

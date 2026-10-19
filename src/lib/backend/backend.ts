@@ -21,7 +21,7 @@ import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
-import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
+import type { AdminOperator, MyStaffInvite, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
 import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "../point-partners";
 import type { Promotion, PromotionInput } from "../promo";
 import type {
@@ -104,7 +104,8 @@ export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots">>;
 /** Start a charge for a cash or app customer, or for the customer of an outlet reservation (with its code). */
 export interface StartChargeInput {
   pointId: string;
-  contact?: string;
+  /** Without a reservation: the customer's one-time counter code (Green Credit page of their app); empty: anonymous cash charge. */
+  creditCode?: string;
   reservationId?: string;
   pickupCode?: string;
 }
@@ -150,6 +151,8 @@ export type BackendErrorCode =
   | "parcel_not_arrived"
   | "not_a_driver"
   | "phone_required"
+  | "hold_limit"
+  | "captcha_failed"
   | "driver_busy"
   | "driver_not_found"
   | "too_far"
@@ -196,6 +199,8 @@ export type BackendErrorCode =
   | "credit_not_accepted"
   | "credit_limit_reached"
   | "card_needs_account"
+  | "credit_code_required"
+  | "ocpp_key_required"
   | "reward_unavailable"
   | "redemption_open"
   | "not_enough_points"
@@ -233,6 +238,8 @@ export type BackendErrorCode =
   | "swap_required"
   | "driver_pass_invalid"
   | "driver_pass_expired"
+  | "driver_pass_required"
+  | "pickup_code_required"
   | "role_change_blocked"
   | "fleet_not_approved"
   | "fleet_locked"
@@ -241,6 +248,7 @@ export type BackendErrorCode =
   | "invite_account_not_empty"
   | "invite_pending"
   | "invite_not_found"
+  | "invite_limit"
   | "already_in_fleet"
   | "account_exists"
   | "parcel_not_in_run"
@@ -300,7 +308,9 @@ export interface Backend {
    * Sends a code by SMS (phone number) or by e-mail (address), needed to register
    * and to set a new PIN when it is forgotten. `contact` is normalised (see lib/contact.ts).
    */
-  sendCode(contact: string): Promise<void>;
+  sendCode(contact: string, captcha?: string): Promise<void>;
+  /** The Cloudflare Turnstile site key the login form shows before sending a code; null while it is off. */
+  captchaSiteKey(): Promise<string | null>;
   /**
    * Checks the code, sets the 4-digit PIN and signs in (new account or new PIN).
    * `demoRole` is only honoured by the demo backend, so testers can try every view.
@@ -366,8 +376,19 @@ export interface Backend {
   // Operator accounts (see src/lib/operators.ts)
   /** The operators the signed-in person runs, their stations and staff. */
   ownerView(): Promise<OwnerView>;
-  /** Makes the account with this phone number or e-mail address staff of one of the operator's stations. */
-  ownerAddStaff(stationId: string, contact: string): Promise<void>;
+  /**
+   * Invites the person with this phone number or e-mail address to work at one of the operator's
+   * stations (migration 0050). The same answer whether an account has the contact or not; the
+   * person becomes staff only by accepting (acceptStaffInvite).
+   */
+  ownerInviteStaff(stationId: string, contact: string): Promise<void>;
+  /** The owner takes back a staff invite nobody answered yet. */
+  ownerRevokeStaffInvite(inviteId: string): Promise<void>;
+  /** Open staff invites for the signed-in person's phone number or e-mail address (empty when signed out). */
+  myStaffInvites(): Promise<MyStaffInvite[]>;
+  /** The invited person becomes staff of the station (the checks of an assignment run now). */
+  acceptStaffInvite(inviteId: string): Promise<void>;
+  declineStaffInvite(inviteId: string): Promise<void>;
   ownerRemoveStaff(stationId: string, userId: string): Promise<void>;
   ownerSaveStation(stationId: string, input: OwnerStationInput): Promise<void>;
   /** Moves a staff member to another station of the owner (staff work at one station only, W2). */
@@ -377,9 +398,11 @@ export interface Backend {
 
   // Owner backoffice (see src/lib/owner-backoffice.ts): one station or all (`null`)
   ownerLive(stationId: string | null): Promise<OwnerLive>;
-  // Station cash (see src/lib/station-cash.ts): partner stations only
-  /** The balance, what is due now and the handovers of the owner's partner stations (admins: all of them). */
+  // Station cash (see src/lib/station-cash.ts): partner stations, and per staff member at own stations
+  /** The balance, what is due now and the handovers of the owner's stations (admins: all of them). */
   ownerCash(stationId: string | null): Promise<StationCash[]>;
+  /** At an own station, the signed-in staff member's Green Credit cash and closings; null elsewhere. */
+  myStationCash(stationId: string): Promise<StationCash | null>;
   /** Closes the open period and records what was handed over (pending until an admin confirms it). */
   closeCashDay(input: HandoverInput): Promise<CashHandover>;
   /** Admins: the money of a handover arrived (confirm) or not (reject, with a reason). */
@@ -507,8 +530,12 @@ export interface Backend {
   cancelRun(stationId: string, runId: string): Promise<void>;
   /** Staff at the destination scan a parcel in from a collection run: it gets its pickup code and the recipient is told. */
   receiveParcel(stationId: string, code: string): Promise<Parcel>;
-  /** Staff at the destination hand out a parcel for its code or scanned QR code. */
-  pickUpParcel(stationId: string, codeOrQr: string): Promise<Parcel>;
+  /**
+   * Staff at the destination hand out a parcel, only for the recipient's code or scanned QR
+   * code. `trackingNo`: the parcel number staff found it by (then wrong codes lock only that
+   * parcel). The number alone never hands it over: pickup_code_required.
+   */
+  pickUpParcel(stationId: string, codeOrQr: string, trackingNo?: string): Promise<Parcel>;
   /** Cancels a parcel that has not left the sending station. */
   cancelParcel(id: string): Promise<void>;
   /** Tells the recipient again that the parcel is waiting. */
@@ -568,6 +595,8 @@ export interface Backend {
   bookDelivery(parcelId: string, home: HomePoint, payWith?: TripPayment): Promise<DeliveryJob>;
   /** Customer (before the driver has the parcel) or admin. */
   cancelJob(id: string): Promise<void>;
+  /** The sender (or the shop) confirms a courier handed over by photo arrived: the driver's held share is booked. */
+  confirmCourierReceipt(jobId: string): Promise<void>;
   /** Station staff: drivers in line and parcels drivers take or bring. */
   stationDrivers(stationId: string): Promise<StationDrivers>;
   /** Station staff scanned a driver's QR code (or typed the code). */
@@ -590,6 +619,10 @@ export interface Backend {
   saveFleetVehicle(id: string | null, input: FleetVehicleInput): Promise<void>;
   saveDriverSettings(settings: DriverSettings): Promise<void>;
   assignJob(jobId: string, driverId: string): Promise<void>;
+  /** Backoffice: the photo of a courier handed over without the code is fine: the driver's held share is booked. */
+  approveCourierProof(jobId: string): Promise<void>;
+  /** Backoffice: the photo does not show the handover: the driver's held share is not booked; driver and sender are told why. */
+  rejectCourierProof(jobId: string, reason: string): Promise<void>;
   /** A displayable URL for a private photo (documents, door photos); admins only. */
   driverFileUrl(key: string): Promise<string>;
   /** Backoffice: links a driver to a fleet manager by phone or e-mail; null unlinks. */
@@ -718,6 +751,8 @@ export interface Backend {
   setWalletEnabled(enabled: boolean): Promise<void>;
   /** The highest balance a customer may hold (0 = no limit). */
   setCreditMax(maxXof: number): Promise<void>;
+  /** The most a Green Credit charge holds of the customer's credit (at least 1 FCFA). */
+  setChargeHold(chargeHoldXof: number): Promise<void>;
   /** Designates a station that loads and accepts Green Credit. */
   setStationGreenCredit(stationId: string, enabled: boolean): Promise<void>;
   adjustWallet(input: WalletAdjustInput): Promise<WalletTransaction>;
