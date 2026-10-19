@@ -418,6 +418,42 @@ describe("handover at the counter", () => {
     expect(status(t, other.id)).toBe("picked_up");
   });
 
+  it("locks the whole counter once wrong codes spread over many parcels reach the station ceiling", async () => {
+    const t = setup();
+    const atB = await Promise.all(Array.from({ length: 9 }, () => createParcel(t.at(A.id), A.id, parcelInput(false))));
+    atB.forEach((p, i) => arrive(t, p.id, String(100000 + i)));
+    // A parcel waiting at station A, another counter.
+    const atA = await createParcel(t.at(B.id), B.id, { ...parcelInput(false), toStationId: A.id });
+    arrive(t, atA.id, "777777");
+    const wrong = (p: { trackingNo: string }) => pickUpParcel(t.at(B.id), B.id, "999999", p.trackingNo);
+    // 4 wrong codes for each of 7 parcels (below the per-parcel lock of 5) and one bare: 29.
+    for (const p of atB.slice(0, 7)) for (let i = 0; i < 4; i++) await expect(wrong(p)).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    await expect(pickUpParcel(t.at(B.id), B.id, "999998")).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    // A right code takes its try back: the recipient collects, the count stays at 29.
+    await pickUpParcel(t.at(B.id), B.id, "100007", atB[7].trackingNo);
+    expect(status(t, atB[7].id)).toBe("picked_up");
+    // The 30th wrong code is still checked; from then on, nothing at this counter is.
+    await expect(wrong(atB[0])).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    await expect(pickUpParcel(t.at(B.id), B.id, "100008", atB[8].trackingNo)).rejects.toMatchObject({ code: "code_locked" });
+    await expect(pickUpParcel(t.at(B.id), B.id, "100008")).rejects.toMatchObject({ code: "code_locked" });
+    expect(status(t, atB[8].id)).toBe("arrived");
+    // Station A is not affected: a wrong code is checked there, the right one hands over.
+    await expect(pickUpParcel(t.at(A.id), A.id, "999999", atA.trackingNo)).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    await pickUpParcel(t.at(A.id), A.id, "777777");
+    expect(status(t, atA.id)).toBe("picked_up");
+    expect(t.db.prepare("select count(*) as n from parcel_code_failures where at_station = ?").get(B.id)).toEqual({ n: 30 });
+  });
+
+  it("never counts more than the station ceiling when wrong codes for many parcels arrive at once", async () => {
+    const t = setup();
+    const atB = await Promise.all(Array.from({ length: 10 }, () => createParcel(t.at(A.id), A.id, parcelInput(false))));
+    atB.forEach((p, i) => arrive(t, p.id, String(100000 + i)));
+    const tries = await Promise.allSettled(atB.flatMap((p) => Array.from({ length: 4 }, () => pickUpParcel(t.at(B.id), B.id, "999999", p.trackingNo))));
+    const codes = tries.map((r) => (r.status === "rejected" ? (r.reason as { code: string }).code : "ok"));
+    expect(codes.filter((c) => c === "wrong_pickup_code")).toHaveLength(30);
+    expect(codes.filter((c) => c === "code_locked")).toHaveLength(10);
+  });
+
   it("locks bare codes at the station without blocking a parcel found by its number", async () => {
     const t = setup();
     const parcel = await createParcel(t.at(A.id), A.id, parcelInput(false));

@@ -141,6 +141,7 @@ import {
   newTrackingNo,
   PARCEL_CODE_LOCK_MINUTES,
   PARCEL_MAX_CODE_FAILURES,
+  PARCEL_STATION_MAX_CODE_FAILURES,
   PARCEL_PICKUP_DAYS,
   needsLabel,
   OPEN_PARCEL_STATUSES,
@@ -429,7 +430,8 @@ interface DemoState {
   /** Full batteries per battery type, by station id then type id (default: the station's total spread over its types). */
   typeBatteries?: Record<string, Record<string, number>>;
   parcelSizes?: ParcelSizeTier[];
-  parcelCodeFailures?: { stationId: string; at: string }[];
+  /** stationId: the key (station, "parcel:<id>" or "job:<id>"); atStation: the counter it was typed at (0058). */
+  parcelCodeFailures?: { stationId: string; at: string; atStation?: string }[];
   /** Collection runs and parcel scans (plan phase 7), as parcel_runs and parcel_scans (migration 0034). */
   parcelRuns?: DemoRun[];
   parcelScans?: DemoScan[];
@@ -4172,18 +4174,19 @@ export class DemoBackend implements Backend {
       if (known.deliveryStatus === "out_for_delivery") throw new BackendError("parcel_with_driver");
     }
     if (!input.code) throw new BackendError("pickup_code_required");
-    // Wrong codes lock that parcel, or bare codes at the station.
+    // Wrong codes lock that parcel, or bare codes at the station; and all of them at this station together, above a ceiling.
     const key = known ? `parcel:${known.id}` : stationId;
     const since = Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000;
-    const failures = (state.parcelCodeFailures ?? []).filter((f) => f.stationId === key && new Date(f.at).getTime() > since);
-    if (failures.length >= PARCEL_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    const recent = (state.parcelCodeFailures ?? []).filter((f) => new Date(f.at).getTime() > since);
+    if (recent.filter((f) => f.stationId === key).length >= PARCEL_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    if (recent.filter((f) => f.atStation === stationId).length >= PARCEL_STATION_MAX_CODE_FAILURES) throw new BackendError("code_locked");
     const parcel = known
       ? known.pickupCode === input.code
         ? known
         : undefined
       : parcels.find((p) => p.toStationId === stationId && p.status === "arrived" && p.pickupCode === input.code);
     if (!parcel) {
-      this.save({ ...state, parcelCodeFailures: [...(state.parcelCodeFailures ?? []), { stationId: key, at: new Date().toISOString() }] });
+      this.save({ ...state, parcelCodeFailures: [...(state.parcelCodeFailures ?? []), { stationId: key, at: new Date().toISOString(), atStation: stationId }] });
       throw new BackendError("wrong_pickup_code");
     }
     if (parcel.deliveryStatus === "out_for_delivery") throw new BackendError("parcel_with_driver");

@@ -226,6 +226,9 @@ CREATE INDEX otp_codes_phone_idx on otp_codes (phone, created_at);
 -- index parcel_code_failures_idx
 CREATE INDEX parcel_code_failures_idx on parcel_code_failures (station_id, at);
 
+-- index parcel_code_failures_station_idx
+CREATE INDEX parcel_code_failures_station_idx on parcel_code_failures (at_station, at) where at_station is not null;
+
 -- index parcel_events_parcel_idx
 CREATE INDEX parcel_events_parcel_idx on parcel_events (parcel_id, id);
 
@@ -509,7 +512,7 @@ CREATE TABLE operators (id text primary key, name text not null, is_own integer 
 CREATE TABLE otp_codes (id integer primary key autoincrement, phone text not null, code_hash text not null, created_at text not null, expires_at text not null, attempts integer not null default 0, used integer not null default 0);
 
 -- table parcel_code_failures
-CREATE TABLE parcel_code_failures (id integer primary key autoincrement, station_id text not null, at text not null);
+CREATE TABLE parcel_code_failures (id integer primary key autoincrement, station_id text not null, at text not null , at_station text);
 
 -- table parcel_depots
 CREATE TABLE parcel_depots (station_id text primary key references stations (id) on delete cascade, is_active integer not null default 1, note text not null default '' check (length(note) <= 200), -- where at the station, e.g. "au comptoir" lockers integer not null default 0 check (lockers between 0 and 500), -- compartments of a future locker updated_at text not null , has_counter integer not null default 1 check (has_counter in (0, 1)));
