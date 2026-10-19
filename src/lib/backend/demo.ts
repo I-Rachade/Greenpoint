@@ -4373,6 +4373,7 @@ export class DemoBackend implements Backend {
       proofKey: j.proofKey,
       ...(j.merchantId ? { forShop: true as const } : {}),
       ...(j.proofReview ? { proofReview: j.proofReview } : {}),
+      ...(j.proofReview === "rejected" && j.proofRejectReason ? { proofRejectReason: j.proofRejectReason } : {}),
     };
   }
 
@@ -5142,6 +5143,22 @@ export class DemoBackend implements Backend {
     const job = (state.jobs ?? []).find((j) => j.id === jobId);
     if (!job) throw new BackendError("job_not_found");
     this.approveProof(state, job, "admin");
+  }
+
+  /** As rejectProof in worker/drivers.ts: the held share is not booked, and the trip can no longer be approved. */
+  async rejectCourierProof(jobId: string, reason: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const why = reason.trim();
+    if (!why || why.length > 300) throw new BackendError("unknown", "bad_request");
+    const job = (state.jobs ?? []).find((j) => j.id === jobId);
+    if (!job) throw new BackendError("job_not_found");
+    if (job.kind !== "courier" || job.status !== "done" || job.proofReview !== "pending" || !job.driverId) throw new BackendError("job_wrong_status");
+    this.saveJobs(
+      state,
+      (state.jobs ?? []).map((j) => (j.id === job.id ? { ...j, proofReview: "rejected" as const, proofRejectReason: why } : j)),
+      { table: "delivery_jobs", action: "update", rowId: job.id, userId: job.driverId, changes: { proof_review: ["pending", "rejected"], reason: why } },
+    );
   }
 
   /** Courier at the door, as checkCourierHandover() in worker/drivers.ts: the recipient's code, or a photo without one. */

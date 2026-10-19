@@ -521,6 +521,11 @@ export function JobDetails({ job: j, stations, showRoute = true }: { job: Delive
           </button>
         </div>
       )}
+      {j.proofReview === "rejected" && (
+        <p className="rounded-lg bg-red-100 p-3 text-red-900 dark:bg-red-900/30 dark:text-red-100">
+          {format(t.drivers.customer.proofRejected, { reason: j.proofRejectReason ?? "" })}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         {j.collectFcfa > 0 && <span className="font-semibold">{fcfa(j.collectFcfa)}</span>}
         {!!j.prepaidFcfa && (

@@ -489,9 +489,11 @@ export interface DeliveryJob {
   handoverCode?: string;
   /**
    * Couriers finished with the photo alone, without the recipient's code: the driver's share
-   * waits ('pending') until the sender confirms receipt or an admin approves the photo.
+   * waits ('pending') until the sender confirms receipt or an admin approves the photo; an
+   * admin may also reject it ('rejected', with proofRejectReason): the share is not booked.
    */
-  proofReview?: "pending" | "approved";
+  proofReview?: "pending" | "approved" | "rejected";
+  proofRejectReason?: string;
 }
 
 export interface PickupBooking {
