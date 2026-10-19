@@ -1069,6 +1069,10 @@ export class CloudflareBackend implements Backend {
     return this.act("POST", `/api/admin/jobs/${encodeURIComponent(jobId)}/approve-proof`);
   }
 
+  rejectCourierProof(jobId: string, reason: string) {
+    return this.act("POST", `/api/admin/jobs/${encodeURIComponent(jobId)}/reject-proof`, { reason });
+  }
+
   setDriverManager(driverId: string, contact: string | null) {
     return this.act("POST", `/api/admin/drivers/${encodeURIComponent(driverId)}/manager`, { contact });
   }

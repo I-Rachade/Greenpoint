@@ -526,6 +526,11 @@ export async function setStationGreenCredit(env: Env, admin: Profile, stationId:
  * Admin correction (spec 1.4.11), or a cash refund (the customer got the money back, e.g. to
  * close the account; the only way credit ever leaves as money): one ledger row; a subtraction
  * can never make a balance negative.
+ *
+ * idempotencyKey (optional, sent by the backoffice once per submission): the correction is
+ * booked once per (admin, key). The key is kept on the ledger row as "adjust:<admin>:<key>",
+ * so the unique index (user_id, idempotency_key) of 0009 makes a repeat break the batch; a
+ * repeated key answers the first booking. Without a key, every request books (older clients).
  */
 export async function adjustBalance(env: Env, admin: Profile, request: Request): Promise<WalletTransaction> {
   const input = await readJson<Partial<WalletAdjustInput>>(request);
@@ -534,7 +539,20 @@ export async function adjustBalance(env: Env, admin: Profile, request: Request):
   if (input.direction !== "add" && input.direction !== "subtract" && input.direction !== "refund") throw new ApiError("bad_request");
   const remark = cleanRemark(input.remark);
   if (!remark) throw new ApiError("bad_request");
+  let key: string | null = null;
+  if (input.idempotencyKey !== undefined && input.idempotencyKey !== null) {
+    if (typeof input.idempotencyKey !== "string" || !/^[\w-]{8,64}$/.test(input.idempotencyKey)) throw new ApiError("bad_request");
+    key = `adjust:${admin.id}:${input.idempotencyKey}`;
+  }
   const target = await findUser(env, input.contact);
+  const booked = async () =>
+    key
+      ? await env.DB.prepare("select * from wallet_transactions where user_id = ? and idempotency_key = ? and type = 'admin_adjust'")
+          .bind(target.id, key)
+          .first<TxRow>()
+      : null;
+  const first = await booked();
+  if (first) return toTransaction(first);
   const now = nowIso();
   const id = uuid();
   const sign = input.direction === "add" ? 1 : -1;
@@ -544,8 +562,8 @@ export async function adjustBalance(env: Env, admin: Profile, request: Request):
       env.DB.prepare("update wallets set balance_xof = balance_xof + ?, updated_at = ? where user_id = ?").bind(sign * amount, now, target.id),
       env.DB.prepare(
         `insert into wallet_transactions (id, trx_id, user_id, type, attribute, amount_xof, fee_xof, total_xof, balance_after_xof,
-           remark, admin_id, details, created_at)
-         values (?1, ?2, ?3, 'admin_adjust', ?4, ?5, 0, ?5, (select balance_xof from wallets where user_id = ?3), ?6, ?7, ?8, ?9)`,
+           remark, admin_id, details, created_at, idempotency_key)
+         values (?1, ?2, ?3, 'admin_adjust', ?4, ?5, 0, ?5, (select balance_xof from wallets where user_id = ?3), ?6, ?7, ?8, ?9, ?10)`,
       ).bind(
         id,
         newTrxId("admin_adjust"),
@@ -556,10 +574,15 @@ export async function adjustBalance(env: Env, admin: Profile, request: Request):
         admin.id,
         JSON.stringify({ device: device(request), ...(input.direction === "refund" ? { cashRefund: true } : {}) }),
         now,
+        key,
       ),
       auditWallet(env, admin.id, "insert", id, { direction: input.direction, amount_xof: amount, remark }, target.id),
     ]);
   } catch (err) {
+    // The same submission booked in between (a double click): its booking is the answer, even
+    // when this batch broke on the balance check before reaching the key's unique index.
+    const again = await booked();
+    if (again) return toTransaction(again);
     if (/CHECK constraint failed/i.test((err as Error).message ?? "")) throw new ApiError("insufficient_balance");
     throw err;
   }

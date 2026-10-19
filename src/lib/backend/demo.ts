@@ -141,6 +141,7 @@ import {
   newTrackingNo,
   PARCEL_CODE_LOCK_MINUTES,
   PARCEL_MAX_CODE_FAILURES,
+  PARCEL_STATION_MAX_CODE_FAILURES,
   PARCEL_PICKUP_DAYS,
   needsLabel,
   OPEN_PARCEL_STATUSES,
@@ -429,7 +430,8 @@ interface DemoState {
   /** Full batteries per battery type, by station id then type id (default: the station's total spread over its types). */
   typeBatteries?: Record<string, Record<string, number>>;
   parcelSizes?: ParcelSizeTier[];
-  parcelCodeFailures?: { stationId: string; at: string }[];
+  /** stationId: the key (station, "parcel:<id>" or "job:<id>"); atStation: the counter it was typed at (0058). */
+  parcelCodeFailures?: { stationId: string; at: string; atStation?: string }[];
   /** Collection runs and parcel scans (plan phase 7), as parcel_runs and parcel_scans (migration 0034). */
   parcelRuns?: DemoRun[];
   parcelScans?: DemoScan[];
@@ -4198,18 +4200,19 @@ export class DemoBackend implements Backend {
       if (known.deliveryStatus === "out_for_delivery") throw new BackendError("parcel_with_driver");
     }
     if (!input.code) throw new BackendError("pickup_code_required");
-    // Wrong codes lock that parcel, or bare codes at the station.
+    // Wrong codes lock that parcel, or bare codes at the station; and all of them at this station together, above a ceiling.
     const key = known ? `parcel:${known.id}` : stationId;
     const since = Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000;
-    const failures = (state.parcelCodeFailures ?? []).filter((f) => f.stationId === key && new Date(f.at).getTime() > since);
-    if (failures.length >= PARCEL_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    const recent = (state.parcelCodeFailures ?? []).filter((f) => new Date(f.at).getTime() > since);
+    if (recent.filter((f) => f.stationId === key).length >= PARCEL_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    if (recent.filter((f) => f.atStation === stationId).length >= PARCEL_STATION_MAX_CODE_FAILURES) throw new BackendError("code_locked");
     const parcel = known
       ? known.pickupCode === input.code
         ? known
         : undefined
       : parcels.find((p) => p.toStationId === stationId && p.status === "arrived" && p.pickupCode === input.code);
     if (!parcel) {
-      this.save({ ...state, parcelCodeFailures: [...(state.parcelCodeFailures ?? []), { stationId: key, at: new Date().toISOString() }] });
+      this.save({ ...state, parcelCodeFailures: [...(state.parcelCodeFailures ?? []), { stationId: key, at: new Date().toISOString(), atStation: stationId }] });
       throw new BackendError("wrong_pickup_code");
     }
     if (parcel.deliveryStatus === "out_for_delivery") throw new BackendError("parcel_with_driver");
@@ -4396,6 +4399,7 @@ export class DemoBackend implements Backend {
       proofKey: j.proofKey,
       ...(j.merchantId ? { forShop: true as const } : {}),
       ...(j.proofReview ? { proofReview: j.proofReview } : {}),
+      ...(j.proofReview === "rejected" && j.proofRejectReason ? { proofRejectReason: j.proofRejectReason } : {}),
     };
   }
 
@@ -5165,6 +5169,22 @@ export class DemoBackend implements Backend {
     const job = (state.jobs ?? []).find((j) => j.id === jobId);
     if (!job) throw new BackendError("job_not_found");
     this.approveProof(state, job, "admin");
+  }
+
+  /** As rejectProof in worker/drivers.ts: the held share is not booked, and the trip can no longer be approved. */
+  async rejectCourierProof(jobId: string, reason: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const why = reason.trim();
+    if (!why || why.length > 300) throw new BackendError("unknown", "bad_request");
+    const job = (state.jobs ?? []).find((j) => j.id === jobId);
+    if (!job) throw new BackendError("job_not_found");
+    if (job.kind !== "courier" || job.status !== "done" || job.proofReview !== "pending" || !job.driverId) throw new BackendError("job_wrong_status");
+    this.saveJobs(
+      state,
+      (state.jobs ?? []).map((j) => (j.id === job.id ? { ...j, proofReview: "rejected" as const, proofRejectReason: why } : j)),
+      { table: "delivery_jobs", action: "update", rowId: job.id, userId: job.driverId, changes: { proof_review: ["pending", "rejected"], reason: why } },
+    );
   }
 
   /** Courier at the door, as checkCourierHandover() in worker/drivers.ts: the recipient's code, or a photo without one. */
@@ -7700,6 +7720,10 @@ export class DemoBackend implements Backend {
     if (!remark) throw new BackendError("unknown", "bad_request");
     const user = this.findWalletUser(state, input.contact);
     const w = this.wallet(state);
+    // One booking per (admin, key), as worker/wallet.ts adjustBalance: a repeat answers the first.
+    const key = input.idempotencyKey ? `adjust:${state.profile?.id ?? ""}:${input.idempotencyKey}` : undefined;
+    const first = key ? w.transactions.find((x) => x.key === key && x.userId === user.id && x.type === "admin_adjust") : undefined;
+    if (first) return first;
     const after = this.balance(w, user.id) + (input.direction === "add" ? amount : -amount);
     if (after < 0) throw new BackendError("insufficient_balance");
     const tx: AdminWalletTransaction = {
@@ -7721,7 +7745,10 @@ export class DemoBackend implements Backend {
     };
     this.save(
       withAudit(
-        { ...state, wallet: { ...w, balances: { ...w.balances, [user.id]: after }, transactions: [tx, ...w.transactions].slice(0, 500) } },
+        {
+          ...state,
+          wallet: { ...w, balances: { ...w.balances, [user.id]: after }, transactions: [{ ...tx, ...(key ? { key } : {}) }, ...w.transactions].slice(0, 500) },
+        },
         { table: "wallets", action: "insert", rowId: tx.id, userId: user.id, changes: { direction: input.direction, amount_xof: amount, remark } },
       ),
     );

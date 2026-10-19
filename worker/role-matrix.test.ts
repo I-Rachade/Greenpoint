@@ -265,6 +265,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/admin/driver-settings": ADMIN,
   "POST /api/admin/jobs/:id/assign": ADMIN,
   "POST /api/admin/jobs/:id/approve-proof": ADMIN,
+  "POST /api/admin/jobs/:id/reject-proof": ADMIN,
   "POST /api/admin/stations": ADMIN,
   "POST /api/admin/stations/:id/active": ADMIN,
   "GET /api/admin/snapshot": ADMIN,

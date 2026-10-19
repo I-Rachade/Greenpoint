@@ -40,6 +40,8 @@ export const PARCEL_MAX_KG = 50;
  */
 export const PARCEL_MAX_CODE_FAILURES = 5;
 export const PARCEL_CODE_LOCK_MINUTES = 15;
+/** Wrong pickup codes of any parcel at one station within PARCEL_CODE_LOCK_MINUTES before the whole counter is locked. */
+export const PARCEL_STATION_MAX_CODE_FAILURES = 30;
 
 /** One size tier: the parcel fits if its dimensions (in any orientation) and weight are within the limits. */
 export interface ParcelSizeTier {

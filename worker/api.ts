@@ -136,6 +136,7 @@ import {
   assignJob,
   boardRide,
   reportPosition,
+  rejectProof,
   askPayout,
   bookDelivery,
   bookPickup,
@@ -2551,6 +2552,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     async (c, [id]) => assignJob(c, id, String((await readJson<{ driverId: string }>(c.request)).driverId)),
   ],
   ["POST", /^\/api\/admin\/jobs\/([\w-]+)\/approve-proof$/, (c, [id]) => approveProof(c, id)],
+  ["POST", /^\/api\/admin\/jobs\/([\w-]+)\/reject-proof$/, (c, [id]) => rejectProof(c, id, () => readJson<{ reason?: unknown }>(c.request))],
   [
     "POST",
     /^\/api\/admin\/stations$/,

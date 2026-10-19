@@ -24,6 +24,7 @@ import {
   driverPass,
   approveProof,
   confirmCourierReceipt,
+  rejectProof,
   failDelivery,
   finishRide,
   handToDriver,
@@ -418,6 +419,42 @@ describe("handover at the counter", () => {
     expect(status(t, other.id)).toBe("picked_up");
   });
 
+  it("locks the whole counter once wrong codes spread over many parcels reach the station ceiling", async () => {
+    const t = setup();
+    const atB = await Promise.all(Array.from({ length: 9 }, () => createParcel(t.at(A.id), A.id, parcelInput(false))));
+    atB.forEach((p, i) => arrive(t, p.id, String(100000 + i)));
+    // A parcel waiting at station A, another counter.
+    const atA = await createParcel(t.at(B.id), B.id, { ...parcelInput(false), toStationId: A.id });
+    arrive(t, atA.id, "777777");
+    const wrong = (p: { trackingNo: string }) => pickUpParcel(t.at(B.id), B.id, "999999", p.trackingNo);
+    // 4 wrong codes for each of 7 parcels (below the per-parcel lock of 5) and one bare: 29.
+    for (const p of atB.slice(0, 7)) for (let i = 0; i < 4; i++) await expect(wrong(p)).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    await expect(pickUpParcel(t.at(B.id), B.id, "999998")).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    // A right code takes its try back: the recipient collects, the count stays at 29.
+    await pickUpParcel(t.at(B.id), B.id, "100007", atB[7].trackingNo);
+    expect(status(t, atB[7].id)).toBe("picked_up");
+    // The 30th wrong code is still checked; from then on, nothing at this counter is.
+    await expect(wrong(atB[0])).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    await expect(pickUpParcel(t.at(B.id), B.id, "100008", atB[8].trackingNo)).rejects.toMatchObject({ code: "code_locked" });
+    await expect(pickUpParcel(t.at(B.id), B.id, "100008")).rejects.toMatchObject({ code: "code_locked" });
+    expect(status(t, atB[8].id)).toBe("arrived");
+    // Station A is not affected: a wrong code is checked there, the right one hands over.
+    await expect(pickUpParcel(t.at(A.id), A.id, "999999", atA.trackingNo)).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    await pickUpParcel(t.at(A.id), A.id, "777777");
+    expect(status(t, atA.id)).toBe("picked_up");
+    expect(t.db.prepare("select count(*) as n from parcel_code_failures where at_station = ?").get(B.id)).toEqual({ n: 30 });
+  });
+
+  it("never counts more than the station ceiling when wrong codes for many parcels arrive at once", async () => {
+    const t = setup();
+    const atB = await Promise.all(Array.from({ length: 10 }, () => createParcel(t.at(A.id), A.id, parcelInput(false))));
+    atB.forEach((p, i) => arrive(t, p.id, String(100000 + i)));
+    const tries = await Promise.allSettled(atB.flatMap((p) => Array.from({ length: 4 }, () => pickUpParcel(t.at(B.id), B.id, "999999", p.trackingNo))));
+    const codes = tries.map((r) => (r.status === "rejected" ? (r.reason as { code: string }).code : "ok"));
+    expect(codes.filter((c) => c === "wrong_pickup_code")).toHaveLength(30);
+    expect(codes.filter((c) => c === "code_locked")).toHaveLength(10);
+  });
+
   it("locks bare codes at the station without blocking a parcel found by its number", async () => {
     const t = setup();
     const parcel = await createParcel(t.at(A.id), A.id, parcelInput(false));
@@ -623,6 +660,87 @@ describe("express parcel door to door", () => {
     await finishRide(driver.me, second.id, code);
     expect(t.db.prepare("select proof_review from delivery_jobs where id = ?").get(second.id)).toMatchObject({ proof_review: null });
     await expect(approveProof(t.admin, second.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+  });
+
+  it("books nothing when an admin rejects the photo, tells the driver and the sender, and refuses an approval after", async () => {
+    const t = setup();
+    const sent: { to: string; subject: string; text: string }[] = [];
+    (t.env as { EMAIL?: unknown }).EMAIL = { send: async (m: { to: string; subject: string; text: string }) => void sent.push(m) };
+    t.db.exec("update users set email = 'ama@example.tg' where id = 'sender'");
+    const job = await bookCourier(t.sender, booking);
+    const driver = await approvedDriver(t, "d1", "moto");
+    t.db.exec("update users set email = 'kodjo@example.tg' where id = 'd1'");
+    await joinQueue(driver.me, B.id, B);
+    await acceptJob(driver.me, job.id);
+    await boardRide(driver.me, job.id);
+    await uploadProof(driver.me, job.id, photo());
+    await finishRide(driver.me, job.id);
+    sent.length = 0;
+    const reason = (text: unknown) => async () => ({ reason: text });
+    // Admins only, with a reason.
+    await expect(rejectProof(t.sender, job.id, reason("Photo floue"))).rejects.toThrow("forbidden");
+    await expect(rejectProof(t.admin, job.id, reason("  "))).rejects.toMatchObject({ code: "bad_request" });
+    await expect(rejectProof(t.admin, job.id, reason(42))).rejects.toMatchObject({ code: "bad_request" });
+    await expect(rejectProof(t.admin, job.id, reason("x".repeat(301)))).rejects.toMatchObject({ code: "bad_request" });
+    await rejectProof(t.admin, job.id, reason(" Photo floue, pas de colis visible "));
+    expect(t.db.prepare("select proof_review, proof_reject_reason from delivery_jobs where id = ?").get(job.id)).toEqual({
+      proof_review: "rejected",
+      proof_reject_reason: "Photo floue, pas de colis visible",
+    });
+    // The held share is not booked: only what the driver collected counts.
+    expect((await driverHome(driver.me)).driver?.balanceFcfa).toBe(job.fareFcfa);
+    expect(t.db.prepare("select count(*) as n from driver_ledger where job_id = ? and kind = 'earning'").get(job.id)).toMatchObject({ n: 0 });
+    // Both are told why, and see it in the app.
+    expect(sent.map((m) => m.to).sort()).toEqual(["ama@example.tg", "kodjo@example.tg"]);
+    for (const m of sent) expect(m.text).toContain("Photo floue, pas de colis visible");
+    expect((await myJobs(t.sender))[0]).toMatchObject({ proofReview: "rejected", proofRejectReason: "Photo floue, pas de colis visible" });
+    expect((await driverHome(driver.me)).history.find((j) => j.id === job.id)).toMatchObject({ proofReview: "rejected" });
+    expect((await adminDrivers(t.admin)).jobs.find((j) => j.id === job.id)?.proofReview).toBe("rejected");
+    // Audit logged.
+    const audit = t.db.prepare("select actor, changes from audit_log where table_name = 'delivery_jobs' and row_id = ?").all(job.id) as { actor: string; changes: string }[];
+    expect(audit.map((a) => ({ actor: a.actor, ...JSON.parse(a.changes) }))).toContainEqual({
+      actor: "admin",
+      proof_review: ["pending", "rejected"],
+      reason: "Photo floue, pas de colis visible",
+    });
+    // No approval, no confirmation and no second rejection after it.
+    await expect(approveProof(t.admin, job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+    await expect(confirmCourierReceipt(t.sender, job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+    await expect(rejectProof(t.admin, job.id, reason("Encore"))).rejects.toMatchObject({ code: "job_wrong_status" });
+    expect((await driverHome(driver.me)).driver?.balanceFcfa).toBe(job.fareFcfa);
+  });
+
+  it("refuses to reject an approved photo or a trip handed over with the code, and one of approve or reject wins a race", async () => {
+    const t = setup();
+    const driver = await approvedDriver(t, "d1", "moto");
+    const byPhoto = async () => {
+      const job = await bookCourier(t.sender, booking);
+      await joinQueue(driver.me, B.id, B);
+      await acceptJob(driver.me, job.id);
+      await boardRide(driver.me, job.id);
+      await uploadProof(driver.me, job.id, photo());
+      await finishRide(driver.me, job.id);
+      return job;
+    };
+    const reason = async () => ({ reason: "Photo floue" });
+    const approved = await byPhoto();
+    await approveProof(t.admin, approved.id);
+    await expect(rejectProof(t.admin, approved.id, reason)).rejects.toMatchObject({ code: "job_wrong_status" });
+    expect(t.db.prepare("select proof_review from delivery_jobs where id = ?").get(approved.id)).toEqual({ proof_review: "approved" });
+
+    const raced = await byPhoto();
+    const answers = await Promise.allSettled([approveProof(t.admin, raced.id), rejectProof(t.admin, raced.id, reason), confirmCourierReceipt(t.sender, raced.id)]);
+    expect(answers.filter((a) => a.status === "fulfilled")).toHaveLength(1);
+    const state = (t.db.prepare("select proof_review from delivery_jobs where id = ?").get(raced.id) as { proof_review: string }).proof_review;
+    const earnings = (t.db.prepare("select count(*) as n from driver_ledger where job_id = ? and kind = 'earning'").get(raced.id) as { n: number }).n;
+    expect(earnings).toBe(state === "approved" ? 1 : 0);
+
+    const withCode = await bookCourier(t.sender, booking);
+    await joinQueue(driver.me, B.id, B);
+    await acceptJob(driver.me, withCode.id);
+    await boardRide(driver.me, withCode.id);
+    await finishRide(driver.me, withCode.id, (await myJobs(t.sender)).find((j) => j.id === withCode.id)!.handoverCode!);
+    await expect(rejectProof(t.admin, withCode.id, reason)).rejects.toMatchObject({ code: "job_wrong_status" });
   });
 
   it("only goes to vehicles big enough and refuses bad bookings", async () => {

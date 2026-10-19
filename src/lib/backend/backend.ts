@@ -621,6 +621,8 @@ export interface Backend {
   assignJob(jobId: string, driverId: string): Promise<void>;
   /** Backoffice: the photo of a courier handed over without the code is fine: the driver's held share is booked. */
   approveCourierProof(jobId: string): Promise<void>;
+  /** Backoffice: the photo does not show the handover: the driver's held share is not booked; driver and sender are told why. */
+  rejectCourierProof(jobId: string, reason: string): Promise<void>;
   /** A displayable URL for a private photo (documents, door photos); admins only. */
   driverFileUrl(key: string): Promise<string>;
   /** Backoffice: links a driver to a fleet manager by phone or e-mail; null unlinks. */

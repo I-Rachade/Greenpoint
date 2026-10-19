@@ -6,6 +6,7 @@ import {
   newTrackingNo,
   OPEN_PARCEL_STATUSES,
   PARCEL_CODE_LOCK_MINUTES,
+  PARCEL_STATION_MAX_CODE_FAILURES,
   PARCEL_MAX_CODE_FAILURES,
   PARCEL_PICKUP_DAYS,
   PARCEL_REMINDER_DAYS,
@@ -619,7 +620,9 @@ export async function resendPickupCode(c: ParcelCtx, parcelId: string) {
  * and is no secret: it finds the parcel, but the handover needs the code (409
  * pickup_code_required). Wrong codes pause entry for a while (withPickupCodeTry): for that
  * parcel when its number came with the code, else for bare codes at this station, so someone
- * guessing the code of one parcel does not stop every other recipient at the counter.
+ * guessing the code of one parcel does not stop every other recipient at the counter. Above
+ * that, PARCEL_STATION_MAX_CODE_FAILURES wrong codes of any parcel at this station lock code
+ * entry at the whole counter, so guessing across many parcel numbers is bounded too.
  */
 export async function pickUpParcel(c: ParcelCtx, stationId: string, rawInput: unknown, rawTrackingNo?: unknown): Promise<Parcel> {
   const staff = await requireStationActor(c, stationId);
@@ -640,7 +643,9 @@ export async function pickUpParcel(c: ParcelCtx, stationId: string, rawInput: un
   }
   const code = input.code;
   if (!code) throw new ApiError("pickup_code_required", 409);
-  const row = await withPickupCodeTry(c.db, known ? `parcel:${known.id}` : stationId, PARCEL_MAX_CODE_FAILURES, PARCEL_CODE_LOCK_MINUTES, async () => {
+  const key = known ? `parcel:${known.id}` : stationId;
+  const atStation = { id: stationId, maxTries: PARCEL_STATION_MAX_CODE_FAILURES };
+  const row = await withPickupCodeTry(c.db, key, PARCEL_MAX_CODE_FAILURES, PARCEL_CODE_LOCK_MINUTES, async () => {
     const found = known
       ? known.pickup_code === code
         ? known
@@ -652,7 +657,7 @@ export async function pickUpParcel(c: ParcelCtx, stationId: string, rawInput: un
     if (!found) throw new ApiError("wrong_pickup_code");
     if (found.delivery_status === "out_for_delivery") throw new ApiError("parcel_with_driver");
     return found;
-  });
+  }, atStation);
   const now = nowIso();
   const done = await c.db
     .prepare("update parcels set status = 'picked_up', picked_up_at = ?, picked_up_by = ? where id = ? and status = 'arrived'")

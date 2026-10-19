@@ -168,8 +168,10 @@ export interface JobRow {
   passengers: number | null;
   vehicle_type: FleetVehicleType | null;
   handover_code?: string | null;
-  /** Couriers finished with the photo alone (0053): 'pending' until the sender or an admin confirms, then 'approved'. */
-  proof_review?: "pending" | "approved" | null;
+  /** Couriers finished with the photo alone (0053): 'pending' until the sender or an admin confirms, then 'approved'; or an admin rejected the photo (0059). */
+  proof_review?: "pending" | "approved" | "rejected" | null;
+  /** Why the admin rejected the photo (0059). */
+  proof_reject_reason?: string | null;
   /** Which of the driver's trips this is on a tour (0037); 1 outside tours. */
   tour_slot?: number;
   /** Paid online from the wallet (0037), and when that went back. */
@@ -251,6 +253,7 @@ export function toJob(r: JobRow): DeliveryJob {
     ...(r.status === "cancelled" && r.cancelled_by === NO_DRIVER ? { noDriver: true } : {}),
     ...(r.merchant_id ? { forShop: true as const } : {}),
     ...(r.proof_review ? { proofReview: r.proof_review } : {}),
+    ...(r.proof_review === "rejected" && r.proof_reject_reason ? { proofRejectReason: r.proof_reject_reason } : {}),
   };
 }
 
@@ -1367,6 +1370,42 @@ export async function confirmCourierReceipt(c: ParcelCtx, jobId: string) {
 export async function approveProof(c: ParcelCtx, jobId: string) {
   const admin = await c.requireAdmin();
   await approveCourierProof(c, await loadJob(c.db, jobId), admin.id, "admin");
+}
+
+/** Longest reason an admin may give for rejecting a handover photo. */
+export const PROOF_REJECT_REASON_MAX = 300;
+
+/**
+ * Backoffice: an admin rejects the photo of a courier handed over without the code
+ * ({ reason }). The driver's held share is not booked, the trip can no longer be approved (nor
+ * confirmed by the sender), and the driver and the sender are told why. Once only, and never
+ * after an approval: the same guarded update as approveCourierProof decides which comes first.
+ */
+export async function rejectProof(c: ParcelCtx, jobId: string, body: () => Promise<{ reason?: unknown }>) {
+  const admin = await c.requireAdmin();
+  // The body is read once the caller is known to be an admin.
+  const input = await body();
+  const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+  if (!reason || reason.length > PROOF_REJECT_REASON_MAX) throw new ApiError("bad_request");
+  const job = await loadJob(c.db, jobId);
+  if (job.kind !== "courier" || job.status !== "done" || job.proof_review !== "pending" || !job.driver_id) throw new ApiError("job_wrong_status");
+  const res = await c.db
+    .prepare("update delivery_jobs set proof_review = 'rejected', proof_reject_reason = ? where id = ? and proof_review = 'pending'")
+    .bind(reason, job.id)
+    .run();
+  if (!res.meta.changes) throw new ApiError("job_wrong_status");
+  await jobAudit(c, admin.id, job, { proof_review: ["pending", "rejected"], reason }).run();
+  const what = `le colis${job.content ? ` (${job.content})` : ""} remis le ${shortDate(job.done_at ?? nowIso())}`;
+  await Promise.all([
+    tellUser(c.env, job.driver_id, null, "courier_proof_rejected", {
+      subject: "Photo de remise refusée",
+      text: `poinderecharge : la photo de remise pour ${what} a été refusée (${reason}). Le gain de cette course n'est pas crédité. Contactez-nous en cas de question : ${DRIVER_URL}`,
+    }),
+    tellUser(c.env, job.customer_user_id, null, "courier_proof_rejected", {
+      subject: "Remise du colis non validée",
+      text: `poinderecharge : nous n'avons pas validé la photo de remise pour ${what} (${reason}). Contactez-nous si le colis n'est pas arrivé : ${APP_URL}`,
+    }),
+  ]);
 }
 
 /**
