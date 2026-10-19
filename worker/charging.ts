@@ -990,15 +990,23 @@ export async function linkedCardCredit(db: D1Database, userId: string, stationId
 }
 
 /**
- * A card with enough credit started a charge at an OCPP charge point (StartTransaction, after
- * swipeCard in worker/charge-cards.ts accepted it): opens the card's charge on that outlet,
+ * A card with enough credit started a charge (OCPP StartTransaction, or a Xingke cloud card
+ * event, after swipeCard in worker/charge-cards.ts accepted it): opens the card's charge on that outlet,
  * the card owner's if it has one (then it shows in their app and can be stopped there). A card
  * linked to an account pays with the account's Green Credit (0047): the charge may cost at most
- * the balance. The charge point already switched on, so nothing is sent. False when the outlet
+ * the balance. Nothing is sent here: an OCPP charge point already switched on, a Xingke socket
+ * is started once the device got our answer (worker/xingke.ts). `order` is the charge's id for
+ * the device (Xingke transactionId); the card number otherwise. False when the outlet
  * cannot take it: unknown outlet, a point partner's socket, station without charging, outlet
  * reserved for someone else, a charge already open on it, or no credit to spend.
  */
-export async function openCardCharge(db: D1Database, deviceId: string, outlet: number, card: { tag: string; userId: string | null }): Promise<boolean> {
+export async function openCardCharge(
+  db: D1Database,
+  deviceId: string,
+  outlet: number,
+  card: { tag: string; userId: string | null },
+  order: string = card.tag,
+): Promise<boolean> {
   const p = await db
     .prepare(
       `select p.id, p.station_id, p.label, ${EV_OF_POINT("p")} from charging_points p join stations s on s.id = p.station_id
@@ -1027,9 +1035,9 @@ export async function openCardCharge(db: D1Database, deviceId: string, outlet: n
       .prepare(
         `insert into charging_sessions (id, station_id, charging_point_id, device_id, outlet, point_label, order_no, user_id, kwh_xof, min_xof, started_by, started_at,
            charge_card, credit_limit_xof)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?7, ?13)`,
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?14, ?8, ?9, ?10, ?11, ?12, ?7, ?13)`,
       )
-      .bind(id, p.station_id, p.id, deviceId, outlet, label, card.tag, card.userId, tariff.kwhXof, tariff.minXof, actor, now, creditLimit),
+      .bind(id, p.station_id, p.id, deviceId, outlet, label, card.tag, card.userId, tariff.kwhXof, tariff.minXof, actor, now, creditLimit, order),
     // Old values of the previous charge must not show as this one's.
     db.prepare("update charging_points set power_watts = null, energy_wh = null where id = ?").bind(p.id),
     audit(db, actor, "insert", { id, station_id: p.station_id, user_id: card.userId }, {
