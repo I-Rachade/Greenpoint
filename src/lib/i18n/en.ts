@@ -2024,13 +2024,14 @@ export const en: Dictionary = {
   },
   stationCash: {
     title: "Station cash",
-    intro: "What each partner station took for poinderecharge and, at our own stations, the Green Credit each staff member loaded in cash, with the handovers and commission. Confirm a handover once the money has arrived.",
+    intro: "What each partner station took for poinderecharge and, at our own stations, the cash each staff member took at the counter (Green Credit, swaps, charges, parcels), with the handovers and commission. Confirm a handover once the money has arrived.",
     ownerIntro: "What you took for poinderecharge since the last closing. Hand it over every day, by 10:00 the next morning at the latest.",
     noStations: "No station with cash to hand over.",
     myCash: "My cash",
-    myCashIntro: "The Green Credit you loaded in cash since your last closing. Close it at the end of your shift, by 10:00 the next morning at the latest; poinderecharge confirms once the money has arrived.",
+    myCashHint: "Close my cash",
+    myCashIntro: "The cash you took since your last closing: Green Credit loaded, and swaps, charges and parcels paid in cash. Close it at the end of your shift, by 10:00 the next morning at the latest; poinderecharge confirms once the money has arrived.",
     types: { operator: "Operator station", shop: "Shop station", own: "poinderecharge station" },
-    typeHints: { operator: "Swapping belongs to the operator, sockets to poinderecharge.", shop: "Swapping and sockets belong to poinderecharge.", own: "Green Credit loaded in cash at the counter by this staff member." },
+    typeHints: { operator: "Swapping belongs to the operator, sockets to poinderecharge.", shop: "Swapping and sockets belong to poinderecharge.", own: "Cash taken at the counter by this staff member: Green Credit, swaps, charges and parcels." },
     lines: {
       chargesXof: "Charges paid in cash",
       swapsXof: "Swaps paid in cash",

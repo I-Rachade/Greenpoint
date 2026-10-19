@@ -10,6 +10,7 @@ import {
   HANDOVER_METHODS,
   HANDOVER_NOTE_MAX,
   HANDOVER_REFERENCE_MAX,
+  OWN_CASH_KINDS,
   type CashHandover,
   type CashKind,
   type HandoverMethod,
@@ -210,7 +211,8 @@ export function StationCashCard({ cash, admin, onChanged, extra }: { cash: Stati
       {cash.late && <p className="text-sm text-red-700 dark:text-red-300">{c.lateHint}</p>}
       {extra}
       <dl className="divide-y divide-black/5 text-sm dark:divide-white/10">
-        {LINES.filter((k) => cash.lines[k] !== 0).map((k) => (
+        {/* At an own station every kind the staff member takes, also at 0, so the breakdown reads the same each day. */}
+        {(cash.type === "own" ? OWN_CASH_KINDS : LINES.filter((k) => cash.lines[k] !== 0)).map((k) => (
           <Row key={k} label={c.lines[k]} value={cash.lines[k]} />
         ))}
         <Row label={c.collected} value={cash.lines.totalXof} strong />

@@ -27,22 +27,20 @@ export function CreditPage() {
   return (
     <WorkShell title={t.wallet.staff.title}>
       {({ station }) =>
-        station.greenCredit ? (
-          <div className="space-y-4">
-            <CreditCounter key={station.id} station={station} />
-            <MyCash key={`cash:${station.id}`} stationId={station.id} />
-          </div>
-        ) : (
-          <EmptyState text={t.wallet.staff.notHere} />
-        )
+        // My cash also without Green Credit here: swaps, charges and parcels paid in cash count too (0057).
+        <div className="space-y-4">
+          {station.greenCredit ? <CreditCounter key={station.id} station={station} /> : !station.isOwn && <EmptyState text={t.wallet.staff.notHere} />}
+          <MyCash key={`cash:${station.id}`} stationId={station.id} />
+        </div>
       }
     </WorkShell>
   );
 }
 
 /**
- * At our own stations (0051): the Green Credit this staff member loaded in cash since their last
- * closing, closed at the end of the shift (worker/station-cash.ts). Partner stations: the owner
+ * At our own stations (0051, 0057): the cash this staff member took since their last closing
+ * (Green Credit loaded, swaps, charges and parcels paid in cash), closed at the end of the shift
+ * (worker/station-cash.ts). Partner stations: the owner
  * closes the station's day in the backoffice instead, so nothing shows here.
  */
 function MyCash({ stationId }: { stationId: string }) {

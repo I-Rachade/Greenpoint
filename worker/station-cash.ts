@@ -1,7 +1,7 @@
 // Station types and the daily cash handover (migration 0045): what a partner station took for
 // poinderecharge, its closings and the admin's confirmation, the host's commission and the
-// late alert. At our own stations (0051): the Green Credit each staff member loaded in cash,
-// closed per staff member. Types and the balance rule: src/lib/station-cash.ts.
+// late alert. At our own stations (0051, 0057): the cash each staff member took at the counter
+// (Green Credit top-ups, swaps, charges, parcels), closed per staff member. Types and the balance rule: src/lib/station-cash.ts.
 
 import type { AuditTable } from "../src/lib/admin/types";
 import {
@@ -14,6 +14,7 @@ import {
   validCommissionPct,
   type CashHandover,
   type CashItem,
+  type CashKind,
   type CommissionItem,
   type HandoverInput,
   type HandoverMethod,
@@ -231,37 +232,60 @@ export async function cashOfStations(db: D1Database, ids: string[] | null, now =
 }
 
 /**
- * The cash of our own stations (0051), one balance per staff member: the Green Credit they loaded
- * in cash at the counter and their own closings. `ids` null: every own station. `staffId`: only
- * that person, also when they have nothing yet (their own page shows "nothing to hand over").
+ * The cash of our own stations (0051), one balance per staff member: what they took in cash at
+ * the counter and their own closings. The same sources as a partner station's (cashOfStations),
+ * each attributed to the person who took the money: Green Credit top-ups (details.staff), cash
+ * swaps (swap_log.staff_id), cash charges (charging_sessions.paid_by) and parcels paid at the
+ * counter (parcels.created_by). Swaps, charges and parcels count from stations.counter_cash_since
+ * (0057). `ids` null: every own station. `staffId`: only that person, also when they have nothing
+ * yet (their own page shows "nothing to hand over").
  */
 export async function cashOfOwnStations(db: D1Database, ids: string[] | null, staffId: string | null = null, now = new Date()): Promise<StationCash[]> {
   const { results: stations } = await db
     .prepare(
-      `select s.id, s.name, o.name as operator_name, coalesce(s.cash_since, s.created_at) as start
+      `select s.id, s.name, o.name as operator_name, coalesce(s.cash_since, s.created_at) as start,
+              max(coalesce(s.cash_since, s.created_at), coalesce(s.counter_cash_since, '')) as counter_start
        from stations s join operators o on o.id = s.operator_id
        where coalesce(o.is_own, 0) = 1 and (?1 is null or s.id in ${IN(1)})
        order by s.name`,
     )
     .bind(ids ? JSON.stringify(ids) : null)
-    .all<Pick<StationRow, "id" | "name" | "operator_name" | "start">>();
+    .all<Pick<StationRow, "id" | "name" | "operator_name" | "start"> & { counter_start: string }>();
   if (!stations.length) return [];
   const list = JSON.stringify(stations.map((s) => s.id));
   const from = stations.reduce((a, s) => (s.start < a ? s.start : a), stations[0].start);
-  const [credit, handovers] = await Promise.all([
+  type Row = { station_id: string; staff_id: string | null; at: string; amount: number };
+  // Each row from its station's start (?2 is only the earliest of them, to use the indexes).
+  const counter = (sql: string) => db.prepare(sql).bind(list, from, staffId).all<Row>();
+  const [credit, swaps, charges, parcels, handovers] = await Promise.all([
     // Who took the cash is in the top-up's details (worker/wallet.ts topUpCredit).
-    db
-      .prepare(
-        `select station_id, json_extract(details, '$.staff') as staff_id, created_at as at, amount_xof as amount from wallet_transactions
-          where type = 'topup' and station_id in ${IN(1)} and created_at >= ?2 and (?3 is null or json_extract(details, '$.staff') = ?3)`,
-      )
-      .bind(list, from, staffId)
-      .all<{ station_id: string; staff_id: string | null; at: string; amount: number }>(),
+    counter(
+      `select station_id, json_extract(details, '$.staff') as staff_id, created_at as at, amount_xof as amount from wallet_transactions
+        where type = 'topup' and station_id in ${IN(1)} and created_at >= ?2 and (?3 is null or json_extract(details, '$.staff') = ?3)`,
+    ),
+    // Who recorded the swap took the cash (worker/station-work.ts).
+    counter(
+      `select l.station_id, l.staff_id, l.created_at as at, l.amount_xof as amount from swap_log l
+         join stations s on s.id = l.station_id left join operators o on o.id = s.operator_id
+        where l.station_id in ${IN(1)} and l.payment = 'cash' and l.created_at >= ?2 and ${SWAP_OWNER_SQL} = 'poinderecharge'
+          and (?3 is null or l.staff_id = ?3)`,
+    ),
+    // Who marked the charge paid in cash (worker/charging.ts payCash).
+    counter(
+      `select station_id, paid_by as staff_id, paid_at as at, amount_xof as amount from charging_sessions
+        where station_id in ${IN(1)} and status = 'paid' and payment_method = 'cash' and paid_at >= ?2 and (?3 is null or paid_by = ?3)`,
+    ),
+    // A counter parcel is paid when handed in, to whoever stored it (worker/parcels.ts storeParcel).
+    counter(
+      `select from_station_id as station_id, created_by as staff_id, paid_at as at, price_fcfa as amount from parcels
+        where from_station_id in ${IN(1)} and payment_method = 'cash' and paid_at >= ?2 and status <> 'cancelled' and (?3 is null or created_by = ?3)`,
+    ),
     db
       .prepare(`${HANDOVER_SELECT} where h.station_id in ${IN(1)} and h.staff_id is not null and (?2 is null or h.staff_id = ?2)`)
       .bind(list, staffId)
       .all<HandoverRow>(),
   ]);
+  const byId = new Map(stations.map((s) => [s.id, s]));
   const people = new Map<string, { station: string; staff: string; cash: CashItem[]; handovers: CashHandover[] }>();
   const entry = (station: string, staff: string) => {
     const k = JSON.stringify([station, staff]);
@@ -269,7 +293,17 @@ export async function cashOfOwnStations(db: D1Database, ids: string[] | null, st
     return people.get(k)!;
   };
   if (staffId) for (const s of stations) entry(s.id, staffId);
-  for (const r of credit.results) if (r.staff_id) entry(r.station_id, r.staff_id).cash.push({ kind: "creditXof", at: r.at, amountXof: r.amount });
+  const push = (kind: CashKind, rows: Row[], counterKind: boolean) => {
+    for (const r of rows) {
+      // Unattributed cash stays out; swaps, charges and parcels before 0057 were handed over outside the app.
+      if (!r.staff_id || (counterKind && r.at < byId.get(r.station_id)!.counter_start)) continue;
+      entry(r.station_id, r.staff_id).cash.push({ kind, at: r.at, amountXof: r.amount });
+    }
+  };
+  push("creditXof", credit.results, false);
+  push("swapsXof", swaps.results, true);
+  push("chargesXof", charges.results, true);
+  push("parcelsXof", parcels.results, true);
   for (const r of handovers.results) entry(r.station_id, r.staff_id!).handovers.push(toHandover(r));
   if (!people.size) return [];
   const { results: users } = await db
@@ -277,7 +311,6 @@ export async function cashOfOwnStations(db: D1Database, ids: string[] | null, st
     .bind(JSON.stringify([...new Set([...people.values()].map((p) => p.staff))]))
     .all<{ id: string; full_name: string | null; phone: string | null; email: string | null }>();
   const names = new Map(users.map((u) => [u.id, label(u.full_name, u.phone, u.email) ?? "?"]));
-  const byId = new Map(stations.map((s) => [s.id, s]));
   return [...people.values()]
     .map((p) => {
       const s = byId.get(p.station)!;
@@ -331,7 +364,7 @@ async function isOwnStation(db: D1Database, stationId: string): Promise<boolean>
 /**
  * POST /api/owner/cash/handovers: the owner closes the open period of a partner station and
  * records what was handed over, pending until an admin confirms it. At an own station a staff
- * member closes their own top-ups, or the station's owner or an admin records it for them
+ * member closes the cash they took, or the station's owner or an admin records it for them
  * (staffId). The amount due must be the one they saw (409 cash_changed otherwise).
  */
 export async function closeCashDay(c: CashCtx, input: HandoverInput): Promise<CashHandover> {
@@ -349,7 +382,7 @@ export async function closeCashDay(c: CashCtx, input: HandoverInput): Promise<Ca
   const now = new Date();
   const [cash] = own ? await cashOfOwnStations(c.db, [input.stationId], staffId, now) : await cashOfStations(c.db, [input.stationId], now);
   if (!cash) throw new ApiError("own_station", 409);
-  // For someone else: only a person who loaded credit or closed here before.
+  // For someone else: only a person who took cash or closed here before.
   if (own && staffId !== user.id && !cash.lines.totalXof && !cash.handovers.length) throw new ApiError("bad_request");
   if (cash.dueXof !== input.expectedDueXof) throw new ApiError("cash_changed", 409);
   const id = uuid();
