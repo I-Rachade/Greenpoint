@@ -1,3 +1,4 @@
+import { pruneIpRequests } from "./ip-limits";
 import { handleApi } from "./api";
 import { runDispatch } from "./drivers";
 import type { Env } from "./env";
@@ -62,6 +63,7 @@ export default {
         await runPartnerEvents(env);
       }),
     );
+    if (controller.cron === DAILY_CRON) ctx.waitUntil(pruneIpRequests(env.DB).catch((err) => console.error("ip limits", err)));
     if (controller.cron !== DAILY_CRON) ctx.waitUntil(runDispatch(env).catch((err) => console.error("dispatch", err)));
     const at = new Date(controller.scheduledTime);
     if (controller.cron !== DAILY_CRON && at.getUTCHours() === CASH_DEADLINE_HOUR && at.getUTCMinutes() === 0) {

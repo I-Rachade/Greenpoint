@@ -17,6 +17,7 @@ import { CountryPicker } from "./country-picker";
 import { useI18n } from "./i18n-provider";
 import { MailIcon, PhoneIcon } from "./icons";
 import { OtpInput } from "./otp-input";
+import { Turnstile } from "./turnstile";
 import { runsOperator } from "@/lib/operators";
 import { cleanFleetName, FLEET_NAME_MAX } from "@/lib/fleet";
 import type { MerchantShopInput } from "@/lib/merchants";
@@ -45,7 +46,7 @@ const digits = (value: string, max: number) => value.replace(/\D/g, "").slice(0,
  * phone, address and pin; the account is a merchant account with a shop waiting for an admin.
  */
 export function LoginForm({ fleet = false, merchant = false }: { fleet?: boolean; merchant?: boolean }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { backend } = useApp();
   const router = useRouter();
   const errorMessage = useErrorMessage();
@@ -68,6 +69,22 @@ export function LoginForm({ fleet = false, merchant = false }: { fleet?: boolean
   /** New accounts must accept the terms and the privacy policy before the SMS code is sent. */
   const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** Turnstile (worker/ip-limits.ts): its site key when the Worker asks for the check, and the current token. */
+  const [captchaKey, setCaptchaKey] = useState<string | null>(null);
+  const [captcha, setCaptcha] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
+  useEffect(() => {
+    backend.captchaSiteKey().then(setCaptchaKey, () => setCaptchaKey(null));
+  }, [backend]);
+  /** Sends a code with the current token; a token is good once, so the widget checks again after. */
+  async function sendWithCaptcha(to: string) {
+    try {
+      await backend.sendCode(to, captcha ?? undefined);
+    } finally {
+      if (captchaKey) setCaptchaReset((n) => n + 1);
+    }
+  }
+  const captchaWidget = captchaKey ? <Turnstile siteKey={captchaKey} lang={locale} resetKey={captchaReset} onToken={setCaptcha} /> : null;
   const [error, setError] = useState<string | null>(null);
 
   function switchMode(next: Mode) {
@@ -155,7 +172,7 @@ export function LoginForm({ fleet = false, merchant = false }: { fleet?: boolean
     const contact = contactOrError();
     if (!contact) return;
     void run(async () => {
-      await backend.sendCode(contact.value);
+      await sendWithCaptcha(contact.value);
       setCodeSentTo(contact);
     });
   }
@@ -402,7 +419,8 @@ export function LoginForm({ fleet = false, merchant = false }: { fleet?: boolean
                 <span>{acceptText}</span>
               </label>
             )}
-            <button type="submit" className={button} disabled={busy || (mode === "register" && !accepted)}>
+            {captchaWidget}
+            <button type="submit" className={button} disabled={busy || (mode === "register" && !accepted) || (!!captchaKey && !captcha)}>
               {t.login.sendCode}
             </button>
             {mode === "reset" && (
@@ -421,7 +439,8 @@ export function LoginForm({ fleet = false, merchant = false }: { fleet?: boolean
             <div className="space-y-2">
               <p className="text-sm font-medium">{t.ui.auth.otpHint}</p>
               <OtpInput length={6} value={code} onChange={setCode} label={t.login.code} autoFocus />
-              <ResendCode onResend={() => backend.sendCode(codeSentTo.value)} />
+              <ResendCode onResend={() => sendWithCaptcha(codeSentTo.value)} />
+              {captchaWidget}
             </div>
             <h2 className="pt-2 text-base font-semibold">{t.ui.auth.choosePin}</h2>
             {pinField(t.login.newPin, pin, setPin, "new-password")}

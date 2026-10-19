@@ -1,3 +1,4 @@
+import { captchaSiteKey, checkCaptcha, countIpRequest } from "./ip-limits";
 import { offersCharging, offersSwap, withinOpeningHours } from "../src/lib/availability";
 import { depotPoints, hasAnyPoint } from "../src/lib/station-points";
 import { cleanAmenities, cleanMainActivity, cleanPhotos, isUnattended, type ReviewInput } from "../src/lib/station-extras";
@@ -1916,13 +1917,17 @@ const ROUTES: [string, RegExp, Handler][] = [
     },
   ],
   ["GET", /^\/api\/me$/, (c) => c.user()],
+  // The Turnstile site key for the login form, null while Turnstile is off (worker/ip-limits.ts).
+  ["GET", /^\/api\/auth\/captcha$/, async (c) => ({ siteKey: captchaSiteKey(c.env) })],
   // Auth bodies name the phone number or e-mail address "contact"; "phone" is the
   // older name, still sent by app versions released before e-mail login.
   [
     "POST",
     /^\/api\/auth\/send$/,
     async (c) => {
-      const body = await readJson<{ contact?: string; phone?: string }>(c.request);
+      const body = await readJson<{ contact?: string; phone?: string; captcha?: string }>(c.request);
+      await countIpRequest(c.db, c.request, "send");
+      await checkCaptcha(c.env, c.request, body.captcha);
       await sendCode(c.env, body.contact ?? body.phone ?? "");
       return { ok: true };
     },
@@ -1956,6 +1961,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/auth\/login$/,
     async (c) => {
       const body = await readJson<{ contact?: string; phone?: string; pin: string }>(c.request);
+      await countIpRequest(c.db, c.request, "login");
       return signIn(c.env, body.contact ?? body.phone ?? "", body.pin);
     },
   ],
@@ -2675,6 +2681,7 @@ export const OPEN_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/operators",
   "GET /api/stations/:id/reviews",
   "GET /api/me",
+  "GET /api/auth/captcha",
   "POST /api/auth/send",
   "POST /api/auth/register",
   "POST /api/auth/register-fleet",

@@ -2624,6 +2624,7 @@ export const fr = {
     not_a_driver: "Réservé aux chauffeurs validés.",
     phone_required: "Ajoutez d'abord votre numéro de téléphone dans Mon compte.",
     hold_limit: "Assez de réservations à cette station pour l'instant. Passez directement ou réessayez plus tard.",
+    captcha_failed: "La vérification anti-robot a échoué. Réessayez.",
     driver_busy: "Ce chauffeur a déjà une course en cours.",
     driver_not_found: "Chauffeur introuvable ou pas actif.",
     too_far: "Vous devez être à la station pour vous mettre dans la file.",

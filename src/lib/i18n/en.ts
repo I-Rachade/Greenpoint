@@ -2624,6 +2624,7 @@ export const en: Dictionary = {
     not_a_driver: "Only for approved drivers.",
     phone_required: "First add your phone number under My account.",
     hold_limit: "This station has enough reservations for now. Walk in, or try again later.",
+    captcha_failed: "The robot check failed. Please try again.",
     driver_busy: "This driver already has a trip.",
     driver_not_found: "Driver not found or not active.",
     too_far: "You must be at the station to join its line.",

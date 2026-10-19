@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { handleApi } from "./api";
 import { checkCode, hashPin, signIn, verifyPin } from "./auth";
 import { COUNTER_CODE_MAX_TRIES, withCounterCodeTry } from "./code-tries";
 import type { Env } from "./env";
 import { ApiError, sha256 } from "./http";
+import { IP_LIMITS } from "./ip-limits";
 import { checkPickupCode } from "./reservations";
 import { refuseWhileCreditCharging, spendCreditCode } from "./wallet";
 import { fakeD1 } from "./test-d1";
@@ -121,5 +123,47 @@ describe("Green Credit charge in progress", () => {
     expect(await code(refuseWhileCreditCharging(d1, "ama"))).toBe("ok");
     insert("charging", 5000);
     expect(await code(refuseWhileCreditCharging(d1, "ama"))).toBe("charge_unpaid");
+  });
+});
+
+describe("login limits per IP address (point 9)", () => {
+  const post = (env: Env, path: string, body: unknown, ip = "203.0.113.7") =>
+    handleApi(new Request(`https://app.poinderecharge.com${path}`, { method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": ip }, body: JSON.stringify(body) }), env).then(
+      async (res) => ({ status: res.status, body: (await res.json()) as { error?: string } }),
+    );
+
+  it("stops one address after too many PIN logins, also in parallel, and not the others", async () => {
+    const { env } = await setup();
+    const answers = await Promise.all(Array.from({ length: IP_LIMITS.login.max + 15 }, () => post(env, "/api/auth/login", { contact: "+22890000099", pin: "1111" })));
+    expect(answers.filter((a) => a.body.error === "rate_limited").length).toBe(15);
+    expect((await post(env, "/api/auth/login", { contact: PHONE, pin: "4826" }, "198.51.100.1")).status).toBe(200);
+  });
+
+  it("stops one address after too many code requests", async () => {
+    const { env } = await setup();
+    const testOtp = Array.from({ length: 12 }, (_, i) => `+228910000${String(i).padStart(2, "0")}=123456`).join(",");
+    const withCodes = { ...env, TEST_OTP: testOtp } as Env;
+    const answers = [];
+    for (let i = 0; i < 12; i++) answers.push(await post(withCodes, "/api/auth/send", { contact: `+228910000${String(i).padStart(2, "0")}` }));
+    expect(answers.slice(0, IP_LIMITS.send.max).every((a) => a.status === 200)).toBe(true);
+    expect(answers.slice(IP_LIMITS.send.max).map((a) => a.body.error)).toEqual(["rate_limited", "rate_limited"]);
+  });
+
+  it("asks for a Turnstile token only once Turnstile is set up", async () => {
+    const { env } = await setup();
+    const on = { ...env, TURNSTILE_SECRET: "s", TURNSTILE_SITE_KEY: "k", TEST_OTP: "+22891000001=123456" } as Env;
+    const get = (e: Env) => handleApi(new Request("https://app.poinderecharge.com/api/auth/captcha"), e).then((r) => r.json());
+    expect(await get(env)).toEqual({ siteKey: null });
+    expect(await get(on)).toEqual({ siteKey: "k" });
+    expect((await post(on, "/api/auth/send", { contact: "+22891000001" })).body.error).toBe("captcha_failed");
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({ success: false }))) as typeof fetch;
+    try {
+      expect((await post(on, "/api/auth/send", { contact: "+22891000001", captcha: "bad" })).body.error).toBe("captcha_failed");
+      globalThis.fetch = (async () => new Response(JSON.stringify({ success: true }))) as typeof fetch;
+      expect((await post(on, "/api/auth/send", { contact: "+22891000001", captcha: "good" })).status).toBe(200);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });

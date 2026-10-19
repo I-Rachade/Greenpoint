@@ -138,6 +138,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "not_a_driver",
   "phone_required",
   "hold_limit",
+  "captcha_failed",
   "driver_busy",
   "driver_not_found",
   "too_far",
@@ -355,8 +356,12 @@ export class CloudflareBackend implements Backend {
     };
   }
 
-  async sendCode(contact: string) {
-    await this.call("POST", "/api/auth/send", { contact });
+  async sendCode(contact: string, captcha?: string) {
+    await this.call("POST", "/api/auth/send", { contact, captcha });
+  }
+
+  async captchaSiteKey() {
+    return (await this.call<{ siteKey: string | null }>("GET", "/api/auth/captcha")).siteKey;
   }
 
   register(contact: string, code: string, pin: string) {

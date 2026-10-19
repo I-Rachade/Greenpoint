@@ -151,6 +151,7 @@ export type BackendErrorCode =
   | "not_a_driver"
   | "phone_required"
   | "hold_limit"
+  | "captcha_failed"
   | "driver_busy"
   | "driver_not_found"
   | "too_far"
@@ -302,7 +303,9 @@ export interface Backend {
    * Sends a code by SMS (phone number) or by e-mail (address), needed to register
    * and to set a new PIN when it is forgotten. `contact` is normalised (see lib/contact.ts).
    */
-  sendCode(contact: string): Promise<void>;
+  sendCode(contact: string, captcha?: string): Promise<void>;
+  /** The Cloudflare Turnstile site key the login form shows before sending a code; null while it is off. */
+  captchaSiteKey(): Promise<string | null>;
   /**
    * Checks the code, sets the 4-digit PIN and signs in (new account or new PIN).
    * `demoRole` is only honoured by the demo backend, so testers can try every view.

@@ -51,6 +51,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/stations/:id/reviews": CUSTOMER,
   "DELETE /api/reviews/:id": SIGNED, // one's own review
   "GET /api/me": ALL,
+  "GET /api/auth/captcha": ALL,
   "POST /api/auth/send": ALL,
   "POST /api/auth/register": ALL,
   "POST /api/auth/register-fleet": ALL,

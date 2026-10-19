@@ -1257,6 +1257,11 @@ export class DemoBackend implements Backend {
     return this.subscribe(() => callback(this.profileOf(this.load())));
   }
 
+  /** The demo sends no codes, so it needs no robot check. */
+  async captchaSiteKey() {
+    return null;
+  }
+
   async sendCode() {
     // Nothing is sent in demo mode; the code is always DEMO_CODE.
   }
