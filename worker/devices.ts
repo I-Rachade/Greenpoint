@@ -29,6 +29,7 @@ import { ocppIdTag, ocppKey, remoteStartRequest, remoteStopRequest } from "../sr
 import { sendOcppCommand } from "./ocpp";
 import { earnStatement } from "./greenpoint";
 import { chargeReadingStatement, creditFollowUp, hasOpenCharge } from "./charging";
+import { isCreditStation } from "./wallet";
 
 // Connected sockets (e.g. LoRa). See docs/steckdosen-lora.md.
 
@@ -114,9 +115,9 @@ export function ingest(db: D1Database): Ingest {
       .run();
 
     const device = await db
-      .prepare("select external_id, station_id from devices where external_id = ?")
+      .prepare("select external_id, station_id, protocol from devices where external_id = ?")
       .bind(externalId)
-      .first<{ external_id: string; station_id: string }>();
+      .first<{ external_id: string; station_id: string; protocol: string | null }>();
     if (!device) return { error: "unknown_device" };
 
     const statements: D1PreparedStatement[] = [
@@ -142,7 +143,7 @@ export function ingest(db: D1Database): Ingest {
           .bind(status, o.power_watts ?? null, o.energy_wh ?? null, point.id),
       );
       // The charge staff started on this outlet adds up the energy and ends with it (worker/charging.ts).
-      statements.push(chargeReadingStatement(db, point.id, o.status, o.energy_wh, now, o.transaction_id));
+      statements.push(chargeReadingStatement(db, point.id, o.status, o.energy_wh, now, o.transaction_id, device.protocol === "ocpp1.6"));
       updated++;
       // A charge staff started is not a reservation's plug-in.
       if (o.status === "charging" && point.status !== "charging" && !(await hasOpenCharge(db, point.id))) {
@@ -270,7 +271,10 @@ export async function createDevice(db: D1Database, input: DeviceInput, actor: st
   const protocol = input.protocol ?? null;
   if (commandRoute({ externalId, vendor, link, protocol }) === "xingke_cloud" && !XINGKE_ID.test(vendorRef)) throw new ApiError("invalid_device");
   // An OCPP charge point logs in with this key; only its hash is kept, so it is shown once.
-  // Without a key (firmware that cannot send a password) anyone with the id can connect.
+  // Without a key (firmware that cannot send a password) anyone with the id can connect, so
+  // never at a Green Credit station, where its readings and card swipes spend customers' credit
+  // (handleOcppUpgrade in worker/ocpp.ts refuses it there too).
+  if (protocol === "ocpp1.6" && input.ocppNoPassword && (await isCreditStation(db, stationId))) throw new ApiError("ocpp_key_required", 409);
   const key = protocol === "ocpp1.6" && !input.ocppNoPassword ? ocppKey() : null;
   const statements = [
     db

@@ -52,6 +52,11 @@ export interface WalletTransaction {
   counterparty: string | null;
   remark: string | null;
   createdAt: string;
+  /**
+   * A Green Credit charge (0052): "held" is the amount taken when it started (status "pending"
+   * while it runs), "refund" what came back of it once the real price was known.
+   */
+  hold?: "held" | "refund";
 }
 
 /** What the signed-in user sees on the Green Credit page. */

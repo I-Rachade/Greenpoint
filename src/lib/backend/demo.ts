@@ -7976,11 +7976,12 @@ export class DemoBackend implements Backend {
       this.checkPickupCode(state, reservation, input.pickupCode);
     }
     const users = state.users ?? demoUsers(new Date());
-    const text = contactFromCode(input.contact ?? "");
+    // Without a reservation only the customer's one-time Green Credit code names them; without it, an anonymous cash charge.
+    const code = (input.creditCode ?? "").trim();
     const customer = reservation
       ? (users.find((u) => u.id === reservation.userId) ?? (state.profile?.id === reservation.userId ? state.profile : null))
-      : text
-        ? this.findWalletUser(state, text)
+      : code
+        ? this.creditCodeOwner(state, code)
         : null;
     if (customer?.id === staff.id) throw new BackendError("own_reservation");
     // The reservation used now: the one named, else the customer's outlet reservation here (this outlet
@@ -8011,7 +8012,9 @@ export class DemoBackend implements Backend {
       paidAt: null,
       greenpoints: 0,
     };
-    this.save({ ...state, reservations, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
+    // The code is used once, by this start.
+    const wallet = !reservation && code ? this.useCreditCode(this.wallet(state), code) : state.wallet;
+    this.save({ ...state, wallet, reservations, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
     return this.chargeView(charge);
   }
 
