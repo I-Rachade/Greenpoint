@@ -214,6 +214,8 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "swap_required",
   "driver_pass_invalid",
   "driver_pass_expired",
+  "driver_pass_required",
+  "pickup_code_required",
   "role_change_blocked",
   "fleet_not_approved",
   "fleet_locked",
@@ -813,8 +815,8 @@ export class CloudflareBackend implements Backend {
     return parcel;
   }
 
-  async pickUpParcel(stationId: string, codeOrQr: string) {
-    const parcel = await this.call<Parcel>("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels/pickup`, { code: codeOrQr });
+  async pickUpParcel(stationId: string, codeOrQr: string, trackingNo?: string) {
+    const parcel = await this.call<Parcel>("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels/pickup`, { code: codeOrQr, trackingNo });
     this.changed();
     return parcel;
   }
@@ -976,6 +978,10 @@ export class CloudflareBackend implements Backend {
     return this.act("POST", `/api/jobs/${encodeURIComponent(id)}/cancel`);
   }
 
+  confirmCourierReceipt(jobId: string) {
+    return this.act("POST", `/api/jobs/${encodeURIComponent(jobId)}/confirm-receipt`);
+  }
+
   stationDrivers(stationId: string) {
     return this.call<StationDrivers>("GET", `/api/stations/${encodeURIComponent(stationId)}/drivers`);
   }
@@ -1028,6 +1034,10 @@ export class CloudflareBackend implements Backend {
 
   assignJob(jobId: string, driverId: string) {
     return this.act("POST", `/api/admin/jobs/${encodeURIComponent(jobId)}/assign`, { driverId });
+  }
+
+  approveCourierProof(jobId: string) {
+    return this.act("POST", `/api/admin/jobs/${encodeURIComponent(jobId)}/approve-proof`);
   }
 
   setDriverManager(driverId: string, contact: string | null) {

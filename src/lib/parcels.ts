@@ -34,7 +34,10 @@ export function liabilityLimit(priceFcfa: number, declaredValue: number | null):
 
 /** Heaviest parcel accepted, in kg. */
 export const PARCEL_MAX_KG = 50;
-/** Wrong pickup codes at one station before code entry is paused there. */
+/**
+ * Wrong pickup codes before code entry is paused: for one parcel when staff found it by its
+ * number or scanned the QR code, else for bare codes typed at the station.
+ */
 export const PARCEL_MAX_CODE_FAILURES = 5;
 export const PARCEL_CODE_LOCK_MINUTES = 15;
 
@@ -141,8 +144,9 @@ export function parsePickupInput(input: string): { trackingNo: string | null; co
 
 /**
  * What staff type or scan at the handover counter: the recipient's pickup code (or QR),
- * or just the parcel number "GP-…", which then needs an ID check. A bare 6-digit
- * number is always a code, so the parcel number has to carry a letter or "GP".
+ * or just the parcel number "GP-…". The number only finds the parcel (it is on the label,
+ * not secret); handing it over always needs the code. A bare 6-digit number is always a
+ * code, so the parcel number has to carry a letter or "GP".
  */
 export function parseHandoverInput(input: string): { trackingNo: string | null; code: string | null } | null {
   const pickup = parsePickupInput(input);

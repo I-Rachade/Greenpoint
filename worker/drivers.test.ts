@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_DRIVER_SETTINGS, driverBadgePayload, driverEarning, fareFor, OPEN_JOB_EXPIRY_MINUTES, type FleetVehicleType } from "../src/lib/drivers";
+import { DEFAULT_DRIVER_SETTINGS, driverBadgePayload, driverEarning, fareFor, OPEN_JOB_EXPIRY_MINUTES, signDriverPass, type FleetVehicleType } from "../src/lib/drivers";
 import { distanceMeters } from "../src/lib/geo";
 import type { Profile } from "../src/lib/types";
 import {
@@ -21,6 +21,9 @@ import {
   dispatch,
   driverAtStation,
   driverHome,
+  driverPass,
+  approveProof,
+  confirmCourierReceipt,
   failDelivery,
   finishRide,
   handToDriver,
@@ -37,7 +40,7 @@ import {
   uploadProof,
 } from "./drivers";
 import type { Env } from "./env";
-import { createParcel, parcelInfo, pickUpParcel, type ParcelCtx } from "./parcels";
+import { createParcel, myParcels, parcelInfo, pickUpParcel, stationParcels, type ParcelCtx } from "./parcels";
 import { startRun } from "./parcel-runs";
 import { fakeD1 } from "./test-d1";
 
@@ -117,7 +120,7 @@ async function approvedDriver(t: ReturnType<typeof setup>, id: string, type: Fle
   // The approval made the account a driver account (0030, R1); the session reads the new role.
   const driver = t.ctx({ ...profile(id, `+2289300000${id.slice(-1)}`), role: "driver" });
   const home = await driverHome(driver);
-  return { me: driver, code: home.driver!.code!, badge: driverBadgePayload(home.driver!.code!) };
+  return { me: driver, code: home.driver!.code!, badge: driverBadgePayload(home.driver!.code!), pass: (await driverPass(driver)).payload };
 }
 
 const parcelInput = (express: boolean) => ({
@@ -231,9 +234,12 @@ describe("express trip", () => {
     const home = await driverHome(first.me);
     expect(home.job).toBeNull();
     expect(home.driver?.balanceFcfa).toBe(-driverEarning(offered.fareFcfa, DEFAULT_DRIVER_SETTINGS));
-    // Daily settlement: the station pays the earning out.
-    await expect(settleDriver(t.at(B.id), B.id, first.badge, 0)).rejects.toMatchObject({ code: "balance_changed" });
-    await settleDriver(t.at(B.id), B.id, first.badge, home.driver!.balanceFcfa);
+    // Daily settlement: the station pays the earning out, only for the signed pass of the driver's app.
+    for (const typed of [first.code, first.badge]) {
+      await expect(settleDriver(t.at(B.id), B.id, typed, home.driver!.balanceFcfa)).rejects.toMatchObject({ code: "driver_pass_required" });
+    }
+    await expect(settleDriver(t.at(B.id), B.id, first.pass, 0)).rejects.toMatchObject({ code: "balance_changed" });
+    await settleDriver(t.at(B.id), B.id, first.pass, home.driver!.balanceFcfa);
     expect((await driverHome(first.me)).driver?.balanceFcfa).toBe(0);
   });
 
@@ -255,6 +261,27 @@ describe("express trip", () => {
     expect(t.db.prepare("select status, driver_id from delivery_jobs where id = ?").get(job.id)).toMatchObject({ status: "open", driver_id: null });
     await assignJob(t.admin, job.id, "d2");
     expect((await driverHome(second.me)).job?.status).toBe("assigned");
+  });
+
+  it("is offered by the write that creates it and by the cron, never by a page load", async () => {
+    const t = setup();
+    const first = await approvedDriver(t, "d1");
+    await joinQueue(first.me, A.id, A);
+    // The counter creating the express parcel offers its trip at once.
+    await createParcel(t.at(A.id), A.id, parcelInput(true));
+    const job = (await driverHome(first.me)).job!;
+    expect(job.status).toBe("assigned");
+    const row = () => t.db.prepare("select status, driver_id from delivery_jobs where id = ?").get(job.id);
+    // The offer runs out: pages that only read leave it alone…
+    t.db.exec(`update delivery_jobs set assigned_at = '${new Date(Date.now() - 10 * 60_000).toISOString()}' where id = '${job.id}'`);
+    await driverHome(first.me);
+    await stationDrivers(t.admin, A.id);
+    await adminDrivers(t.admin);
+    expect(row()).toMatchObject({ status: "assigned", driver_id: "d1" });
+    // …the driver can no longer take it, and the every-minute cron moves it on.
+    await expect(acceptJob(first.me, job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+    await runDispatch(t.env);
+    expect(row()).toMatchObject({ status: "open", driver_id: null });
   });
 
   it("only offers parcels to vehicles big enough", async () => {
@@ -340,14 +367,87 @@ describe("home delivery", () => {
 });
 
 describe("handover at the counter", () => {
-  it("finds an arrived parcel by its number alone", async () => {
+  const arrive = (t: ReturnType<typeof setup>, id: string, code: string) =>
+    t.db.exec(`update parcels set status = 'arrived', pickup_code = '${code}', arrived_at = '${new Date().toISOString()}' where id = '${id}'`);
+  const status = (t: ReturnType<typeof setup>, id: string) => (t.db.prepare("select status from parcels where id = ?").get(id) as { status: string }).status;
+
+  it("finds a parcel by its number, but hands it over only for the pickup code", async () => {
     const t = setup();
     const parcel = await createParcel(t.at(A.id), A.id, parcelInput(false));
     await expect(pickUpParcel(t.at(B.id), B.id, parcel.trackingNo)).rejects.toMatchObject({ code: "parcel_not_arrived" });
-    t.db.exec(`update parcels set status = 'arrived', pickup_code = '654321', arrived_at = '${new Date().toISOString()}' where id = '${parcel.id}'`);
-    const done = await pickUpParcel(t.at(B.id), B.id, parcel.trackingNo);
+    await expect(pickUpParcel(t.at(B.id), B.id, "GP-ZZZZZZ")).rejects.toMatchObject({ code: "parcel_not_found" });
+    arrive(t, parcel.id, "654321");
+    // The number is on the label, not secret: alone it hands nothing over.
+    await expect(pickUpParcel(t.at(B.id), B.id, parcel.trackingNo)).rejects.toMatchObject({ code: "pickup_code_required" });
+    await expect(pickUpParcel(t.at(B.id), B.id, "", parcel.trackingNo)).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    await expect(pickUpParcel(t.at(B.id), B.id, "111111", parcel.trackingNo)).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    expect(status(t, parcel.id)).toBe("arrived");
+    const done = await pickUpParcel(t.at(B.id), B.id, "654321", parcel.trackingNo.toLowerCase());
     expect(done.status).toBe("picked_up");
-    expect(t.db.prepare("select status from parcels where id = ?").get(parcel.id)).toMatchObject({ status: "picked_up" });
+    expect(status(t, parcel.id)).toBe("picked_up");
+    // The right code took its try back; only the one wrong code is left.
+    expect(t.db.prepare("select count(*) as n from parcel_code_failures where station_id = ?").get(`parcel:${parcel.id}`)).toMatchObject({ n: 1 });
+  });
+
+  it("shows the pickup code to the sender as well, never to staff", async () => {
+    const t = setup();
+    const parcel = await createParcel(t.at(A.id), A.id, parcelInput(false));
+    arrive(t, parcel.id, "654321");
+    const own = t.ctx(profile((t.db.prepare("select id from users where phone = '+22891000000'").get() as { id: string }).id, "+22891000000"));
+    const [mine] = await myParcels(own);
+    expect(mine).toMatchObject({ direction: "sent", pickupCode: "654321" });
+    const staffView = await stationParcels(t.admin, B.id);
+    expect(staffView.find((p) => p.id === parcel.id)?.pickupCode).toBeUndefined();
+  });
+
+  it("locks wrong codes per parcel, so other recipients can still collect", async () => {
+    const t = setup();
+    const target = await createParcel(t.at(A.id), A.id, parcelInput(false));
+    const other = await createParcel(t.at(A.id), A.id, parcelInput(false));
+    arrive(t, target.id, "654321");
+    arrive(t, other.id, "123456");
+    // Parallel guesses for one parcel: the tries are counted before the check, never more than 5.
+    const tries = await Promise.allSettled(Array.from({ length: 8 }, (_, i) => pickUpParcel(t.at(B.id), B.id, String(200000 + i), target.trackingNo)));
+    const codes = tries.map((r) => (r.status === "rejected" ? (r.reason as { code: string }).code : "ok"));
+    expect(codes.filter((c) => c === "wrong_pickup_code")).toHaveLength(5);
+    expect(codes.filter((c) => c === "code_locked")).toHaveLength(3);
+    // Even the right code waits for that parcel now…
+    await expect(pickUpParcel(t.at(B.id), B.id, "654321", target.trackingNo)).rejects.toMatchObject({ code: "code_locked" });
+    // …but the other recipient collects with their code, typed bare or with the number.
+    await pickUpParcel(t.at(B.id), B.id, "123456");
+    expect(status(t, other.id)).toBe("picked_up");
+  });
+
+  it("locks bare codes at the station without blocking a parcel found by its number", async () => {
+    const t = setup();
+    const parcel = await createParcel(t.at(A.id), A.id, parcelInput(false));
+    arrive(t, parcel.id, "654321");
+    for (let i = 0; i < 5; i++) await expect(pickUpParcel(t.at(B.id), B.id, "999999")).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    await expect(pickUpParcel(t.at(B.id), B.id, "654321")).rejects.toMatchObject({ code: "code_locked" });
+    await pickUpParcel(t.at(B.id), B.id, "654321", parcel.trackingNo);
+    expect(status(t, parcel.id)).toBe("picked_up");
+  });
+});
+
+describe("driver pass at the counter", () => {
+  it("refuses a forged or expired pass where the typed code still works", async () => {
+    const t = setup();
+    const driver = await approvedDriver(t, "d1");
+    const parcel = await createParcel(t.at(A.id), A.id, parcelInput(false));
+    t.db.exec(`update parcels set label_printed_at = '${new Date().toISOString()}' where id = '${parcel.id}'`);
+    const forged = `${driver.pass.slice(0, -4)}0000`;
+    await expect(driverAtStation(t.admin, A.id, forged)).rejects.toMatchObject({ code: "driver_pass_invalid" });
+    await expect(startRun(t.at(A.id), A.id, forged, [parcel.id])).rejects.toMatchObject({ code: "driver_pass_invalid" });
+    await expect(startRun(t.at(A.id), A.id, `${driver.badge}:0:1:X`, [parcel.id])).rejects.toMatchObject({ code: "driver_pass_invalid" });
+    const secret = (t.db.prepare("select value from app_settings where key = 'driver_pass_secret'").get() as { value: string }).value;
+    const old = await signDriverPass(secret, driver.code, null, Date.now() - 60 * 60_000);
+    await expect(driverAtStation(t.admin, A.id, old.payload)).rejects.toMatchObject({ code: "driver_pass_expired" });
+    await expect(settleDriver(t.at(A.id), A.id, old.payload, 0)).rejects.toMatchObject({ code: "driver_pass_expired" });
+    // The pass and the typed code both find the driver for parcels.
+    expect((await driverAtStation(t.admin, A.id, driver.pass)).driver.userId).toBe("d1");
+    expect((await driverAtStation(t.admin, A.id, driver.code)).driver.userId).toBe("d1");
+    const run = await startRun(t.at(A.id), A.id, driver.code, [parcel.id]);
+    expect(run.parcels).toHaveLength(1);
   });
 });
 
@@ -486,7 +586,43 @@ describe("express parcel door to door", () => {
     await expect(finishRide(driver.me, job.id, "")).rejects.toMatchObject({ code: "proof_required" });
     await uploadProof(driver.me, job.id, photo());
     await finishRide(driver.me, job.id);
-    expect(t.db.prepare("select status from delivery_jobs where id = ?").get(job.id)).toMatchObject({ status: "done" });
+    expect(t.db.prepare("select status, proof_review from delivery_jobs where id = ?").get(job.id)).toMatchObject({ status: "done", proof_review: "pending" });
+    // Without the recipient's code the driver's share waits: only what they collected counts.
+    expect((await driverHome(driver.me)).driver?.balanceFcfa).toBe(job.fareFcfa);
+    expect((await myJobs(t.sender))[0].proofReview).toBe("pending");
+    expect((await adminDrivers(t.admin)).jobs.find((j) => j.id === job.id)?.proofReview).toBe("pending");
+    // Someone else cannot confirm it; the sender can, once.
+    const stranger = t.ctx(profile("d2", "+22893000002"));
+    await expect(confirmCourierReceipt(stranger, job.id)).rejects.toMatchObject({ code: "forbidden" });
+    await confirmCourierReceipt(t.sender, job.id);
+    await expect(confirmCourierReceipt(t.sender, job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+    await expect(approveProof(t.admin, job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+    expect((await driverHome(driver.me)).driver?.balanceFcfa).toBe(job.fareFcfa - driverEarning(job.fareFcfa, DEFAULT_DRIVER_SETTINGS));
+    expect((await myJobs(t.sender))[0].proofReview).toBe("approved");
+  });
+
+  it("books the held share when an admin approves the photo, and not for a trip handed over with the code", async () => {
+    const t = setup();
+    const job = await bookCourier(t.sender, booking);
+    const driver = await approvedDriver(t, "d1", "moto");
+    await joinQueue(driver.me, B.id, B);
+    await acceptJob(driver.me, job.id);
+    await boardRide(driver.me, job.id);
+    await uploadProof(driver.me, job.id, photo());
+    await finishRide(driver.me, job.id);
+    await expect(approveProof(t.sender, job.id)).rejects.toThrow("forbidden");
+    await approveProof(t.admin, job.id);
+    expect((await driverHome(driver.me)).driver?.balanceFcfa).toBe(job.fareFcfa - driverEarning(job.fareFcfa, DEFAULT_DRIVER_SETTINGS));
+    expect(t.db.prepare("select count(*) as n from driver_ledger where job_id = ? and kind = 'earning'").get(job.id)).toMatchObject({ n: 1 });
+
+    const second = await bookCourier(t.sender, booking);
+    await joinQueue(driver.me, B.id, B);
+    await acceptJob(driver.me, second.id);
+    await boardRide(driver.me, second.id);
+    const code = (await myJobs(t.sender)).find((j) => j.id === second.id)!.handoverCode!;
+    await finishRide(driver.me, second.id, code);
+    expect(t.db.prepare("select proof_review from delivery_jobs where id = ?").get(second.id)).toMatchObject({ proof_review: null });
+    await expect(approveProof(t.admin, second.id)).rejects.toMatchObject({ code: "job_wrong_status" });
   });
 
   it("only goes to vehicles big enough and refuses bad bookings", async () => {

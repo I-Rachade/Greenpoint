@@ -531,6 +531,54 @@ describe("DemoBackend driver phase 2 (as in the Worker)", () => {
     expect((await backend.driverHome()).payout).toMatchObject({ status: "paid", reference: "FL-1" });
   });
 
+  it("holds the share of a courier handed over by photo until the sender confirms, and settles cash only for the pass", async () => {
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    await backend.setDriversEnabled(true);
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.joinDriverQueue("st-be", HOME);
+    await asRole(backend, "customer");
+    const job = await backend.bookCourier({ pickup: HOME, dropoff: { lat: 6.13, lng: 1.22, note: "Porte bleue" }, recipientPhone: "+22897200001", content: "Pagne", size: "S" });
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.acceptJob(job.id);
+    await backend.boardRide(job.id);
+    // No FileReader in Node: a stand-in that reads every photo as the same data URL.
+    vi.stubGlobal(
+      "FileReader",
+      class {
+        result = "data:image/jpeg;base64,AQID";
+        onload: (() => void) | null = null;
+        readAsDataURL() {
+          this.onload?.();
+        }
+      },
+    );
+    await backend.uploadDeliveryPhoto(job.id, new File([new Uint8Array([1, 2, 3])], "door.jpg", { type: "image/jpeg" }));
+    vi.unstubAllGlobals();
+    await backend.finishRide(job.id);
+    expect((await backend.driverHome()).ledger.map((e) => e.kind)).toEqual(["collected"]);
+
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    expect((await backend.adminDrivers()).jobs.find((j) => j.id === job.id)?.proofReview).toBe("pending");
+    await asRole(backend, "customer");
+    expect((await backend.myJobs()).find((j) => j.id === job.id)?.proofReview).toBe("pending");
+    await backend.confirmCourierReceipt(job.id);
+    await expect(backend.confirmCourierReceipt(job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    const home = await backend.driverHome();
+    expect(home.ledger.map((e) => e.kind).sort()).toEqual(["collected", "earning"]);
+    const pass = (await backend.driverPass()).payload;
+
+    // The driver hands in the cash at the counter: the typed code is not enough, the pass is.
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    setActiveStation("st-be");
+    await expect(backend.settleDriver("st-be", home.driver!.code!, home.driver!.balanceFcfa)).rejects.toMatchObject({ code: "driver_pass_required" });
+    await expect(backend.settleDriver("st-be", pass.replace(/.$/, (c) => (c === "0" ? "1" : "0")), home.driver!.balanceFcfa)).rejects.toMatchObject({ code: "driver_pass_invalid" });
+    await backend.settleDriver("st-be", pass, home.driver!.balanceFcfa);
+    setActiveStation(null);
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    expect((await backend.driverHome()).driver!.balanceFcfa).toBe(0);
+  });
+
   it("adds a nearby parcel trip to a busy driver's tour", async () => {
     await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
     await backend.setDriversEnabled(true);

@@ -6,6 +6,7 @@ import {
   driverEarning,
   fareFor,
   inServiceArea,
+  isDriverPassFormat,
   newDriverCode,
   parseDriverBadge,
   pickDriver,
@@ -84,5 +85,13 @@ describe("driver QR code", () => {
     expect(parseDriverBadge(driverBadgePayload(code))).toBe(code);
     expect(parseDriverBadge(` ${code.slice(0, 4)}-${code.slice(4).toLowerCase()} `)).toBe(code);
     expect(parseDriverBadge("POINDERECHARGE-COLIS:GP-AAAAAA:123456")).toBeNull();
+  });
+
+  it("tells a pass (checked as such, genuine or not) from the typed code and the old static QR", () => {
+    const code = newDriverCode();
+    expect(isDriverPassFormat(`${driverBadgePayload(code)}:0:ABC:0123456789ABCDEF`)).toBe(true);
+    expect(isDriverPassFormat(` ${driverBadgePayload(code).toLowerCase()}:x `)).toBe(true);
+    expect(isDriverPassFormat(driverBadgePayload(code))).toBe(false);
+    expect(isDriverPassFormat(code)).toBe(false);
   });
 });
