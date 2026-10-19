@@ -104,7 +104,8 @@ export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots">>;
 /** Start a charge for a cash or app customer, or for the customer of an outlet reservation (with its code). */
 export interface StartChargeInput {
   pointId: string;
-  contact?: string;
+  /** Without a reservation: the customer's one-time counter code (Green Credit page of their app); empty: anonymous cash charge. */
+  creditCode?: string;
   reservationId?: string;
   pickupCode?: string;
 }
@@ -196,6 +197,8 @@ export type BackendErrorCode =
   | "credit_not_accepted"
   | "credit_limit_reached"
   | "card_needs_account"
+  | "credit_code_required"
+  | "ocpp_key_required"
   | "reward_unavailable"
   | "redemption_open"
   | "not_enough_points"

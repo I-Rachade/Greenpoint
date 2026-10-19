@@ -1,8 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { chargePrice, customerCode, type ChargeSession, type StationCharging } from "../src/lib/charging";
+import { chargePrice, type ChargeSession, type StationCharging } from "../src/lib/charging";
 import type { Profile } from "../src/lib/types";
 import { hashPin } from "./auth";
-import { creditFollowUp, payCash, payWithMobile, payWithWallet, myCharges, saveChargeTariff, settlePrepaidCharges, stopCharge } from "./charging";
+import { chargeStartFailed, creditFollowUp, payCash, payWithMobile, payWithWallet, myCharges, saveChargeTariff, settlePrepaidCharges, stopCharge } from "./charging";
+import { getWallet } from "./wallet";
 import { deleteDevice, ingest } from "./devices";
 import type { Env } from "./env";
 import { ApiError } from "./http";
@@ -99,6 +100,17 @@ async function code(promise: Promise<unknown>): Promise<string> {
   }
 }
 
+/**
+ * The one-time counter code the customer's app shows after the PIN (credit_codes, 0047): staff
+ * need it to start a charge on the customer's account (0052).
+ */
+async function counterCode(env: Env, user = "kofi", code = "12345678") {
+  await env.DB.prepare("insert into credit_codes (code_hash, user_id, created_at, expires_at) values (?, ?, ?, ?)")
+    .bind(await sha256(code), user, new Date().toISOString(), new Date(Date.now() + 600_000).toISOString())
+    .run();
+  return code;
+}
+
 /** Green Credit on the customer's account (0047), so QR charges can start. */
 function fund(db: { exec(sql: string): void }, user = "kofi", balance = 1000) {
   db.exec(`insert into wallets (user_id, balance_xof, created_at, updated_at) values ('${user}', ${balance}, 'x', 'x')`);
@@ -121,8 +133,8 @@ describe("chargePrice", () => {
 describe("a charge at the counter", () => {
   it("runs from start to cash payment, with live values, greenpoints and today's takings", async () => {
     const { db, env } = await setup();
-    // Kofi shows his QR code; staff start outlet 1.
-    const started = await start(env, { pointId: "p1", contact: customerCode(KOFI.phone!) });
+    // Kofi shows the code his app gives after his PIN; staff start outlet 1.
+    const started = await start(env, { pointId: "p1", creditCode: await counterCode(env) });
     expect(started.status).toBe(200);
     expect(started.data).toMatchObject({ status: "charging", customer: "Kofi M.", pointLabel: "3456-1", energyWh: 0, amountXof: 0, tariff: { kwhXof: 150, minXof: 100 } });
     const command = db.prepare("select kind, outlet, status from device_commands").get();
@@ -146,11 +158,12 @@ describe("a charge at the counter", () => {
     const stopped = await act(env, started.data.id, "stop");
     expect(stopped.data).toMatchObject({ status: "stopped", amountXof: 105, powerWatts: 0, endedByDevice: false });
     expect(db.prepare("select count(*) as n from device_commands where kind = 'stop'").get()).toEqual({ n: 1 });
-    // A last reading after the stop still counts.
+    // A reading after the stop that does not name the charge no longer changes it (0052): it may
+    // be someone else's charge nobody opened.
     await read(env, [{ outlet: 1, status: "free", energy_wh: 750 }]);
 
     const paid = await act(env, started.data.id, "pay");
-    expect(paid.data).toMatchObject({ status: "paid", paymentMethod: "cash", energyWh: 750, amountXof: 115, greenpoints: 7 });
+    expect(paid.data).toMatchObject({ status: "paid", paymentMethod: "cash", energyWh: 700, amountXof: 105, greenpoints: 7 });
     // Paid twice is still one payment and one ledger row.
     expect((await act(env, started.data.id, "pay")).data.status).toBe("paid");
     expect(db.prepare("select count(*) as n, sum(points) as p from greenpoint_ledger where charging_session_id is not null").get()).toEqual({ n: 1, p: 7 });
@@ -158,8 +171,8 @@ describe("a charge at the counter", () => {
     await read(env, [{ outlet: 1, status: "free", energy_wh: 900 }]);
     const after = await api<StationCharging>(env, "staff", "GET", "/api/stations/st/charging");
     expect(after.data.open).toHaveLength(0);
-    expect(after.data.today[0]).toMatchObject({ status: "paid", amountXof: 115, energyWh: 750 });
-    expect(after.data.takings).toEqual({ cashXof: 115, appXof: 0, count: 1 });
+    expect(after.data.today[0]).toMatchObject({ status: "paid", amountXof: 105, energyWh: 700 });
+    expect(after.data.takings).toEqual({ cashXof: 105, appXof: 0, count: 1 });
     expect((await myCharges(env, KOFI))[0]).toMatchObject({ status: "paid", paymentMethod: "cash", greenpoints: 7 });
   });
 
@@ -190,7 +203,9 @@ describe("a charge at the counter", () => {
     const { db, env } = await setup();
     db.exec("update charging_points set last_seen_at = '2020-01-01T00:00:00.000Z' where id = 'p2'");
     expect((await start(env, { pointId: "p2" })).data.error).toBe("device_offline");
-    expect((await start(env, { pointId: "p1", contact: "+22899999999" })).data.error).toBe("recipient_not_found");
+    // A phone number alone no longer names the customer (0052); an unknown code is refused.
+    expect((await start(env, { pointId: "p1", contact: KOFI.phone })).data.error).toBe("credit_code_required");
+    expect((await start(env, { pointId: "p1", creditCode: "99999999" })).data.error).toBe("credit_code_invalid");
     expect((await start(env, { pointId: "q1" })).data.error).toBe("not_found"); // outlet of another station
     db.exec("delete from station_staff where station_id = 'st'");
     expect((await start(env, { pointId: "p1" })).status).toBe(403);
@@ -257,7 +272,7 @@ describe("paying in the app", () => {
   async function stoppedCharge(env: Env, energyWh = 1000, point = "p1", station = "st") {
     const device = point === "q1" ? "654321" : "123456";
     const outlet = point === "p2" ? 2 : 1;
-    const { data } = await start(env, { pointId: point, contact: KOFI.phone }, "staff", station);
+    const { data } = await start(env, { pointId: point, creditCode: await counterCode(env) }, "staff", station);
     await read(env, [{ outlet, status: "charging", energy_wh: energyWh }], device);
     await act(env, data.id, "stop", station);
     return data.id;
@@ -313,7 +328,7 @@ describe("paying in the app", () => {
   it("marks the charge paid once Flooz/T-Money confirms", async () => {
     const { db, env } = await setup();
     // Admins may test against the simulated provider; make the admin the customer.
-    const { data } = await start(env, { pointId: "p1", contact: ADMIN.phone });
+    const { data } = await start(env, { pointId: "p1", creditCode: await counterCode(env, "admin") });
     await read(env, [{ outlet: 1, status: "charging", energy_wh: 2000 }]);
     await act(env, data.id, "stop");
     const payment = await payWithMobile(env, ADMIN, data.id, new Request("https://x", { method: "POST", body: JSON.stringify({ network: "tmoney", phone: "+22890123456" }) }));
@@ -382,15 +397,22 @@ describe("charging by QR code", () => {
     // Paid in advance: never cash at the counter.
     expect((await act(env, started.data.id, "pay")).data.error).toBe("charge_wrong_status");
 
-    // The next start takes the ended charge from the credit first.
-    expect((await selfStart(env, "p2")).status).toBe(200);
-    expect(db.prepare("select status, payment_method from charging_sessions where id = ?").get(started.data.id)).toEqual({ status: "paid", payment_method: "wallet" });
-    expect(db.prepare("select balance_xof from wallets where user_id = 'kofi'").get()).toEqual({ balance_xof: 850 });
+    // The next start settles the ended charge first: 150 FCFA of the 1000 held, the rest back,
+    // then holds the 850 FCFA left for itself (0052).
+    const next = await selfStart(env, "p2");
+    expect(next.status).toBe(200);
+    expect(db.prepare("select status, payment_method, amount_xof from charging_sessions where id = ?").get(started.data.id)).toEqual({
+      status: "paid",
+      payment_method: "wallet",
+      amount_xof: 150,
+    });
+    expect(db.prepare("select credit_held_xof from charging_sessions where id = ?").get(next.data.id)).toEqual({ credit_held_xof: 850 });
+    expect(db.prepare("select balance_xof from wallets where user_id = 'kofi'").get()).toEqual({ balance_xof: 0 });
   });
 
   it("cannot stop a charge staff started", async () => {
     const { env } = await setup();
-    const { data } = await start(env, { pointId: "p1", contact: KOFI.phone });
+    const { data } = await start(env, { pointId: "p1", creditCode: await counterCode(env) });
     expect(data.selfStarted).toBeUndefined();
     expect((await selfStop(env, data.id)).status).toBe(403);
   });
@@ -496,15 +518,22 @@ describe("one QR code per socket box", () => {
     expect((await box(env, BOX, "admin")).data.outlets[0]).toMatchObject({ state: "free", yours: true });
   });
 
-  // Two starts sent at once both pass the early "no open charge" read before either writes:
-  // here that read is made to miss, as it would for the second request.
+  // Two starts sent at once both pass the early reads before either writes: here the "no open
+  // charge" read is made to miss and the credit read still finds the whole balance, as they
+  // would for the second request.
   function racing(env: Env): Env {
     const d1 = env.DB;
     const miss = { first: async () => null };
+    const oldBalance = { first: async () => ({ balance_xof: 1000, status: "active" }) };
     const DB = new Proxy(d1, {
       get(target, key) {
         if (key === "prepare") {
-          return (sql: string) => (/^select 1 from charging_sessions where user_id = \? and status in/.test(sql) ? { bind: () => miss } : target.prepare(sql));
+          return (sql: string) =>
+            /^select 1 from charging_sessions where user_id = \? and status in/.test(sql)
+              ? { bind: () => miss }
+              : /^select balance_xof, status from wallets/.test(sql)
+                ? { bind: () => oldBalance }
+                : target.prepare(sql);
         }
         const v = Reflect.get(target, key);
         return typeof v === "function" ? v.bind(target) : v;
@@ -600,6 +629,89 @@ describe("Green Credit pays QR charges (0047)", () => {
     expect(db.prepare("select type, attribute, amount_xof, balance_after_xof from wallet_transactions").all()).toEqual([
       { type: "charge", attribute: "send", amount_xof: 120, balance_after_xof: 0 },
     ]);
+    // Greenpoints only for the paid part: 120 of 300 FCFA, so 0.8 of the 2 kWh (1000 g CO2 per kWh by default).
+    expect(db.prepare("select co2_grams, points from greenpoint_ledger").get()).toEqual({ co2_grams: 800, points: 8 });
+  });
+});
+
+describe("staff start a charge with the customer's counter code (0052)", () => {
+  it("puts the charge on the customer's account only with their one-time code, used once", async () => {
+    const { db, env } = await setup();
+    const c = await counterCode(env);
+    const first = await start(env, { pointId: "p1", creditCode: `GC-${c.slice(0, 4)} ${c.slice(4)}` });
+    expect(first.data).toMatchObject({ status: "charging", customer: "Kofi M." });
+    expect(db.prepare("select used_for, used_at_station from credit_codes").get()).toEqual({ used_for: "charge", used_at_station: "st" });
+    // The same code a second time names nobody.
+    expect((await start(env, { pointId: "p2", creditCode: c })).data.error).toBe("credit_code_invalid");
+    // Without a code: an anonymous cash charge.
+    expect((await start(env, { pointId: "p2" })).data).toMatchObject({ status: "charging", customer: null });
+    expect(db.prepare("select count(*) as n from charging_sessions where user_id = 'kofi'").get()).toEqual({ n: 1 });
+  });
+
+  it("refuses the staff member's own code, and stops staff who try out codes", async () => {
+    const { db, env } = await setup();
+    expect((await start(env, { pointId: "p1", creditCode: await counterCode(env, "staff", "11112222") })).data.error).toBe("own_reservation");
+    for (let i = 0; i < 10; i++) expect((await start(env, { pointId: "p1", creditCode: `5555000${i}` })).data.error).toBe("credit_code_invalid");
+    const real = await counterCode(env, "kofi", "33334444");
+    expect((await start(env, { pointId: "p1", creditCode: real })).data.error).toBe("code_locked");
+    expect(db.prepare("select count(*) as n from charging_sessions").get()).toEqual({ n: 0 });
+  });
+});
+
+describe("Green Credit held while a charge runs (0052)", () => {
+  const startAt = (env: Env, pointId: string) => api<ChargeSession & { error?: string }>(env, "kofi", "POST", `/api/charging/outlets/${BOX_ST}/start`, { pointId, pin: PIN });
+  const allow = (env: Env, point: string) => api(env, "admin", "POST", `/api/admin/charging-points/${point}/qr`, { enabled: true });
+  const balance = (db: { prepare(sql: string): { get(): unknown } }) => (db.prepare("select balance_xof from wallets where user_id = 'kofi'").get() as { balance_xof: number }).balance_xof;
+
+  it("takes the limit when the charge starts, shows it in the history and gives all of it back when nothing was charged", async () => {
+    const { db, env } = await setup();
+    fund(db);
+    await allow(env, "p1");
+    const { data } = await startAt(env, "p1");
+    expect(balance(db)).toBe(0);
+    expect(db.prepare("select credit_limit_xof, credit_held_xof from charging_sessions").get()).toEqual({ credit_limit_xof: 1000, credit_held_xof: 1000 });
+    const view = await getWallet(env, KOFI);
+    expect(view.balanceXof).toBe(0);
+    expect(view.transactions).toEqual([expect.objectContaining({ type: "charge", attribute: "send", status: "pending", amountXof: 1000, hold: "held", counterparty: "Bè" })]);
+    // Stopped before any energy: cancelled, the whole hold comes back, once.
+    await api(env, "kofi", "POST", `/api/charging/${data.id}/stop`, {});
+    await settlePrepaidCharges(env.DB, { userId: "kofi" });
+    await settlePrepaidCharges(env.DB, { userId: "kofi" });
+    expect(db.prepare("select status from charging_sessions").get()).toEqual({ status: "cancelled" });
+    expect(balance(db)).toBe(1000);
+    expect((await getWallet(env, KOFI)).transactions.map((t) => [t.attribute, t.status, t.amountXof, t.hold])).toEqual([
+      ["received", "success", 1000, "refund"],
+      ["send", "rejected", 1000, "held"],
+    ]);
+  });
+
+  it("gives the hold back when the socket refuses to start", async () => {
+    const { db, env } = await setup();
+    fund(db);
+    await allow(env, "p1");
+    await startAt(env, "p1");
+    const order = (db.prepare("select order_no from charging_sessions").get() as { order_no: string }).order_no;
+    await chargeStartFailed(env.DB, "123456", 1, order);
+    await chargeStartFailed(env.DB, "123456", 1, order);
+    expect(db.prepare("select status from charging_sessions").get()).toEqual({ status: "cancelled" });
+    expect(balance(db)).toBe(1000);
+  });
+
+  it("books the price and the rest once, also when two settlements run at the same time", async () => {
+    const { db, env } = await setup();
+    fund(db);
+    await allow(env, "p1");
+    const { data } = await startAt(env, "p1");
+    await read(env, [{ outlet: 1, status: "charging", energy_wh: 1000 }]);
+    await api(env, "kofi", "POST", `/api/charging/${data.id}/stop`, {});
+    await Promise.all([settlePrepaidCharges(env.DB, { userId: "kofi" }), settlePrepaidCharges(env.DB, { userId: "kofi" })]);
+    expect(db.prepare("select status, amount_xof from charging_sessions").get()).toEqual({ status: "paid", amount_xof: 150 });
+    expect(balance(db)).toBe(850);
+    expect(db.prepare("select attribute, status, amount_xof, balance_after_xof from wallet_transactions order by rowid").all()).toEqual([
+      { attribute: "send", status: "success", amount_xof: 1000, balance_after_xof: 0 },
+      { attribute: "received", status: "success", amount_xof: 850, balance_after_xof: 850 },
+    ]);
+    expect(db.prepare("select count(*) as n from greenpoint_ledger").get()).toEqual({ n: 1 });
   });
 });
 

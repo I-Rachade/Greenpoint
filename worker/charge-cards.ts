@@ -1,7 +1,10 @@
 import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, type ChargeCard, type CounterCard } from "../src/lib/charge-cards";
 import type { Profile } from "../src/lib/types";
-import { findCustomer, linkedCardCredit, socketIsOurs } from "./charging";
+import { findCustomer, linkedCardCredit, socketIsOurs, stopCardCharges } from "./charging";
+import { withCounterCodeTry } from "./code-tries";
+import type { Env } from "./env";
 import { ApiError, nowIso, readJson, uuid } from "./http";
+import { notCustomerRole } from "./roles";
 import { cardOwnerCredit } from "./wallet";
 
 // Charging cards with their own credit (schema: migrations/0042_charge_cards.sql). A swipe
@@ -36,7 +39,9 @@ export type CardStatus = "Accepted" | "Blocked" | "ConcurrentTx" | "Invalid";
  * A card was swiped at a charge point: whether it may charge. Remembers the swipe, and adds
  * a card seen for the first time, so its number shows in the backoffice to be linked to an
  * account. A card charges when it is linked to an account, not blocked, has no other charge
- * running, and the account's Green Credit covers the minimum price (linkedCardCredit).
+ * running, and the account may spend its Green Credit and it covers the minimum price
+ * (linkedCardCredit: a customer's account with the module on, never a driver's, staff's,
+ * merchant's or fleet manager's).
  */
 export async function swipeCard(db: D1Database, externalId: string, rawTag: string): Promise<{ status: CardStatus; tag: string | null; userId: string | null }> {
   const clean = cleanCardTag(rawTag);
@@ -88,6 +93,9 @@ function counterCard(r: { id_tag: string; user_id?: string | null; label: string
   return { idTag: r.id_tag, label: r.label, blocked: !!r.blocked, balanceXof: r.balance_xof, ...(r.user_id ? { linked: true } : {}) };
 }
 
+/** How long after a swipe at a station its staff still see the card's owner and credit. */
+const COUNTER_CARD_HOURS = 24;
+
 async function loadCard(db: D1Database, rawTag: string) {
   let decoded: string;
   try {
@@ -111,10 +119,26 @@ async function loadCard(db: D1Database, rawTag: string) {
 
 type StaffCheck = (user: Profile, stationId: string) => Promise<boolean>;
 
-/** GET /api/stations/:id/charge-cards/:tag: a card's credit, for staff at the counter. */
+/**
+ * GET /api/stations/:id/charge-cards/:tag: a card at the counter. Staff see whether it is linked
+ * and blocked; whose it is, its name and the credit only when it was swiped at this station in
+ * the last COUNTER_CARD_HOURS or is in a charge here, so a card number alone tells nobody whose
+ * card it is or how much credit is on the account. Unknown numbers count as wrong tries
+ * (worker/code-tries.ts), so staff cannot try out card numbers.
+ */
 export async function counterCardInfo(db: D1Database, user: Profile, isStaffOf: StaffCheck, stationId: string, rawTag: string): Promise<CounterCard> {
   if (!(await isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
-  const card = await loadCard(db, rawTag);
+  const card = await withCounterCodeTry(db, user.id, "card", () => loadCard(db, rawTag));
+  const seenHere = await db
+    .prepare(
+      `select 1 from charge_cards c
+        where c.id_tag = ?1 and (
+          (c.last_swiped_at > ?3 and exists (select 1 from devices d where d.external_id = c.last_device_id and d.station_id = ?2))
+          or exists (select 1 from charging_sessions cs where cs.charge_card = c.id_tag and cs.station_id = ?2 and (cs.status in ('charging', 'stopped') or cs.started_at > ?3)))`,
+    )
+    .bind(card.id_tag, stationId, new Date(Date.now() - COUNTER_CARD_HOURS * 3_600_000).toISOString())
+    .first();
+  if (!seenHere) return { idTag: card.id_tag, label: null, blocked: !!card.blocked, ...(card.user_id ? { linked: true } : {}) };
   // A linked card shows the account's Green Credit, which it pays with (loaded with the customer's QR code only).
   return card.user_id ? { ...counterCard(card), ...(await cardOwnerCredit(db, card.user_id)) } : counterCard(card);
 }
@@ -186,6 +210,8 @@ export async function saveChargeCard(db: D1Database, admin: Profile, request: Re
   if (contact && !customer) throw new ApiError("recipient_not_found", 404);
   // Every card belongs to an account: it pays with that account's Green Credit.
   if (!customer) throw new ApiError("card_needs_account");
+  // Only a customer's account (or an admin's, to test): drivers, staff, merchants and fleet managers have no Green Credit.
+  if (notCustomerRole(customer.role)) throw new ApiError("not_a_customer", 409);
   const userId = customer.id;
   const label = typeof body.label === "string" && body.label.trim() ? body.label.trim().slice(0, 60) : null;
   const before = await db.prepare("select user_id, label from charge_cards where id_tag = ?").bind(tag).first<{ user_id: string | null; label: string | null }>();
@@ -217,16 +243,23 @@ export async function adjustChargeCard(db: D1Database, admin: Profile, rawTag: s
   return { ok: true };
 }
 
-/** POST /api/admin/charge-cards/:tag/block { blocked }: a blocked card starts no charge and takes no top-up (lost or stolen); its credit stays. */
-export async function setChargeCardBlocked(db: D1Database, admin: Profile, rawTag: string, request: Request) {
+/**
+ * POST /api/admin/charge-cards/:tag/block { blocked }: a blocked card starts no charge and takes
+ * no top-up (lost or stolen); its credit stays. A charge it is running is stopped right away.
+ */
+export async function setChargeCardBlocked(env: Env, admin: Profile, rawTag: string, request: Request) {
+  const db = env.DB;
   const { blocked } = await readJson<{ blocked?: unknown }>(request);
   if (typeof blocked !== "boolean") throw new ApiError("bad_request");
   const card = await loadCard(db, rawTag);
-  if (!!card.blocked === blocked) return { ok: true };
-  await db.batch([
-    db.prepare("update charge_cards set blocked = ? where id_tag = ?").bind(blocked ? 1 : 0, card.id_tag),
-    audit(db, admin, "update", card.id_tag, card.user_id, { blocked: [!!card.blocked, blocked] }),
-  ]);
+  if (!!card.blocked !== blocked) {
+    await db.batch([
+      db.prepare("update charge_cards set blocked = ? where id_tag = ?").bind(blocked ? 1 : 0, card.id_tag),
+      audit(db, admin, "update", card.id_tag, card.user_id, { blocked: [!!card.blocked, blocked] }),
+    ]);
+  }
+  // Also when it was blocked already: a charge that slipped through still stops.
+  if (blocked) await stopCardCharges(env, card.id_tag, admin.id);
   return { ok: true };
 }
 

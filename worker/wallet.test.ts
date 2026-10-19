@@ -234,9 +234,25 @@ describe("linked card at the counter", () => {
     const now = new Date().toISOString();
     db.prepare("insert into charge_cards (id_tag, user_id, created_at) values ('1592637480', 'kofi', ?), ('2745839105', null, ?)").run(now, now);
     await credit(env, KOFI.phone!, 1_200);
+    // Never swiped here: only whether it is linked or blocked, not whose it is nor the credit.
+    expect(await counterCardInfo(env.DB, STAFF, isStaffOf, "st", "1592637480")).toEqual({ idTag: "1592637480", label: null, blocked: false, linked: true });
+    // Swiped at a charge point of this station within the last 24 hours: the owner and the credit.
+    db.exec(`insert into devices (external_id, station_id, vendor, link, outlets, created_at) values ('123456', 'st', 'Xingke', 'own_server', 1, '${now}')`);
+    db.prepare("update charge_cards set last_swiped_at = ?, last_device_id = '123456'").run(now);
     expect(await counterCardInfo(env.DB, STAFF, isStaffOf, "st", "1592637480")).toEqual({ idTag: "1592637480", label: null, blocked: false, linked: true, customer: "Kofi M.", balanceXof: 1_200 });
     expect(await counterCardInfo(env.DB, STAFF, isStaffOf, "st", "2745839105")).toEqual({ idTag: "2745839105", label: null, blocked: false, balanceXof: 0 });
+    // A swipe two days ago no longer shows anything.
+    db.prepare("update charge_cards set last_swiped_at = ?").run(new Date(Date.now() - 48 * 3_600_000).toISOString());
+    expect(await counterCardInfo(env.DB, STAFF, isStaffOf, "st", "1592637480")).not.toHaveProperty("customer");
     expect(await code(counterCardInfo(env.DB, AMA, isStaffOf, "st", "1592637480"))).toBe("forbidden");
+  });
+
+  it("stops staff who try out card numbers", async () => {
+    const { db, env } = setup();
+    db.prepare("insert into charge_cards (id_tag, user_id, created_at) values ('1592637480', 'kofi', ?)").run(new Date().toISOString());
+    for (let i = 0; i < 10; i++) expect(await code(counterCardInfo(env.DB, STAFF, isStaffOf, "st", `55500${i}`))).toBe("card_unknown");
+    // Locked for a while, even for a real card.
+    expect(await code(counterCardInfo(env.DB, STAFF, isStaffOf, "st", "1592637480"))).toBe("code_locked");
   });
 });
 

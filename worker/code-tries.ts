@@ -1,4 +1,4 @@
-// Tries of codes staff type at the counter for someone else (greenpoint rewards, Green Credit).
+// Tries of codes staff type at the counter for someone else (greenpoint rewards, Green Credit, card numbers).
 // The try is written down before the code is compared, in one statement with the count, so
 // parallel requests cannot pass the limit; a right code takes its try back.
 import { ApiError, nowIso } from "./http";
@@ -7,7 +7,7 @@ import { ApiError, nowIso } from "./http";
 export const COUNTER_CODE_MAX_TRIES = 10;
 export const COUNTER_CODE_LOCK_MINUTES = 15;
 
-export type CounterCodeKind = "greenpoint" | "credit";
+export type CounterCodeKind = "greenpoint" | "credit" | "card";
 
 /**
  * Checks a code with `check` (which throws when it is wrong), counting the try for this staff

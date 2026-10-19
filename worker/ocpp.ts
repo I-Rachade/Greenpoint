@@ -134,7 +134,13 @@ export async function handleOcppCall(db: D1Database, externalId: string, action:
         .bind(externalId, connectorId, idTag.slice(0, 20), start, str(payload.timestamp, "timestamp"))
         .first<{ id: number }>();
       if (status === "Accepted") {
-        await apply(externalId, [{ outlet: connectorId, status: "charging", power_watts: undefined, energy_wh: 0 }], payload);
+        // The charge running on this outlet is this transaction's: its readings and stop name it,
+        // also once the charge is stopped (chargeReadingStatement, 0052).
+        await db
+          .prepare("update charging_sessions set ocpp_transaction_id = ? where device_id = ? and outlet = ? and status = 'charging' and ocpp_transaction_id is null")
+          .bind(tx!.id, externalId, connectorId)
+          .run();
+        await apply(externalId, [{ outlet: connectorId, status: "charging", power_watts: undefined, energy_wh: 0, transaction_id: String(tx!.id) }], payload);
       }
       return { transactionId: tx!.id, idTagInfo: { status } };
     }
@@ -150,7 +156,7 @@ export async function handleOcppCall(db: D1Database, externalId: string, action:
         .first<{ connector_id: number; meter_start: number }>();
       if (tx) {
         const energy = Math.max(0, stop - tx.meter_start);
-        await apply(externalId, [{ outlet: tx.connector_id, status: "done", power_watts: 0, energy_wh: energy }], payload);
+        await apply(externalId, [{ outlet: tx.connector_id, status: "done", power_watts: 0, energy_wh: energy, transaction_id: String(transactionId) }], payload);
         // A card charge is paid from the card now that its energy is final.
         await settleCardCharges(db, externalId);
       }
@@ -159,6 +165,8 @@ export async function handleOcppCall(db: D1Database, externalId: string, action:
     case "MeterValues": {
       const connectorId = int(payload.connectorId, "connectorId");
       const reading = meterReading(payload, await meterStart(db, externalId, connectorId, payload.transactionId));
+      // A reading that names its transaction reaches only that transaction's charge.
+      if (reading && typeof payload.transactionId === "number") reading.transactionId = String(payload.transactionId);
       if (reading) await apply(externalId, toIngestOutlets({ externalId, outlets: [reading] }), payload);
       return {};
     }
@@ -265,15 +273,19 @@ export async function handleOcppUpgrade(request: Request, env: Env, rawId: strin
   }
   if (!OCPP_ID.test(id)) return new Response("Unknown charge point", { status: 404 });
   const externalId = normalizeDeviceId(id);
-  const device = await env.DB.prepare("select ocpp_key_hash from devices where external_id = ? and protocol = 'ocpp1.6'")
+  const device = await env.DB.prepare(
+    "select d.ocpp_key_hash, s.green_credit from devices d join stations s on s.id = d.station_id where d.external_id = ? and d.protocol = 'ocpp1.6'",
+  )
     .bind(externalId)
-    .first<{ ocpp_key_hash: string | null }>();
+    .first<{ ocpp_key_hash: string | null; green_credit: number }>();
   if (!device) return new Response("Unknown charge point", { status: 404 });
-  // No stored key: the socket was added "without password" and connects with its id alone.
+  const unauthorized = () => new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="OCPP"' } });
+  // No stored key: the socket was added "without password" and connects with its id alone, but
+  // never at a Green Credit station (its readings and card swipes spend customers' credit): an
+  // admin must give it a key first (re-add it with a key).
+  if (!device.ocpp_key_hash && device.green_credit) return unauthorized();
   const key = urlKey ?? basicAuth(request.headers.get("Authorization"))?.password;
-  if (device.ocpp_key_hash && (!key || !sameSecret(await sha256(key), device.ocpp_key_hash))) {
-    return new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="OCPP"' } });
-  }
+  if (device.ocpp_key_hash && (!key || !sameSecret(await sha256(key), device.ocpp_key_hash))) return unauthorized();
   return stub(env, externalId).fetch(new Request(`https://ocpp/connect?id=${encodeURIComponent(externalId)}`, request));
 }
 

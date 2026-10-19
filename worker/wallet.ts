@@ -25,7 +25,7 @@ import { withCounterCodeTry } from "./code-tries";
 import type { Env } from "./env";
 import { ApiError, nowIso, readJson, sha256, uuid } from "./http";
 import { notifyUser } from "./notify";
-import { refuseNonCustomer } from "./roles";
+import { notCustomerRole, refuseNonCustomer } from "./roles";
 
 // Green Credit (migration 0047, formerly the Cashplus wallet): a closed prepaid credit for
 // energy, loaded in cash at the counter of a Green Credit station and spent on what belongs
@@ -48,6 +48,7 @@ interface TxRow {
   counterparty_label: string | null;
   remark: string | null;
   admin_id: string | null;
+  details?: string | null;
   created_at: string;
 }
 
@@ -62,7 +63,19 @@ interface UserRow {
 const HISTORY_LIMIT = 50;
 const ADMIN_HISTORY_LIMIT = 300;
 
+/** A Green Credit charge's hold (taken when it starts) or what came back of it (0052). */
+function holdOf(r: TxRow): "held" | "refund" | null {
+  if (r.type !== "charge" || !r.details) return null;
+  try {
+    const d = JSON.parse(r.details) as { hold?: unknown; holdRefund?: unknown };
+    return d.hold ? "held" : d.holdRefund ? "refund" : null;
+  } catch {
+    return null;
+  }
+}
+
 function toTransaction(r: TxRow): WalletTransaction {
+  const hold = holdOf(r);
   return {
     id: r.id,
     trxId: r.trx_id,
@@ -76,11 +89,12 @@ function toTransaction(r: TxRow): WalletTransaction {
     counterparty: r.counterparty_label,
     remark: r.remark,
     createdAt: r.created_at,
+    ...(hold ? { hold } : {}),
   };
 }
 
-async function walletEnabled(env: Env): Promise<boolean> {
-  const row = await env.DB.prepare("select value from app_settings where key = 'wallet_enabled'").first<{ value: string }>();
+async function walletEnabled(db: D1Database): Promise<boolean> {
+  const row = await db.prepare("select value from app_settings where key = 'wallet_enabled'").first<{ value: string }>();
   return row?.value === "1";
 }
 
@@ -88,10 +102,20 @@ async function walletEnabled(env: Env): Promise<boolean> {
 export async function walletAccess(env: Env, user: Profile): Promise<{ enabled: boolean; testMode: boolean }> {
   // Drivers are never customers (R11); their former balance waits in a customer account (0031).
   refuseNonCustomer(user);
-  const enabled = await walletEnabled(env);
+  const enabled = await walletEnabled(env.DB);
   if (enabled) return { enabled, testMode: false };
   if (user.role === "admin") return { enabled, testMode: true };
   throw new ApiError("wallet_disabled", 403);
+}
+
+/**
+ * Whether an account may spend its Green Credit without signing in itself (a card linked to it,
+ * worker/charge-cards.ts): the same rule as walletAccess, read from the database.
+ */
+export async function accountSpendsCredit(db: D1Database, userId: string): Promise<boolean> {
+  const row = await db.prepare("select role from users where id = ?").bind(userId).first<{ role: string }>();
+  if (!row || notCustomerRole(row.role)) return false;
+  return row.role === "admin" || (await walletEnabled(db));
 }
 
 function ensureWallet(env: Env, userId: string, now: string) {
@@ -146,12 +170,14 @@ async function creditStations(db: D1Database): Promise<GreenCreditStation[]> {
 }
 
 /**
- * A Green Credit charge of the user that runs or waits to be settled (QR or linked card, 0047). Its
- * limit is the whole balance and nothing is taken until it ends, so no other payment may spend
- * the credit meanwhile: the charge would end up unpaid. Bind the user's id.
+ * A Green Credit charge of the user started before 0052 that runs or waits to be settled: its
+ * limit is the whole balance and nothing was taken when it started, so no other payment may spend
+ * the credit meanwhile. Since 0052 a charge takes its limit from the credit when it starts
+ * (credit_held_xof), and other payments simply find less credit; this guard can go once no such
+ * old charge is open. Bind the user's id.
  */
 export const OPEN_CREDIT_CHARGE_SQL =
-  "exists (select 1 from charging_sessions where user_id = ? and credit_limit_xof is not null and status in ('charging', 'stopped'))";
+  "exists (select 1 from charging_sessions where user_id = ? and credit_limit_xof is not null and credit_held_xof is null and status in ('charging', 'stopped'))";
 
 /** Refuses a payment from Green Credit while a Green Credit charge of the user holds the credit. */
 export async function refuseWhileCreditCharging(db: D1Database, userId: string) {
@@ -246,7 +272,7 @@ export async function creditCodeOwner(db: D1Database, rawCode: unknown): Promise
  * only apply when `usedSql` holds: this request was the one that used the code (a fresh id per
  * request, not the time, which two parallel requests can share).
  */
-export function spendCreditCode(db: D1Database, hash: string, stationId: string, purpose: "topup" | "swap", at: string) {
+export function spendCreditCode(db: D1Database, hash: string, stationId: string, purpose: "topup" | "swap" | "charge", at: string) {
   const request = uuid();
   return {
     statement: db
@@ -369,7 +395,7 @@ export async function adminWallet(env: Env, url: URL): Promise<AdminWallet> {
   }
   const filter = where.length ? `where ${where.join(" and ")}` : "";
   const [enabled, maxXof, stations, totals, rows] = await Promise.all([
-    walletEnabled(env),
+    walletEnabled(env.DB),
     creditMax(env.DB),
     env.DB.prepare("select id, name, green_credit from stations where is_active = 1 order by name").all<{ id: string; name: string; green_credit: number }>(),
     env.DB.prepare(
