@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { handleApi } from "./api";
-import { checkCode, hashPin, signIn, verifyPin } from "./auth";
+import { checkCode, currentUser, hashPin, signIn, verifyPin } from "./auth";
 import { COUNTER_CODE_MAX_TRIES, withCounterCodeTry } from "./code-tries";
 import type { Env } from "./env";
-import { ApiError, sha256 } from "./http";
+import { ApiError, corsHeaders, sha256 } from "./http";
 import { IP_LIMITS } from "./ip-limits";
 import { checkPickupCode } from "./reservations";
 import { refuseWhileCreditCharging, spendCreditCode } from "./wallet";
@@ -165,5 +165,33 @@ describe("login limits per IP address (point 9)", () => {
     } finally {
       globalThis.fetch = realFetch;
     }
+  });
+});
+
+describe("sessions", () => {
+  it("ends admin and staff sessions after a week, customers' only after 60 days", async () => {
+    const { db, env } = await setup();
+    db.prepare("insert into users (id, phone, role, created_at) values ('boss', '+22890000002', 'admin', '2026-01-01T00:00:00.000Z')").run();
+    const eightDaysAgo = new Date(Date.now() - 8 * 86_400_000).toISOString();
+    const later = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    for (const [user, token] of [["ama", "token-of-ama-0123456789"], ["boss", "token-of-boss-0123456789"]]) {
+      db.prepare("insert into sessions (token_hash, user_id, created_at, expires_at) values (?, ?, ?, ?)").run(await sha256(token), user, eightDaysAgo, later);
+    }
+    const me = (token: string) => currentUser(env, new Request("https://app.poinderecharge.com/api/me", { headers: { Authorization: `Bearer ${token}` } }));
+    expect(await me("token-of-ama-0123456789")).toMatchObject({ id: "ama" });
+    expect(await me("token-of-boss-0123456789")).toBeNull();
+    // A customer who became staff since: the old session ends too.
+    db.exec("update users set role = 'operator' where id = 'ama'");
+    expect(await me("token-of-ama-0123456789")).toBeNull();
+  });
+});
+
+describe("CORS", () => {
+  const allowed = (url: string, origin: string) => corsHeaders(new Request(url, { headers: { Origin: origin } }))["Access-Control-Allow-Origin"] ?? null;
+  it("lets the apps call the live API, and the dev servers only a local Worker", () => {
+    for (const app of ["https://app.poinderecharge.com", "https://localhost", "capacitor://localhost"]) expect(allowed("https://app.poinderecharge.com/api/me", app)).toBe(app);
+    expect(allowed("https://app.poinderecharge.com/api/me", "http://localhost:3000")).toBeNull();
+    expect(allowed("http://localhost:8787/api/me", "http://localhost:3000")).toBe("http://localhost:3000");
+    expect(allowed("https://app.poinderecharge.com/api/me", "https://evil.example")).toBeNull();
   });
 });

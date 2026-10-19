@@ -14,6 +14,12 @@ const MAX_ATTEMPTS = 5;
 /** Codes one number or address may request per hour. */
 const PER_TARGET_HOURLY = 5;
 const SESSION_DAYS = 60;
+/**
+ * Admins and station staff or owners (role 'operator') hold money and other people's data:
+ * their sessions end after a week, also one opened before the account got the role.
+ */
+const STAFF_SESSION_DAYS = 7;
+const STAFF_ROLES_SQL = "('admin', 'operator')";
 /** Wrong PINs in a row before the account is locked for PIN_LOCK_MINUTES. */
 const PIN_MAX_FAILURES = 5;
 const PIN_LOCK_MINUTES = 15;
@@ -512,7 +518,7 @@ async function openSession(env: Env, user: UserRow): Promise<{ token: string; pr
       await sha256(token),
       user.id,
       now,
-      new Date(Date.now() + SESSION_DAYS * 86_400_000).toISOString(),
+      new Date(Date.now() + (user.role === "admin" || user.role === "operator" ? STAFF_SESSION_DAYS : SESSION_DAYS) * 86_400_000).toISOString(),
     ),
     env.DB.prepare("update users set last_sign_in_at = ? where id = ?").bind(now, user.id),
     // Housekeeping: old codes and sessions.
@@ -535,9 +541,9 @@ export async function currentUser(env: Env, request: Request): Promise<Profile |
   const row = await env.DB.prepare(
     `select u.id, u.phone, u.email, u.full_name, u.role, ${ownerOf("u")}, ${merchantOf("u")}, ${pointPartnerOf("u")}, d.status as driver_status from sessions s
      join users u on u.id = s.user_id left join drivers d on d.user_id = u.id
-     where s.token_hash = ? and s.expires_at > ?`,
+     where s.token_hash = ? and s.expires_at > ? and (u.role not in ${STAFF_ROLES_SQL} or s.created_at > ?)`,
   )
-    .bind(await sha256(token), nowIso())
+    .bind(await sha256(token), nowIso(), new Date(Date.now() - STAFF_SESSION_DAYS * 86_400_000).toISOString())
     .first<UserRow>();
   return row ? toProfile(row) : null;
 }
