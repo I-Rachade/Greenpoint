@@ -55,7 +55,7 @@ export function WalletPanel() {
 }
 
 /** The PIN, then the one-time code for the counter, with its countdown. */
-function CounterCode({ onUsed }: { onUsed: () => void }) {
+export function CounterCode({ onUsed }: { onUsed: () => void }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();

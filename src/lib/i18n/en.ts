@@ -2720,7 +2720,7 @@ export const en: Dictionary = {
       scan: "Scan a code",
       scanHint: "Start a charge",
       show: "Show my QR code",
-      showHint: "Pickup, reservation or ID",
+      showHint: "Pickup, reservation, Green Credit or ID",
       parcel: "Parcel pickup",
       parcelHint: "Show this code at the {station} counter to collect your parcel.",
       reservation: "Reservation",

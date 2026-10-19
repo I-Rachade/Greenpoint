@@ -9,15 +9,16 @@ import { isStationStaff } from "@/lib/operators";
 import { pickupQrPayload } from "@/lib/parcels";
 import { reservationQrPayload } from "@/lib/reservations";
 import { useApp } from "./app-provider";
-import { BoxIcon, QrIcon, TicketIcon, UserIcon } from "./icons";
+import { BoxIcon, QrIcon, TicketIcon, UserIcon, WalletIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { QrImage } from "./parcels/qr-image";
 import { StaffScan } from "./station-work/staff-scan";
+import { CounterCode } from "./wallet/wallet-panel";
 
-/** One QR code the customer can show: a parcel to collect, a reservation, or their own account. */
+/** One QR code the customer can show: a parcel to collect, a reservation, their Green Credit, or their own account. */
 interface ShownCode {
   key: string;
-  kind: "parcel" | "reservation" | "identity";
+  kind: "parcel" | "reservation" | "credit" | "identity";
   /** Short name on the switcher; `label` is the full one above the code. */
   chip: string;
   label: string;
@@ -30,7 +31,8 @@ interface ShownCode {
  * The page behind the scanner button in the tab bar: either scan a socket to start a charge
  * (src/components/charging/charge-at-point.tsx), or show my QR code at the station. The code
  * shown first is the one needed now: a parcel waiting to be collected, then the next
- * reservation, then the account's own code that staff scan to identify the customer.
+ * reservation, then the Green Credit code (PIN first), then the account's own code that staff
+ * scan to identify the customer.
  */
 export function ScanHub() {
   const { profile } = useApp();
@@ -84,11 +86,13 @@ function CustomerScan() {
       });
     }
   }
+  // Green Credit: the PIN, then the one-time code staff scan to load or spend the credit (CounterCode).
+  if (profile) codes.push({ key: "credit", kind: "credit", chip: t.wallet.title, label: t.wallet.title, qr: "", code: "", hint: "" });
   if (contact) {
     codes.push({ key: "identity", kind: "identity", chip: L.identity, label: L.identity, qr: customerCode(contact), code: contact, hint: t.charging.myCodeHint });
   }
   const current = codes.find((c) => c.key === picked) ?? codes[0];
-  const icons = { parcel: BoxIcon, reservation: TicketIcon, identity: UserIcon };
+  const icons = { parcel: BoxIcon, reservation: TicketIcon, credit: WalletIcon, identity: UserIcon };
 
   const tile = "flex min-h-32 flex-col items-center justify-center gap-1.5 rounded-2xl p-3 text-center shadow-sm active:scale-[0.99]";
   return (
@@ -147,14 +151,18 @@ function CustomerScan() {
                 })}
               </div>
             )}
-            <div className="flex flex-col items-center gap-2 text-center">
-              <div className="font-semibold">{current.label}</div>
-              <QrImage text={current.qr} label={current.label} size={220} />
-              <div className={`font-mono font-semibold ${current.kind === "identity" ? "text-lg" : "text-4xl tracking-[0.3em] text-gp-green-dark dark:text-gp-green"}`}>
-                {current.code}
+            {current.kind === "credit" ? (
+              <CounterCode onUsed={() => {}} />
+            ) : (
+              <div className="flex flex-col items-center gap-2 text-center">
+                <div className="font-semibold">{current.label}</div>
+                <QrImage text={current.qr} label={current.label} size={220} />
+                <div className={`font-mono font-semibold ${current.kind === "identity" ? "text-lg" : "text-4xl tracking-[0.3em] text-gp-green-dark dark:text-gp-green"}`}>
+                  {current.code}
+                </div>
+                <p className="text-sm text-gp-muted">{current.hint}</p>
               </div>
-              <p className="text-sm text-gp-muted">{current.hint}</p>
-            </div>
+            )}
           </section>
         ))}
     </div>
