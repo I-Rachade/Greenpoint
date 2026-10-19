@@ -96,9 +96,10 @@ const ok = () => Response.json({ code: "OK" });
  *   POST /api/devices/xingke
  *   Authorization: Bearer <XINGKE_CALLBACK_TOKEN>
  * Device events from the vendor platform. Answers {"code":"OK"} once an event is
- * stored, also for repeats, so the platform stops retrying (section 4.1).
+ * stored, also for repeats, so the platform stops retrying (section 4.1). What follows
+ * (answering a card, stopping a charge) runs through `defer` after the answer, if given.
  */
-export async function handleXingkeCallback(request: Request, env: Env): Promise<Response> {
+export async function handleXingkeCallback(request: Request, env: Env, defer?: (work: Promise<unknown>) => void): Promise<Response> {
   if (request.method !== "POST") return Response.json({ code: "METHOD_NOT_ALLOWED" }, { status: 405 });
   const denied = deviceKeyError(request, env.XINGKE_CALLBACK_TOKEN);
   if (denied) return Response.json({ code: denied.status === 401 ? "UNAUTHORIZED" : "SERVICE_UNAVAILABLE" }, { status: denied.status });
@@ -121,11 +122,16 @@ export async function handleXingkeCallback(request: Request, env: Env): Promise<
   const seen = await env.DB.prepare("select 1 from device_callbacks where key = ?").bind(key).first();
   if (seen) return ok();
   await applyCallback(env.DB, cb, body);
-  // Stored first: a retry while we still answer a card (the platform waits 3 seconds) is a repeat.
   await env.DB.prepare("insert or ignore into device_callbacks (key, received_at) values (?, ?)").bind(key, nowIso()).run();
-  await cardFollowUp(env, cb);
-  // Green Credit charges: stopped when the credit is used up, paid once they ended (0047).
-  await creditFollowUp(env, cb.deviceId);
+  // After the acknowledgement when the Worker lets us (`defer`): the platform waits at most
+  // 3 seconds for it, and our card answer is a request to that same platform.
+  const followUp = (async () => {
+    await cardFollowUp(env, cb);
+    // Green Credit charges: stopped when the credit is used up, paid once they ended (0047).
+    await creditFollowUp(env, cb.deviceId);
+  })();
+  if (defer) defer(followUp);
+  else await followUp;
   return ok();
 }
 
@@ -229,8 +235,13 @@ async function answerCard(env: Env, cb: XingkeCallback) {
   }
   const charging = credit !== null && !!outlet;
   // The platform's own id for the device, as it called us.
-  const result = await sendXingkeCommand(env, cb.deviceId, xingkeAuthorizeResponse(card, credit));
-  if (!result.ok) console.error("xingke card answer", deviceId, card.messageId, result.code, result.detail ?? "");
+  const answer = xingkeAuthorizeResponse(card, credit);
+  const result = await sendXingkeCommand(env, cb.deviceId, answer);
+  // Kept with the device's events, so a card the device showed nothing for can be traced.
+  await db
+    .prepare("insert into device_messages (external_id, received_at, payload) values (?, ?, ?)")
+    .bind(deviceId, nowIso(), JSON.stringify({ sent: answer, result }))
+    .run();
   // Refused for sure: the device will not wait for a start.
   if (charging && !result.ok && !result.uncertain) await chargeStartFailed(db, deviceId, outlet, order);
 }

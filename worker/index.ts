@@ -7,6 +7,7 @@ import { handleOcppUpgrade, logOcppAttempt } from "./ocpp";
 import { runParcelDeadlines } from "./parcels";
 import { runPartnerDeadlines, runPartnerEvents } from "./partners";
 import { runCashAlerts } from "./station-cash";
+import { handleXingkeCallback } from "./xingke";
 import { CASH_DEADLINE_HOUR } from "../src/lib/station-cash";
 
 // The Durable Object behind each OCPP charge point's WebSocket (wrangler.jsonc).
@@ -39,6 +40,9 @@ export default {
       ctx.waitUntil(logOcppAttempt(env.DB, request, ocpp?.[2], response.status).catch((err) => console.error("ocpp log", err)));
       return response;
     }
+
+    // The Xingke platform waits 3 seconds for our acknowledgement: card answers follow it.
+    if (url.pathname === "/api/devices/xingke") return handleXingkeCallback(request, env, (work) => ctx.waitUntil(work));
 
     const cors = corsHeaders(request);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });

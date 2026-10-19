@@ -269,6 +269,27 @@ describe("card charging through the Xingke cloud", () => {
     expect(sent[3].data).toEqual({ connectorId: 1, idTag: CARD, status: "Invalid" });
   });
 
+  it("acknowledges the card event before answering the card", async () => {
+    const { db, env } = await cardSetup();
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      await held;
+      sent.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ code: "ACCEPTED" }), { status: 202 });
+    });
+    const later: Promise<unknown>[] = [];
+    const body = { messageId: "slow1", deviceId: DEV, action: "CardPresented", timestamp: new Date().toISOString(),
+      data: { idTag: CARD, intent: "BalanceInquiry", expiresAt: new Date(Date.now() + 30_000).toISOString() } };
+    const res = await handleXingkeCallback(new Request("https://x/api/devices/xingke", { method: "POST", headers: { Authorization: "Bearer cb" }, body: JSON.stringify(body) }), env, (w) => later.push(w));
+    expect(await res.json()).toEqual({ code: "OK" });
+    expect(sent).toEqual([]);
+    release();
+    await Promise.all(later);
+    expect(sent[0]).toMatchObject({ messageId: "slow1", data: { status: "Accepted" } });
+    expect(JSON.parse(String((db.prepare("select payload from device_messages order by id desc limit 1").get() as { payload: string }).payload))).toMatchObject({ result: { ok: true } });
+  });
+
   it("keeps an expired card event without answering it", async () => {
     const { db, env } = await cardSetup();
     await swipe(env, "StartCharging", CARD, 1, -1_000);
