@@ -8,7 +8,7 @@
 // Amounts are whole francs (XOF has no subunit), so every amount is an integer.
 
 export type WalletTxType =
-  | "transfer" // user -> user; no longer possible, kept for the history
+  | "transfer" // user -> user; kept for old history, the database refuses new ones (0055)
   | "admin_adjust" // correction or cash refund by an admin
   | "topup" // cash at a Green Credit station's counter (formerly also Flooz or T-Money)
   | "charge" // a charge or a battery swap paid from the credit (worker/charging.ts, worker/station-work.ts)

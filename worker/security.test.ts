@@ -195,3 +195,19 @@ describe("CORS", () => {
     expect(allowed("https://app.poinderecharge.com/api/me", "https://evil.example")).toBeNull();
   });
 });
+
+describe("Green Credit stays with its owner", () => {
+  it("lets the database refuse any new transfer booking (0055)", async () => {
+    const { db } = await setup();
+    const book = (type: string) =>
+      db
+        .prepare(
+          `insert into wallet_transactions (id, trx_id, user_id, type, attribute, amount_xof, fee_xof, total_xof, balance_after_xof, created_at)
+           values (?, ?, 'ama', ?, 'send', 100, 0, 100, 0, '2026-10-19T00:00:00.000Z')`,
+        )
+        .run(`tx-${type}`, `TRX-${type}`, type);
+    expect(() => book("transfer")).toThrow(/wallet_transfer_not_allowed/);
+    book("admin_adjust");
+    expect(() => db.prepare("update wallet_transactions set type = 'transfer'").run()).toThrow(/wallet_transfer_not_allowed/);
+  });
+});
