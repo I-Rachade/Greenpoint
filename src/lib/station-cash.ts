@@ -11,8 +11,12 @@
  * and records the handover, an admin confirms it once the money arrived or rejects it. The
  * host earns a commission on what belongs to poinderecharge at the station, kept back at each
  * handover or paid monthly. A day not closed by 10:00 the next morning raises an alert.
+ *
+ * At our own stations (0051) nobody owes a commission, but the Green Credit staff load in cash
+ * at the counter must reach us too: each staff member closes their own top-ups at the end of
+ * their shift, an owner or admin can record it for them, and an admin confirms it the same way.
  * Worker: worker/station-cash.ts. Demo: src/lib/backend/demo.ts. UI: src/components/owner/cash.tsx,
- * src/components/backoffice/station-cash-manager.tsx.
+ * src/components/backoffice/station-cash-manager.tsx, src/components/station-work/credit-page.tsx (staff).
  */
 
 export type SwapOwner = "operator" | "poinderecharge";
@@ -96,14 +100,22 @@ export interface CashHandover {
   decidedBy: string | null;
   decidedAt: string | null;
   rejectReason: string | null;
+  /** Own stations: the staff member whose top-ups it covers (0051). */
+  staffId: string | null;
 }
 
-/** GET /api/owner/cash: a partner station's balance, what is due now and its handovers. */
+/**
+ * GET /api/owner/cash: a partner station's balance, what is due now and its handovers; at an own
+ * station, one per staff member who loaded Green Credit there (their top-ups only).
+ */
 export interface StationCash {
   stationId: string;
   stationName: string;
   operatorName: string;
-  type: Exclude<StationType, "own">;
+  type: StationType;
+  /** Own stations: whose cash this is. */
+  staffId: string | null;
+  staffName: string | null;
   commissionPct: number;
   commissionMode: CommissionMode;
   /** Start of the open period: the last closing, or where the station's balance starts. */
@@ -139,6 +151,8 @@ export interface HandoverInput {
   note?: string | null;
   /** The amount due the owner saw: a different one now means the figures moved (409). */
   expectedDueXof: number;
+  /** Own stations: whose top-ups are closed; missing = the signed-in staff member's own. */
+  staffId?: string | null;
 }
 
 /** What a closing checks before anything is looked up; the error code, or null. */
@@ -150,6 +164,7 @@ export function handoverInputError(input: Partial<HandoverInput> | null | undefi
   if (!reference || reference.length > HANDOVER_REFERENCE_MAX) return "handover_reference_required";
   if (input.note != null && (typeof input.note !== "string" || input.note.trim().length > HANDOVER_NOTE_MAX)) return "bad_request";
   if (typeof input.expectedDueXof !== "number" || !Number.isInteger(input.expectedDueXof)) return "bad_request";
+  if (input.staffId != null && typeof input.staffId !== "string") return "bad_request";
   // A different amount than due needs a reason.
   if (input.amountXof !== Math.max(0, input.expectedDueXof) && !input.note?.trim()) return "handover_note_required";
   return null;
@@ -182,6 +197,9 @@ export interface CommissionItem {
   amountXof: number;
 }
 
+/** What staff take in cash for poinderecharge at an own station (0051): the Green Credit they load. */
+export const OWN_CASH_KINDS: readonly CashKind[] = ["creditXof"];
+
 export interface StationCashInput {
   stationId: string;
   stationName: string;
@@ -195,8 +213,10 @@ export interface StationCashInput {
   cash: CashItem[];
   /** Commission items from the earlier of `start` and the month's start on. */
   sales: CommissionItem[];
-  /** Every handover of the station, any order. */
+  /** Every handover of the station (own station: of this staff member), any order. */
   handovers: CashHandover[];
+  /** Own stations: the staff member whose cash, handovers and items these are. */
+  staff?: { id: string; name: string } | null;
 }
 
 /** Counted as handed over: confirmed, or pending (the owner is not asked twice); rejected counts nothing. */
@@ -231,7 +251,9 @@ export function stationCash(input: StationCashInput, now: Date): StationCash {
     stationId: input.stationId,
     stationName: input.stationName,
     operatorName: input.operatorName,
-    type: input.swapOwner === "poinderecharge" ? "shop" : "operator",
+    type: input.staff ? "own" : input.swapOwner === "poinderecharge" ? "shop" : "operator",
+    staffId: input.staff?.id ?? null,
+    staffName: input.staff?.name ?? null,
     commissionPct: input.commissionPct,
     commissionMode: input.commissionMode,
     since,

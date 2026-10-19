@@ -674,4 +674,18 @@ describe("DemoBackend station cash (as worker/station-cash.ts)", () => {
     await backend.saveStationCashSettings(PARTNER_STATION, { swapOwner: "poinderecharge", commissionPct: 10, commissionMode: "deduct" });
     expect((await backend.ownerCash(PARTNER_STATION))[0]).toMatchObject({ type: "shop", commissionXof: 0, dueXof: 2000 });
   });
+
+  it("closes the Green Credit a staff member loaded at an own station (0051)", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    const me = (await backend.getProfile())!.id;
+    const memory = (backend as unknown as { memory: { wallet?: unknown } }).memory;
+    const at = new Date().toISOString();
+    memory.wallet = { enabled: true, balances: {}, frozen: [], transactions: [{ id: "t1", type: "topup", amountXof: 800, createdAt: at, stationId: STATION, staffId: me }] };
+    expect(await backend.myStationCash(STATION)).toMatchObject({ type: "own", staffId: me, dueXof: 800, lines: { creditXof: 800 } });
+    expect((await backend.ownerCash(STATION)).map((s) => s.staffId)).toEqual([me]);
+    const h = await backend.closeCashDay({ stationId: STATION, method: "cash", reference: "Caisse", amountXof: 800, expectedDueXof: 800 });
+    expect(h).toMatchObject({ staffId: me, dueXof: 800 });
+    expect(await backend.myStationCash(STATION)).toMatchObject({ dueXof: 0, pendingXof: 800 });
+  });
 });

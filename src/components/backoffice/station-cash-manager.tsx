@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
-import { StationCashCard } from "@/components/owner/cash";
+import { cashKey, StationCashCard } from "@/components/owner/cash";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { COMMISSION_MODES, type CommissionMode, type StationCash, type SwapOwner } from "@/lib/station-cash";
@@ -69,7 +69,7 @@ function SettingsForm({ cash, onChanged }: { cash: StationCash; onChanged: () =>
   );
 }
 
-/** Backoffice: the cash of every partner station, its settings and the handovers to confirm. */
+/** Backoffice: the cash of every partner station and of each staff member at own stations, the settings and the handovers to confirm. */
 export function StationCashManager() {
   const { t } = useI18n();
   const { backend } = useApp();
@@ -102,7 +102,13 @@ export function StationCashManager() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           {sorted.map((s) => (
-            <StationCashCard key={s.stationId} cash={s} admin onChanged={reload} extra={<SettingsForm key={`${s.type}:${s.commissionPct}:${s.commissionMode}`} cash={s} onChanged={reload} />} />
+            <StationCashCard
+              key={cashKey(s)}
+              cash={s}
+              admin
+              onChanged={reload}
+              extra={s.type !== "own" && <SettingsForm key={`${s.type}:${s.commissionPct}:${s.commissionMode}`} cash={s} onChanged={reload} />}
+            />
           ))}
         </div>
       )}

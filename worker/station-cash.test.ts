@@ -12,7 +12,8 @@ import { fakeD1 } from "./test-d1";
 // Station types and the daily cash handover (migration 0045): an operator station keeps its
 // swaps, a shop station's swaps are ours; what a partner station takes for poinderecharge is
 // closed every day, confirmed or rejected by an admin, with the host's commission and the
-// late alert at 10:00.
+// late alert at 10:00. At our own stations (0051) each staff member closes the Green Credit
+// they loaded in cash.
 
 const OWN = "00000000-0000-4000-8000-000000000001";
 const PARTNER = "op-partner";
@@ -25,6 +26,8 @@ const USERS = [
   { id: "mensah", phone: "+22890000004", name: "Mensah", role: "operator" as const }, // owner of SHOP (boutique, a shop station)
   { id: "efo", phone: "+22890000005", name: "Efo", role: "operator" as const }, // staff at kara
   { id: "ama", phone: "+22890000006", name: "Ama", role: "customer" as const },
+  { id: "afi", phone: "+22890000007", name: "Afi", role: "operator" as const }, // staff at be
+  { id: "kodjo", phone: "+22890000008", name: "Kodjo", role: "operator" as const }, // staff at be
 ];
 
 let pinHash = "";
@@ -57,9 +60,9 @@ async function setup() {
       ('boutique', '${SHOP}', 'Boutique', 6.15, 1.24, 'both', 10, '00:00-24:00', 450, 'poinderecharge', '${created}');
     insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values
       ('be', 1, 0, 3, '${now}'), ('kara', 1, 0, 3, '${now}'), ('boutique', 1, 0, 3, '${now}');
-    insert into station_staff (station_id, user_id) values ('kara', 'efo');
+    insert into station_staff (station_id, user_id) values ('kara', 'efo'), ('be', 'afi'), ('be', 'kodjo');
     insert into wallets (user_id, balance_xof, created_at, updated_at) values ('ama', 5000, 'x', 'x');
-    update stations set green_credit = 1 where id in ('kara', 'boutique');
+    update stations set green_credit = 1 where id in ('kara', 'boutique', 'be');
   `);
   return { db, env };
 }
@@ -225,5 +228,78 @@ describe("daily cash handover", () => {
     // Closed: no longer late.
     await close(env, "kossi", "kara", 2000, 2000);
     expect(await runCashAlerts(env, new Date(Math.max(Date.now(), at(10).getTime()) + 60_000))).toEqual(["boutique"]);
+  });
+});
+
+describe("own station cash per staff member (0051)", () => {
+  /** Green Credit loaded in cash at be's counter, as worker/wallet.ts topUpCredit writes it. */
+  const topup = (db: DatabaseSync, id: string, staff: string, amount: number, at = ago(1)) =>
+    db.exec(`insert into wallet_transactions (id, trx_id, user_id, type, attribute, amount_xof, fee_xof, total_xof, balance_after_xof, station_id, details, created_at)
+               values ('${id}', 'AM${id.padStart(8, "0")}', 'ama', 'topup', 'received', ${amount}, 0, ${amount}, 0, 'be', '{"staff":"${staff}"}', '${at}')`);
+  const mine = (env: Env, as: string, stationId = "be") => call<StationCash | null>(env, as, "GET", `/api/stations/${stationId}/cash`);
+
+  it("shows each staff member the Green Credit they loaded, and the owner and admin everyone's", async () => {
+    const { env, db } = await setup();
+    // A real top-up at the counter records who took the cash.
+    const code = (await call<{ code: string }>(env, "ama", "POST", "/api/wallet/code", { pin: PIN })).body.code;
+    expect((await call(env, "afi", "POST", "/api/stations/be/green-credit/topup", { code, amountXof: 1000 }, "be")).status).toBe(200);
+    topup(db, "w2", "kodjo", 500);
+    expect((await mine(env, "afi")).body).toMatchObject({ type: "own", staffId: "afi", staffName: "Afi", lines: { creditXof: 1000, totalXof: 1000 }, dueXof: 1000, commissionXof: 0 });
+    expect((await mine(env, "kodjo")).body).toMatchObject({ staffId: "kodjo", dueXof: 500 });
+    // Staff of another station: refused; at a partner station the owner closes, so nothing for staff.
+    expect((await mine(env, "efo")).status).toBe(403);
+    expect((await mine(env, "efo", "kara")).body).toBeNull();
+    expect((await mine(env, "ama")).status).toBe(403);
+    const owner = await call<StationCash[]>(env, "yao", "GET", "/api/owner/cash?stationId=be");
+    expect(owner.body.map((s) => [s.staffName, s.dueXof])).toEqual([
+      ["Afi", 1000],
+      ["Kodjo", 500],
+    ]);
+    expect((await call(env, "kossi", "GET", "/api/owner/cash?stationId=be")).status).toBe(403);
+    const all = (await call<StationCash[]>(env, "admin", "GET", "/api/owner/cash")).body;
+    expect(all.map((s) => `${s.stationId}:${s.staffId ?? ""}`)).toEqual(["boutique:", "kara:", "be:afi", "be:kodjo"]);
+  });
+
+  it("lets staff close only their own top-ups, the owner record them for staff, and an admin confirm", async () => {
+    const { env, db } = await setup();
+    topup(db, "w1", "afi", 1000);
+    topup(db, "w2", "kodjo", 500);
+    // Staff cannot close for a colleague; a customer or a partner's staff not at all.
+    expect((await close(env, "afi", "be", 500, 500, { staffId: "kodjo" })).status).toBe(403);
+    expect((await close(env, "ama", "be", 1000, 1000)).status).toBe(403);
+    expect((await close(env, "efo", "be", 1000, 1000)).status).toBe(403);
+    // No staff member at a partner station: the owner closes the station's day.
+    expect((await close(env, "kossi", "kara", 0, 0, { staffId: "efo" })).body).toEqual({ error: "bad_request" });
+    const afi = await close(env, "afi", "be", 1000, 1000);
+    expect(afi.body).toMatchObject({ status: "pending", staffId: "afi", cashXof: 1000, dueXof: 1000, createdBy: "Afi" });
+    expect(db.prepare("select staff_id from cash_handovers where id = ?").get(afi.body.id)).toEqual({ staff_id: "afi" });
+    // Kodjo's first closing starts at the same instant as Afi's: one closing per period and staff member.
+    const short = await close(env, "kodjo", "be", 300, 500, { note: "Monnaie rendue" });
+    expect(short.body).toMatchObject({ staffId: "kodjo", amountXof: 300 });
+    expect((await mine(env, "kodjo")).body).toMatchObject({ carryXof: 200, dueXof: 200 });
+    expect((await mine(env, "afi")).body).toMatchObject({ dueXof: 0, pendingXof: 1000 });
+    // The owner records what Kodjo handed over later; only for someone with cash here.
+    expect((await close(env, "yao", "be", 0, 0, { staffId: "ama" })).body).toEqual({ error: "bad_request" });
+    const later = await close(env, "yao", "be", 200, 200, { staffId: "kodjo" });
+    expect(later.body).toMatchObject({ staffId: "kodjo", createdBy: "Yao", amountXof: 200 });
+    expect((await call(env, "afi", "POST", `/api/admin/cash/handovers/${afi.body.id}/decide`, { confirm: true })).status).toBe(403);
+    expect((await call<CashHandover>(env, "admin", "POST", `/api/admin/cash/handovers/${afi.body.id}/decide`, { confirm: true })).body).toMatchObject({ status: "confirmed" });
+    expect((await mine(env, "afi")).body).toMatchObject({ dueXof: 0, pendingXof: 0 });
+    expect(db.prepare("select changes from audit_log where table_name = 'cash_handovers' and row_id = ?").get(later.body.id)).toMatchObject({
+      changes: expect.stringContaining('"staff_id":"kodjo"'),
+    });
+  });
+
+  it("counts a staff member late after 10:00 the next morning", async () => {
+    const { env, db } = await setup();
+    const yesterday = new Date(Date.now() - 86_400_000);
+    yesterday.setUTCHours(18, 0, 0, 0);
+    topup(db, "w1", "kodjo", 500, yesterday.toISOString());
+    const today = new Date(yesterday.getTime() + 86_400_000);
+    const at = (h: number) => new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), h));
+    expect(await runCashAlerts(env, at(9))).toEqual([]);
+    expect(await runCashAlerts(env, at(10))).toEqual(["be"]);
+    await close(env, "kodjo", "be", 500, 500);
+    expect(await runCashAlerts(env, new Date(Math.max(Date.now(), at(10).getTime()) + 60_000))).toEqual([]);
   });
 });

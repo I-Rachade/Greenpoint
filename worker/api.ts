@@ -48,7 +48,7 @@ import {
 import { cleanOpeningHours } from "../src/lib/opening-hours";
 import { reportPeriod } from "../src/lib/owner-backoffice";
 import { ownerLive, ownerReport } from "./owner";
-import { closeCashDay, decideHandover, ownerCash, saveStationCashSettings } from "./station-cash";
+import { closeCashDay, decideHandover, myStationCash, ownerCash, saveStationCashSettings } from "./station-cash";
 import type { HandoverInput, StationCashSettings } from "../src/lib/station-cash";
 import { normalizeTogoPhone } from "../src/lib/phone";
 import { personLabel } from "../src/lib/wallet";
@@ -1954,7 +1954,8 @@ const ROUTES: [string, RegExp, Handler][] = [
   // Owner backoffice (worker/owner.ts): live queue and handovers, settlement and statistics.
   ["GET", /^\/api\/owner\/live$/, (c) => ownerLive(c, c.url.searchParams.get("stationId") || null)],
   ["GET", /^\/api\/owner\/report$/, (c) => ownerReport(c, c.url.searchParams.get("stationId") || null, reportPeriod(c.url.searchParams.get("days")))],
-  // Station cash (worker/station-cash.ts): what partner stations owe, their closings and the admin's confirmation.
+  // Station cash (worker/station-cash.ts): what partner stations (at own stations: staff members) owe, their closings and the admin's confirmation.
+  ["GET", /^\/api\/stations\/([\w-]+)\/cash$/, (c, [id]) => myStationCash(c, id)],
   ["GET", /^\/api\/owner\/cash$/, (c) => ownerCash(c, c.url.searchParams.get("stationId") || null)],
   ["POST", /^\/api\/owner\/cash\/handovers$/, async (c) => closeCashDay(c, await readJson<HandoverInput>(c.request))],
   [

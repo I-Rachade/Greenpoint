@@ -377,9 +377,11 @@ export interface Backend {
 
   // Owner backoffice (see src/lib/owner-backoffice.ts): one station or all (`null`)
   ownerLive(stationId: string | null): Promise<OwnerLive>;
-  // Station cash (see src/lib/station-cash.ts): partner stations only
-  /** The balance, what is due now and the handovers of the owner's partner stations (admins: all of them). */
+  // Station cash (see src/lib/station-cash.ts): partner stations, and per staff member at own stations
+  /** The balance, what is due now and the handovers of the owner's stations (admins: all of them). */
   ownerCash(stationId: string | null): Promise<StationCash[]>;
+  /** At an own station, the signed-in staff member's Green Credit cash and closings; null elsewhere. */
+  myStationCash(stationId: string): Promise<StationCash | null>;
   /** Closes the open period and records what was handed over (pending until an admin confirms it). */
   closeCashDay(input: HandoverInput): Promise<CashHandover>;
   /** Admins: the money of a handover arrived (confirm) or not (reject, with a reason). */

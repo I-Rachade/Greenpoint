@@ -52,7 +52,15 @@ function CloseForm({ cash, onDone }: { cash: StationCash; onDone: () => void }) 
     setBusy(true);
     setMessage(null);
     try {
-      await backend.closeCashDay({ stationId: cash.stationId, amountXof, method, reference, note: note.trim() || null, expectedDueXof: cash.dueXof });
+      await backend.closeCashDay({
+        stationId: cash.stationId,
+        staffId: cash.staffId,
+        amountXof,
+        method,
+        reference,
+        note: note.trim() || null,
+        expectedDueXof: cash.dueXof,
+      });
       setMessage({ text: c.saved, ok: true });
       setReference("");
       setNote("");
@@ -174,8 +182,9 @@ function HandoverItem({ h, admin, onChanged }: { h: CashHandover; admin: boolean
 }
 
 /**
- * A partner station's cash: what it took for poinderecharge since the last closing, the carry
- * over, the commission kept back and the amount due; the closing form and the handovers.
+ * A partner station's cash (at an own station: one staff member's): what it took for poinderecharge
+ * since the last closing, the carry over, the commission kept back and the amount due; the closing
+ * form and the handovers.
  */
 export function StationCashCard({ cash, admin, onChanged, extra }: { cash: StationCash; admin: boolean; onChanged: () => void; extra?: ReactNode }) {
   const { t } = useI18n();
@@ -186,10 +195,10 @@ export function StationCashCard({ cash, admin, onChanged, extra }: { cash: Stati
   const pendingCount = cash.handovers.filter((h) => h.status === "pending").length;
   return (
     <Section
-      title={cash.stationName}
+      title={cash.staffName ? `${cash.stationName} · ${cash.staffName}` : cash.stationName}
       aside={
         <>
-          <Badge tone={cash.type === "shop" ? "blue" : "neutral"}>{c.types[cash.type]}</Badge>
+          <Badge tone={cash.type === "shop" ? "blue" : cash.type === "own" ? "green" : "neutral"}>{c.types[cash.type]}</Badge>
           {cash.late && <Badge tone="red">{c.late}</Badge>}
           {admin && pendingCount > 0 && <Badge tone="amber">{format(c.toConfirm, { n: pendingCount })}</Badge>}
         </>
@@ -246,7 +255,10 @@ export function StationCashCard({ cash, admin, onChanged, extra }: { cash: Stati
   );
 }
 
-/** The owner's "Cash" tab: one card per partner station of the selection. */
+/** Cards are per station, at own stations per staff member. */
+export const cashKey = (s: StationCash) => `${s.stationId}:${s.staffId ?? ""}`;
+
+/** The owner's "Cash" tab: one card per partner station of the selection, per staff member at own stations. */
 export function CashView({ stationId }: { stationId: string | null }) {
   const { t } = useI18n();
   const { backend, profile } = useApp();
@@ -260,7 +272,7 @@ export function CashView({ stationId }: { stationId: string | null }) {
           <div className="space-y-4">
             <p className="text-sm text-gp-muted">{t.stationCash.ownerIntro}</p>
             {stations.map((s) => (
-              <StationCashCard key={s.stationId} cash={s} admin={profile?.role === "admin"} onChanged={reload} />
+              <StationCashCard key={cashKey(s)} cash={s} admin={profile?.role === "admin"} onChanged={reload} />
             ))}
           </div>
         )
