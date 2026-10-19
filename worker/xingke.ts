@@ -203,14 +203,17 @@ const CARD_START_WINDOW_MS = 120_000;
  *    transactionId, so a second swipe or another customer cannot take it.
  * 2. CommandResult of that answer: "Sent", or "Unknown" (DELIVERY_UNCERTAIN, what the platform
  *    reports today, as it gets no receipt from the device), so we start the outlet with
- *    startSource "Card" (the platform never starts by itself). "Failed", a send the platform
- *    refused, or no result within CARD_START_WINDOW_MS cancels the charge at no cost.
+ *    startSource "Card" (the platform never starts by itself). An answer refused with
+ *    PROFILE_UNCONFIRMED or whose send timed out starts the outlet at once. "Failed", another
+ *    refusal, or no result within CARD_START_WINDOW_MS cancels the charge at no cost.
  * Then it runs like a Green Credit charge: stopped when the credit is used up and paid once it
  * ended (creditFollowUp). Never throws: the event is stored and acknowledged either way.
  */
 async function cardFollowUp(env: Env, cb: XingkeCallback) {
   const deviceId = cb.deviceId.toUpperCase();
   try {
+    // First, so a card left with an unstarted charge by an earlier swipe can charge again.
+    await dropUnstartedCardCharges(env.DB, deviceId);
     if (cb.action === "CardPresented") await answerCard(env, cb);
     else if (cb.action === "CommandResult" && cb.data.requestAction === "AuthorizeResponse") await cardAnswerDelivered(env, cb);
     await dropUnstartedCardCharges(env.DB, deviceId);
@@ -242,10 +245,11 @@ async function answerCard(env: Env, cb: XingkeCallback) {
     .prepare("insert into device_messages (external_id, received_at, payload) values (?, ?, ?)")
     .bind(deviceId, nowIso(), JSON.stringify({ sent: answer, result }))
     .run();
-  if (!charging || result.ok || result.uncertain) return;
-  // The platform has not confirmed card authorization for this device (section 6.3):
-  // the answer never reaches it, so the outlet is started directly, as for an app start.
-  if (result.code === "PROFILE_UNCONFIRMED") return startCardCharge(env, deviceId, outlet, order);
+  if (!charging || result.ok) return;
+  // The platform has not confirmed card authorization for this device (section 6.3), or our
+  // send timed out: no CommandResult may follow, so the outlet is started directly, as for an
+  // app start. A late CommandResult then finds the charge started and does nothing.
+  if (result.uncertain || result.code === "PROFILE_UNCONFIRMED") return startCardCharge(env, deviceId, outlet, order);
   // Refused for sure: the device will not wait for a start.
   await chargeStartFailed(db, deviceId, outlet, order);
 }

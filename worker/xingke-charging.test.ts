@@ -316,6 +316,28 @@ describe("card charging through the Xingke cloud", () => {
     expect(sess(db)[1]).toMatchObject({ status: "charging" });
   });
 
+  it("starts the outlet when the answer's send timed out, and a stale unstarted charge does not block the next swipe", async () => {
+    const { db, env } = await cardSetup();
+    // Refused for sure on the start too: the charge stays unstarted until it is stale.
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      if (JSON.parse(String(init.body)).action === "AuthorizeResponse") throw new Error("timeout");
+      return new Response(JSON.stringify({ code: "DEVICE_OFFLINE" }), { status: 409 });
+    });
+    await swipe(env, "StartCharging");
+    expect(sess(db)).toMatchObject([{ status: "cancelled" }]);
+
+    // An older unstarted charge on the card (no result ever came) is dropped before answering.
+    platform();
+    db.exec(`update charging_sessions set status = 'charging', started_at = '${new Date(Date.now() - 180_000).toISOString()}'`);
+    db.exec("delete from device_commands");
+    mode = "timeout";
+    await swipe(env, "StartCharging", CARD, 2);
+    expect(sent.map((m) => m.action)).toEqual(["AuthorizeResponse", "RemoteStartTransaction"]);
+    expect(sent[0]).toMatchObject({ data: { status: "Accepted" } });
+    expect(sent[1]).toMatchObject({ data: { connectorId: 2, startSource: "Card" } });
+    expect(sess(db)).toMatchObject([{ status: "cancelled" }, { status: "charging" }]);
+  });
+
   it("cancels the card charge at no cost when the answer fails, the start is refused, or no result comes", async () => {
     const { db, env } = await cardSetup();
     await answered(env, await swipe(env, "StartCharging"), "Failed");
