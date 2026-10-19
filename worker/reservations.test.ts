@@ -111,6 +111,8 @@ describe("swap reservations name an available battery type", () => {
 
   it("counts holds per type, without touching the counter", async () => {
     const { env, db } = await setup();
+    // Spiro batteries in stock keep the half-of-stock limit (point 8) out of the way.
+    db.exec("update station_battery_types set full_batteries = 4 where station_id = 'be' and battery_type_id = 'spiro'");
     expect((await reserve(env, "ama", { stationId: "be", kind: "swap", target: "ov" })).status).toBe(200);
     expect((await reserve(env, "kofi", { stationId: "be", type: "battery", target: "ov" })).status).toBe(200);
     expect((await reserve(env, "yawa", { stationId: "be", kind: "swap", target: "ov" })).body).toEqual({ error: "battery_type_unavailable" });
@@ -325,5 +327,41 @@ describe("stations nobody answers for", () => {
     db.exec("update stations set phone = null where id = 'be'");
     expect(await stationOf(env, "be")).toMatchObject({ phone: null, hasStaff: true });
     expect((await reserve(env, "kofi", { stationId: "be", kind: "swap", target: "ov" })).body).toEqual({ error: "station_unattended" });
+  });
+});
+
+describe("reservations cannot block a station (review 2026-10-19, point 8)", () => {
+  it("needs a confirmed phone number: an e-mail account alone cannot reserve", async () => {
+    const { env, db } = await setup();
+    db.exec("update users set phone = null, email = 'ama@example.com' where id = 'ama'");
+    expect((await reserve(env, "ama", { stationId: "solo", kind: "swap" })).body).toEqual({ error: "phone_required" });
+  });
+
+  it("holds at most half of the full batteries, the rest stays for walk-ins", async () => {
+    const { env, db } = await setup();
+    db.exec("update station_battery_types set full_batteries = 3 where station_id = 'be' and battery_type_id = 'ov'");
+    // 3 full batteries: 2 may be held, the third stays.
+    expect((await reserve(env, "ama", { stationId: "be", kind: "swap", target: "ov" })).status).toBe(200);
+    expect((await reserve(env, "kofi", { stationId: "be", kind: "swap", target: "ov" })).status).toBe(200);
+    expect((await reserve(env, "yawa", { stationId: "be", kind: "swap", target: "ov" })).body).toEqual({ error: "hold_limit" });
+    // One battery can always be held.
+    expect((await reserve(env, "esi", { stationId: "solo", kind: "swap" })).status).toBe(200);
+    expect(count(db, "select count(*) as n from reservations where status = 'active'")).toBe(3);
+  });
+
+  it("holds at most half of the outlets and car chargers", async () => {
+    const { env } = await setup();
+    // Ch: 3 outlets and a car charger, so 2 holds.
+    expect((await reserve(env, "ama", { stationId: "ch", kind: "charging_point", target: "p1" })).status).toBe(200);
+    expect((await reserve(env, "kofi", { stationId: "ch", kind: "charging_point", target: "ev1" })).status).toBe(200);
+    expect((await reserve(env, "yawa", { stationId: "ch", kind: "charging_point", target: "p2" })).body).toEqual({ error: "hold_limit" });
+  });
+
+  it("checks the limit in the insert itself, so a burst of accounts cannot pass it", async () => {
+    const { env, db } = await setup();
+    db.exec("update station_battery_types set full_batteries = 3 where station_id = 'be' and battery_type_id = 'ov'");
+    const answers = await Promise.all(["ama", "kofi", "yawa", "esi"].map((u) => reserve(env, u, { stationId: "be", kind: "swap", target: "ov" })));
+    expect(answers.filter((a) => a.status === 200).length).toBe(2);
+    expect(count(db, "select count(*) as n from reservations where status = 'active'")).toBe(2);
   });
 });

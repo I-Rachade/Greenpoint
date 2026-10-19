@@ -16,6 +16,9 @@ import {
   checkPickupCode,
   evTargetSql,
   heldBatteriesSql,
+  heldOfKindSql,
+  holdRoomSql,
+  holdStockSql,
   heldTargetsByStation,
   RESERVATION_SELECT,
   stillActive,
@@ -551,6 +554,8 @@ async function reserve(c: Ctx, input: { stationId?: unknown; kind?: unknown; typ
   const user = await c.requireUser();
   // Only riders reserve; staff, drivers' fleet managers and admins do not (role matrix).
   if (user.role !== "customer") throw new ApiError("forbidden", 403);
+  // A confirmed phone number: e-mail accounts are free to make, so they alone cannot hold stock (point 8).
+  if (!user.phone) throw new ApiError("phone_required");
   const stationId = String(input?.stationId ?? "");
   const kind = kindFrom(input?.kind ?? input?.type);
   if (!kind) throw new ApiError("bad_request");
@@ -634,6 +639,13 @@ async function reserve(c: Ctx, input: { stationId?: unknown; kind?: unknown; typ
   }
   // No phone and no staff: nobody answers for the hold, so the station is greyed out in the app.
   if (isUnattended(station)) throw new ApiError("station_unattended");
+  // Reservations take at most half of the station's stock; the insert checks it again. When
+  // everything is held already, the usual answer (none available) says it better.
+  const hold = await c.db
+    .prepare(`select ${heldOfKindSql(kind, "?1", "?2")} as held, ${holdStockSql(kind, "?1")} as stock`)
+    .bind(stationId, now)
+    .first<{ held: number; stock: number }>();
+  if (hold && hold.held >= Math.max(1, Math.ceil(hold.stock / 2)) && hold.held < hold.stock) throw new ApiError("hold_limit");
 
   const id = uuid();
   const code = randomDigits(4);
@@ -647,7 +659,7 @@ async function reserve(c: Ctx, input: { stationId?: unknown; kind?: unknown; typ
       .prepare(
         `insert into reservations (id, user_id, station_id, type, kind, target, charging_point_id, status, created_at, expires_at, pickup_code)
          select ?1, ?2, ?3, ?4, ?10, ?9, ?11, 'active', ?5, ?6, ?7
-         where ${free}`,
+         where ${free} and ${holdRoomSql(kind, "?3", "?5")}`,
       )
       .bind(
         id,

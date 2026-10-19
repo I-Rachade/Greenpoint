@@ -1405,6 +1405,7 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const profile = this.requireProfile(state);
     if (profile.role !== "customer") throw new BackendError("forbidden");
+    if (!profile.phone) throw new BackendError("phone_required");
     const kind = kindFrom(kindOrType);
     if (!kind) throw new BackendError("unknown", "bad_request");
     const now = new Date();

@@ -137,6 +137,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "parcel_not_arrived",
   "not_a_driver",
   "phone_required",
+  "hold_limit",
   "driver_busy",
   "driver_not_found",
   "too_far",
