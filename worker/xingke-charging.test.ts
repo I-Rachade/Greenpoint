@@ -297,6 +297,25 @@ describe("card charging through the Xingke cloud", () => {
     expect(sess(db)).toEqual([]);
   });
 
+  it("starts the outlet itself when the platform has not confirmed card authorization for the device", async () => {
+    const { db, env } = await cardSetup();
+    // Start refused as well: cancelled at no cost.
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ code: "PROFILE_UNCONFIRMED" }), { status: 422 }));
+    await swipe(env, "StartCharging");
+    expect(sess(db)).toMatchObject([{ status: "cancelled" }]);
+
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      sent.push(body);
+      if (body.action === "AuthorizeResponse") return new Response(JSON.stringify({ code: "PROFILE_UNCONFIRMED" }), { status: 422 });
+      return new Response(JSON.stringify({ code: "ACCEPTED" }), { status: 202 });
+    });
+    await swipe(env, "StartCharging");
+    expect(sent.map((m) => m.action)).toEqual(["AuthorizeResponse", "RemoteStartTransaction"]);
+    expect(sent[1]).toMatchObject({ data: { connectorId: 1, startSource: "Card" } });
+    expect(sess(db)[1]).toMatchObject({ status: "charging" });
+  });
+
   it("cancels the card charge at no cost when the answer fails, the start is refused, or no result comes", async () => {
     const { db, env } = await cardSetup();
     await answered(env, await swipe(env, "StartCharging"), "Failed");

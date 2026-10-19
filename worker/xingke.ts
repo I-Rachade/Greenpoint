@@ -242,8 +242,22 @@ async function answerCard(env: Env, cb: XingkeCallback) {
     .prepare("insert into device_messages (external_id, received_at, payload) values (?, ?, ?)")
     .bind(deviceId, nowIso(), JSON.stringify({ sent: answer, result }))
     .run();
+  if (!charging || result.ok || result.uncertain) return;
+  // The platform has not confirmed card authorization for this device (section 6.3):
+  // the answer never reaches it, so the outlet is started directly, as for an app start.
+  if (result.code === "PROFILE_UNCONFIRMED") return startCardCharge(env, deviceId, outlet, order);
   // Refused for sure: the device will not wait for a start.
-  if (charging && !result.ok && !result.uncertain) await chargeStartFailed(db, deviceId, outlet, order);
+  await chargeStartFailed(db, deviceId, outlet, order);
+}
+
+async function startCardCharge(env: Env, deviceId: string, outlet: number, order: string) {
+  try {
+    await startCardOutlet(env, deviceId, outlet, order, "card");
+  } catch (err) {
+    // Refused by the platform (e.g. device offline): stored on the command.
+    console.error("xingke card start", deviceId, order, err);
+    await chargeStartFailed(env.DB, deviceId, outlet, order);
+  }
 }
 
 /** The card charge opened by answerCard on this outlet that has not been started yet. */
@@ -278,13 +292,7 @@ async function cardAnswerDelivered(env: Env, cb: XingkeCallback) {
   const status = cb.data.status;
   if (status === "Failed") return chargeStartFailed(db, deviceId, outlet, charge.order_no);
   if (status !== "Sent" && status !== "Unknown") return;
-  try {
-    await startCardOutlet(env, deviceId, outlet, charge.order_no, "card");
-  } catch (err) {
-    // Refused by the platform (e.g. PROFILE_UNCONFIRMED, device offline): stored on the command.
-    console.error("xingke card start", deviceId, charge.order_no, err);
-    await chargeStartFailed(db, deviceId, outlet, charge.order_no);
-  }
+  await startCardCharge(env, deviceId, outlet, charge.order_no);
 }
 
 /** Cancels card charges whose start was never sent (the device did not confirm our answer in time). */
