@@ -194,3 +194,98 @@ describe("charging through the Xingke cloud", () => {
     expect(sess(db)).toMatchObject([{ status: "charging" }]);
   });
 });
+
+// Cards on Xingke sockets (worker/xingke.ts cardFollowUp): the same cards as at OCPP charge
+// points, linked to an account and paying with its Green Credit.
+const CARD = "3105713408";
+async function cardSetup(balance = 5000) {
+  const s = await setup();
+  s.db.exec(`insert into charge_cards (id_tag, user_id, created_at) values ('${CARD}', 'kofi', '${new Date().toISOString()}');
+             update wallets set balance_xof = ${balance} where user_id = 'kofi';`);
+  return s;
+}
+async function swipe(env: Env, intent: string, idTag = CARD, connectorId = 1, expiresInMs = 30_000) {
+  const messageId = `card${++n}`;
+  await cb(env, "CardPresented", { connectorId, idTag, intent, expiresAt: new Date(Date.now() + expiresInMs).toISOString() }, messageId);
+  return messageId;
+}
+const answered = (env: Env, messageId: string, status: string) =>
+  cb(env, "CommandResult", { requestAction: "AuthorizeResponse", status, code: status.toUpperCase(), result: { connectorId: 1 } }, messageId);
+
+describe("card charging through the Xingke cloud", () => {
+  it("answers a balance inquiry with the account's Green Credit, in hundredths, and starts nothing", async () => {
+    const { db, env } = await cardSetup();
+    const id = await swipe(env, "BalanceInquiry");
+    expect(sent).toEqual([{ messageId: id, action: "AuthorizeResponse", data: { connectorId: 1, idTag: CARD, status: "Accepted", cardType: "Balance", balance: 500_000 } }]);
+    await answered(env, id, "Sent");
+    expect(sent).toHaveLength(1);
+    expect(sess(db)).toEqual([]);
+    // A card nobody linked yet is refused, and kept so an admin can link it.
+    const other = await swipe(env, "BalanceInquiry", "0000000042");
+    expect(sent[1]).toEqual({ messageId: other, action: "AuthorizeResponse", data: { connectorId: 1, idTag: "0000000042", status: "Invalid" } });
+    expect(db.prepare("select count(*) as n from charge_cards").get()).toEqual({ n: 2 });
+  });
+
+  it("starts the outlet once the device got the answer, stops when the credit is used up and pays from it", async () => {
+    const { db, env } = await cardSetup(300);
+    const id = await swipe(env, "StartCharging");
+    expect(sent[0].data).toMatchObject({ status: "Accepted", balance: 30_000 });
+    expect(sess(db)).toMatchObject([{ user_id: "kofi", status: "charging" }]);
+    expect(sent).toHaveLength(1);
+    await answered(env, id, "Sent");
+    expect(sent[1]).toMatchObject({ action: "RemoteStartTransaction", data: { connectorId: 1, startSource: "Card", chargingMode: "AutoStop" } });
+    const tx = sent[1].data.transactionId;
+    expect(db.prepare("select order_no, charge_card, credit_limit_xof from charging_sessions").get()).toEqual({ order_no: tx, charge_card: CARD, credit_limit_xof: 300 });
+    await result(env, sent[1], "Succeeded", "OK");
+    await reading(env, 1, tx, "Charging", 1.0);
+    expect(sent).toHaveLength(2);
+    // 2 kWh at 150 FCFA use up the 300.
+    await reading(env, 1, tx, "Charging", 2.0);
+    expect(sent[2]).toMatchObject({ action: "RemoteStopTransaction", data: { connectorId: 1, transactionId: tx } });
+    await result(env, sent[2], "Succeeded", "OK");
+    await reading(env, 1, tx, "Stopped", 2.0, "Completed");
+    db.exec(`update charging_sessions set stopped_at = '${new Date(Date.now() - 120_000).toISOString()}'`);
+    await cb(env, "StatusNotification", { connectors: [{ connectorId: 1, status: "Available" }] });
+    expect(db.prepare("select status, energy_wh, amount_xof, payment_method from charging_sessions").get()).toEqual({ status: "paid", energy_wh: 2000, amount_xof: 300, payment_method: "wallet" });
+    expect(db.prepare("select balance_xof from wallets where user_id = 'kofi'").get()).toEqual({ balance_xof: 0 });
+  });
+
+  it("refuses a second start while the card charges, and a card without enough credit", async () => {
+    const { db, env } = await cardSetup();
+    await answered(env, await swipe(env, "StartCharging"), "Sent");
+    await swipe(env, "StartCharging", CARD, 2);
+    expect(sent[2]).toMatchObject({ action: "AuthorizeResponse", data: { connectorId: 2, status: "Invalid" } });
+    expect(sess(db)).toHaveLength(1);
+    db.exec("update charging_sessions set status = 'cancelled'; update wallets set balance_xof = 4 where user_id = 'kofi'");
+    await swipe(env, "StartCharging");
+    expect(sent[3].data).toEqual({ connectorId: 1, idTag: CARD, status: "Invalid" });
+  });
+
+  it("keeps an expired card event without answering it", async () => {
+    const { db, env } = await cardSetup();
+    await swipe(env, "StartCharging", CARD, 1, -1_000);
+    expect(sent).toEqual([]);
+    expect(sess(db)).toEqual([]);
+  });
+
+  it("cancels the card charge at no cost when the answer fails, the start is refused, or the device never confirms", async () => {
+    const { db, env } = await cardSetup();
+    await answered(env, await swipe(env, "StartCharging"), "Failed");
+    expect(sess(db)).toMatchObject([{ status: "cancelled" }]);
+
+    // The platform has not enabled card starts for this model.
+    const id = await swipe(env, "StartCharging");
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ code: "PROFILE_UNCONFIRMED" }), { status: 422 }));
+    await answered(env, id, "Sent");
+    expect(sess(db)).toMatchObject([{ status: "cancelled" }, { status: "cancelled" }]);
+    expect(db.prepare("select status, result from device_commands").get()).toEqual({ status: "failed", result: "PROFILE_UNCONFIRMED" });
+
+    platform();
+    await swipe(env, "StartCharging");
+    await answered(env, sent[0].messageId, "Unknown");
+    expect(sess(db)[2]).toMatchObject({ status: "charging" });
+    db.exec(`update charging_sessions set started_at = '${new Date(Date.now() - 180_000).toISOString()}' where status = 'charging'`);
+    await cb(env, "StatusNotification", { connectors: [{ connectorId: 1, status: "Available" }] });
+    expect(sess(db)[2]).toMatchObject({ status: "cancelled" });
+  });
+});

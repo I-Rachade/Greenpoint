@@ -450,6 +450,13 @@ export async function startOutlet(env: Env, rawId: string, outlet: number, actor
   return { order };
 }
 
+/** Switches a Xingke cloud outlet on for the card charge `order` (worker/xingke.ts), until full. */
+export async function startCardOutlet(env: Env, externalId: string, outlet: number, order: string, actor: string) {
+  const target = await commandTarget(env.DB, externalId, outlet);
+  if (target.route !== "xingke_cloud") throw new ApiError("bad_request");
+  await sendCloud(env, target, outlet, "start", xingkeStartRequest(xingkeMessageId("start"), outlet, order, undefined, "Card"), actor);
+}
+
 /** Switches an outlet off, ending its last started charge. */
 export async function stopOutlet(env: Env, rawId: string, outlet: number, actor: string) {
   const target = await commandTarget(env.DB, rawId, outlet);

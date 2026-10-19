@@ -12,7 +12,7 @@ export const XINGKE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 /** Longest timed charge the API accepts, in seconds (whole minutes). */
 export const XINGKE_MAX_DURATION = 59_880;
 
-export type XingkeCommandAction = "RemoteStartTransaction" | "RemoteStopTransaction";
+export type XingkeCommandAction = "RemoteStartTransaction" | "RemoteStopTransaction" | "AuthorizeResponse";
 
 export interface XingkeCommand {
   messageId: string;
@@ -28,9 +28,18 @@ export function xingkeMessageId(kind: "start" | "stop", random: () => string = (
 /** The 20-digit charging correlation id the API requires. */
 export const xingkeTransactionId = xingkeOrderNumber;
 
-/** Switch an outlet on, until the battery is full or for `seconds`. */
-export function xingkeStartRequest(messageId: string, connectorId: number, transactionId: string, seconds?: number): XingkeCommand {
-  const data: Record<string, string | number> = { connectorId, transactionId, startSource: "Remote" };
+/**
+ * Switch an outlet on, until the battery is full or for `seconds`. `source` "Card" after a
+ * card we accepted (AuthorizeResponse), "Remote" otherwise.
+ */
+export function xingkeStartRequest(
+  messageId: string,
+  connectorId: number,
+  transactionId: string,
+  seconds?: number,
+  source: "Remote" | "Card" = "Remote",
+): XingkeCommand {
+  const data: Record<string, string | number> = { connectorId, transactionId, startSource: source };
   if (seconds === undefined) data.chargingMode = "AutoStop";
   else {
     if (!(Number.isInteger(seconds) && seconds >= 60 && seconds <= XINGKE_MAX_DURATION && seconds % 60 === 0)) {
@@ -45,6 +54,21 @@ export function xingkeStartRequest(messageId: string, connectorId: number, trans
 /** Switch an outlet off, ending the charge `transactionId`. */
 export function xingkeStopRequest(messageId: string, connectorId: number, transactionId: string): XingkeCommand {
   return { messageId, action: "RemoteStopTransaction", data: { connectorId, transactionId, stopSource: "Remote" } };
+}
+
+/** Highest balance the API accepts (section 8). */
+const XINGKE_MAX_BALANCE = 2_147_483_647;
+
+/**
+ * Our answer to a card event (section 8), with the event's own messageId: a card that may
+ * charge, with its credit as balance, or Invalid. The API counts in CNY cents (fen); we send
+ * FCFA × 100, so the device's screen shows the amount in FCFA.
+ */
+export function xingkeAuthorizeResponse(card: XingkeCardEvent, balanceXof: number | null): XingkeCommand {
+  const data: Record<string, string | number> = { connectorId: card.connectorId, idTag: card.idTag };
+  if (balanceXof === null) data.status = "Invalid";
+  else Object.assign(data, { status: "Accepted", cardType: "Balance", balance: Math.min(Math.max(0, Math.floor(balanceXof)) * 100, XINGKE_MAX_BALANCE) });
+  return { messageId: card.messageId, action: "AuthorizeResponse", data };
 }
 
 // Callbacks -------------------------------------------------------------------
@@ -139,8 +163,8 @@ function chargingReading(d: Record<string, unknown>): OutletReading | null {
 }
 
 /**
- * Maps a callback to its effect. Card events and unknown actions only get
- * stored (we keep no card accounts), so they return null.
+ * Maps a callback to its effect. Card events (answered in worker/xingke.ts) and
+ * unknown actions change no outlet, so they return null.
  */
 export function xingkeEffect(cb: XingkeCallback): XingkeEffect | null {
   const d = cb.data;
@@ -184,6 +208,29 @@ export function xingkeEffect(cb: XingkeCallback): XingkeEffect | null {
     default:
       return null;
   }
+}
+
+/** A card held to an outlet (CardPresented, section 16): to answer before `expiresAt`. */
+export interface XingkeCardEvent {
+  messageId: string;
+  connectorId: number;
+  /** The card number as the device read it (10 decimal digits); our answer repeats it. */
+  idTag: string;
+  intent: "BalanceInquiry" | "StartCharging";
+  expiresAt: string;
+}
+
+/** The card event of a CardPresented callback; null for any other callback or a malformed one. */
+export function xingkeCardEvent(cb: XingkeCallback): XingkeCardEvent | null {
+  if (cb.action !== "CardPresented") return null;
+  const d = cb.data;
+  const connectorId = connector(d.connectorId);
+  const idTag = str(d.idTag);
+  const expiresAt = str(d.expiresAt);
+  const intent = d.intent;
+  if (!connectorId || !idTag || !expiresAt || Number.isNaN(Date.parse(expiresAt))) return null;
+  if (intent !== "BalanceInquiry" && intent !== "StartCharging") return null;
+  return { messageId: cb.messageId, connectorId, idTag, intent, expiresAt };
 }
 
 /**
