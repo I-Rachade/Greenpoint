@@ -47,11 +47,12 @@ export function cleanMainActivity(value: unknown): MainActivity | null {
 }
 
 /**
- * A station nobody answers for: no phone number and no staff assigned. It is shown greyed out
- * and cannot be reserved (reserve() in worker/api.ts refuses with "station_unattended").
+ * A station not yet ready for reservations: it has no phone number or no staff (staff or the
+ * operator's owner). It is shown greyed out and cannot be reserved (reserve() in worker/api.ts
+ * refuses with "station_unattended"). Both are needed: someone to call, and someone there.
  */
 export function isUnattended(station: { phone: string | null; hasStaff?: boolean }): boolean {
-  return !station.phone?.trim() && station.hasStaff === false;
+  return !station.phone?.trim() || station.hasStaff === false;
 }
 
 /** Photos a station may have; the first one is the cover. */

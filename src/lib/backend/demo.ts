@@ -118,7 +118,7 @@ import {
   type SwapOwner,
 } from "../station-cash";
 import { validBatteryType, type BatteryType, type BatteryTypeInput } from "../battery-types";
-import { DEMO_STAFF, demoHistory, demoReassignments, demoUsers } from "../admin/demo-seed";
+import { DEMO_OWNERS, DEMO_STAFF, demoHistory, demoReassignments, demoUsers } from "../admin/demo-seed";
 import { cleanOpeningHours } from "../opening-hours";
 import { emptyDays, periodStart, reportPeriod, type Handover, type OwnerLive, type OwnerReport, type ReportPeriod, type StaffStats } from "../owner-backoffice";
 import {
@@ -711,6 +711,8 @@ function freshState(): DemoState {
     profile: null,
     users: demoUsers(now),
     staff: DEMO_STAFF,
+    // Afi runs poinderecharge's stations, so they count as staffed (isUnattended) and can be reserved.
+    operatorOwners: DEMO_OWNERS,
     inactive: [],
     audit: [],
     promotions: [demoPromotion(now)],
@@ -1159,7 +1161,9 @@ export class DemoBackend implements Backend {
         parcelPoint,
         batteryTypes,
         evChargers,
-        hasStaff: (state.staff ?? DEMO_STAFF).some((a) => a.stationId === s.id),
+        // Staff of the station or an owner of its operator, as the Worker counts them.
+        hasStaff:
+          (state.staff ?? DEMO_STAFF).some((a) => a.stationId === s.id) || (state.operatorOwners ?? []).some((x) => x.operatorId === s.operatorId),
       };
     });
   }

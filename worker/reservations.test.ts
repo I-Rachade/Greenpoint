@@ -25,6 +25,7 @@ const USERS = [
   { id: "yawa", phone: "+22890000008", name: "Yawa", role: "customer" as const },
   { id: "esi", phone: "+22890000010", name: "Esi", role: "customer" as const },
   { id: "edem", phone: "+22890000006", name: "Edem", role: "fleet_manager" as const },
+  { id: "kodjo", phone: "+22890000011", name: "Kodjo", role: "operator" as const }, // owns the stations
 ];
 
 let pinHash = "";
@@ -57,8 +58,9 @@ async function setup() {
     insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values
       ('be', 1, 0, 2, '${now}'), ('solo', 1, 0, 1, '${now}'), ('ch', 1, 0, 0, '${now}'), ('cnt', 1, 1, 0, '${now}');
     insert into station_staff (station_id, user_id) values ('be', 'afi'), ('ch', 'efo');
-    -- Without staff, a phone number keeps a station reservable (isUnattended in station-extras.ts).
-    update stations set phone = '+22822000001' where id in ('solo', 'cnt');
+    -- A phone and someone there (staff or the owner) keep a station reservable (isUnattended in station-extras.ts).
+    update stations set phone = '+22822000001';
+    insert into operator_owners (operator_id, user_id, created_at) values ('${OWN}', 'kodjo', '${now}');
     insert into wallets (user_id, balance_xof, created_at, updated_at) values ('ama', 2000, 'x', 'x');
     update stations set green_credit = 1 where id = 'be';
     insert into devices (external_id, station_id, vendor, link, outlets, last_seen_at, created_at) values ('123456', 'ch', 'Xingke', 'own_server', 3, '${now}', '${now}');
@@ -311,14 +313,17 @@ describe("wrong pickup codes (as parcels)", () => {
 });
 
 describe("stations nobody answers for", () => {
-  it("lists a station without phone and staff as such and refuses its reservations", async () => {
+  it("refuses reservations at a station without phone or without staff", async () => {
     const { env, db } = await setup();
-    db.exec("update stations set phone = null where id = 'solo'");
-    expect(await stationOf(env, "solo")).toMatchObject({ phone: null, hasStaff: false });
-    expect((await reserve(env, "ama", { stationId: "solo", kind: "swap" })).body).toEqual({ error: "station_unattended" });
-    // A phone number or one staff member is enough.
-    db.exec("update stations set phone = '+22822000001' where id = 'solo'");
     expect((await reserve(env, "ama", { stationId: "solo", kind: "swap" })).status).toBe(200);
+    db.exec("update reservations set status = 'cancelled'");
+    // The owner counts as someone there; without them, Solo has nobody.
+    db.exec("delete from operator_owners");
+    expect(await stationOf(env, "solo")).toMatchObject({ phone: "+22822000001", hasStaff: false });
+    expect((await reserve(env, "yawa", { stationId: "solo", kind: "swap" })).body).toEqual({ error: "station_unattended" });
+    // Staff without a phone: nobody to call.
+    db.exec("update stations set phone = null where id = 'be'");
     expect(await stationOf(env, "be")).toMatchObject({ phone: null, hasStaff: true });
+    expect((await reserve(env, "kofi", { stationId: "be", kind: "swap", target: "ov" })).body).toEqual({ error: "station_unattended" });
   });
 });

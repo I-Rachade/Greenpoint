@@ -2536,7 +2536,7 @@ export const fr = {
     already_reserved: "Vous avez déjà une réservation active.",
     station_not_found: "Station introuvable.",
     station_closed: "Cette station est fermée.",
-    station_unattended: "Pas de réservation ici : cette station n'a encore ni téléphone ni personnel.",
+    station_unattended: "Pas de réservation ici : il manque encore à cette station un téléphone ou du personnel.",
     service_not_offered: "Ce service n'est pas proposé ici.",
     none_available: "Plus rien de disponible dans cette station.",
     daily_limit: "Trop de réservations non utilisées ces dernières 24 heures. Réessayez plus tard.",
@@ -2907,7 +2907,7 @@ export const fr = {
     workshop: "Atelier de réparation",
     workshopOf: "Atelier de réparation {brand}",
     call: "Appeler",
-    unattendedHint: "Cette station n'a encore ni téléphone ni personnel : la réservation n'est pas possible.",
+    unattendedHint: "Il manque encore à cette station un téléphone ou du personnel : la réservation n'est pas possible.",
     amenities: {
       title: "Points de repos et services",
       none: "Aucun service indiqué pour cette station.",
