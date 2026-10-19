@@ -125,7 +125,7 @@ Seit Oktober 2026 bietet Xingke eine Cloud-API an ("Xingke Unified API V1.0", `p
 | `CommandResult` | schließt den Befehl (`Succeeded`/`Sent` = `done`, `Failed` = `failed`, Code in `result`); ein später `Unknown` überschreibt kein bestätigtes Ergebnis. Start bestätigt = lädt, Stopp bestätigt = frei |
 | `DeviceOnline` | Lebenszeichen, Ausgänge wieder angeboten |
 | `DeviceOffline` | Ausgänge sofort offline, freie Plätze der Station neu gezählt |
-| `CardPresented` | Ladekarte (wie bei OCPP: mit einem Konto verknüpft, zahlt mit dessen Green Credit): Antwort `AuthorizeResponse` mit dem Guthaben (FCFA × 100); bei `StartCharging` öffnet sich die Ladung, und nach `CommandResult` „Sent“ folgt `RemoteStartTransaction` mit `startSource: "Card"`. Abgelaufene Ereignisse werden nur gespeichert |
+| `CardPresented` | Ladekarte (wie bei OCPP: mit einem Konto verknüpft, zahlt mit dessen Green Credit): Antwort `AuthorizeResponse` mit dem Guthaben (FCFA × 100); eine Guthabenabfrage für das ganze Gerät kommt ohne `connectorId` und wird ohne beantwortet (API 1.2); bei `StartCharging` öffnet sich die Ladung, und nach `CommandResult` „Sent“ oder „Unknown“ (`DELIVERY_UNCERTAIN`, der Normalfall) folgt `RemoteStartTransaction` mit `startSource: "Card"`. Abgelaufene Ereignisse werden nur gespeichert |
 
 Noch offen bei Xingke: Produktionsadresse und Zugangsdaten, ob die Geräte-IDs Kleinbuchstaben enthalten, und ob `energy` pro Ladevorgang oder als Zählerstand gemeldet wird (die App zeigt den gemeldeten Wert). Die JSON-Beispiele, das JSON-Schema und die OpenAPI-Datei des Herstellers liegen unter `src/lib/__tests__/fixtures/xingke/`; die Tests prüfen unsere Befehle und Callbacks dagegen.
 

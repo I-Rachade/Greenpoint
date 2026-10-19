@@ -121,8 +121,9 @@ export async function handleXingkeCallback(request: Request, env: Env): Promise<
   const seen = await env.DB.prepare("select 1 from device_callbacks where key = ?").bind(key).first();
   if (seen) return ok();
   await applyCallback(env.DB, cb, body);
-  await cardFollowUp(env, cb);
+  // Stored first: a retry while we still answer a card (the platform waits 3 seconds) is a repeat.
   await env.DB.prepare("insert or ignore into device_callbacks (key, received_at) values (?, ?)").bind(key, nowIso()).run();
+  await cardFollowUp(env, cb);
   // Green Credit charges: stopped when the credit is used up, paid once they ended (0047).
   await creditFollowUp(env, cb.deviceId);
   return ok();
@@ -191,11 +192,13 @@ const CARD_START_WINDOW_MS = 120_000;
  * Card charging on Xingke sockets (sections 8 and 16), with the same cards as OCPP charge points
  * (swipeCard in worker/charge-cards.ts: linked to an account, paying with its Green Credit):
  * 1. CardPresented: we answer with AuthorizeResponse within its 30 seconds, Accepted with the
- *    credit as balance or Invalid. For StartCharging the card's charge opens at once on that
- *    outlet with a new transactionId, so a second swipe or another customer cannot take it.
- * 2. CommandResult "Sent" of that answer: the device has it, so we start the outlet with
+ *    credit as balance or Invalid. A balance inquiry may be for the whole device (no outlet,
+ *    API 1.2). For StartCharging the card's charge opens at once on that outlet with a new
+ *    transactionId, so a second swipe or another customer cannot take it.
+ * 2. CommandResult of that answer: "Sent", or "Unknown" (DELIVERY_UNCERTAIN, what the platform
+ *    reports today, as it gets no receipt from the device), so we start the outlet with
  *    startSource "Card" (the platform never starts by itself). "Failed", a send the platform
- *    refused, or no "Sent" within CARD_START_WINDOW_MS cancels the charge at no cost.
+ *    refused, or no result within CARD_START_WINDOW_MS cancels the charge at no cost.
  * Then it runs like a Green Credit charge: stopped when the credit is used up and paid once it
  * ended (creditFollowUp). Never throws: the event is stored and acknowledged either way.
  */
@@ -219,16 +222,17 @@ async function answerCard(env: Env, cb: XingkeCallback) {
   const swipe = await swipeCard(db, deviceId, card.idTag);
   let credit = swipe.status === "Accepted" && swipe.tag && swipe.creditXof !== undefined ? swipe.creditXof : null;
   const order = xingkeTransactionId();
-  if (credit !== null && card.intent === "StartCharging") {
-    const opened = await openCardCharge(db, deviceId, card.connectorId, { tag: swipe.tag!, userId: swipe.userId }, order);
+  const outlet = card.intent === "StartCharging" ? card.connectorId : undefined;
+  if (credit !== null && outlet) {
+    const opened = await openCardCharge(db, deviceId, outlet, { tag: swipe.tag!, userId: swipe.userId }, order);
     if (!opened) credit = null;
   }
-  const charging = credit !== null && card.intent === "StartCharging";
+  const charging = credit !== null && !!outlet;
   // The platform's own id for the device, as it called us.
   const result = await sendXingkeCommand(env, cb.deviceId, xingkeAuthorizeResponse(card, credit));
   if (!result.ok) console.error("xingke card answer", deviceId, card.messageId, result.code, result.detail ?? "");
   // Refused for sure: the device will not wait for a start.
-  if (charging && !result.ok && !result.uncertain) await chargeStartFailed(db, deviceId, card.connectorId, order);
+  if (charging && !result.ok && !result.uncertain) await chargeStartFailed(db, deviceId, outlet, order);
 }
 
 /** The card charge opened by answerCard on this outlet that has not been started yet. */
@@ -256,19 +260,19 @@ async function cardAnswerDelivered(env: Env, cb: XingkeCallback) {
     .bind(deviceId, new Date(Date.now() - CARD_START_WINDOW_MS).toISOString(), cb.messageId)
     .first<{ payload: string }>();
   const card = event && xingkeCardEvent(parseXingkeCallback(JSON.parse(event.payload)));
-  if (!card || card.intent !== "StartCharging") return;
-  const charge = await unstartedCardCharge(db, deviceId, card.connectorId);
+  const outlet = card?.intent === "StartCharging" ? card.connectorId : undefined;
+  if (!outlet) return;
+  const charge = await unstartedCardCharge(db, deviceId, outlet);
   if (!charge) return;
   const status = cb.data.status;
-  if (status === "Failed") return chargeStartFailed(db, deviceId, card.connectorId, charge.order_no);
-  // Unknown: a "Sent" may still follow; else the charge is given up after the window.
-  if (status !== "Sent") return;
+  if (status === "Failed") return chargeStartFailed(db, deviceId, outlet, charge.order_no);
+  if (status !== "Sent" && status !== "Unknown") return;
   try {
-    await startCardOutlet(env, deviceId, card.connectorId, charge.order_no, "card");
+    await startCardOutlet(env, deviceId, outlet, charge.order_no, "card");
   } catch (err) {
     // Refused by the platform (e.g. PROFILE_UNCONFIRMED, device offline): stored on the command.
     console.error("xingke card start", deviceId, charge.order_no, err);
-    await chargeStartFailed(db, deviceId, card.connectorId, charge.order_no);
+    await chargeStartFailed(db, deviceId, outlet, charge.order_no);
   }
 }
 

@@ -65,7 +65,8 @@ const XINGKE_MAX_BALANCE = 2_147_483_647;
  * FCFA × 100, so the device's screen shows the amount in FCFA.
  */
 export function xingkeAuthorizeResponse(card: XingkeCardEvent, balanceXof: number | null): XingkeCommand {
-  const data: Record<string, string | number> = { connectorId: card.connectorId, idTag: card.idTag };
+  // Same channel as the event; a device-wide balance inquiry has none (API 1.2).
+  const data: Record<string, string | number> = { ...(card.connectorId ? { connectorId: card.connectorId } : {}), idTag: card.idTag };
   if (balanceXof === null) data.status = "Invalid";
   else Object.assign(data, { status: "Accepted", cardType: "Balance", balance: Math.min(Math.max(0, Math.floor(balanceXof)) * 100, XINGKE_MAX_BALANCE) });
   return { messageId: card.messageId, action: "AuthorizeResponse", data };
@@ -213,7 +214,8 @@ export function xingkeEffect(cb: XingkeCallback): XingkeEffect | null {
 /** A card held to an outlet (CardPresented, section 16): to answer before `expiresAt`. */
 export interface XingkeCardEvent {
   messageId: string;
-  connectorId: number;
+  /** Absent for a device-wide balance inquiry (API 1.2); a start always names its outlet. */
+  connectorId?: number;
   /** The card number as the device read it (10 decimal digits); our answer repeats it. */
   idTag: string;
   intent: "BalanceInquiry" | "StartCharging";
@@ -228,9 +230,11 @@ export function xingkeCardEvent(cb: XingkeCallback): XingkeCardEvent | null {
   const idTag = str(d.idTag);
   const expiresAt = str(d.expiresAt);
   const intent = d.intent;
-  if (!connectorId || !idTag || !expiresAt || Number.isNaN(Date.parse(expiresAt))) return null;
+  if (!idTag || !expiresAt || Number.isNaN(Date.parse(expiresAt))) return null;
   if (intent !== "BalanceInquiry" && intent !== "StartCharging") return null;
-  return { messageId: cb.messageId, connectorId, idTag, intent, expiresAt };
+  if (d.connectorId !== undefined && !connectorId) return null;
+  if (intent === "StartCharging" && !connectorId) return null;
+  return { messageId: cb.messageId, ...(connectorId ? { connectorId } : {}), idTag, intent, expiresAt };
 }
 
 /**

@@ -204,9 +204,10 @@ async function cardSetup(balance = 5000) {
              update wallets set balance_xof = ${balance} where user_id = 'kofi';`);
   return s;
 }
-async function swipe(env: Env, intent: string, idTag = CARD, connectorId = 1, expiresInMs = 30_000) {
+/** `connectorId` null: held to the device, not an outlet. */
+async function swipe(env: Env, intent: string, idTag = CARD, connectorId: number | null = 1, expiresInMs = 30_000) {
   const messageId = `card${++n}`;
-  await cb(env, "CardPresented", { connectorId, idTag, intent, expiresAt: new Date(Date.now() + expiresInMs).toISOString() }, messageId);
+  await cb(env, "CardPresented", { ...(connectorId ? { connectorId } : {}), idTag, intent, expiresAt: new Date(Date.now() + expiresInMs).toISOString() }, messageId);
   return messageId;
 }
 const answered = (env: Env, messageId: string, status: string) =>
@@ -224,6 +225,12 @@ describe("card charging through the Xingke cloud", () => {
     const other = await swipe(env, "BalanceInquiry", "0000000042");
     expect(sent[1]).toEqual({ messageId: other, action: "AuthorizeResponse", data: { connectorId: 1, idTag: "0000000042", status: "Invalid" } });
     expect(db.prepare("select count(*) as n from charge_cards").get()).toEqual({ n: 2 });
+    // Held to the device, not an outlet (API 1.2): the answer names no outlet either.
+    const device = await swipe(env, "BalanceInquiry", CARD, null);
+    expect(sent[2]).toEqual({ messageId: device, action: "AuthorizeResponse", data: { idTag: CARD, status: "Accepted", cardType: "Balance", balance: 500_000 } });
+    await cb(env, "CommandResult", { requestAction: "AuthorizeResponse", status: "Unknown", code: "DELIVERY_UNCERTAIN", result: {} }, device);
+    expect(sent).toHaveLength(3);
+    expect(sess(db)).toEqual([]);
   });
 
   it("starts the outlet once the device got the answer, stops when the credit is used up and pays from it", async () => {
@@ -232,7 +239,8 @@ describe("card charging through the Xingke cloud", () => {
     expect(sent[0].data).toMatchObject({ status: "Accepted", balance: 30_000 });
     expect(sess(db)).toMatchObject([{ user_id: "kofi", status: "charging" }]);
     expect(sent).toHaveLength(1);
-    await answered(env, id, "Sent");
+    // What the platform reports for every card answer today (no receipt from the device).
+    await answered(env, id, "Unknown");
     expect(sent[1]).toMatchObject({ action: "RemoteStartTransaction", data: { connectorId: 1, startSource: "Card", chargingMode: "AutoStop" } });
     const tx = sent[1].data.transactionId;
     expect(db.prepare("select order_no, charge_card, credit_limit_xof from charging_sessions").get()).toEqual({ order_no: tx, charge_card: CARD, credit_limit_xof: 300 });
@@ -268,7 +276,7 @@ describe("card charging through the Xingke cloud", () => {
     expect(sess(db)).toEqual([]);
   });
 
-  it("cancels the card charge at no cost when the answer fails, the start is refused, or the device never confirms", async () => {
+  it("cancels the card charge at no cost when the answer fails, the start is refused, or no result comes", async () => {
     const { db, env } = await cardSetup();
     await answered(env, await swipe(env, "StartCharging"), "Failed");
     expect(sess(db)).toMatchObject([{ status: "cancelled" }]);
@@ -280,9 +288,9 @@ describe("card charging through the Xingke cloud", () => {
     expect(sess(db)).toMatchObject([{ status: "cancelled" }, { status: "cancelled" }]);
     expect(db.prepare("select status, result from device_commands").get()).toEqual({ status: "failed", result: "PROFILE_UNCONFIRMED" });
 
+    // No result for the answer at all.
     platform();
     await swipe(env, "StartCharging");
-    await answered(env, sent[0].messageId, "Unknown");
     expect(sess(db)[2]).toMatchObject({ status: "charging" });
     db.exec(`update charging_sessions set started_at = '${new Date(Date.now() - 180_000).toISOString()}' where status = 'charging'`);
     await cb(env, "StatusNotification", { connectors: [{ connectorId: 1, status: "Available" }] });
