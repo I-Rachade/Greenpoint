@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { signWebhook } from "../src/lib/partners";
+import { signWebhook, validWebhookUrl } from "../src/lib/partners";
 import type { Profile } from "../src/lib/types";
 import type { Env } from "./env";
 import { markLabelPrinted, type ParcelCtx } from "./parcels";
@@ -299,6 +299,57 @@ describe("partner API", () => {
     const { api } = await setup();
     const res = await api("PUT", "/webhook", { url: "http://boutique.tg/hooks" });
     expect(await res.json()).toMatchObject({ error: "invalid_request", field: "url" });
+  });
+
+  it("refuses webhooks to IP addresses, local names, our own domains and shared Cloudflare hosts", async () => {
+    const { api, db } = await setup();
+    const refused = [
+      "https://127.0.0.1/hook",
+      "https://10.0.0.5/hook",
+      "https://169.254.169.254/latest",
+      "https://2130706433/hook", // 127.0.0.1 written as one number
+      "https://0x7f.1/hook",
+      "https://[::1]/hook",
+      "https://[fd00::1]:8443/hook",
+      "https://localhost/hook",
+      "https://localhost./hook",
+      "https://api.localhost/hook",
+      "https://intranet/hook",
+      "https://printer.local/hook",
+      "https://poinderecharge.com/api/admin",
+      "https://app.poinderecharge.com/api/admin",
+      "https://APP.PoindeRecharge.com./api",
+      "https://evil.workers.dev/hook",
+      "https://evil.pages.dev/hook",
+      "https://user:pw@boutique.tg/hook",
+    ];
+    for (const url of refused) {
+      expect(validWebhookUrl(url), url).toBe(false);
+      expect(await (await api("PUT", "/webhook", { url })).json(), url).toMatchObject({ error: "invalid_request", field: "url" });
+    }
+    for (const url of ["https://boutique.tg/hooks", "https://hooks.example.com:8443/p?x=1", "https://notpoinderecharge.com/hook"]) {
+      expect(validWebhookUrl(url), url).toBe(true);
+    }
+    // An address saved before the rules is not called: the test and the deliveries refuse it.
+    const calls = stubFetch();
+    db.exec("update partners set webhook_url = 'https://169.254.169.254/latest'");
+    expect(await (await api("POST", "/webhook/test")).json()).toMatchObject({ delivered: false, error: "invalid_webhook_url" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("does not follow redirects of a webhook", async () => {
+    const { api } = await setup();
+    await api("PUT", "/webhook", { url: "https://boutique.tg/hooks" });
+    let redirect: RequestRedirect | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        redirect = init.redirect;
+        return new Response(null, { status: 302, headers: { Location: "https://127.0.0.1/" } });
+      }),
+    );
+    expect(await (await api("POST", "/webhook/test")).json()).toMatchObject({ delivered: false, status: 302, error: "http_302" });
+    expect(redirect).toBe("manual");
   });
 
   it("cancels only before drop-off, and expires old bookings", async () => {

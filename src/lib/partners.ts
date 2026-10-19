@@ -144,14 +144,33 @@ export function newWebhookSecret(): string {
   return `whsec_${[...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** Only https addresses, no credentials in the URL. */
+/**
+ * Hosts a webhook may not point at: our own domains (the Worker would call itself) and
+ * Cloudflare's shared hosting names, where anyone can put up a Worker that looks like ours.
+ */
+const BLOCKED_WEBHOOK_SUFFIXES = ["poinderecharge.com", "workers.dev", "pages.dev"];
+
+/**
+ * Only https addresses with a public host name: no credentials in the URL, no IP address
+ * (v4 or v6, in any notation the URL parser accepts), no localhost or single-label names,
+ * nothing under BLOCKED_WEBHOOK_SUFFIXES. Checked on save and again before every send.
+ */
 export function validWebhookUrl(value: string): boolean {
+  let url: URL;
   try {
-    const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password && value.length <= 500;
+    url = new URL(value);
   } catch {
     return false;
   }
+  if (url.protocol !== "https:" || url.username || url.password || value.length > 500) return false;
+  // The parser lower-cases the host and writes IPv4 in any notation (0x7f.1, 2130706433) as
+  // dotted decimal and IPv6 in brackets; a trailing dot ("localhost.") is cut off here.
+  const host = url.hostname.replace(/\.$/, "");
+  if (!host || host.startsWith("[") || host.includes(":")) return false;
+  if (/^[\d.]+$/.test(host)) return false;
+  if (!host.includes(".") || host === "localhost" || host.endsWith(".localhost")) return false;
+  if (/\.(local|internal|lan|home|arpa|invalid|test)$/.test(host)) return false;
+  return !BLOCKED_WEBHOOK_SUFFIXES.some((s) => host === s || host.endsWith(`.${s}`));
 }
 
 /** Signature header value: "t=<unix seconds>,v1=<hex HMAC-SHA256 of `${t}.${body}`>". */

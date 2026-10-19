@@ -32,3 +32,38 @@ export async function withCounterCodeTry<T>(db: D1Database, staffId: string, kin
   ]);
   return result;
 }
+
+/**
+ * Checks a pickup code with `check` (which throws when it is wrong), counting the try under
+ * `key` in parcel_code_failures (0005): a station id for a bare code, "parcel:<id>" once the
+ * parcel is known, "job:<id>" at the door. The try is written first, guarded by the count, so
+ * parallel requests cannot pass `maxTries`; only a wrong code (wrong_pickup_code) keeps its try.
+ */
+export async function withPickupCodeTry<T>(db: D1Database, key: string, maxTries: number, lockMinutes: number, check: () => Promise<T>): Promise<T> {
+  const since = new Date(Date.now() - lockMinutes * 60_000).toISOString();
+  const tried = await db
+    .prepare(
+      `insert into parcel_code_failures (station_id, at)
+       select ?1, ?2 where (select count(*) from parcel_code_failures where station_id = ?1 and at > ?3) < ?4
+       returning id`,
+    )
+    .bind(key, nowIso(), since, maxTries)
+    .first<{ id: number }>();
+  if (!tried) throw new ApiError("code_locked", 429);
+  const takeBack = () =>
+    db.batch([
+      db.prepare("delete from parcel_code_failures where id = ?").bind(tried.id),
+      db.prepare("delete from parcel_code_failures where at < ?").bind(new Date(Date.now() - 86_400_000).toISOString()),
+    ]);
+  let result: T;
+  try {
+    result = await check();
+  } catch (err) {
+    // Only a wrong code counts; any other refusal (parcel with a driver, …) takes the try back.
+    if (!(err instanceof ApiError && err.code === "wrong_pickup_code")) await takeBack();
+    throw err;
+  }
+  await takeBack();
+  return result;
+}
+

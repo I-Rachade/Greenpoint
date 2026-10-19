@@ -130,6 +130,7 @@ import {
   abandonJob,
   acceptJob,
   adminDrivers,
+  approveProof,
   applyDriver,
   arriveAtDoor,
   assignJob,
@@ -142,6 +143,7 @@ import {
   bookCourier,
   cancelJob,
   collectPickup,
+  confirmCourierReceipt,
   customerThingsOpen,
   declineJob,
   deliverJob,
@@ -2343,7 +2345,10 @@ const ROUTES: [string, RegExp, Handler][] = [
   [
     "POST",
     /^\/api\/stations\/([\w-]+)\/parcels\/pickup$/,
-    async (c, [id]) => pickUpParcel(c, id, (await readJson<{ code: string }>(c.request)).code),
+    async (c, [id]) => {
+      const { code, trackingNo } = await readJson<{ code: string; trackingNo?: string }>(c.request);
+      return pickUpParcel(c, id, code, trackingNo);
+    },
   ],
   // Partner API bookings waiting for drop-off (worker/partners.ts)
   ["GET", /^\/api\/stations\/([\w-]+)\/bookings$/, (c, [id]) => stationBookings(c, id)],
@@ -2500,6 +2505,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     },
   ],
   ["POST", /^\/api\/jobs\/([\w-]+)\/cancel$/, (c, [id]) => cancelJob(c, id)],
+  ["POST", /^\/api\/jobs\/([\w-]+)\/confirm-receipt$/, (c, [id]) => confirmCourierReceipt(c, id)],
   ["GET", /^\/api\/stations\/([\w-]+)\/drivers$/, (c, [id]) => stationDrivers(c, id)],
   [
     "POST",
@@ -2542,6 +2548,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/admin\/jobs\/([\w-]+)\/assign$/,
     async (c, [id]) => assignJob(c, id, String((await readJson<{ driverId: string }>(c.request)).driverId)),
   ],
+  ["POST", /^\/api\/admin\/jobs\/([\w-]+)\/approve-proof$/, (c, [id]) => approveProof(c, id)],
   [
     "POST",
     /^\/api\/admin\/stations$/,

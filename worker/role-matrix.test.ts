@@ -221,6 +221,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/jobs/courier": BOOKING,
   "POST /api/parcels/:id/delivery": CUSTOMER,
   "POST /api/jobs/:id/cancel": BOOKING, // a shop's member cancels the shop's trips
+  "POST /api/jobs/:id/confirm-receipt": BOOKING, // the sender or a member of the shop that booked the courier
   "GET /api/merchant": MERCHANT,
   "POST /api/merchant/bookings": MERCHANT,
   "GET /api/merchant/activity": MERCHANT,
@@ -262,6 +263,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/admin/fleet": ADMIN,
   "POST /api/admin/driver-settings": ADMIN,
   "POST /api/admin/jobs/:id/assign": ADMIN,
+  "POST /api/admin/jobs/:id/approve-proof": ADMIN,
   "POST /api/admin/stations": ADMIN,
   "POST /api/admin/stations/:id/active": ADMIN,
   "GET /api/admin/snapshot": ADMIN,

@@ -10,6 +10,7 @@ import {
   PARCEL_PICKUP_DAYS,
   PARCEL_REMINDER_DAYS,
   PARCEL_SIZES,
+  normalizeTrackingNo,
   parseHandoverInput,
   sizeFor,
   sortHistory,
@@ -36,6 +37,7 @@ import { stationUnlocked, unlockedSql } from "./services";
 import { ApiError, nowIso, randomDigits, uuid } from "./http";
 import { DB_CUSTOMER, roleToDb } from "./roles";
 import { stationActor, type StationActor } from "./station-work";
+import { withPickupCodeTry } from "./code-tries";
 import { notifyPerson, type Message } from "./notify";
 
 /** What the parcel handlers need from the request context (worker/api.ts). */
@@ -611,42 +613,46 @@ export async function resendPickupCode(c: ParcelCtx, parcelId: string) {
 }
 
 /**
- * Hands a parcel to the recipient at station B: the scanned QR code, the typed
- * 6-digit code, or the parcel number "GP-…" alone finds it. Too many misses pause
- * entry at the station.
+ * Hands a parcel to the recipient at station B, only for the recipient's pickup code: the
+ * scanned QR code (parcel number and code) or the typed 6-digit code, with or without the
+ * parcel number staff found the parcel by. The parcel number alone is printed on the label
+ * and is no secret: it finds the parcel, but the handover needs the code (409
+ * pickup_code_required). Wrong codes pause entry for a while (withPickupCodeTry): for that
+ * parcel when its number came with the code, else for bare codes at this station, so someone
+ * guessing the code of one parcel does not stop every other recipient at the counter.
  */
-export async function pickUpParcel(c: ParcelCtx, stationId: string, rawInput: unknown): Promise<Parcel> {
+export async function pickUpParcel(c: ParcelCtx, stationId: string, rawInput: unknown, rawTrackingNo?: unknown): Promise<Parcel> {
   const staff = await requireStationActor(c, stationId);
   const input = parseHandoverInput(String(rawInput ?? ""));
   if (!input) throw new ApiError("wrong_pickup_code");
-  const since = new Date(Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000).toISOString();
-  const failures = await c.db
-    .prepare("select count(*) as n from parcel_code_failures where station_id = ? and at > ?")
-    .bind(stationId, since)
-    .first<{ n: number }>();
-  if ((failures?.n ?? 0) >= PARCEL_MAX_CODE_FAILURES) throw new ApiError("code_locked", 429);
+  const typedNo = rawTrackingNo == null || rawTrackingNo === "" ? null : normalizeTrackingNo(String(rawTrackingNo));
+  if (rawTrackingNo != null && rawTrackingNo !== "" && !typedNo) throw new ApiError("parcel_not_found", 404);
+  if (input.trackingNo && typedNo && input.trackingNo !== typedNo) throw new ApiError("wrong_pickup_code");
+  const trackingNo = input.trackingNo ?? typedNo;
 
-  const row = input.code
-    ? await c.db
-        .prepare("select * from parcels where to_station_id = ? and status = 'arrived' and pickup_code = ?")
-        .bind(stationId, input.code)
-        .first<ParcelRow>()
-    : await c.db
-        .prepare("select * from parcels where to_station_id = ? and status = 'arrived' and tracking_no = ?")
-        .bind(stationId, input.trackingNo)
-        .first<ParcelRow>();
-  if (row?.delivery_status === "out_for_delivery") throw new ApiError("parcel_with_driver");
-  if (!row || (input.trackingNo && row.tracking_no !== input.trackingNo)) {
-    await c.db.batch([
-      c.db.prepare("insert into parcel_code_failures (station_id, at) values (?, ?)").bind(stationId, nowIso()),
-      c.db.prepare("delete from parcel_code_failures where at < ?").bind(new Date(Date.now() - 86_400_000).toISOString()),
-    ]);
-    // A real parcel number that is not waiting here says so, instead of "wrong code".
-    if (!input.code && (await c.db.prepare("select 1 from parcels where tracking_no = ?").bind(input.trackingNo).first())) {
-      throw new ApiError("parcel_not_arrived");
-    }
-    throw new ApiError("wrong_pickup_code");
+  // Found by its number: it must be waiting here, and not out with a driver.
+  let known: ParcelRow | null = null;
+  if (trackingNo) {
+    known = await c.db.prepare("select * from parcels where tracking_no = ?").bind(trackingNo).first<ParcelRow>();
+    if (!known) throw new ApiError("parcel_not_found", 404);
+    if (known.to_station_id !== stationId || known.status !== "arrived") throw new ApiError("parcel_not_arrived");
+    if (known.delivery_status === "out_for_delivery") throw new ApiError("parcel_with_driver");
   }
+  const code = input.code;
+  if (!code) throw new ApiError("pickup_code_required", 409);
+  const row = await withPickupCodeTry(c.db, known ? `parcel:${known.id}` : stationId, PARCEL_MAX_CODE_FAILURES, PARCEL_CODE_LOCK_MINUTES, async () => {
+    const found = known
+      ? known.pickup_code === code
+        ? known
+        : null
+      : await c.db
+          .prepare("select * from parcels where to_station_id = ? and status = 'arrived' and pickup_code = ?")
+          .bind(stationId, code)
+          .first<ParcelRow>();
+    if (!found) throw new ApiError("wrong_pickup_code");
+    if (found.delivery_status === "out_for_delivery") throw new ApiError("parcel_with_driver");
+    return found;
+  });
   const now = nowIso();
   const done = await c.db
     .prepare("update parcels set status = 'picked_up', picked_up_at = ?, picked_up_by = ? where id = ? and status = 'arrived'")
@@ -662,7 +668,7 @@ export async function pickUpParcel(c: ParcelCtx, stationId: string, rawInput: un
       "parcels",
       "update",
       row.id,
-      { status: ["arrived", "picked_up"], handedOverBy: input.code ? "pickup_code" : "parcel_number" },
+      { status: ["arrived", "picked_up"], handedOverBy: input.trackingNo ? "pickup_qr" : "pickup_code" },
       { stationId, userId: row.recipient_user_id },
     ),
   ]);
@@ -710,7 +716,10 @@ export async function closeStoredParcel(c: ParcelCtx, parcelId: string, outcome:
 
 // Customers --------------------------------------------------------------------
 
-/** Parcels the signed-in customer sent or is to receive. Only the recipient sees the pickup code. */
+/**
+ * Parcels the signed-in customer sent or is to receive. Recipient and sender see the pickup
+ * code (the sender may pass it on to the recipient); staff never do.
+ */
 export async function myParcels(c: ParcelCtx): Promise<Parcel[]> {
   const user = await c.user();
   if (!user) return [];
@@ -725,7 +734,7 @@ export async function myParcels(c: ParcelCtx): Promise<Parcel[]> {
   const history = await parcelHistories(c.db, results.map((r) => r.id));
   return results.map((r) => {
     const received = r.recipient_user_id === user.id || (!!user.phone && r.recipient_phone === user.phone);
-    return { ...toParcel(r, received), direction: received ? "received" : "sent", history: history.get(r.id) ?? [] };
+    return { ...toParcel(r, true), direction: received ? "received" : "sent", history: history.get(r.id) ?? [] };
   });
 }
 

@@ -1,4 +1,4 @@
-import type { DeliveryJob, DriverApplication, DriverPosition, DriverSettings, DriverStatus, FleetVehicle } from "./drivers";
+import { jobFits, type DeliveryJob, type DriverApplication, type DriverPosition, type DriverSettings, type DriverStatus, type FleetVehicle, type FleetVehicleType } from "./drivers";
 
 /**
  * Fleet managers (plan phase 6): an account of its own that registers itself
@@ -217,4 +217,36 @@ export function jobForManager(job: DeliveryJob): DeliveryJob {
     declaredValue: null,
     proofKey: null,
   };
+}
+
+/** About 100 m: enough to judge the trip, not enough to find the door. */
+const roundCoord = (v: number) => Math.round(v * 1000) / 1000;
+
+/**
+ * An open trip as a manager sees it before one of their drivers has it (jobForManager, and
+ * more): start and end rounded to 3 decimals and without the free-text notes (door, landmark).
+ * Managers only see open trips one of their drivers could take (fitsFleet).
+ */
+export function openJobForManager(job: DeliveryJob): DeliveryJob {
+  const m = jobForManager(job);
+  return {
+    ...m,
+    home: m.home ? { ...m.home, lat: roundCoord(m.home.lat), lng: roundCoord(m.home.lng), note: "" } : null,
+    dropoff: m.dropoff ? { ...m.dropoff, lat: roundCoord(m.dropoff.lat), lng: roundCoord(m.dropoff.lng), note: "" } : null,
+  };
+}
+
+/**
+ * True when one of the manager's drivers could be handed this open trip (handJob in
+ * worker/drivers.ts): an active driver with an active vehicle that fits it (jobFits: the
+ * vehicle type the customer chose, seats, size and weight). Dispatch has no area limit, so the
+ * stations the drivers queue at do not narrow it further.
+ */
+export function fitsFleet(
+  job: Pick<DeliveryJob, "kind" | "vehicleType" | "passengers" | "size">,
+  weightKg: number,
+  drivers: { status: string; vehicle: { type: FleetVehicleType; isActive: boolean } | null }[],
+  s: DriverSettings,
+): boolean {
+  return drivers.some((d) => d.status === "active" && !!d.vehicle?.isActive && jobFits(job, d.vehicle.type, weightKg, s));
 }

@@ -238,6 +238,8 @@ export type BackendErrorCode =
   | "swap_required"
   | "driver_pass_invalid"
   | "driver_pass_expired"
+  | "driver_pass_required"
+  | "pickup_code_required"
   | "role_change_blocked"
   | "fleet_not_approved"
   | "fleet_locked"
@@ -528,8 +530,12 @@ export interface Backend {
   cancelRun(stationId: string, runId: string): Promise<void>;
   /** Staff at the destination scan a parcel in from a collection run: it gets its pickup code and the recipient is told. */
   receiveParcel(stationId: string, code: string): Promise<Parcel>;
-  /** Staff at the destination hand out a parcel for its code or scanned QR code. */
-  pickUpParcel(stationId: string, codeOrQr: string): Promise<Parcel>;
+  /**
+   * Staff at the destination hand out a parcel, only for the recipient's code or scanned QR
+   * code. `trackingNo`: the parcel number staff found it by (then wrong codes lock only that
+   * parcel). The number alone never hands it over: pickup_code_required.
+   */
+  pickUpParcel(stationId: string, codeOrQr: string, trackingNo?: string): Promise<Parcel>;
   /** Cancels a parcel that has not left the sending station. */
   cancelParcel(id: string): Promise<void>;
   /** Tells the recipient again that the parcel is waiting. */
@@ -589,6 +595,8 @@ export interface Backend {
   bookDelivery(parcelId: string, home: HomePoint, payWith?: TripPayment): Promise<DeliveryJob>;
   /** Customer (before the driver has the parcel) or admin. */
   cancelJob(id: string): Promise<void>;
+  /** The sender (or the shop) confirms a courier handed over by photo arrived: the driver's held share is booked. */
+  confirmCourierReceipt(jobId: string): Promise<void>;
   /** Station staff: drivers in line and parcels drivers take or bring. */
   stationDrivers(stationId: string): Promise<StationDrivers>;
   /** Station staff scanned a driver's QR code (or typed the code). */
@@ -611,6 +619,8 @@ export interface Backend {
   saveFleetVehicle(id: string | null, input: FleetVehicleInput): Promise<void>;
   saveDriverSettings(settings: DriverSettings): Promise<void>;
   assignJob(jobId: string, driverId: string): Promise<void>;
+  /** Backoffice: the photo of a courier handed over without the code is fine: the driver's held share is booked. */
+  approveCourierProof(jobId: string): Promise<void>;
   /** A displayable URL for a private photo (documents, door photos); admins only. */
   driverFileUrl(key: string): Promise<string>;
   /** Backoffice: links a driver to a fleet manager by phone or e-mail; null unlinks. */
