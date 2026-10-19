@@ -28,7 +28,7 @@ import { requireService, serviceActive } from "./services";
 import { cardBooking, cardTopupsSince } from "./charge-cards";
 import { cardStopReached } from "../src/lib/charge-cards";
 import { mobilePaymentOffered, startChargePayment, type Payment } from "./payments";
-import { isCreditStation, walletAccess } from "./wallet";
+import { isCreditStation, OPEN_CREDIT_CHARGE_SQL, refuseWhileCreditCharging, walletAccess } from "./wallet";
 import { checkPickupCode, evTargetSql, stillActive, type ReservationRow } from "./reservations";
 
 // Charging at a connected socket, run by station staff (plan: planung/laden-vor-ort-plan.md,
@@ -687,6 +687,7 @@ export async function payWithWallet(env: Env, user: Profile, id: string, request
   const key = String(input.idempotencyKey ?? "");
   if (!/^[\w-]{8,64}$/.test(key)) throw new ApiError("bad_request");
   await verifyPin(env, user.id, input.pin);
+  await refuseWhileCreditCharging(env.DB, user.id);
   const wallet = await env.DB.prepare("select balance_xof, status from wallets where user_id = ?")
     .bind(user.id)
     .first<{ balance_xof: number; status: string }>();
@@ -701,6 +702,8 @@ export async function payWithWallet(env: Env, user: Profile, id: string, request
   // makes the whole batch fail when the money is no longer there.
   const mine = "(select payment_ref from charging_sessions where id = ?) = ?";
   const extra = [
+    // A Green Credit charge started meanwhile holds the credit: the payment fails as a whole.
+    db.prepare(`update wallets set balance_xof = -1 where user_id = ?1 and ${OPEN_CREDIT_CHARGE_SQL.replace("?", "?1")}`).bind(user.id),
     db.prepare(`update wallets set balance_xof = balance_xof - ?, updated_at = ? where user_id = ? and ${mine}`).bind(amount, now, user.id, s.id, trxId),
     db
       .prepare(

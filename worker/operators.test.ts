@@ -162,7 +162,9 @@ describe("operator accounts", () => {
     expect((await call(env, "yao", "POST", `/api/owner/stations/${lome}`, { openingHours: "06:00-22:00", phone: "90 11 22 33" })).status).toBe(200);
     expect((await call(env, "yao", "POST", `/api/owner/stations/${be}`, { openingHours: "06:00-22:00", phone: null })).status).toBe(403);
     view = (await call(env, "yao", "GET", "/api/owner")).body as OwnerView;
-    expect(view.stations.find((s) => s.id === lome)).toMatchObject({ openingHours: "06:00-22:00", phone: "90 11 22 33" });
+    // Kept as a real number, so "has a phone" means one can call the station.
+    expect(view.stations.find((s) => s.id === lome)).toMatchObject({ openingHours: "06:00-22:00", phone: "+22890112233" });
+    expect((await call(env, "yao", "POST", `/api/owner/stations/${lome}`, { openingHours: "06:00-22:00", phone: "." })).body).toEqual({ error: "phone_not_allowed" });
 
     expect((await call(env, "yao", "DELETE", "/api/owner/staff", { stationId: lome, userId: "afi" })).status).toBe(200);
     // Back to a customer: no station work at all (R2).

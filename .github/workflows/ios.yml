@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Read-only token: these jobs only check and build.
+permissions:
+  contents: read
+
 jobs:
   build:
     # Apple only builds iOS apps on macOS with Xcode, so this runs on GitHub's Macs (no own Mac needed).

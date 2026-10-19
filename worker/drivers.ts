@@ -434,6 +434,19 @@ async function moveJob(db: D1Database, id: string, from: JobStatus[], set: strin
   return !!res.meta.changes;
 }
 
+/**
+ * moveJob for the driver who holds the trip: only while it is still theirs. Dispatch or an admin
+ * may hand it to someone else between reading the trip and this update.
+ */
+async function moveMyJob(db: D1Database, job: Pick<JobRow, "id" | "driver_id">, from: JobStatus[], set: string, ...params: unknown[]): Promise<boolean> {
+  if (!job.driver_id) return false;
+  const res = await db
+    .prepare(`update delivery_jobs set ${set} where id = ? and driver_id = ? and status in (${from.map(() => "?").join(", ")})`)
+    .bind(...params, job.id, job.driver_id, ...from)
+    .run();
+  return !!res.meta.changes;
+}
+
 function jobAudit(c: ParcelCtx, actor: string | null, r: Pick<JobRow, "id" | "from_station_id" | "to_station_id" | "driver_id">, changes: Record<string, unknown>) {
   return c.audit(actor, "delivery_jobs", "update", r.id, changes, { stationId: r.from_station_id ?? r.to_station_id, userId: r.driver_id });
 }
@@ -955,14 +968,14 @@ async function myJob(c: ParcelCtx, jobId: string): Promise<{ user: Profile; job:
 
 export async function acceptJob(c: ParcelCtx, jobId: string) {
   const { user, job } = await myJob(c, jobId);
-  if (!(await moveJob(c.db, job.id, ["assigned"], "status = 'accepted', accepted_at = ?", nowIso()))) throw new ApiError("job_wrong_status");
+  if (!(await moveMyJob(c.db, job, ["assigned"], "status = 'accepted', accepted_at = ?", nowIso()))) throw new ApiError("job_wrong_status");
   await jobAudit(c, user.id, job, { status: ["assigned", "accepted"] }).run();
 }
 
 /** The driver says no: the trip goes to the next in line, and the driver goes to the back of the line. */
 export async function declineJob(c: ParcelCtx, jobId: string) {
   const { user, job } = await myJob(c, jobId);
-  if (!(await moveJob(c.db, job.id, ["assigned"], "status = 'open', driver_id = null, assigned_at = null, declined = declined || ?", `,${user.id}`))) {
+  if (!(await moveMyJob(c.db, job, ["assigned"], "status = 'open', driver_id = null, assigned_at = null, declined = declined || ?", `,${user.id}`))) {
     throw new ApiError("job_wrong_status");
   }
   const batch = [jobAudit(c, user.id, job, { status: ["assigned", "open"], reason: "declined" })];
@@ -988,9 +1001,9 @@ export async function abandonJob(c: ParcelCtx, jobId: string, reasonOrRead: unkn
   const reason = typeof reasonOrRead === "function" ? await (reasonOrRead as () => Promise<unknown>)() : reasonOrRead;
   if (!ABANDON_REASONS.includes(reason as AbandonReason)) throw new ApiError("bad_request");
   if (
-    !(await moveJob(
+    !(await moveMyJob(
       c.db,
-      job.id,
+      job,
       ["accepted"],
       "status = 'open', driver_id = null, assigned_at = null, accepted_at = null, declined = declined || ?",
       `,${user.id}`,
@@ -1044,9 +1057,9 @@ export async function collectPickup(c: ParcelCtx, jobId: string, rawMeasures: Pa
   const collect = tier.priceFcfa + job.fare_fcfa;
   // The trip first: if the customer called it off in the meantime, no parcel is created.
   if (
-    !(await moveJob(
+    !(await moveMyJob(
       c.db,
-      job.id,
+      job,
       ["accepted"],
       "status = 'picked_up', picked_up_at = ?, size = ?, weight_kg = ?, collect_fcfa = ?",
       nowIso(),
@@ -1080,7 +1093,7 @@ export async function collectPickup(c: ParcelCtx, jobId: string, rawMeasures: Pa
     });
   } catch (err) {
     // No parcel: the trip is the driver's to collect again.
-    await moveJob(c.db, job.id, ["picked_up"], "status = 'accepted', picked_up_at = null");
+    await moveMyJob(c.db, job, ["picked_up"], "status = 'accepted', picked_up_at = null");
     throw err;
   }
   const { id, trackingNo } = created;
@@ -1120,7 +1133,7 @@ function hasDoorStep(job: Pick<JobRow, "kind" | "merchant_id">): boolean {
 
 export async function arriveAtDoor(c: ParcelCtx, jobId: string) {
   const { user, job } = await myJob(c, jobId);
-  if (!hasDoorStep(job) || !(await moveJob(c.db, job.id, ["picked_up"], "status = 'at_door', at_door_at = ?", nowIso()))) {
+  if (!hasDoorStep(job) || !(await moveMyJob(c.db, job, ["picked_up"], "status = 'at_door', at_door_at = ?", nowIso()))) {
     throw new ApiError("job_wrong_status");
   }
   await jobAudit(c, user.id, job, { status: ["picked_up", "at_door"] }).run();
@@ -1161,7 +1174,7 @@ export async function deliverJob(c: ParcelCtx, jobId: string, rawCode: unknown) 
   }
   const now = nowIso();
   const s = await driverSettings(c.db);
-  if (!(await moveJob(c.db, job.id, ["picked_up", "at_door"], "status = 'done', done_at = ?", now))) throw new ApiError("job_wrong_status");
+  if (!(await moveMyJob(c.db, job, ["picked_up", "at_door"], "status = 'done', done_at = ?", now))) throw new ApiError("job_wrong_status");
   // The driver's CO2 and greenpoints for this trip (worker/greenpoint.ts).
   const trip = await tripStatement(c.db, { driverId: user.id, jobId: job.id, distanceMeters: job.distance_m, stationId: job.from_station_id, createdBy: user.id });
   await c.db.batch([
@@ -1194,7 +1207,7 @@ export async function failDelivery(c: ParcelCtx, jobId: string) {
   if (!hasDoorStep(job) || job.status !== "at_door" || !job.at_door_at) throw new ApiError("job_wrong_status");
   const s = await driverSettings(c.db);
   if (Date.now() - new Date(job.at_door_at).getTime() < s.waitMinutes * 60_000) throw new ApiError("wait_longer");
-  if (!(await moveJob(c.db, job.id, ["at_door"], "status = 'returning'"))) throw new ApiError("job_wrong_status");
+  if (!(await moveMyJob(c.db, job, ["at_door"], "status = 'returning'"))) throw new ApiError("job_wrong_status");
   await jobAudit(c, user.id, job, { status: ["at_door", "returning"], ...(job.merchant_id ? { merchant_id: job.merchant_id } : {}) }).run();
   if (shopCourier(job)) {
     await tellUser(c.env, job.customer_user_id, null, "courier_returning", {
@@ -1240,7 +1253,7 @@ export async function boardRide(c: ParcelCtx, jobId: string) {
   const code = job.kind === "courier" ? randomDigits(6) : null;
   if (
     !POINT_TO_POINT.includes(job.kind) ||
-    !(await moveJob(c.db, job.id, ["accepted"], "status = 'picked_up', picked_up_at = ?, handover_code = coalesce(handover_code, ?)", nowIso(), code))
+    !(await moveMyJob(c.db, job, ["accepted"], "status = 'picked_up', picked_up_at = ?, handover_code = coalesce(handover_code, ?)", nowIso(), code))
   ) {
     throw new ApiError("job_wrong_status");
   }
@@ -1273,7 +1286,7 @@ export async function finishRide(c: ParcelCtx, jobId: string, rawCode?: unknown)
   if (job.kind === "courier") await checkCourierHandover(c, job, rawCode);
   const s = await driverSettings(c.db);
   const from: JobStatus[] = shopCourier(job) ? ["picked_up", "at_door"] : ["picked_up"];
-  if (!(await moveJob(c.db, job.id, from, "status = 'done', done_at = ?", nowIso()))) throw new ApiError("job_wrong_status");
+  if (!(await moveMyJob(c.db, job, from, "status = 'done', done_at = ?", nowIso()))) throw new ApiError("job_wrong_status");
   const trip = await tripStatement(c.db, { driverId: user.id, jobId: job.id, distanceMeters: job.distance_m, stationId: job.driver_station_id, createdBy: user.id });
   await c.db.batch([
     ...(trip ? [trip] : []),
@@ -1429,7 +1442,7 @@ export async function handToDriver(c: ParcelCtx, stationId: string, badge: unkno
   } else if (parcel.status !== "arrived" || parcel.to_station_id !== stationId || parcel.delivery_status !== "booked") {
     throw new ApiError("parcel_wrong_status");
   }
-  if (!(await moveJob(c.db, job.id, ["assigned", "accepted"], "status = 'picked_up', picked_up_at = ?, accepted_at = coalesce(accepted_at, ?)", now, now))) {
+  if (!(await moveMyJob(c.db, job, ["assigned", "accepted"], "status = 'picked_up', picked_up_at = ?, accepted_at = coalesce(accepted_at, ?)", now, now))) {
     throw new ApiError("job_wrong_status");
   }
   const parcelUpdate =
@@ -1469,7 +1482,7 @@ export async function receiveFromDriver(c: ParcelCtx, stationId: string, badge: 
   const now = nowIso();
   const scan = scanStatement(c.db, { parcelId: parcel.id, runId: job.id, kind: "received_at_station", driverId: row.user_id, stationId, by: staff.id, role });
   if (job.status === "returning") {
-    if (!(await moveJob(c.db, job.id, ["returning"], "status = 'failed', done_at = ?", now))) throw new ApiError("job_wrong_status");
+    if (!(await moveMyJob(c.db, job, ["returning"], "status = 'failed', done_at = ?", now))) throw new ApiError("job_wrong_status");
     await c.db.batch([
       scan,
       c.db.prepare("update parcels set delivery_status = 'failed' where id = ? and delivery_status = 'out_for_delivery'").bind(parcel.id),
@@ -1482,7 +1495,7 @@ export async function receiveFromDriver(c: ParcelCtx, stationId: string, badge: 
   }
   if (parcel.status !== "in_transit" || parcel.to_station_id !== stationId) throw new ApiError("parcel_wrong_status");
   const s = await driverSettings(c.db);
-  if (!(await moveJob(c.db, job.id, ["picked_up"], "status = 'done', done_at = ?", now))) throw new ApiError("job_wrong_status");
+  if (!(await moveMyJob(c.db, job, ["picked_up"], "status = 'done', done_at = ?", now))) throw new ApiError("job_wrong_status");
   const trip = await tripStatement(c.db, { driverId: row.user_id, jobId: job.id, distanceMeters: job.distance_m, stationId, createdBy: staff.id });
   await c.db.batch([
     ...(trip ? [trip] : []),

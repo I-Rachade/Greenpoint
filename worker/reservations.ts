@@ -93,16 +93,22 @@ export function stillActive(r: Pick<ReservationRow, "status" | "expires_at">): b
  */
 export async function checkPickupCode(db: D1Database, r: Pick<ReservationRow, "id" | "station_id" | "pickup_code">, raw: unknown): Promise<void> {
   const since = new Date(Date.now() - RESERVATION_CODE_LOCK_MINUTES * 60_000).toISOString();
-  const failures = await db
-    .prepare("select count(*) as n from reservation_code_failures where reservation_id = ? and at > ?")
-    .bind(r.id, since)
-    .first<{ n: number }>();
-  if ((failures?.n ?? 0) >= RESERVATION_MAX_CODE_FAILURES) throw new ApiError("code_locked", 429);
-  if (r.pickup_code === String(raw ?? "").trim()) return;
-  await db.batch([
-    db.prepare("insert into reservation_code_failures (reservation_id, station_id, at) values (?, ?, ?)").bind(r.id, r.station_id, nowIso()),
-    db.prepare("delete from reservation_code_failures where at < ?").bind(new Date(Date.now() - 86_400_000).toISOString()),
-  ]);
+  // The try is written down before the code is compared, in one statement with the count, so
+  // parallel requests cannot pass the limit; a right code takes its try back.
+  const tried = await db
+    .prepare(
+      `insert into reservation_code_failures (reservation_id, station_id, at)
+       select ?1, ?2, ?3 where (select count(*) from reservation_code_failures where reservation_id = ?1 and at > ?4) < ?5
+       returning rowid`,
+    )
+    .bind(r.id, r.station_id, nowIso(), since, RESERVATION_MAX_CODE_FAILURES)
+    .first<{ rowid: number }>();
+  if (!tried) throw new ApiError("code_locked", 429);
+  if (r.pickup_code === String(raw ?? "").trim()) {
+    await db.prepare("delete from reservation_code_failures where rowid = ?").bind(tried.rowid).run();
+    return;
+  }
+  await db.prepare("delete from reservation_code_failures where at < ?").bind(new Date(Date.now() - 86_400_000).toISOString()).run();
   throw new ApiError("wrong_pickup_code");
 }
 

@@ -1,4 +1,4 @@
-import { toIngestOutlets } from "../src/lib/iot/device-events";
+import { sameSecret, toIngestOutlets } from "../src/lib/iot/device-events";
 import { normalizeDeviceId } from "../src/lib/iot/devices";
 import {
   OCPP_HEARTBEAT_SECONDS,
@@ -271,7 +271,7 @@ export async function handleOcppUpgrade(request: Request, env: Env, rawId: strin
   if (!device) return new Response("Unknown charge point", { status: 404 });
   // No stored key: the socket was added "without password" and connects with its id alone.
   const key = urlKey ?? basicAuth(request.headers.get("Authorization"))?.password;
-  if (device.ocpp_key_hash && (!key || (await sha256(key)) !== device.ocpp_key_hash)) {
+  if (device.ocpp_key_hash && (!key || !sameSecret(await sha256(key), device.ocpp_key_hash))) {
     return new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="OCPP"' } });
   }
   return stub(env, externalId).fetch(new Request(`https://ocpp/connect?id=${encodeURIComponent(externalId)}`, request));

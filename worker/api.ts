@@ -414,7 +414,8 @@ const STATION_SELECT = `
          (select count(*) from reservations r where r.station_id = s.id and r.status = 'active' and r.expires_at > ?1 and r.kind = 'swap') as reserved_batteries,
          (select avg(rating) from station_reviews sr where sr.station_id = s.id) as rating_avg,
          (select count(*) from station_reviews sr where sr.station_id = s.id) as rating_count,
-         (select count(*) from station_staff sf where sf.station_id = s.id) as staff_count
+         (select count(*) from station_staff sf where sf.station_id = s.id)
+           + (select count(*) from operator_owners oo where oo.operator_id = s.operator_id) as staff_count
   from stations s
   left join operators o on o.id = s.operator_id
   left join station_status st on st.station_id = s.id
@@ -755,6 +756,8 @@ async function updateStatus(
 ): Promise<{ cancelled: number }> {
   const { user } = await stationActor(c, stationId);
   if (patch.fullBatteries !== undefined || patch.typeBatteries !== undefined) throw new ApiError("bad_request");
+  // "false" as text would open the station.
+  if (patch.isOpen !== undefined && typeof patch.isOpen !== "boolean") throw new ApiError("bad_request");
   const before = await c.db
     .prepare("select is_open, free_slots from station_status where station_id = ?")
     .bind(stationId)
@@ -894,8 +897,17 @@ function stationRow(input: StationInput) {
     opening_hours: cleanOpeningHours(input.openingHours) ?? (() => {
       throw new ApiError("opening_hours_invalid");
     })(),
-    phone: input.phone ? String(input.phone) : null,
+    phone: stationPhone(input.phone),
   };
+}
+
+/** A station's phone: empty, or a real Togolese number, so "has a phone" (isUnattended) means one can call. */
+function stationPhone(raw: unknown): string | null {
+  const text = String(raw ?? "").trim();
+  if (!text) return null;
+  const phone = normalizeTogoPhone(text);
+  if (!phone) throw new ApiError("phone_not_allowed");
+  return phone;
 }
 
 /** Charging places of station ?{station}: its connected outlets. */
@@ -1412,7 +1424,7 @@ async function ownerSaveStation(c: Ctx, stationId: string, input: OwnerStationIn
   };
   const after = {
     opening_hours: hours,
-    phone: String(input?.phone ?? "").trim().slice(0, 40) || null,
+    phone: stationPhone(input?.phone),
     price_battery_xof: price("swapXof", before.price_battery_xof),
     charge_kwh_xof: price("chargeKwhXof", before.charge_kwh_xof),
     charge_min_xof: price("chargeMinXof", before.charge_min_xof),
@@ -2469,7 +2481,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const c = new Ctx(env, request, url);
   try {
-    const mediaMatch = /^\/api\/media\/(promotions\/[\w-]+\.(?:png|jpg|webp|gif))$/.exec(url.pathname);
+    const mediaMatch = /^\/api\/media\/((?:promotions|stations)\/[\w-]+\.(?:png|jpg|webp|gif))$/.exec(url.pathname);
     if (mediaMatch && (request.method === "GET" || request.method === "HEAD")) return await media(c, mediaMatch[1]);
     // Called by the payment provider, answers in plain text (see worker/payments.ts).
     if (url.pathname === "/api/payments/callback" && request.method === "POST") return await paymentCallback(env, request);

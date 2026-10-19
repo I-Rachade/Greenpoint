@@ -17,6 +17,8 @@ const SESSION_DAYS = 60;
 /** Wrong PINs in a row before the account is locked for PIN_LOCK_MINUTES. */
 const PIN_MAX_FAILURES = 5;
 const PIN_LOCK_MINUTES = 15;
+/** Longest lock after many locks in a row. */
+const PIN_LOCK_MAX_MINUTES = 24 * 60;
 /** Highest PBKDF2 iteration count Cloudflare Workers allow. */
 const PIN_ITERATIONS = 100_000;
 /** Sender of the code e-mails; its domain must be onboarded in Cloudflare Email Service (also in wrangler.jsonc). */
@@ -240,6 +242,11 @@ export async function checkCode(env: Env, target: string, code: string) {
     .bind(target, nowIso())
     .first<{ id: number; code_hash: string; attempts: number }>();
   if (!row || row.attempts >= MAX_ATTEMPTS) throw new ApiError("invalid_code");
+  // The try is counted before the code is compared, so parallel guesses cannot pass the limit.
+  const tried = await env.DB.prepare("update otp_codes set attempts = attempts + 1 where id = ? and attempts < ? and used = 0")
+    .bind(row.id, MAX_ATTEMPTS)
+    .run();
+  if (!tried.meta.changes) throw new ApiError("invalid_code");
 
   if (row.code_hash === DIDIT_MARK) {
     const { data } = await didit<{ status: string }>(env, "check", {
@@ -249,12 +256,8 @@ export async function checkCode(env: Env, target: string, code: string) {
       disposable_number_action: "DECLINE",
       voip_number_action: "DECLINE",
     });
-    if (data.status !== "Approved") {
-      await env.DB.prepare("update otp_codes set attempts = attempts + 1 where id = ?").bind(row.id).run();
-      throw new ApiError("invalid_code");
-    }
+    if (data.status !== "Approved") throw new ApiError("invalid_code");
   } else if (row.code_hash !== (await sha256(`${target}:${code}`))) {
-    await env.DB.prepare("update otp_codes set attempts = attempts + 1 where id = ?").bind(row.id).run();
     throw new ApiError("invalid_code");
   }
   // Only one request can use the code.
@@ -334,7 +337,7 @@ export async function register(env: Env, rawContact: string, rawCode: string, ra
     }
   }
   await env.DB.batch([
-    env.DB.prepare("update users set pin_hash = ?, pin_failures = 0, pin_locked_until = null where id = ?").bind(
+    env.DB.prepare("update users set pin_hash = ?, pin_failures = 0, pin_lock_count = 0, pin_locked_until = null where id = ?").bind(
       pinHash,
       user.id,
     ),
@@ -464,18 +467,27 @@ interface PinState {
 /** Compares a PIN with the stored hash. A few wrong PINs in a row lock the account for a while. */
 async function checkPin(env: Env, userId: string, pin: string, state: PinState) {
   if (!state.pin_hash) throw new ApiError("invalid_pin");
-  if (state.pin_locked_until && state.pin_locked_until > nowIso()) throw new ApiError("pin_locked", 429);
+  const now = nowIso();
+  // The try is counted before the PIN is compared, in one statement: parallel guesses each
+  // take a try, and none is left once the account is locked.
+  const slot = await env.DB.prepare(
+    `update users set pin_failures = pin_failures + 1
+      where id = ? and pin_failures < ? and (pin_locked_until is null or pin_locked_until <= ?)
+      returning pin_failures, pin_lock_count`,
+  )
+    .bind(userId, PIN_MAX_FAILURES, now)
+    .first<{ pin_failures: number; pin_lock_count: number }>();
+  if (!slot) throw new ApiError("pin_locked", 429);
   if (!(await pinMatches(pin, state.pin_hash))) {
-    const failures = state.pin_failures + 1;
-    const locked = failures >= PIN_MAX_FAILURES;
-    await env.DB.prepare("update users set pin_failures = ?, pin_locked_until = ? where id = ?")
-      .bind(locked ? 0 : failures, locked ? new Date(Date.now() + PIN_LOCK_MINUTES * 60_000).toISOString() : null, userId)
+    if (slot.pin_failures < PIN_MAX_FAILURES) throw new ApiError("invalid_pin");
+    // Each lock since the last right PIN lasts twice as long (15 min, 30 min, 1 h, … at most a day).
+    const minutes = Math.min(PIN_LOCK_MINUTES * 2 ** slot.pin_lock_count, PIN_LOCK_MAX_MINUTES);
+    await env.DB.prepare("update users set pin_failures = 0, pin_lock_count = pin_lock_count + 1, pin_locked_until = ? where id = ?")
+      .bind(new Date(Date.now() + minutes * 60_000).toISOString(), userId)
       .run();
-    throw new ApiError(locked ? "pin_locked" : "invalid_pin", locked ? 429 : 400);
+    throw new ApiError("pin_locked", 429);
   }
-  if (state.pin_failures || state.pin_locked_until) {
-    await env.DB.prepare("update users set pin_failures = 0, pin_locked_until = null where id = ?").bind(userId).run();
-  }
+  await env.DB.prepare("update users set pin_failures = 0, pin_lock_count = 0, pin_locked_until = null where id = ?").bind(userId).run();
 }
 
 /** Confirms a payment with the signed-in user's PIN; wrong PINs count towards the same lock as the login. */
@@ -603,13 +615,8 @@ export async function deleteAccount(
     const target = deleteTarget(profile, input.channel === "email" ? "email" : "sms");
     await checkCode(env, target.value, String(input.code).trim());
   } else {
-    const row = await env.DB.prepare("select pin_hash from users where id = ?")
-      .bind(profile.id)
-      .first<{ pin_hash: string | null }>();
-    const pin = String(input.pin ?? "").trim();
-    if (!row?.pin_hash || !validPinFormat(pin) || !(await pinMatches(pin, row.pin_hash))) {
-      throw new ApiError("invalid_pin");
-    }
+    // Wrong PINs count towards the same lock as the login.
+    await verifyPin(env, profile.id, input.pin);
   }
   // Money left in the wallet belongs to the person: it has to be spent or paid out first.
   const wallet = await env.DB.prepare("select balance_xof from wallets where user_id = ?")

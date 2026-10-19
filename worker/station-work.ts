@@ -44,7 +44,7 @@ import { earnStatement } from "./greenpoint";
 import { ApiError, nowIso, uuid } from "./http";
 import { DB_CUSTOMER, DB_DRIVER } from "./roles";
 import { requireService } from "./services";
-import { creditCodeOwner, isCreditStation, spendCreditCode, walletAccess } from "./wallet";
+import { creditCodeOwner, isCreditStation, OPEN_CREDIT_CHARGE_SQL, refuseWhileCreditCharging, spendCreditCode, walletAccess } from "./wallet";
 import { checkPickupCode, heldBatteriesSql, stillActive, type ReservationRow } from "./reservations";
 import { resolveSwapBattery, swapBatteryStatements, swapType } from "./batteries";
 import { batteryNumbersRequired } from "../src/lib/batteries";
@@ -724,9 +724,12 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     if (code.user.id !== customer.id) throw new ApiError("credit_code_invalid");
     const used = spendCreditCode(db, code.hash, stationId, "swap", now);
     // The code first; a code another request used meanwhile breaks the balance check and with it the whole swap.
+    await refuseWhileCreditCharging(db, customer.id);
     statements.unshift(
       used.statement,
       db.prepare(`update wallets set balance_xof = -1 where user_id = ? and not ${used.usedSql}`).bind(customer.id),
+      // A Green Credit charge started meanwhile holds the credit: the swap fails as a whole.
+      db.prepare(`update wallets set balance_xof = -1 where user_id = ?1 and ${OPEN_CREDIT_CHARGE_SQL.replace("?", "?1")}`).bind(customer.id),
     );
     const wallet = await db.prepare("select balance_xof, status from wallets where user_id = ?").bind(customer.id).first<{ balance_xof: number; status: string }>();
     if (wallet?.status === "frozen") throw new ApiError("wallet_frozen", 403);

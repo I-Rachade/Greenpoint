@@ -48,7 +48,7 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/repair-centers": ALL,
   "GET /api/operators": ALL,
   "GET /api/stations/:id/reviews": ALL,
-  "POST /api/stations/:id/reviews": SIGNED,
+  "POST /api/stations/:id/reviews": CUSTOMER,
   "DELETE /api/reviews/:id": SIGNED, // one's own review
   "GET /api/me": ALL,
   "POST /api/auth/send": ALL,

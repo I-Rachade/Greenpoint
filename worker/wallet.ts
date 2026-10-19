@@ -21,6 +21,7 @@ import {
   type WalletView,
 } from "../src/lib/wallet";
 import { verifyPin } from "./auth";
+import { withCounterCodeTry } from "./code-tries";
 import type { Env } from "./env";
 import { ApiError, nowIso, readJson, sha256, uuid } from "./http";
 import { notifyUser } from "./notify";
@@ -144,6 +145,21 @@ async function creditStations(db: D1Database): Promise<GreenCreditStation[]> {
   return results;
 }
 
+/**
+ * A Green Credit charge of the user that runs or waits to be settled (QR or linked card, 0047). Its
+ * limit is the whole balance and nothing is taken until it ends, so no other payment may spend
+ * the credit meanwhile: the charge would end up unpaid. Bind the user's id.
+ */
+export const OPEN_CREDIT_CHARGE_SQL =
+  "exists (select 1 from charging_sessions where user_id = ? and credit_limit_xof is not null and status in ('charging', 'stopped'))";
+
+/** Refuses a payment from Green Credit while a Green Credit charge of the user holds the credit. */
+export async function refuseWhileCreditCharging(db: D1Database, userId: string) {
+  if (await db.prepare(`select ${OPEN_CREDIT_CHARGE_SQL} as open`).bind(userId).first<{ open: number }>().then((r) => r?.open)) {
+    throw new ApiError("charge_unpaid", 409);
+  }
+}
+
 /** Whether this station loads and accepts Green Credit (designated in the backoffice). */
 export async function isCreditStation(db: D1Database, stationId: string): Promise<boolean> {
   return !!(await db.prepare("select 1 from stations where id = ? and green_credit = 1").bind(stationId).first());
@@ -227,14 +243,19 @@ export async function creditCodeOwner(db: D1Database, rawCode: unknown): Promise
 
 /**
  * Marks a counter code used, for the batch that spends or loads with it. The statements after it
- * only apply when `usedSql` holds: this request was the one that used the code.
+ * only apply when `usedSql` holds: this request was the one that used the code (a fresh id per
+ * request, not the time, which two parallel requests can share).
  */
 export function spendCreditCode(db: D1Database, hash: string, stationId: string, purpose: "topup" | "swap", at: string) {
+  const request = uuid();
   return {
     statement: db
-      .prepare("update credit_codes set used_at = ?, used_at_station = ?, used_for = ? where code_hash = ? and used_at is null and expires_at > ?")
-      .bind(at, stationId, purpose, hash, at),
-    usedSql: `exists (select 1 from credit_codes where code_hash = '${hash}' and used_at = '${at}' and used_for = '${purpose}')`,
+      .prepare(
+        "update credit_codes set used_at = ?, used_at_station = ?, used_for = ?, used_by_request = ? where code_hash = ? and used_at is null and expires_at > ?",
+      )
+      .bind(at, stationId, purpose, request, hash, at),
+    // Both values are made here (a hex hash and a uuid), never typed by anyone.
+    usedSql: `exists (select 1 from credit_codes where code_hash = '${hash}' and used_by_request = '${request}' and used_for = '${purpose}')`,
   };
 }
 
@@ -242,8 +263,9 @@ async function requireCreditStation(db: D1Database, stationId: string) {
   if (!(await isCreditStation(db, stationId))) throw new ApiError("credit_not_accepted", 409);
 }
 
-async function customerForCode(env: Env, rawCode: unknown) {
-  const owner = await creditCodeOwner(env.DB, rawCode);
+async function customerForCode(env: Env, staff: Profile, rawCode: unknown) {
+  // Staff type someone else's code: many wrong ones stop them for a while (worker/code-tries.ts).
+  const owner = await withCounterCodeTry(env.DB, staff.id, "credit", () => creditCodeOwner(env.DB, rawCode));
   const wallet = await env.DB.prepare("select balance_xof, status from wallets where user_id = ?")
     .bind(owner.user.id)
     .first<{ balance_xof: number; status: string }>();
@@ -258,7 +280,7 @@ export async function counterCredit(env: Env, user: Profile, isStaffOf: StaffChe
   if (!(await isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
   await requireCreditStation(env.DB, stationId);
   const { code } = await readJson<{ code?: unknown }>(request);
-  const c = await customerForCode(env, code);
+  const c = await customerForCode(env, user, code);
   return { customer: label(c.user), balanceXof: c.balance, maxTopupXof: maxTopup(c.balance, await creditMax(env.DB)) };
 }
 
@@ -274,7 +296,7 @@ export async function topUpCredit(env: Env, user: Profile, isStaffOf: StaffCheck
   const input = await readJson<{ code?: unknown; amountXof?: unknown }>(request);
   const amount = parseAmount(input.amountXof);
   if (amount === null || amount < CREDIT_TOPUP_MIN_XOF) throw new ApiError("invalid_amount");
-  const c = await customerForCode(env, input.code);
+  const c = await customerForCode(env, user, input.code);
   if (c.user.id === user.id) throw new ApiError("own_reservation");
   const limit = maxTopup(c.balance, await creditMax(db));
   if (limit !== null && amount > limit) throw new ApiError("credit_limit_reached");
