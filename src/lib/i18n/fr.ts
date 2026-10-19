@@ -2028,13 +2028,14 @@ export const fr = {
   },
   stationCash: {
     title: "Caisse des stations",
-    intro: "Ce que chaque station partenaire a encaissé pour poinderecharge et, dans nos propres stations, le Green Credit que chaque employé a chargé en espèces, avec les remises et la commission. Confirmez une remise quand l'argent est arrivé.",
+    intro: "Ce que chaque station partenaire a encaissé pour poinderecharge et, dans nos propres stations, les espèces que chaque employé a encaissées au comptoir (Green Credit, échanges, recharges, colis), avec les remises et la commission. Confirmez une remise quand l'argent est arrivé.",
     ownerIntro: "Ce que vous avez encaissé pour poinderecharge depuis la dernière clôture. Remettez-le chaque jour, au plus tard à 10 h le lendemain.",
     noStations: "Aucune station avec de l'argent à remettre.",
     myCash: "Ma caisse",
-    myCashIntro: "Le Green Credit que vous avez chargé en espèces depuis votre dernière clôture. Clôturez à la fin de votre service, au plus tard à 10 h le lendemain ; poinderecharge confirme quand l'argent est arrivé.",
+    myCashHint: "Clôturer mes espèces",
+    myCashIntro: "Les espèces que vous avez encaissées depuis votre dernière clôture : Green Credit chargé, échanges, recharges et colis payés en espèces. Clôturez à la fin de votre service, au plus tard à 10 h le lendemain ; poinderecharge confirme quand l'argent est arrivé.",
     types: { operator: "Station exploitant", shop: "Station commerce", own: "Station poinderecharge" },
-    typeHints: { operator: "L'échange est à l'exploitant, les prises à poinderecharge.", shop: "L'échange et les prises sont à poinderecharge.", own: "Green Credit chargé en espèces au comptoir par cet employé." },
+    typeHints: { operator: "L'échange est à l'exploitant, les prises à poinderecharge.", shop: "L'échange et les prises sont à poinderecharge.", own: "Espèces encaissées au comptoir par cet employé : Green Credit, échanges, recharges et colis." },
     lines: {
       chargesXof: "Recharges payées en espèces",
       swapsXof: "Échanges payés en espèces",

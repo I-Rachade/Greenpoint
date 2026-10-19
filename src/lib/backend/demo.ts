@@ -417,7 +417,7 @@ interface DemoState {
   promotions?: Promotion[];
   devices?: Device[];
   /** Parcel depot; parcels keep their pickup code here (demo only). */
-  parcels?: Parcel[];
+  parcels?: DemoParcel[];
   parcelDepots?: ParcelDepot[];
   batteryTypes?: BatteryType[];
   /** Electric car chargers, assigned to a station or not. */
@@ -664,7 +664,11 @@ interface DemoServiceRow {
 }
 
 /** `partnerId`: the socket's point partner when the charge started (charging_sessions.partner_id). */
-type DemoCharge = ChargeSession & { userId: string | null; pointId: string; startedBy?: string; partnerId?: string | null };
+/** `paidBy`: who marked it paid in cash at the counter (as charging_sessions.paid_by). */
+type DemoCharge = ChargeSession & { userId: string | null; pointId: string; startedBy?: string; partnerId?: string | null; paidBy?: string | null };
+
+/** `createdById`: who stored it at the counter and took the cash (as parcels.created_by). */
+type DemoParcel = Parcel & { createdById?: string };
 
 type DemoPointPartner = { id: string; name: string; contactPhone: string | null; status: PointPartnerStatus; createdAt: string };
 
@@ -3104,14 +3108,31 @@ export class DemoBackend implements Backend {
     });
   }
 
-  /** Our own stations, one balance per staff member: the Green Credit they loaded (as cashOfOwnStations). */
+  /**
+   * Our own stations, one balance per staff member: the cash they took at the counter, Green Credit
+   * loaded, swaps, charges and parcels paid in cash, each for whoever took it (as cashOfOwnStations;
+   * the demo has no history before 0057, so every kind counts from the month's start).
+   */
   private ownStationCashOf(state: DemoState, ids: string[] | null, staffId: string | null = null, now = new Date()): StationCash[] {
     const own = state.stations.filter((st) => st.isOwn && (!ids || ids.includes(st.id)));
     const handovers = (state.cashHandovers ?? []).filter((h) => h.staffId);
-    const topups = this.wallet(state).transactions.filter((t) => t.type === "topup" && t.stationId && t.staffId);
+    const items: (CashItem & { stationId: string; staffId: string })[] = [
+      ...this.wallet(state)
+        .transactions.filter((t) => t.type === "topup" && t.stationId && t.staffId)
+        .map((t) => ({ stationId: t.stationId!, staffId: t.staffId!, kind: "creditXof" as const, at: t.createdAt, amountXof: t.amountXof })),
+      ...(state.swaps ?? [])
+        .filter((x) => x.payment === "cash" && this.swapOwnerOfEntry(state, x) === "poinderecharge")
+        .map((x) => ({ stationId: x.stationId, staffId: x.staffId, kind: "swapsXof" as const, at: x.createdAt, amountXof: x.amountXof })),
+      ...(state.charges ?? [])
+        .filter((c) => c.status === "paid" && c.paidAt && c.paymentMethod === "cash" && c.paidBy)
+        .map((c) => ({ stationId: c.stationId, staffId: c.paidBy!, kind: "chargesXof" as const, at: c.paidAt!, amountXof: c.amountXof })),
+      ...this.parcelsOf(state)
+        .filter((p) => p.paymentMethod === "cash" && p.paidAt && p.status !== "cancelled" && p.createdById)
+        .map((p) => ({ stationId: p.fromStationId, staffId: p.createdById!, kind: "parcelsXof" as const, at: p.paidAt!, amountXof: p.priceFcfa })),
+    ];
     const out: StationCash[] = [];
     for (const st of own) {
-      const people = new Set([...topups.filter((t) => t.stationId === st.id).map((t) => t.staffId!), ...handovers.filter((h) => h.stationId === st.id).map((h) => h.staffId!)]);
+      const people = new Set([...items.filter((t) => t.stationId === st.id).map((t) => t.staffId), ...handovers.filter((h) => h.stationId === st.id).map((h) => h.staffId!)]);
       if (staffId) {
         people.clear();
         people.add(staffId);
@@ -3127,9 +3148,9 @@ export class DemoBackend implements Backend {
               commissionPct: 0,
               commissionMode: "monthly",
               start: monthStartOf(now),
-              cash: topups
+              cash: items
                 .filter((t) => t.stationId === st.id && t.staffId === person)
-                .map((t): CashItem => ({ kind: "creditXof", at: t.createdAt, amountXof: t.amountXof })),
+                .map((t): CashItem => ({ kind: t.kind, at: t.at, amountXof: t.amountXof })),
               sales: [],
               handovers: handovers.filter((h) => h.stationId === st.id && h.staffId === person).map(handoverView),
               staff: { id: person, name: this.personName(state, person) ?? "?" },
@@ -3759,7 +3780,7 @@ export class DemoBackend implements Backend {
   // Parcel depot --------------------------------------------------------------
 
   /** Parcels past their pickup deadline go into storage (the Worker does this in a daily job). */
-  private parcelsOf(state: DemoState): Parcel[] {
+  private parcelsOf(state: DemoState): DemoParcel[] {
     const now = new Date().toISOString();
     return (state.parcels ?? []).map((p) =>
       p.status === "arrived" && p.pickupDeadline && p.pickupDeadline <= now
@@ -3894,7 +3915,7 @@ export class DemoBackend implements Backend {
     const recipient = this.demoAccount(sender.state, recipientPhone, recipientName);
     state = recipient.state;
     const now = new Date().toISOString();
-    const parcel: Parcel = {
+    const parcel: DemoParcel = {
       id: crypto.randomUUID(),
       trackingNo: newTrackingNo(),
       fromStationId: stationId,
@@ -3910,6 +3931,7 @@ export class DemoBackend implements Backend {
       paidAt: now,
       status: "deposited",
       createdAt: now,
+      createdById: staff.id,
       inTransitAt: null,
       arrivedAt: null,
       pickedUpAt: null,
@@ -7957,7 +7979,7 @@ export class DemoBackend implements Backend {
 
   /** A running demo charge gains energy with time; the price follows. */
   private chargeView(c: DemoCharge, now = Date.now()): ChargeSession {
-    const { userId: _userId, pointId: _pointId, startedBy: _startedBy, partnerId: _partnerId, ...rest } = c;
+    const { userId: _userId, pointId: _pointId, startedBy: _startedBy, partnerId: _partnerId, paidBy: _paidBy, ...rest } = c;
     const view: ChargeSession = c.userId && c.startedBy === c.userId ? { ...rest, selfStarted: true } : rest;
     if (c.status !== "charging") return view;
     const energyWh = Math.round(((now - new Date(c.startedAt).getTime()) / 3_600_000) * DEMO_CHARGE_WATTS);
@@ -8151,7 +8173,7 @@ export class DemoBackend implements Backend {
   }
 
   /** Paid: the greenpoints follow the kWh for an app customer at a solar station (as chargeEarnStatement). */
-  private payCharge(state: DemoState, id: string, method: ChargeSession["paymentMethod"]): DemoState {
+  private payCharge(state: DemoState, id: string, method: ChargeSession["paymentMethod"], paidBy: string | null = null): DemoState {
     const c = (state.charges ?? []).find((x) => x.id === id);
     if (!c || c.status !== "stopped" || c.amountXof <= 0) throw new BackendError("charge_wrong_status");
     let next = state;
@@ -8180,15 +8202,15 @@ export class DemoBackend implements Backend {
       }
     }
     const charges = (next.charges ?? []).map((x) =>
-      x.id === id ? { ...x, status: "paid" as const, paymentMethod: method, paidAt: new Date().toISOString(), greenpoints: points } : x,
+      x.id === id ? { ...x, status: "paid" as const, paymentMethod: method, paidAt: new Date().toISOString(), greenpoints: points, paidBy } : x,
     );
     return { ...next, charges };
   }
 
   async payChargeCash(stationId: string, id: string): Promise<ChargeSession> {
     const state = this.load();
-    this.stationActor(state, stationId);
-    const next = this.payCharge(state, id, "cash");
+    const { profile } = this.stationActor(state, stationId);
+    const next = this.payCharge(state, id, "cash", profile.id);
     this.save(next);
     return this.chargeView(next.charges!.find((c) => c.id === id)!);
   }

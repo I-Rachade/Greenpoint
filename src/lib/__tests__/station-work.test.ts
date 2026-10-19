@@ -40,6 +40,8 @@ describe("station work rules", () => {
     expect(stationTiles(["swap"])).toEqual(["swap", "counter", "reservations"]);
     expect(stationTiles(["ev", "parcels"])).toEqual(["charging", "parcels"]);
     expect(stationTiles([])).toEqual([]);
+    // Our own stations: the tile opens the staff's cash closing even without Green Credit (0057).
+    expect(stationTiles(["parcels"], false, true)).toEqual(["parcels", "credit"]);
   });
 
   it("knows the role at a station", () => {
