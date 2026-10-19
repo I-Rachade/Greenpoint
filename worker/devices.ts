@@ -237,6 +237,20 @@ export function recountFreeSlots(db: D1Database, stationId: string) {
 }
 
 /**
+ * Recounts every station with connected outlets (minute cron): an outlet that falls silent
+ * sends nothing, so its place leaves the counter once DEVICE_OFFLINE_MINUTES have passed.
+ */
+export async function recountSilentFreeSlots(db: D1Database) {
+  await db
+    .prepare(
+      `update station_status set free_slots = ${liveFreePointsSql("station_status.station_id", "?1")}, updated_at = ?2
+       where ${hasConnectedPointsSql("station_status.station_id")} and free_slots != ${liveFreePointsSql("station_status.station_id", "?1")}`,
+    )
+    .bind(onlineSince(), nowIso())
+    .run();
+}
+
+/**
  * A station's charging places are its connected outlets: sets charging_slots to their
  * number and keeps the staff counter within it.
  */

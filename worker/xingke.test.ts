@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDevice, handleDeviceCommands, startOutlet, stopOutlet } from "./devices";
+import { createDevice, handleDeviceCommands, recountSilentFreeSlots, startOutlet, stopOutlet } from "./devices";
 import type { Env } from "./env";
 import { handleXingkeCallback } from "./xingke";
 
@@ -70,7 +70,7 @@ async function setup() {
     DEVICE_WEBHOOK_SECRET: "bridge-key",
   } as unknown as Env;
   await createDevice(d1 as unknown as D1Database, { externalId: DEVICE, stationId: "st", outlets: 2, link: "vendor_cloud", vendor: "Xingke" }, "admin");
-  return { db, env };
+  return { db, d1, env };
 }
 
 function platform(status = 202, body: object = { code: "ACCEPTED" }) {
@@ -228,6 +228,15 @@ describe("Xingke cloud", () => {
     await handleXingkeCallback(callback(event("DeviceOffline", { reason: "HeartbeatTimeout" }, "evt-0025")), env);
     expect(db.prepare("select count(*) n from charging_points where last_seen_at is not null").get()).toEqual({ n: 0 });
     expect(db.prepare("select free_slots from station_status").get()).toEqual({ free_slots: 0 });
+  });
+
+  it("takes the places of a socket that fell silent out of the free places (minute cron)", async () => {
+    const { db, d1, env } = await setup();
+    await handleXingkeCallback(callback(event("DeviceOnline", { reason: "Connected" }, "evt-0026")), env);
+    expect(db.prepare("select free_slots from station_status").get()).toEqual({ free_slots: 2 });
+    db.exec(`update charging_points set last_seen_at = '${new Date(Date.now() - 20 * 60_000).toISOString()}' where outlet = 1`);
+    await recountSilentFreeSlots(d1 as unknown as D1Database);
+    expect(db.prepare("select free_slots from station_status").get()).toEqual({ free_slots: 1 });
   });
 
   it("rejects wrong credentials and broken bodies", async () => {
