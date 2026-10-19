@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { AdminOperator, OwnerView } from "../src/lib/operators";
+import type { AdminOperator, MyStaffInvite, OwnerView } from "../src/lib/operators";
 import type { StationInput, StationView } from "../src/lib/types";
 import { handleApi } from "./api";
 import type { Env } from "./env";
@@ -84,6 +84,13 @@ async function call(env: Env, as: string, method: string, path: string, body?: u
   return { status: res.status, body: (await res.json()) as unknown };
 }
 
+/** The person's open staff invites, and accepting the first one (migration 0050). */
+const myInvites = async (env: Env, as: string) => (await call(env, as, "GET", "/api/staff-invites")).body as MyStaffInvite[];
+async function acceptFirst(env: Env, as: string) {
+  const [invite] = await myInvites(env, as);
+  return call(env, as, "POST", `/api/staff-invites/${invite.id}/accept`);
+}
+
 function station(operatorId: string, name: string): StationInput {
   return {
     operatorId,
@@ -154,6 +161,9 @@ describe("operator accounts", () => {
     expect((await call(env, "yao", "PATCH", `/api/stations/${be}/status`, { isOpen: false }, be)).status).toBe(403);
 
     expect((await call(env, "yao", "POST", "/api/owner/staff", { stationId: lome, contact: "90000003" })).status).toBe(200);
+    // Only an invite so far: Afi is staff once she accepts.
+    expect((await call(env, "afi", "GET", "/api/staff/stations")).status).toBe(403);
+    expect((await acceptFirst(env, "afi")).status).toBe(200);
     expect((await call(env, "afi", "GET", "/api/staff/stations")).body).toMatchObject([{ id: lome }]);
     let view = (await call(env, "yao", "GET", "/api/owner")).body as OwnerView;
     expect(view.staff).toEqual([{ stationId: lome, userId: "afi", label: "+228 90 •• •• 03" }]);
@@ -176,6 +186,8 @@ describe("operator accounts", () => {
     const role = (id: string) => (db.prepare("select role from users where id = ?").get(id) as { role: string }).role;
     expect(role("yao")).toBe("operator");
     await call(env, "yao", "POST", "/api/owner/staff", { stationId: lome, contact: "90000003" });
+    expect(role("afi")).toBe("rider");
+    await acceptFirst(env, "afi");
     expect(role("afi")).toBe("operator");
     await call(env, "yao", "DELETE", "/api/owner/staff", { stationId: lome, userId: "afi" });
     expect(role("afi")).toBe("rider");
@@ -186,6 +198,7 @@ describe("operator accounts", () => {
   it("gives exactly the rights and menu of the role an admin sets", async () => {
     const { db, env, lome } = await withOperator();
     await call(env, "yao", "POST", "/api/owner/staff", { stationId: lome, contact: "90000003" });
+    await acceptFirst(env, "afi");
 
     // Back to customer: no station pages, no rights, no assignments or operator account left.
     expect((await call(env, "admin", "POST", "/api/admin/users/yao/role", { role: "customer" })).status).toBe(200);
@@ -229,6 +242,90 @@ describe("operator accounts", () => {
     function role(id: string) {
       return (db.prepare("select role from users where id = ?").get(id) as { role: string }).role;
     }
+  });
+
+  it("answers the owner the same whether or not an account has the contact (no probing)", async () => {
+    const { db, env, lome } = await withOperator();
+    const known = await call(env, "yao", "POST", "/api/owner/staff", { stationId: lome, contact: "90000003" });
+    const unknown = await call(env, "yao", "POST", "/api/owner/staff", { stationId: lome, contact: "90999999" });
+    const unknownMail = await call(env, "yao", "POST", "/api/owner/staff", { stationId: lome, contact: "Nobody@Example.com" });
+    expect(known).toEqual({ status: 200, body: null });
+    expect(unknown).toEqual(known);
+    expect(unknownMail).toEqual(known);
+    // The owner's list shows what was typed, masked, never an account's name; nobody is staff yet.
+    const view = (await call(env, "yao", "GET", "/api/owner")).body as OwnerView;
+    expect(view.invites.map((i) => i.label)).toEqual(["+228 90 •• •• 03", "+228 90 •• •• 99", "no••@example.com"]);
+    expect(view.staff).toEqual([]);
+    // Inviting again keeps one open invite.
+    expect((await call(env, "yao", "POST", "/api/owner/staff", { stationId: lome, contact: "90 00 00 03" })).status).toBe(200);
+    expect(db.prepare("select count(*) as n from staff_invites where contact = '+22890000003'").get()).toEqual({ n: 1 });
+    // The account made later with that number sees its invite.
+    db.prepare("insert into users (id, phone, role, created_at) values ('new', '+22890999999', 'rider', ?)").run(new Date().toISOString());
+    db.prepare("insert into sessions (token_hash, user_id, created_at, expires_at) values (?, 'new', ?, ?)").run(
+      await sha256("session-token-of-new-0123456789"),
+      new Date().toISOString(),
+      new Date(Date.now() + 3_600_000).toISOString(),
+    );
+    expect((await myInvites(env, "new")).map((i) => [i.stationName, i.operatorName])).toEqual([["Lomé Centre", "Togo Moto"]]);
+    // Signed out: an empty list, like fleet and shop invites.
+    const res = await handleApi(new Request("https://app.poinderecharge.com/api/staff-invites"), env);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it("makes staff only when the invited person accepts, with every check of an assignment", async () => {
+    const { db, env, lome, kara } = await withOperator();
+    await call(env, "yao", "POST", "/api/owner/staff", { stationId: lome, contact: "90000003" });
+    await call(env, "yao", "POST", "/api/owner/staff", { stationId: kara, contact: "90000003" });
+    const [toLome, toKara] = await myInvites(env, "afi");
+    // Someone else cannot see, accept or decline Afi's invite.
+    expect(await myInvites(env, "kossi")).toEqual([]);
+    expect(await call(env, "kossi", "POST", `/api/staff-invites/${toLome.id}/accept`)).toEqual({ status: 404, body: { error: "invite_not_found" } });
+    expect((await call(env, "kossi", "POST", `/api/staff-invites/${toLome.id}/decline`)).status).toBe(404);
+    expect(db.prepare("select count(*) as n from station_staff where user_id = 'kossi'").get()).toEqual({ n: 0 });
+    // R15 at accepting: money in the wallet keeps Afi a customer, and the invite stays open.
+    db.prepare("insert into wallets (user_id, balance_xof, created_at, updated_at) values ('afi', 500, 'x', 'x')").run();
+    expect((await call(env, "afi", "POST", `/api/staff-invites/${toLome.id}/accept`)).body).toEqual({ error: "role_change_blocked" });
+    db.prepare("update wallets set balance_xof = 0 where user_id = 'afi'").run();
+    expect((await call(env, "afi", "POST", `/api/staff-invites/${toLome.id}/accept`)).status).toBe(200);
+    expect(db.prepare("select station_id from station_staff where user_id = 'afi'").all()).toEqual([{ station_id: lome }]);
+    expect(db.prepare("select role from users where id = 'afi'").get()).toEqual({ role: "operator" });
+    // One station only: the other invite ended with the accept, and a used invite cannot be used again.
+    expect(await myInvites(env, "afi")).toEqual([]);
+    expect((await call(env, "afi", "POST", `/api/staff-invites/${toKara.id}/accept`)).status).toBe(404);
+    expect((await call(env, "afi", "POST", `/api/staff-invites/${toLome.id}/accept`)).status).toBe(404);
+    // An owner is never staff: the invite is answered at accepting, not at inviting.
+    expect((await call(env, "yao", "POST", "/api/owner/staff", { stationId: kara, contact: "90000002" })).status).toBe(200);
+    expect((await acceptFirst(env, "yao")).body).toEqual({ error: "has_other_role" });
+  });
+
+  it("lets the person decline, the owner cancel, and ends invites after 7 days", async () => {
+    const { db, env, lome, kara, be } = await withOperator();
+    await call(env, "yao", "POST", "/api/owner/staff", { stationId: lome, contact: "90000003" });
+    const [declined] = await myInvites(env, "afi");
+    expect((await call(env, "afi", "POST", `/api/staff-invites/${declined.id}/decline`)).status).toBe(200);
+    expect(await myInvites(env, "afi")).toEqual([]);
+    expect((await call(env, "afi", "POST", `/api/staff-invites/${declined.id}/accept`)).status).toBe(404);
+
+    await call(env, "yao", "POST", "/api/owner/staff", { stationId: lome, contact: "90000004" });
+    let view = (await call(env, "yao", "GET", "/api/owner")).body as OwnerView;
+    const [open] = view.invites;
+    // Only an owner of the station (or an admin) cancels; not the invited person, not a stranger.
+    expect((await call(env, "kossi", "POST", `/api/owner/staff-invites/${open.id}/revoke`)).status).toBe(403);
+    expect((await call(env, "yao", "POST", `/api/owner/staff-invites/${open.id}/revoke`)).status).toBe(200);
+    expect((await call(env, "yao", "POST", `/api/owner/staff-invites/${open.id}/revoke`)).status).toBe(404);
+    expect(await myInvites(env, "kossi")).toEqual([]);
+    expect((await call(env, "kossi", "POST", `/api/staff-invites/${open.id}/accept`)).status).toBe(404);
+    // Nobody may invite to a station of another operator.
+    expect((await call(env, "yao", "POST", "/api/owner/staff", { stationId: be, contact: "90000004" })).status).toBe(403);
+
+    await call(env, "yao", "POST", "/api/owner/staff", { stationId: kara, contact: "90000004" });
+    const expires = db.prepare("select expires_at from staff_invites where status = 'pending'").get() as { expires_at: string };
+    expect(Date.parse(expires.expires_at) - Date.now()).toBeGreaterThan(6.9 * 86_400_000);
+    db.prepare("update staff_invites set expires_at = ? where status = 'pending'").run(new Date(Date.now() - 1000).toISOString());
+    expect(await myInvites(env, "kossi")).toEqual([]);
+    view = (await call(env, "yao", "GET", "/api/owner")).body as OwnerView;
+    expect(view.invites).toEqual([]);
+    expect(db.prepare("select status from staff_invites where station_id = ?").get(kara)).toEqual({ status: "expired" });
   });
 
   it("takes the rights away when the admin removes the owner", async () => {
