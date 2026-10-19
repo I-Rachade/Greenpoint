@@ -183,6 +183,8 @@ export interface WalletAdjustInput {
   direction: "add" | "subtract" | "refund";
   amountXof: number;
   remark: string;
+  /** One per backoffice submission (reused when it is retried): the worker books it once. */
+  idempotencyKey?: string;
 }
 
 /** A positive whole number of francs within the sanity bound, or null. */

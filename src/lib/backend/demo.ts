@@ -7657,6 +7657,10 @@ export class DemoBackend implements Backend {
     if (!remark) throw new BackendError("unknown", "bad_request");
     const user = this.findWalletUser(state, input.contact);
     const w = this.wallet(state);
+    // One booking per (admin, key), as worker/wallet.ts adjustBalance: a repeat answers the first.
+    const key = input.idempotencyKey ? `adjust:${state.profile?.id ?? ""}:${input.idempotencyKey}` : undefined;
+    const first = key ? w.transactions.find((x) => x.key === key && x.userId === user.id && x.type === "admin_adjust") : undefined;
+    if (first) return first;
     const after = this.balance(w, user.id) + (input.direction === "add" ? amount : -amount);
     if (after < 0) throw new BackendError("insufficient_balance");
     const tx: AdminWalletTransaction = {
@@ -7678,7 +7682,10 @@ export class DemoBackend implements Backend {
     };
     this.save(
       withAudit(
-        { ...state, wallet: { ...w, balances: { ...w.balances, [user.id]: after }, transactions: [tx, ...w.transactions].slice(0, 500) } },
+        {
+          ...state,
+          wallet: { ...w, balances: { ...w.balances, [user.id]: after }, transactions: [{ ...tx, ...(key ? { key } : {}) }, ...w.transactions].slice(0, 500) },
+        },
         { table: "wallets", action: "insert", rowId: tx.id, userId: user.id, changes: { direction: input.direction, amount_xof: amount, remark } },
       ),
     );

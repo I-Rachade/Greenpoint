@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { ConfirmSheet } from "@/components/confirm-sheet";
 import { useI18n } from "@/components/i18n-provider";
@@ -226,6 +226,12 @@ function AdjustForm({
   const [amount, setAmount] = useState("");
   const [remark, setRemark] = useState("");
   const [busy, setBusy] = useState(false);
+  // One idempotency key per submission: kept when it is confirmed again after a failure (a lost
+  // answer must not book twice), new once it succeeded or the form was changed.
+  const submissionKey = useRef<string | null>(null);
+  const edited = () => {
+    submissionKey.current = null;
+  };
   // Money and blocking are asked first, with the account, the amount and the balance it leads to.
   const [pending, setPending] = useState<Pending | null>(null);
   // undefined: loading; null: no transaction on record, so the balance is not known here.
@@ -260,6 +266,7 @@ function AdjustForm({
     try {
       if (pending.kind === "adjust") {
         if (await onAdjust(pending.input)) {
+          submissionKey.current = null;
           setAmount("");
           setRemark("");
         }
@@ -283,18 +290,22 @@ function AdjustForm({
       onSubmit={(e: FormEvent) => {
         e.preventDefault();
         if (busy) return;
-        void ask({ kind: "adjust", input: { contact: contact.trim(), direction, amountXof: parseAmount(amount) ?? 0, remark: remark.trim() } });
+        submissionKey.current ??= crypto.randomUUID();
+        void ask({
+          kind: "adjust",
+          input: { contact: contact.trim(), direction, amountXof: parseAmount(amount) ?? 0, remark: remark.trim(), idempotencyKey: submissionKey.current },
+        });
       }}
     >
       <h2 className="font-semibold">{b.adjustTitle}</h2>
       <label className="block space-y-1 text-sm">
         <span className="block text-zinc-600 dark:text-zinc-400">{b.contact}</span>
-        <input className={`${field} w-full`} value={contact} onChange={(e) => setContact(e.target.value)} required />
+        <input className={`${field} w-full`} value={contact} onChange={(e) => { edited(); setContact(e.target.value); }} required />
       </label>
       <div className="flex flex-wrap gap-4 text-sm">
         {(["add", "subtract", "refund"] as const).map((d) => (
           <label key={d} className="flex items-center gap-1">
-            <input type="radio" name="direction" checked={direction === d} onChange={() => setDirection(d)} />
+            <input type="radio" name="direction" checked={direction === d} onChange={() => { edited(); setDirection(d); }} />
             {directionLabel[d]}
           </label>
         ))}
@@ -302,11 +313,11 @@ function AdjustForm({
       {direction === "refund" && <p className="text-xs text-zinc-500">{b.refundHint}</p>}
       <label className="block space-y-1 text-sm">
         <span className="block text-zinc-600 dark:text-zinc-400">{b.amount}</span>
-        <input className={`${field} w-full`} value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ""))} inputMode="numeric" required />
+        <input className={`${field} w-full`} value={amount} onChange={(e) => { edited(); setAmount(e.target.value.replace(/[^\d]/g, "")); }} inputMode="numeric" required />
       </label>
       <label className="block space-y-1 text-sm">
         <span className="block text-zinc-600 dark:text-zinc-400">{b.reason}</span>
-        <input className={`${field} w-full`} value={remark} onChange={(e) => setRemark(e.target.value)} maxLength={120} required />
+        <input className={`${field} w-full`} value={remark} onChange={(e) => { edited(); setRemark(e.target.value); }} maxLength={120} required />
       </label>
       <div className="flex flex-wrap gap-2">
         <button type="submit" disabled={!valid || busy} className="min-h-11 rounded-full bg-gp-forest px-4 text-sm text-white disabled:opacity-50">

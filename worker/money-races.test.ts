@@ -319,8 +319,9 @@ describe("greenpoint reward redemption", () => {
 });
 
 describe("admin wallet adjustment", () => {
-  // The route has no idempotency key: every request is a new correction, so a double tap in the
-  // backoffice books twice. What must hold in parallel: a subtraction never overdraws.
+  // Without an idempotency key (older clients) every request is a new correction; what must
+  // hold in parallel then: a subtraction never overdraws. With the backoffice's key, a double
+  // click books once.
   it("never overdraws with many parallel subtractions", async () => {
     const { db, env } = await setup(1000);
     const answers = await Promise.all(
@@ -331,6 +332,45 @@ describe("admin wallet adjustment", () => {
     expect(balance(db)).toBe(100);
     expect(count(db, "select count(*) as n from wallet_transactions where type = 'admin_adjust'")).toBe(3);
     ledgerMatches(db, 1000);
+  });
+
+  it("books once per key when the same submission arrives many times at once", async () => {
+    const { db, env } = await setup(1000);
+    const body = { contact: "+22890000005", direction: "subtract", amountXof: 300, remark: "double clic", idempotencyKey: "adjust-key-0001" };
+    const answers = await Promise.all(Array.from({ length: N }, () => call<{ id: string }>(env, "admin", "POST", "/api/admin/wallet/adjust", body)));
+    expect(answers.map((a) => a.status)).toEqual(Array(N).fill(200));
+    expect(new Set(answers.map((a) => a.body.id)).size).toBe(1);
+    expect(balance(db)).toBe(700);
+    expect(count(db, "select count(*) as n from wallet_transactions where type = 'admin_adjust'")).toBe(1);
+    expect(count(db, "select count(*) as n from audit_log where table_name = 'wallets' and action = 'insert'")).toBe(1);
+    // A late retry of the same submission answers the first booking too.
+    const late = await call<{ id: string }>(env, "admin", "POST", "/api/admin/wallet/adjust", body);
+    expect(late.body.id).toBe(answers[0].body.id);
+    expect(balance(db)).toBe(700);
+    ledgerMatches(db, 1000);
+  });
+
+  it("answers the first booking, not insufficient_balance, when the repeat breaks on the emptied balance", async () => {
+    const { db, env } = await setup(300);
+    const body = { contact: "+22890000005", direction: "subtract", amountXof: 300, remark: "clôture", idempotencyKey: "adjust-key-0002" };
+    const answers = await Promise.all(Array.from({ length: N }, () => call(env, "admin", "POST", "/api/admin/wallet/adjust", body)));
+    expect(answers.map((a) => a.status)).toEqual(Array(N).fill(200));
+    expect(balance(db)).toBe(0);
+    expect(count(db, "select count(*) as n from wallet_transactions where type = 'admin_adjust'")).toBe(1);
+  });
+
+  it("books separately with different keys, and a malformed key is refused", async () => {
+    const { db, env } = await setup(0);
+    const add = (idempotencyKey: unknown) =>
+      call(env, "admin", "POST", "/api/admin/wallet/adjust", { contact: "+22890000005", direction: "add", amountXof: 100, remark: "dépôt", idempotencyKey });
+    const answers = await Promise.all([add("adjust-key-a001"), add("adjust-key-b002"), add("adjust-key-a001"), add("adjust-key-c003")]);
+    expect(answers.map((a) => a.status)).toEqual([200, 200, 200, 200]);
+    expect(balance(db)).toBe(300);
+    expect(count(db, "select count(*) as n from wallet_transactions where type = 'admin_adjust'")).toBe(3);
+    expect((await add("short")).body.error).toBe("bad_request");
+    expect((await add(42)).body.error).toBe("bad_request");
+    expect(balance(db)).toBe(300);
+    ledgerMatches(db, 0);
   });
 
   it("keeps the balance and the ledger in step when additions, refunds and a swap run at once", async () => {
