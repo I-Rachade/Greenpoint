@@ -699,6 +699,10 @@ export class CloudflareBackend implements Backend {
     return this.call<StationCash[]>("GET", `/api/owner/cash${stationId ? `?stationId=${encodeURIComponent(stationId)}` : ""}`);
   }
 
+  myStationCash(stationId: string) {
+    return this.call<StationCash | null>("GET", `/api/stations/${encodeURIComponent(stationId)}/cash`);
+  }
+
   async closeCashDay(input: HandoverInput) {
     const handover = await this.call<CashHandover>("POST", "/api/owner/cash/handovers", input);
     this.changed();

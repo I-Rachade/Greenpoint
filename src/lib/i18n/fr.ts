@@ -1993,11 +1993,13 @@ export const fr = {
   },
   stationCash: {
     title: "Caisse des stations",
-    intro: "Ce que chaque station partenaire a encaissé pour poinderecharge, ses remises et sa commission. Confirmez une remise quand l'argent est arrivé.",
+    intro: "Ce que chaque station partenaire a encaissé pour poinderecharge et, dans nos propres stations, le Green Credit que chaque employé a chargé en espèces, avec les remises et la commission. Confirmez une remise quand l'argent est arrivé.",
     ownerIntro: "Ce que vous avez encaissé pour poinderecharge depuis la dernière clôture. Remettez-le chaque jour, au plus tard à 10 h le lendemain.",
-    noStations: "Aucune station partenaire : rien à remettre.",
-    types: { operator: "Station exploitant", shop: "Station commerce" },
-    typeHints: { operator: "L'échange est à l'exploitant, les prises à poinderecharge.", shop: "L'échange et les prises sont à poinderecharge." },
+    noStations: "Aucune station avec de l'argent à remettre.",
+    myCash: "Ma caisse",
+    myCashIntro: "Le Green Credit que vous avez chargé en espèces depuis votre dernière clôture. Clôturez à la fin de votre service, au plus tard à 10 h le lendemain ; poinderecharge confirme quand l'argent est arrivé.",
+    types: { operator: "Station exploitant", shop: "Station commerce", own: "Station poinderecharge" },
+    typeHints: { operator: "L'échange est à l'exploitant, les prises à poinderecharge.", shop: "L'échange et les prises sont à poinderecharge.", own: "Green Credit chargé en espèces au comptoir par cet employé." },
     lines: {
       chargesXof: "Recharges payées en espèces",
       swapsXof: "Échanges payés en espèces",

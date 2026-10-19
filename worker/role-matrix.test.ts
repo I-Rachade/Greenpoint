@@ -75,7 +75,8 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/owner/live": OWNER,
   "GET /api/owner/report": OWNER,
   "GET /api/owner/cash": OWNER,
-  "POST /api/owner/cash/handovers": OWNER,
+  "POST /api/owner/cash/handovers": STATION, // staff close their own Green Credit at our stations (0051)
+  "GET /api/stations/:id/cash": STATION,
   "GET /api/station-services": OWNER,
   "POST /api/station-services/request": ["owner"], // the owner asks, the admin decides
   "POST /api/admin/station-services/decide": ADMIN,

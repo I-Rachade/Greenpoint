@@ -383,7 +383,7 @@ type DemoHandover = CashHandover & { createdById: string; decidedById: string | 
 
 /** A stored closing as the API shows it, without who made and decided it. */
 function handoverView(h: DemoHandover): CashHandover {
-  const view: CashHandover & Partial<Pick<DemoHandover, "createdById" | "decidedById">> = { ...h };
+  const view: CashHandover & Partial<Pick<DemoHandover, "createdById" | "decidedById">> = { ...h, staffId: h.staffId ?? null };
   delete view.createdById;
   delete view.decidedById;
   return view;
@@ -652,7 +652,7 @@ interface DemoWallet {
   balances: Record<string, number>;
   frozen: string[];
   /** Ledger, newest first, with the idempotency key of each payment. */
-  transactions: (AdminWalletTransaction & { key?: string; stationId?: string })[];
+  transactions: (AdminWalletTransaction & { key?: string; stationId?: string; staffId?: string })[];
   /** Green Credit stations (0047); absent: every demo station, so it can be tried right away. */
   creditStations?: string[];
   /** Highest balance (0 = no limit). */
@@ -2950,11 +2950,56 @@ export class DemoBackend implements Backend {
     });
   }
 
+  /** Our own stations, one balance per staff member: the Green Credit they loaded (as cashOfOwnStations). */
+  private ownStationCashOf(state: DemoState, ids: string[] | null, staffId: string | null = null, now = new Date()): StationCash[] {
+    const own = state.stations.filter((st) => st.isOwn && (!ids || ids.includes(st.id)));
+    const handovers = (state.cashHandovers ?? []).filter((h) => h.staffId);
+    const topups = this.wallet(state).transactions.filter((t) => t.type === "topup" && t.stationId && t.staffId);
+    const out: StationCash[] = [];
+    for (const st of own) {
+      const people = new Set([...topups.filter((t) => t.stationId === st.id).map((t) => t.staffId!), ...handovers.filter((h) => h.stationId === st.id).map((h) => h.staffId!)]);
+      if (staffId) {
+        people.clear();
+        people.add(staffId);
+      }
+      for (const person of people) {
+        out.push(
+          stationCash(
+            {
+              stationId: st.id,
+              stationName: st.name,
+              operatorName: state.operators.find((o) => o.id === st.operatorId)?.name ?? "",
+              swapOwner: "poinderecharge",
+              commissionPct: 0,
+              commissionMode: "monthly",
+              start: monthStartOf(now),
+              cash: topups
+                .filter((t) => t.stationId === st.id && t.staffId === person)
+                .map((t): CashItem => ({ kind: "creditXof", at: t.createdAt, amountXof: t.amountXof })),
+              sales: [],
+              handovers: handovers.filter((h) => h.stationId === st.id && h.staffId === person).map(handoverView),
+              staff: { id: person, name: this.personName(state, person) ?? "?" },
+            },
+            now,
+          ),
+        );
+      }
+    }
+    return out.sort((a, b) => a.stationName.localeCompare(b.stationName) || a.staffName!.localeCompare(b.staffName!));
+  }
+
   async ownerCash(stationId: string | null): Promise<StationCash[]> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    if (profile.role === "admin" && !stationId) return this.stationCashOf(state, null);
-    return this.stationCashOf(state, this.backofficeStations(state, stationId).ids);
+    const ids = profile.role === "admin" && !stationId ? null : this.backofficeStations(state, stationId).ids;
+    return [...this.stationCashOf(state, ids), ...this.ownStationCashOf(state, ids)];
+  }
+
+  async myStationCash(stationId: string): Promise<StationCash | null> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    if (!this.roleAt(state, profile, stationId)) throw new BackendError("forbidden");
+    return this.ownStationCashOf(state, [stationId], profile.id)[0] ?? null;
   }
 
   async closeCashDay(input: HandoverInput): Promise<CashHandover> {
@@ -2962,9 +3007,13 @@ export class DemoBackend implements Backend {
     if (error) throw new BackendError(error as BackendErrorCode);
     const state = this.load();
     const profile = this.requireProfile(state);
-    this.backofficeStations(state, input.stationId);
+    const own = !!state.stations.find((st) => st.id === input.stationId)?.isOwn;
+    const staffId = own ? (input.staffId ?? profile.id) : null;
+    if (staffId === profile.id) {
+      if (!this.roleAt(state, profile, input.stationId)) throw new BackendError("forbidden");
+    } else this.backofficeStations(state, input.stationId);
     const now = new Date();
-    const [cash] = this.stationCashOf(state, [input.stationId], now);
+    const [cash] = own ? this.ownStationCashOf(state, [input.stationId], staffId, now) : this.stationCashOf(state, [input.stationId], now);
     if (!cash) throw new BackendError("own_station");
     if (cash.dueXof !== input.expectedDueXof) throw new BackendError("cash_changed");
     const handover: CashHandover = {
@@ -2986,6 +3035,7 @@ export class DemoBackend implements Backend {
       decidedBy: null,
       decidedAt: null,
       rejectReason: null,
+      staffId,
     };
     const next = withAudit(
       { ...state, cashHandovers: [{ ...handover, createdById: profile.id, decidedById: null }, ...(state.cashHandovers ?? [])] },
@@ -7287,6 +7337,7 @@ export class DemoBackend implements Backend {
       userLabel: [user.fullName, user.phone ?? user.email].filter(Boolean).join(" · "),
       adminId: null,
       stationId,
+      staffId: actor.profile.id,
     };
     const used = this.useCreditCode(w, input.code);
     this.save({ ...state, wallet: { ...used, balances: { ...w.balances, [user.id]: before + amount }, transactions: [tx, ...w.transactions].slice(0, 500) } });

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { useErrorMessage } from "@/lib/hooks";
+import { StationCashCard } from "@/components/owner/cash";
+import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
 import type { StationView } from "@/lib/types";
 import { CREDIT_TOPUP_MIN_XOF, parseAmount, parseCreditCode, type CounterCredit } from "@/lib/wallet";
@@ -25,8 +26,36 @@ export function CreditPage() {
   const { t } = useI18n();
   return (
     <WorkShell title={t.wallet.staff.title}>
-      {({ station }) => (station.greenCredit ? <CreditCounter key={station.id} station={station} /> : <EmptyState text={t.wallet.staff.notHere} />)}
+      {({ station }) =>
+        station.greenCredit ? (
+          <div className="space-y-4">
+            <CreditCounter key={station.id} station={station} />
+            <MyCash key={`cash:${station.id}`} stationId={station.id} />
+          </div>
+        ) : (
+          <EmptyState text={t.wallet.staff.notHere} />
+        )
+      }
     </WorkShell>
+  );
+}
+
+/**
+ * At our own stations (0051): the Green Credit this staff member loaded in cash since their last
+ * closing, closed at the end of the shift (worker/station-cash.ts). Partner stations: the owner
+ * closes the station's day in the backoffice instead, so nothing shows here.
+ */
+function MyCash({ stationId }: { stationId: string }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { data, reload } = useLiveQuery(() => backend.myStationCash(stationId).then((cash) => ({ cash })), stationId);
+  if (!data?.cash) return null;
+  return (
+    <div className="space-y-2">
+      <h2 className="font-heading text-lg font-semibold">{t.stationCash.myCash}</h2>
+      <p className="text-sm text-gp-muted">{t.stationCash.myCashIntro}</p>
+      <StationCashCard cash={data.cash} admin={false} onChanged={reload} />
+    </div>
   );
 }
 
