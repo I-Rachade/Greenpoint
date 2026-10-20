@@ -1284,7 +1284,7 @@ export class CloudflareBackend implements Backend {
 
   async features(): Promise<Features> {
     // A server from before the Lite switch only names parcels and drivers; the rest was on.
-    return { wallet: true, evChargers: true, lite: false, ...(await this.call<Partial<Features>>("GET", "/api/features")) } as Features;
+    return { wallet: true, evChargers: true, share: false, lite: false, ...(await this.call<Partial<Features>>("GET", "/api/features")) } as Features;
   }
 
   async setParcelsEnabled(enabled: boolean) {

@@ -7,12 +7,16 @@ import { corsHeaders } from "./http";
 import { handleOcppUpgrade, logOcppAttempt } from "./ocpp";
 import { runParcelDeadlines } from "./parcels";
 import { runPartnerDeadlines, runPartnerEvents } from "./partners";
+import { runShareTimers } from "./share";
 import { runCashAlerts } from "./station-cash";
+import { ensureTutrackBridge } from "./tutrack-bridge";
 import { handleXingkeCallback } from "./xingke";
 import { CASH_DEADLINE_HOUR } from "../src/lib/station-cash";
 
 // The Durable Object behind each OCPP charge point's WebSocket (wrangler.jsonc).
 export { OcppConnection } from "./ocpp";
+// The Durable Object that holds the Tutrack MQTT subscription of the Share trackers.
+export { TutrackBridge } from "./tutrack-bridge";
 
 /**
  * OCPP charge points connect here (worker/ocpp.ts): /api/devices/ocpp/<id>, or
@@ -58,7 +62,8 @@ export default {
    * (worker/drivers.ts), daily parcel reminders and returns. Nothing runs while
    * its module is switched off; parcels catch up once the module is back on.
    * The minute cron also takes silent sockets out of the free places.
- * At 10:00 the minute cron also tells the admins which stations did not close their cash.
+   * The minute cron also runs out Share reservations and keeps the Tutrack bridge running.
+   * At 10:00 the minute cron also tells the admins which stations did not close their cash.
    */
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
@@ -69,6 +74,8 @@ export default {
       }),
     );
     if (controller.cron !== DAILY_CRON) ctx.waitUntil(runDispatch(env).catch((err) => console.error("dispatch", err)));
+    if (controller.cron !== DAILY_CRON) ctx.waitUntil(runShareTimers(env).catch((err) => console.error("share timers", err)));
+    if (controller.cron !== DAILY_CRON) ctx.waitUntil(ensureTutrackBridge(env).catch((err) => console.error("tutrack bridge", err)));
     if (controller.cron !== DAILY_CRON) ctx.waitUntil(recountSilentFreeSlots(env.DB).catch((err) => console.error("free slots", err)));
     const at = new Date(controller.scheduledTime);
     if (controller.cron !== DAILY_CRON && at.getUTCHours() === CASH_DEADLINE_HOUR && at.getUTCMinutes() === 0) {
