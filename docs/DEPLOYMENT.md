@@ -66,7 +66,7 @@ Neue Datei in `worker/migrations/` anlegen (z. B. `0002_….sql`), nie eine scho
 npm run db:migrate
 ```
 
-(braucht ein Cloudflare-Login: `npx wrangler login`). Die Cloudflare-Konsole unter D1 zeigt die Tabellen und erlaubt SQL.
+(braucht ein Cloudflare-Login: `npx wrangler login`). Ohne eigenen Rechner geht es über GitHub: der Workflow **D1 migrations** (`.github/workflows/d1-migrate.yml`) läuft, sobald neue Migrationen auf `main` landen, oder von Hand unter Actions → D1 migrations → Run workflow. Er braucht die Repository-Secrets `CLOUDFLARE_API_TOKEN` (Recht: D1 bearbeiten) und `CLOUDFLARE_ACCOUNT_ID`. Die Cloudflare-Konsole unter D1 zeigt die Tabellen und erlaubt SQL.
 
 ## 5a. Täglicher Cron (Paket-Depot)
 
