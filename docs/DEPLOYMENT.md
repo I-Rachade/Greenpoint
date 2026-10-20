@@ -32,6 +32,8 @@ Unter **Workers & Pages > pointderecharge-app > Settings > Variables and secrets
 | `ADMIN_EMAILS` | Text, optional | E-Mail-Adressen, die bei der **Registrierung** Admin werden, z. B. `chef@poinderecharge.com` (mehrere mit Komma) |
 | `DEVICE_WEBHOOK_SECRET` | Secret, optional | Schlüssel der vernetzten Steckdosen, siehe [steckdosen-lora.md](steckdosen-lora.md) |
 | `XINGKE_API_HOST`, `XINGKE_API_TOKEN`, `XINGKE_CALLBACK_TOKEN` | Text, Secret, Secret, optional | Xingke-Cloud-API für die Steckdosen, siehe [steckdosen-lora.md](steckdosen-lora.md#xingke-cloud-api) |
+| `SHARE_TRACKER_PROVIDER`, `TUTRACK_ACCESS_KEY`, `TUTRACK_ACCESS_SECRET` | Text, Secret, Secret, optional | GPS-Tracker der Share-Fahrzeuge (Tutrack); ohne sie laufen die Tracker als Simulation, siehe [SHARE.md](SHARE.md) |
+| `TUTRACK_ENT_ID`, `TUTRACK_MQTT_USER`, `TUTRACK_MQTT_PASSWORD` | Text, Text, Secret, optional | MQTT-Push von Tutrack (Positionen, Alarme), siehe [SHARE.md](SHARE.md) |
 | `TEST_OTP` | Text, optional | Testnummern oder -adressen mit festem Code ohne SMS/E-Mail, z. B. `+22890000001=123456,test@poinderecharge.com=123456`. In Produktion leer lassen oder nur für eigene Kontakte. |
 | `OTP_HOURLY_LIMIT` | Text, optional | höchstens so viele SMS-Codes pro Stunde insgesamt (Standard 30) |
 | `PAYMENT_CALLBACK_SECRET` | Secret | langer Zufallswert für die Rückruf-Adresse des Zahlungsanbieters (siehe [ZAHLUNGEN.md](ZAHLUNGEN.md)) |
@@ -64,7 +66,7 @@ Neue Datei in `worker/migrations/` anlegen (z. B. `0002_….sql`), nie eine scho
 npm run db:migrate
 ```
 
-(braucht ein Cloudflare-Login: `npx wrangler login`). Die Cloudflare-Konsole unter D1 zeigt die Tabellen und erlaubt SQL.
+(braucht ein Cloudflare-Login: `npx wrangler login`). Ohne eigenen Rechner geht es über GitHub: der Workflow **D1 migrations** (`.github/workflows/d1-migrate.yml`) läuft, sobald neue Migrationen auf `main` landen, oder von Hand unter Actions → D1 migrations → Run workflow. Er braucht die Repository-Secrets `CLOUDFLARE_API_TOKEN` (Recht: D1 bearbeiten) und `CLOUDFLARE_ACCOUNT_ID`. Die Cloudflare-Konsole unter D1 zeigt die Tabellen und erlaubt SQL.
 
 ## 5a. Täglicher Cron (Paket-Depot)
 

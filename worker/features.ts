@@ -34,6 +34,12 @@ async function storedDrivers(db: D1Database): Promise<boolean> {
   return row?.value === "1";
 }
 
+/** Share (0060): off until an admin switches it on. */
+export async function storedShare(db: D1Database): Promise<boolean> {
+  const row = await db.prepare("select value from app_settings where key = 'share_enabled'").first<{ value: string }>();
+  return row?.value === "1";
+}
+
 /**
  * Everything that needs a driver: rides and couriers ("Courses"), express door to
  * door, pickups at the sender's home, home deliveries and express at the counter.
@@ -54,8 +60,8 @@ export async function getFeatures(env: Env): Promise<Features> {
 }
 
 export async function featuresOf(db: D1Database): Promise<Features> {
-  const [parcels, drivers, lite] = await Promise.all([storedParcels(db), storedDrivers(db), liteEnabled(db)]);
-  return effectiveFeatures({ parcels, drivers, lite });
+  const [parcels, drivers, share, lite] = await Promise.all([storedParcels(db), storedDrivers(db), storedShare(db), liteEnabled(db)]);
+  return effectiveFeatures({ parcels, drivers, share, lite });
 }
 
 export async function setParcelsEnabled(env: Env, admin: Profile, enabled: boolean) {

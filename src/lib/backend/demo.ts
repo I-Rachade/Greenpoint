@@ -1,3 +1,4 @@
+import type { AdminShare, ShareMe, ShareOverview, ShareRide, ShareTrackPoint, StationShare } from "../share";
 import { countHolding, isHolding, offersCharging, offersSwap, withinOpeningHours } from "../availability";
 import {
   MAX_UNUSED_RESERVATIONS_PER_DAY,
@@ -8222,6 +8223,123 @@ export class DemoBackend implements Backend {
     this.save({ ...state, chargeCards: (state.chargeCards ?? seedChargeCards()).filter((c) => c.idTag !== idTag) });
   }
 
+
+  // Share is not simulated in the demo: the module stays off there (demoFeatures), so the app never calls these.
+
+  async shareOverview(): Promise<ShareOverview> {
+    return { stations: [], tariffs: [] };
+  }
+
+  private shareOff(): never {
+    throw new BackendError("unknown", "not_found");
+  }
+
+  async shareMe(): Promise<ShareMe> {
+    return this.shareOff();
+  }
+
+  async myShareRides(): Promise<ShareRide[]> {
+    return [];
+  }
+
+  async uploadShareDocument(): Promise<void> {
+    this.shareOff();
+  }
+
+  async reserveShare(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async shareRideAction(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async endShareRide(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async reportSharePosition(): Promise<void> {}
+
+  async reportShareProblem(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async payShareWallet(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async payShareMobile(): Promise<string> {
+    return this.shareOff();
+  }
+
+  async stationShare(): Promise<StationShare> {
+    return this.shareOff();
+  }
+
+  async setStationShareVehicle(): Promise<void> {
+    this.shareOff();
+  }
+
+  async payShareCash(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async adminShare(): Promise<AdminShare> {
+    this.requireAdmin(this.load());
+    return { enabled: false, simulated: true, vehicles: [], stations: [], tariffs: [], rides: [], verifications: [], incidents: [] };
+  }
+
+  async setShareEnabled(): Promise<void> {
+    throw new BackendError("unknown", "Share is not available in the demo");
+  }
+
+  async saveShareVehicle(): Promise<void> {
+    this.shareOff();
+  }
+
+  async deleteShareVehicle(): Promise<void> {
+    this.shareOff();
+  }
+
+  async setShareVehicleState(): Promise<void> {
+    this.shareOff();
+  }
+
+  async shareVehicleCommand(): Promise<void> {
+    this.shareOff();
+  }
+
+  async saveShareStation(): Promise<void> {
+    this.shareOff();
+  }
+
+  async saveShareTariff(): Promise<void> {
+    this.shareOff();
+  }
+
+  async decideShareVerification(): Promise<void> {
+    this.shareOff();
+  }
+
+  async adminEndShareRide(): Promise<void> {
+    this.shareOff();
+  }
+
+  async waiveShareRide(): Promise<void> {
+    this.shareOff();
+  }
+
+  async shareRideTrack(): Promise<ShareTrackPoint[]> {
+    return [];
+  }
+
+  async resolveShareIncident(): Promise<void> {
+    this.shareOff();
+  }
+
+  async shareFileUrl(): Promise<string> {
+    return this.shareOff();
+  }
 }
 
 interface DemoChargeCard {

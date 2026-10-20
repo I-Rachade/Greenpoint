@@ -41,6 +41,25 @@ export interface Env {
   XINGKE_API_TOKEN?: string;
   /** Credential the Xingke platform sends with its callbacks to /api/devices/xingke (secret). */
   XINGKE_CALLBACK_TOKEN?: string;
+  /** "tutrack" switches the Share trackers from the simulation to Tutrack (needs both TUTRACK_ACCESS values), see docs/SHARE.md. */
+  SHARE_TRACKER_PROVIDER?: string;
+  /** Tutrack open API access key (secret). */
+  TUTRACK_ACCESS_KEY?: string;
+  /** Tutrack open API access secret (secret). */
+  TUTRACK_ACCESS_SECRET?: string;
+  /** Tutrack API address; default https://openapi-ent.tqiot.com. */
+  TUTRACK_BASE_URL?: string;
+  /** Tutrack MQTT push: host (default pub.ent.tqiot.com), port (default 2883), "1" for TLS. */
+  TUTRACK_MQTT_HOST?: string;
+  TUTRACK_MQTT_PORT?: string;
+  TUTRACK_MQTT_TLS?: string;
+  /** Tutrack MQTT user name and password (secret), from Tutrack. */
+  TUTRACK_MQTT_USER?: string;
+  TUTRACK_MQTT_PASSWORD?: string;
+  /** Our Tutrack enterprise id: the push topic is server/ent/<id>. */
+  TUTRACK_ENT_ID?: string;
+  /** The one Durable Object that holds the Tutrack MQTT subscription (worker/tutrack-bridge.ts). */
+  TUTRACK?: DurableObjectNamespace;
   /** One Durable Object per OCPP charge point, holding its WebSocket (wrangler.jsonc, worker/ocpp.ts). */
   OCPP?: DurableObjectNamespace;
 }

@@ -60,7 +60,7 @@ function setup() {
 const ADMIN: Profile = { id: "admin", phone: "+22890000001", email: null, fullName: "Admin", role: "admin" };
 
 /** What the full version adds to the parcel and driver switches. */
-const FULL = { wallet: true, evChargers: true, lite: false };
+const FULL = { wallet: true, evChargers: true, share: false, lite: false };
 
 const get = (env: Env, path: string) => handleApi(new Request(`https://app.poinderecharge.com${path}`), env);
 
@@ -116,7 +116,7 @@ describe("Lite version switch", () => {
     await setDriversEnabled(env, ADMIN, true);
     await setLiteEnabled(env, ADMIN, true);
 
-    const lite = { parcels: false, drivers: false, wallet: true, evChargers: false, lite: true };
+    const lite = { parcels: false, drivers: false, wallet: true, evChargers: false, share: false, lite: true };
     expect(await getFeatures(env)).toEqual(lite);
     expect(await (await get(env, "/api/features")).json()).toEqual(lite);
     expect(await driversEnabled(env.DB)).toBe(false);

@@ -26,8 +26,17 @@
     }
   ],
   // Each OCPP charge point keeps a WebSocket to its own Durable Object (worker/ocpp.ts).
-  "durable_objects": { "bindings": [{ "name": "OCPP", "class_name": "OcppConnection" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OcppConnection"] }],
+  // One more holds the Tutrack MQTT subscription of the Share trackers (worker/tutrack-bridge.ts).
+  "durable_objects": {
+    "bindings": [
+      { "name": "OCPP", "class_name": "OcppConnection" },
+      { "name": "TUTRACK", "class_name": "TutrackBridge" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["OcppConnection"] },
+    { "tag": "v2", "new_sqlite_classes": ["TutrackBridge"] }
+  ],
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "poinderecharge-media" }],
   // Login codes by e-mail through Cloudflare Email Service. The domain must be
   // onboarded under Email Service > Email Sending (see docs/DEPLOYMENT.md).
