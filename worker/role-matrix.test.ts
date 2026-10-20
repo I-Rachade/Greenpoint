@@ -121,7 +121,6 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/admin/wallet/adjust": ADMIN,
   "POST /api/admin/wallet/freeze": ADMIN,
   "GET /api/payments/mine": CUSTOMER,
-  "POST /api/payments": CUSTOMER,
   "POST /api/payments/:id/refresh": CUSTOMER,
   "GET /api/greenpoint": CUSTOMER,
   "GET /api/greenpoint/total": ALL,
