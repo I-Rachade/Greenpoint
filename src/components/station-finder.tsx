@@ -55,6 +55,8 @@ export function StationFinder() {
   const { data: stations, error, reload } = useLiveQuery(() => backend.listStations());
   // Workshops only add markers; without them the map works as before.
   const { data: workshops } = useLiveQuery(() => backend.listRepairCenters().catch(() => []));
+  // Share vehicles parked at their stations (src/lib/share.ts), only while the module is on.
+  const { data: share } = useLiveQuery(() => (features.share ? backend.shareOverview().then((o) => o.stations).catch(() => []) : Promise.resolve([])), String(features.share));
   const [filter, setFilter] = useState<StationFilter>(DEFAULT_FILTER);
   const [, setBrandPref] = useBrandPref();
   const [query, setQuery] = useState("");
@@ -179,6 +181,7 @@ export function StationFinder() {
         <StationMap
           stations={shown.map((r) => r.station)}
           workshops={workshops ?? []}
+          share={share ?? []}
           position={position}
           selectedId={selectedId}
           onSelect={setSelectedId}

@@ -430,11 +430,18 @@ async function verification(db: D1Database, userId: string): Promise<Verificatio
 export async function shareMe(c: ShareCtx): Promise<ShareMe> {
   const user = await shareCustomer(c);
   await expireReservations(c.db);
-  const [v, open, unpaid, wallet] = await Promise.all([
+  const [v, open, unpaid, wallet, pending] = await Promise.all([
     verification(c.db, user.id),
     c.db.prepare(`${RIDE_SELECT} where r.user_id = ? and r.status in ('reserved', 'riding', 'paused')`).bind(user.id).first<RideRow>(),
     c.db.prepare(`${RIDE_SELECT} where r.user_id = ? and r.payment_status = 'unpaid' order by r.ended_at`).bind(user.id).all<RideRow>(),
     walletBalance(c.env, user),
+    c.db
+      .prepare(
+        `select p.id, p.share_ride_id from payments p join share_rides r on r.id = p.share_ride_id
+          where r.user_id = ? and r.payment_status = 'unpaid' and p.status = 'pending'`,
+      )
+      .bind(user.id)
+      .all<{ id: string; share_ride_id: string }>(),
   ]);
   return {
     verification: v?.status ?? "none",
@@ -445,6 +452,7 @@ export async function shareMe(c: ShareCtx): Promise<ShareMe> {
     simulated: tracker(c.env).name === "simulated",
     payOptions: { mobile: mobilePaymentOffered(c.env, user), wallet: wallet !== null },
     walletBalanceXof: wallet,
+    pendingPayments: Object.fromEntries(pending.results.map((p) => [p.share_ride_id, p.id])),
   };
 }
 
@@ -833,7 +841,7 @@ export async function stationShare(c: ShareCtx, stationId: string): Promise<Stat
   await requireShare(c.db);
   await expireReservations(c.db);
   const [settings, vehicles, incoming, unpaid] = await Promise.all([
-    c.db.prepare("select helmets from share_stations where station_id = ?").bind(stationId).first<{ helmets: number }>(),
+    c.db.prepare("select enabled, helmets from share_stations where station_id = ?").bind(stationId).first<{ enabled: number; helmets: number }>(),
     c.db.prepare("select * from share_vehicles where station_id = ? order by name").bind(stationId).all<VehicleRow>(),
     c.db
       .prepare(
@@ -845,6 +853,7 @@ export async function stationShare(c: ShareCtx, stationId: string): Promise<Stat
     c.db.prepare(`${RIDE_SELECT} where r.end_station_id = ? and r.payment_status = 'unpaid' order by r.ended_at desc`).bind(stationId).all<RideRow>(),
   ]);
   return {
+    enabled: !!settings?.enabled,
     helmets: settings?.helmets ?? 0,
     vehicles: vehicles.results.map(toVehicle),
     incoming: incoming.results.map((r) => toRide(r)),

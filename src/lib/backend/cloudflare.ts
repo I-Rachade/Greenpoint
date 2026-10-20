@@ -1,3 +1,17 @@
+import type {
+  AdminShare,
+  ShareDocument,
+  ShareMe,
+  ShareOverview,
+  ShareRide,
+  ShareStationInput,
+  ShareTariffInput,
+  ShareTrackPoint,
+  ShareVehicleInput,
+  ShareVehicleKind,
+  ShareVehicleStatus,
+  StationShare,
+} from "../share";
 import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "../batteries";
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
 import type { AdminCharging, ChargeOutletInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
@@ -1532,4 +1546,132 @@ export class CloudflareBackend implements Backend {
     return this.call<CounterCard>("GET", `/api/stations/${encodeURIComponent(stationId)}/charge-cards/${encodeURIComponent(idTag)}`);
   }
 
+  // Share --------------------------------------------------------------------------
+
+  shareOverview() {
+    return this.call<ShareOverview>("GET", "/api/share");
+  }
+
+  shareMe() {
+    return this.call<ShareMe>("GET", "/api/share/me");
+  }
+
+  myShareRides() {
+    return this.call<ShareRide[]>("GET", "/api/share/rides/mine");
+  }
+
+  uploadShareDocument(kind: ShareDocument, image: Blob) {
+    return this.act("POST", `/api/share/documents/${kind}`, image);
+  }
+
+  private async shareRide(path: string, body?: unknown) {
+    const ride = await this.call<ShareRide>("POST", `/api/share/rides${path}`, body ?? {});
+    this.changed();
+    return ride;
+  }
+
+  reserveShare(input: { vehicleId?: string; qrToken?: string; toStationId: string | null; helmet: boolean; start?: boolean }) {
+    return this.shareRide("", input);
+  }
+
+  shareRideAction(id: string, action: "start" | "cancel" | "pause" | "resume") {
+    return this.shareRide(`/${encodeURIComponent(id)}/${action}`);
+  }
+
+  endShareRide(id: string, position: LatLng | null) {
+    return this.shareRide(`/${encodeURIComponent(id)}/end`, position ?? {});
+  }
+
+  async reportSharePosition(id: string, position: LatLng) {
+    await this.call("POST", `/api/share/rides/${encodeURIComponent(id)}/position`, position);
+  }
+
+  reportShareProblem(id: string, note: string) {
+    return this.shareRide(`/${encodeURIComponent(id)}/problem`, { note });
+  }
+
+  payShareWallet(id: string, input: { pin: string; idempotencyKey: string }) {
+    return this.shareRide(`/${encodeURIComponent(id)}/pay/wallet`, input);
+  }
+
+  async payShareMobile(id: string, input: { network: "flooz" | "tmoney"; phone: string }) {
+    const p = await this.call<{ id: string }>("POST", `/api/share/rides/${encodeURIComponent(id)}/pay/mobile`, input);
+    this.changed();
+    return p.id;
+  }
+
+  stationShare(stationId: string) {
+    return this.call<StationShare>("GET", `/api/stations/${encodeURIComponent(stationId)}/share`);
+  }
+
+  setStationShareVehicle(stationId: string, vehicleId: string, status: ShareVehicleStatus) {
+    return this.act("POST", `/api/stations/${encodeURIComponent(stationId)}/share/vehicles/${encodeURIComponent(vehicleId)}/status`, { status });
+  }
+
+  async payShareCash(stationId: string, rideId: string) {
+    const ride = await this.call<ShareRide>("POST", `/api/stations/${encodeURIComponent(stationId)}/share/rides/${encodeURIComponent(rideId)}/cash`, {});
+    this.changed();
+    return ride;
+  }
+
+  adminShare() {
+    return this.call<AdminShare>("GET", "/api/admin/share");
+  }
+
+  setShareEnabled(enabled: boolean) {
+    return this.act("POST", "/api/admin/features/share", { enabled });
+  }
+
+  saveShareVehicle(id: string | null, input: ShareVehicleInput) {
+    return this.act("POST", "/api/admin/share/vehicles", { id, input });
+  }
+
+  deleteShareVehicle(id: string) {
+    return this.act("DELETE", `/api/admin/share/vehicles/${encodeURIComponent(id)}`);
+  }
+
+  setShareVehicleState(id: string, status: ShareVehicleStatus, stationId: string | null) {
+    return this.act("POST", `/api/admin/share/vehicles/${encodeURIComponent(id)}/state`, { status, stationId });
+  }
+
+  shareVehicleCommand(id: string, action: "unlock" | "lock" | "locate") {
+    return this.act("POST", `/api/admin/share/vehicles/${encodeURIComponent(id)}/command`, { action });
+  }
+
+  saveShareStation(stationId: string, input: ShareStationInput) {
+    return this.act("POST", `/api/admin/share/stations/${encodeURIComponent(stationId)}`, input);
+  }
+
+  saveShareTariff(kind: ShareVehicleKind, input: ShareTariffInput) {
+    return this.act("POST", `/api/admin/share/tariffs/${kind}`, input);
+  }
+
+  decideShareVerification(userId: string, approve: boolean, reason: string) {
+    return this.act("POST", `/api/admin/share/verifications/${encodeURIComponent(userId)}`, { approve, reason });
+  }
+
+  adminEndShareRide(id: string, stationId: string | null, wrongDrop: boolean) {
+    return this.act("POST", `/api/admin/share/rides/${encodeURIComponent(id)}/end`, { stationId, wrongDrop });
+  }
+
+  waiveShareRide(id: string) {
+    return this.act("POST", `/api/admin/share/rides/${encodeURIComponent(id)}/waive`);
+  }
+
+  shareRideTrack(id: string) {
+    return this.call<ShareTrackPoint[]>("GET", `/api/admin/share/rides/${encodeURIComponent(id)}/track`);
+  }
+
+  resolveShareIncident(id: string, resolution: string) {
+    return this.act("POST", `/api/admin/share/incidents/${encodeURIComponent(id)}/resolve`, { resolution });
+  }
+
+  /** Private photos need the session, like the drivers' (driverFileUrl). */
+  async shareFileUrl(key: string) {
+    const headers: Record<string, string> = {};
+    if (this.token) headers.Authorization = `Bearer ${this.token}`;
+    const res = await fetch(`${this.apiBase}/api/admin/share-files/${key}`, { headers }).catch(() => null);
+    if (!res?.ok) throw new BackendError("forbidden");
+    return URL.createObjectURL(await res.blob());
+  }
 }

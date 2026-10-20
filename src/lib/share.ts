@@ -132,6 +132,8 @@ export interface ShareMe {
   payOptions: { mobile: boolean; wallet: boolean };
   /** Green Credit balance, null without access to Green Credit. */
   walletBalanceXof: number | null;
+  /** Flooz/T-Money payments waiting for the customer's confirmation, per ride. */
+  pendingPayments: Record<string, string>;
 }
 
 /** GET /api/share: public overview for the map and the Share tab. */
@@ -143,6 +145,8 @@ export interface ShareOverview {
 // Station staff ----------------------------------------------------------------------
 
 export interface StationShare {
+  /** The station takes Share vehicles (backoffice). */
+  enabled: boolean;
   helmets: number;
   vehicles: ShareVehicle[];
   /** Rides on the road that were planned to end here, and reservations of vehicles parked here. */

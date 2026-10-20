@@ -42,6 +42,8 @@ export const ADMIN_NAV: { group: GroupKey; links: { href: string; key: NavKey }[
       { href: "/admin", key: "overview" },
       { href: "/admin/stations", key: "stations" },
       { href: "/admin/batteries", key: "batteries" },
+      // Renting e-motorbikes from station to station (src/lib/share.ts).
+      { href: "/admin/share", key: "share" },
       // Live queue, settlement and statistics of every station (the owners' backoffice; admin all).
       { href: "/exploitant", key: "stationBackoffice" },
       { href: "/admin/activity", key: "activity" },
@@ -92,6 +94,7 @@ const NAV_ICON: Record<NavKey, ComponentType<SVGProps<SVGSVGElement> & { size?: 
   overview: GridIcon,
   stations: BoltIcon,
   batteries: BatteryIcon,
+  share: ScooterIcon,
   stationBackoffice: StoreIcon,
   activity: HistoryIcon,
   reservations: TicketIcon,
