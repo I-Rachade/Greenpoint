@@ -1,0 +1,98 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # publish the test APK as a release download
+    env:
+      # The app talks to the live Worker API (the same accounts and stations as the web app).
+      NEXT_PUBLIC_BACKEND: cloudflare
+      NEXT_PUBLIC_API_URL: https://app.poinderecharge.com
+      # android/app/google-services.json is committed, so the app may register for push.
+      NEXT_PUBLIC_PUSH: "1"
+      ANDROID_VERSION_CODE: ${{ github.run_number }}
+      ANDROID_VERSION_NAME: 2.0.${{ github.run_number }}
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync android
+
+      # Test build anyone can install on an Android phone (allow "unknown sources").
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: poinderecharge-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      # Same APK as a direct link for phones (no zip, no GitHub login):
+      # https://github.com/I-Rachade/Greenpoint/releases/download/android-test/poinderecharge-test.apk
+      - name: Publish test APK
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: Neueste Test-Version der Android-App, verbunden mit app.poinderecharge.com. Wird bei jedem Build ersetzt.
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/poinderecharge-test.apk"
+          if ! gh release view android-test --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create android-test --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+              --title "Android Test-APK" --notes "$NOTES"
+          else
+            gh release edit android-test --repo "$GITHUB_REPOSITORY" --notes "$NOTES"
+          fi
+          gh release upload android-test "$RUNNER_TEMP/poinderecharge-test.apk" --repo "$GITHUB_REPOSITORY" --clobber
+
+      # Signed bundle for Google Play, only once the upload key is stored as GitHub secrets.
+      - name: Build signed app bundle
+        if: ${{ env.HAS_KEYSTORE == 'true' }}
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          # A store build must talk to the real backend, never ship the demo (it offers staff/admin logins).
+          if [ "$NEXT_PUBLIC_BACKEND" != "cloudflare" ]; then
+            echo "::error::Store builds must use the Cloudflare backend."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/upload.jks" ./gradlew bundleRelease --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('android/app/build/outputs/bundle/release/app-release.aab') != '' }}
+        with:
+          name: poinderecharge-release-aab
+          path: android/app/build/outputs/bundle/release/app-release.aab
+      # The same bundle in a draft release, visible only to repository members:
+      # Releases > "Google Play Upload" > poinderecharge-<version>.aab, then upload it in the Play Console.
+      - name: Publish app bundle (draft release)
+        if: ${{ hashFiles('android/app/build/outputs/bundle/release/app-release.aab') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          AAB="$RUNNER_TEMP/poinderecharge-$ANDROID_VERSION_NAME.aab"
+          cp android/app/build/outputs/bundle/release/app-release.aab "$AAB"
+          if ! gh release view play-upload --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create play-upload --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+              --title "Google Play Upload" --notes "Signiertes App Bundle für die Play Console (nur für Mitglieder sichtbar)."
+          fi
+          gh release upload play-upload "$AAB" --repo "$GITHUB_REPOSITORY" --clobber

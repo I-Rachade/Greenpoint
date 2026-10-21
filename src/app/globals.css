@@ -1,0 +1,248 @@
+@import "tailwindcss";
+
+/* Dark mode follows the "dark" class on <html>, set from Settings (system, light or dark). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Design tokens from design/tokens.css (colours, fonts, radii, motion).
+   Plain variables on :root so inline styles (map markers) can read them too; .dark swaps the
+   theme-dependent ones. Tailwind utilities (bg-gp-surface, text-gp-muted…) follow automatically. */
+:root {
+  --background: #f4f6f3;
+  --foreground: #0b3b2e;
+  --surface: #ffffff;
+  --gp-muted: #5b6b63;
+  --gp-border: #dde3de;
+
+  /* Status colours: the same in light and dark. */
+  --gp-green: #1db954;
+  --gp-green-dark: #12823b;
+  --gp-forest: #0b3b2e;
+  --gp-yellow: #ffc93c;
+  --gp-low: #f59e0b;
+  --gp-closed: #d93b3b;
+  --gp-info: #2f80ed;
+  --gp-full: #5b6b63;
+  --gp-unknown: #d4d4d8;
+
+  /* Motion: durations for small (160), standard (240) and large (360) movements. */
+  --gp-duration-fast: 160ms;
+  --gp-duration: 240ms;
+  --gp-duration-slow: 360ms;
+}
+.dark {
+  --background: #071f18;
+  --foreground: #e6f0ea;
+  --surface: #0b3b2e;
+  --gp-muted: #9db5aa;
+  --gp-border: #1e4d3f;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+  --font-heading: var(--font-poppins);
+
+  /* Never put white text on gp-green; use gp-green-dark or gp-forest for that. */
+  --color-gp-green: var(--gp-green);
+  --color-gp-green-dark: var(--gp-green-dark);
+  --color-gp-forest: var(--gp-forest);
+  --color-gp-yellow: var(--gp-yellow);
+  --color-gp-muted: var(--gp-muted);
+  --color-gp-border: var(--gp-border);
+  --color-gp-low: var(--gp-low);
+  --color-gp-closed: var(--gp-closed);
+  --color-gp-info: var(--gp-info);
+  --color-gp-surface: var(--surface);
+
+  /* rounded-gp (14px), rounded-gp-sm / -md / -lg. */
+  --radius-gp: 14px;
+  --radius-gp-sm: 8px;
+  --radius-gp-md: 14px;
+  --radius-gp-lg: 20px;
+
+  /* ease-gp-out for most movement, ease-gp-spring for a small overshoot (pops, bumps). */
+  --ease-gp-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-gp-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Keyboard focus ring. In the base layer so a field's own focus style (outline-none, ring-…) wins. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--gp-green-dark);
+    outline-offset: 2px;
+  }
+  .dark :focus-visible {
+    outline-color: var(--gp-green);
+  }
+}
+
+/* Bottom tab bar on phones: pages leave room for it. */
+@media (max-width: 767px) {
+  body.has-tabs main {
+    padding-bottom: calc(64px + env(safe-area-inset-bottom));
+  }
+}
+
+@keyframes gp-fade-out {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+@keyframes gp-pop {
+  from {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+}
+@keyframes gp-slide-up {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+}
+.animate-gp-pop {
+  animation: gp-pop 0.5s ease-out both;
+}
+.animate-gp-slide-up {
+  animation: gp-slide-up 0.35s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-gp-pop,
+  .animate-gp-slide-up {
+    animation: none;
+  }
+}
+
+/* Shared motion (src/components/ui.tsx uses these). */
+@keyframes gp-bump {
+  40% {
+    transform: scale(1.14);
+  }
+}
+@keyframes gp-shake {
+  20%,
+  60% {
+    transform: translateX(-6px);
+  }
+  40%,
+  80% {
+    transform: translateX(6px);
+  }
+}
+@keyframes gp-check {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes gp-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes gp-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+/* A number that just changed pops once (re-trigger by changing the element's key). */
+.animate-gp-bump {
+  display: inline-block;
+  animation: gp-bump var(--gp-duration) var(--ease-gp-spring);
+}
+/* Wrong code or refused action. */
+.animate-gp-shake {
+  animation: gp-shake var(--gp-duration-slow) var(--ease-gp-out);
+}
+/* On an SVG path with pathLength="1": the stroke draws itself. */
+.animate-gp-check {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: gp-check var(--gp-duration-slow) var(--ease-gp-out) 0.12s forwards;
+}
+.animate-gp-fade-in {
+  animation: gp-fade-in var(--gp-duration) var(--ease-gp-out) both;
+}
+/* Placeholder block while content loads. */
+.gp-skeleton {
+  background: linear-gradient(90deg, var(--gp-border) 25%, color-mix(in srgb, var(--gp-border) 45%, transparent) 50%, var(--gp-border) 75%) 0 0 / 200% 100%;
+  animation: gp-shimmer 1.4s linear infinite;
+}
+/* Splash screen fade (src/components/splash.tsx). */
+.gp-splash {
+  animation: gp-fade-out 0.35s ease-in 1.25s forwards;
+}
+
+/* Reduced motion: everything settles at once (keeps end states, so fades still end hidden). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .gp-skeleton {
+    animation: none !important;
+  }
+}
+
+body {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-inter), "Segoe UI", Roboto, sans-serif;
+}
+
+h1,
+h2,
+h3,
+button {
+  font-family: var(--font-poppins), "Segoe UI", Roboto, sans-serif;
+}
+
+/* Printing a parcel drop-off slip prints only the slip image, at receipt width. */
+@media print {
+  body:has(.print-slip) * {
+    visibility: hidden;
+  }
+  body:has(.print-slip) .print-slip {
+    visibility: visible;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 72mm;
+    border: 0;
+  }
+}
+
+/* Bottom sheet for confirmations (src/components/confirm-sheet.tsx). */
+@keyframes gp-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes gp-scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+.gp-sheet[open] {
+  animation: gp-sheet-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.gp-sheet[open]::backdrop {
+  background: rgb(4 20 15 / 0.55);
+  animation: gp-scrim-in 0.16s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gp-sheet[open],
+  .gp-sheet[open]::backdrop {
+    animation: none;
+  }
+}

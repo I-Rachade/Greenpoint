@@ -1,0 +1,23 @@
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
+
+const eslintConfig = defineConfig([
+  ...nextVitals,
+  ...nextTs,
+  // Override default ignores of eslint-config-next.
+  globalIgnores([
+    // Default ignores of eslint-config-next:
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+    // Native app projects (Capacitor), including the web files copied into them.
+    "android/**",
+    "ios/**",
+    // Local Cloudflare Worker state and bundles.
+    ".wrangler/**",
+  ]),
+]);
+
+export default eslintConfig;
