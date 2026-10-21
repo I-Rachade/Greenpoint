@@ -559,7 +559,11 @@ export interface Backend {
   leaveDriverQueue(): Promise<void>;
   /** The driver app's position while on duty (driver phase 2); kept: false when off duty. */
   /** Signs this phone up for push notices of the signed-in account (planung/fahrer.md phase 2). */
-  registerPushToken(token: string, platform: "android" | "ios"): Promise<void>;
+  registerPushToken(token: string, platform: "android" | "ios" | "web"): Promise<void>;
+  /** This phone or browser gets no more notices (the token it registered). */
+  removePushToken(token: string): Promise<void>;
+  /** The key a browser subscribes to push notices with (web app, worker/web-push.ts). */
+  webPushKey(): Promise<{ publicKey: string }>;
   reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }): Promise<{ kept: boolean }>;
   acceptJob(id: string): Promise<void>;
   /** The trip goes to the next in line; the driver goes to the back. */

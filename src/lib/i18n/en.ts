@@ -3019,6 +3019,10 @@ export const en: Dictionary = {
       about: "About",
       version: "Version",
       legal: "Legal information",
+      pushThisDevice: "Notifications on this device",
+      pushOn: "On",
+      pushOff: "Off",
+      pushBlocked: "Blocked in the browser",
     },
   },
   stationLook: {
