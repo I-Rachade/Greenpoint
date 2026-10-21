@@ -13,6 +13,7 @@ import {
   type ChargeTariff,
   type StationCharging,
   contactFromCode,
+  newBoxCode,
   validBoxToken,
 } from "../src/lib/charging";
 import { parseContact } from "../src/lib/contact";
@@ -863,12 +864,12 @@ async function selfCharge(env: Env, user: Profile, p: QrPointRow, pin: unknown):
   });
 }
 
-/** The outlets of the box behind a QR token (devices.qr_token), by outlet number; unknown or inactive: 404. */
+/** The outlets of the box behind a QR code (devices.qr_code, or qr_token on older stickers), by outlet number; unknown or inactive: 404. */
 async function loadBoxPoints(db: D1Database, token: string): Promise<QrPointRow[]> {
   if (!validBoxToken(token)) throw new ApiError("not_found", 404);
   const { results } = await db
-    .prepare(`${QR_POINT_SQL} where d.qr_token = ? and p.station_id = d.station_id and s.is_active = 1 and p.outlet is not null order by p.outlet`)
-    .bind(token)
+    .prepare(`${QR_POINT_SQL} where (d.qr_code = ? or d.qr_token = ?) and p.station_id = d.station_id and s.is_active = 1 and p.outlet is not null order by p.outlet`)
+    .bind(token, token)
     .all<QrPointRow>();
   if (!results.length) throw new ApiError("not_found", 404);
   return results;
@@ -928,19 +929,20 @@ export async function startOutletCharge(env: Env, user: Profile, token: string, 
   return selfCharge(env, user, p, pin);
 }
 
-/** POST /api/admin/devices/:id/qr: a new QR token for the box; the old sticker stops working. */
-export async function renewOutletQr(env: Env, admin: Profile, externalId: string): Promise<{ qrToken: string }> {
+/** POST /api/admin/devices/:id/qr: a new QR code for the box; the old stickers stop working. */
+export async function renewOutletQr(env: Env, admin: Profile, externalId: string): Promise<{ qrToken: string; qrCode: string }> {
   const db = env.DB;
   const d = await db.prepare("select station_id from devices where external_id = ?").bind(externalId).first<{ station_id: string }>();
   if (!d) throw new ApiError("not_found", 404);
   const qrToken = newBoxToken();
+  const qrCode = newBoxCode();
   await db.batch([
-    db.prepare("update devices set qr_token = ? where external_id = ?").bind(qrToken, externalId),
+    db.prepare("update devices set qr_token = ?, qr_code = ? where external_id = ?").bind(qrToken, qrCode, externalId),
     db
       .prepare("insert into audit_log (at, actor, table_name, action, row_id, station_id, changes) values (?, ?, 'devices', 'update', ?, ?, ?)")
       .bind(nowIso(), admin.id, externalId, d.station_id, JSON.stringify({ qr_token: "renewed" })),
   ]);
-  return { qrToken };
+  return { qrToken, qrCode };
 }
 
 /** A stopped charge that took no energy has nothing to pay: it is closed, not held against the customer. */

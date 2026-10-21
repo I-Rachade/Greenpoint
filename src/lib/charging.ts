@@ -81,9 +81,10 @@ export interface ChargeSession {
   creditLimitXof?: number;
 }
 
-// Charging by QR code: one sticker per socket box links to /recharge?o=<token>; the customer
-// picks a free outlet of the box and starts the charge in the app where an admin allowed it
-// (charging_points.qr_start). The older per-outlet codes (/recharge?p=…) no longer work.
+// Charging by QR code: one sticker per socket box links to /q/<code> (the short link, 0061) or,
+// on stickers printed before it, /recharge?o=<token>; the customer picks a free outlet of the box
+// and starts the charge in the app where an admin allowed it (charging_points.qr_start). The
+// older per-outlet codes (/recharge?p=…) no longer work.
 
 /** What an outlet shows on the box's page: "free" can be started now, the rest say why not. */
 export type ChargePointState = "free" | "busy" | "reserved" | "offline" | "fault" | "disabled";
@@ -114,29 +115,62 @@ export interface ChargeOutletInfo {
 }
 
 const POINT_PATH = "/recharge";
+const SHORT_PATH = "/q/";
 const BOX_TOKEN = /^[0-9a-f]{32}$/;
+// The short code: 8 characters of 0-9a-z (41 random bits), lower case so no scanner or keyboard
+// changes it. A link with one more character opens one outlet: 1-9, then a-g for 10 to 16.
+const CODE_CHARS = "0123456789abcdefghijklmnopqrstuvwxyz";
+const BOX_CODE = /^[0-9a-z]{8}$/;
+const SHORT_LINK = /^([0-9a-z]{8})([1-9a-g])?$/;
+const OUTLET_CHARS = "123456789abcdefg";
 
-/** The link printed as the box's QR code (devices.qr_token, worker/migrations/0043_device_qr.sql). */
-export function boxQrUrl(origin: string, token: string): string {
-  return `${origin.replace(/\/$/, "")}${POINT_PATH}?o=${encodeURIComponent(token)}`;
-}
-
-/** The link printed on one outlet of the box: the box's code plus the outlet number, which the picker selects. */
-export function socketQrUrl(origin: string, token: string, outlet: number): string {
-  return `${boxQrUrl(origin, token)}&s=${outlet}`;
+/** A new short code for a box (devices.qr_code, worker/migrations/0061_device_qr_code.sql). */
+export function newBoxCode(): string {
+  return [...crypto.getRandomValues(new Uint8Array(8))].map((b) => CODE_CHARS[b % CODE_CHARS.length]).join("");
 }
 
 /**
- * The box in a scanned code (our link), with the outlet when it is one outlet's code; null for
- * any other text, older per-outlet codes (?p=) included. The outlet only preselects: the server
- * checks it like any pick.
+ * The link printed as the box's QR code. With its short code (devices.qr_code) it is
+ * https://app.poinderecharge.com/q/<code>, 41 characters: a version 3 QR code (29×29) instead of
+ * version 5 (37×37) for the long /recharge?o=<token>, so cheap phones read it from further away.
+ * The Worker answers /q/… with a redirect, so where it leads can change without new stickers.
+ */
+export function boxQrUrl(origin: string, code: string): string {
+  const base = origin.replace(/\/$/, "");
+  return BOX_CODE.test(code) ? `${base}${SHORT_PATH}${code}` : `${base}${POINT_PATH}?o=${encodeURIComponent(code)}`;
+}
+
+/** The link printed on one outlet of the box: the box's code plus the outlet, which the picker selects. */
+export function socketQrUrl(origin: string, code: string, outlet: number): string {
+  const short = outlet >= 1 && outlet <= OUTLET_CHARS.length ? OUTLET_CHARS[outlet - 1] : null;
+  return BOX_CODE.test(code) && short ? `${boxQrUrl(origin, code)}${short}` : `${boxQrUrl(origin, code)}&s=${outlet}`;
+}
+
+/** The box and outlet in the part of a short link after /q/; null when it is not one. */
+export function shortLinkTarget(path: string): { token: string; outlet: number | null } | null {
+  const m = SHORT_LINK.exec(path.toLowerCase());
+  return m ? { token: m[1], outlet: m[2] ? OUTLET_CHARS.indexOf(m[2]) + 1 : null } : null;
+}
+
+/** Where the Worker sends a scanned short link: the box's page with its outlet selected. */
+export function shortLinkRedirect(path: string): string | null {
+  const target = shortLinkTarget(path);
+  return target && `${POINT_PATH}?o=${target.token}${target.outlet ? `&s=${target.outlet}` : ""}`;
+}
+
+/**
+ * The box in a scanned code (our link, short or long), with the outlet when it is one outlet's
+ * code; null for any other text, older per-outlet codes (?p=) included. The outlet only
+ * preselects: the server checks it like any pick.
  */
 export function boxFromCode(text: string): { token: string; outlet: number | null } | null {
   try {
     const url = new URL(text.trim());
+    const path = url.pathname.toLowerCase();
+    if (path.startsWith(SHORT_PATH)) return shortLinkTarget(path.slice(SHORT_PATH.length).replace(/\/$/, ""));
     if (url.pathname.replace(/\/$/, "") !== POINT_PATH) return null;
     const token = url.searchParams.get("o")?.toLowerCase();
-    if (!token || !BOX_TOKEN.test(token)) return null;
+    if (!token || !validBoxToken(token)) return null;
     return { token, outlet: outletParam(url.searchParams.get("s")) };
   } catch {
     return null;
@@ -148,9 +182,9 @@ export function outletParam(raw: string | null): number | null {
   return raw && /^([1-9]|1[0-6])$/.test(raw) ? Number(raw) : null;
 }
 
-/** A box token as typed in a link; anything else is not ours. */
+/** A box's short code or long token as typed in a link; anything else is not ours. */
 export function validBoxToken(token: string): boolean {
-  return BOX_TOKEN.test(token);
+  return BOX_TOKEN.test(token) || BOX_CODE.test(token);
 }
 
 /** Staff view of a station: the charges running or waiting for payment, and today's takings. */

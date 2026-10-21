@@ -29,6 +29,7 @@ import { ocppIdTag, ocppKey, remoteStartRequest, remoteStopRequest } from "../sr
 import { sendOcppCommand } from "./ocpp";
 import { earnStatement } from "./greenpoint";
 import { chargeReadingStatement, creditFollowUp, hasOpenCharge } from "./charging";
+import { newBoxCode } from "../src/lib/charging";
 
 // Connected sockets (e.g. LoRa). See docs/steckdosen-lora.md.
 
@@ -289,10 +290,10 @@ export async function createDevice(db: D1Database, input: DeviceInput, actor: st
   const statements = [
     db
       .prepare(
-        `insert into devices (external_id, station_id, vendor, model, link, outlets, vendor_ref, protocol, ocpp_key_hash, qr_token, created_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `insert into devices (external_id, station_id, vendor, model, link, outlets, vendor_ref, protocol, ocpp_key_hash, qr_token, qr_code, created_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(externalId, stationId, vendor, model, link, outlets, vendorRef, protocol, key && (await sha256(key)), newBoxToken(), now),
+      .bind(externalId, stationId, vendor, model, link, outlets, vendorRef, protocol, key && (await sha256(key)), newBoxToken(), newBoxCode(), now),
   ];
   for (let n = 1; n <= outlets; n++) {
     statements.push(
@@ -336,6 +337,7 @@ interface DeviceRow {
   created_at: string;
   partner_id: string | null;
   qr_token: string | null;
+  qr_code: string | null;
 }
 
 /** All sockets with their outlets, newest first. */
@@ -358,6 +360,7 @@ export async function listDevices(db: D1Database): Promise<Device[]> {
     createdAt: d.created_at,
     partnerId: d.partner_id ?? null,
     qrToken: d.qr_token ?? null,
+    qrCode: d.qr_code ?? null,
     points: all.filter((p) => p.deviceId === d.external_id).sort((a, b) => (a.outlet ?? 0) - (b.outlet ?? 0)),
   }));
 }
