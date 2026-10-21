@@ -12,6 +12,7 @@ import { runCashAlerts } from "./station-cash";
 import { ensureTutrackBridge } from "./tutrack-bridge";
 import { handleXingkeCallback } from "./xingke";
 import { CASH_DEADLINE_HOUR } from "../src/lib/station-cash";
+import { shortLinkRedirect } from "../src/lib/charging";
 
 // The Durable Object behind each OCPP charge point's WebSocket (wrangler.jsonc).
 export { OcppConnection } from "./ocpp";
@@ -37,6 +38,12 @@ const PARCEL_CHANGE = /^\/api\/(stations\/[\w-]+\/(parcels|bookings)|parcels|adm
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    // A socket's short QR link (src/lib/charging.ts boxQrUrl): a temporary redirect, so where it
+    // leads can change without new stickers.
+    if (url.pathname.startsWith("/q/")) {
+      const to = shortLinkRedirect(url.pathname.slice(3).replace(/\/$/, ""));
+      if (to) return Response.redirect(new URL(to, url).toString(), 302);
+    }
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     // A WebSocket for a charge point, not a browser call: no CORS.
     if (url.pathname.startsWith("/api/devices/ocpp")) {

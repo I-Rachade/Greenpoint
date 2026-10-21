@@ -72,6 +72,7 @@ import {
 import {
   chargePrice,
   contactFromCode,
+  newBoxCode,
   DEFAULT_CHARGE_TARIFF,
   DEFAULT_EV_TARIFF,
   validTariff,
@@ -727,9 +728,21 @@ function randomBoxToken(): string {
   return [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** A demo box's short QR code: fixed per device, like demoBoxToken. */
+function demoBoxCode(externalId: string): string {
+  let h = 0;
+  for (const c of externalId) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return (h.toString(36) + "00000000").slice(0, 8);
+}
+
 /** Saved demo states from before one QR code per box have no token. */
 function boxToken(d: Device): string {
   return d.qrToken ?? demoBoxToken(d.externalId);
+}
+
+/** Saved demo states from before short QR codes have none. */
+function boxCode(d: Device): string {
+  return d.qrCode ?? demoBoxCode(d.externalId);
 }
 
 /** The connected socket of the "Déckon" station, as a device. */
@@ -749,6 +762,7 @@ function seedDevices(): Device[] {
       createdAt: "2026-10-01T08:00:00.000Z",
       partnerId: null,
       qrToken: demoBoxToken(first.deviceId!),
+      qrCode: demoBoxCode(first.deviceId!),
       points: DEMO_CHARGING_POINTS,
     },
     ...(
@@ -771,6 +785,7 @@ function seedDevices(): Device[] {
       createdAt: "2026-10-01T08:00:00.000Z",
       partnerId: null,
       qrToken: demoBoxToken(externalId),
+      qrCode: demoBoxCode(externalId),
       points: demoSocketPoints(stationId, externalId, outlets, free),
     })),
     {
@@ -787,6 +802,7 @@ function seedDevices(): Device[] {
       createdAt: "2026-10-01T08:00:00.000Z",
       partnerId: null,
       qrToken: demoBoxToken(DEMO_EV_POINT.deviceId!),
+      qrCode: demoBoxCode(DEMO_EV_POINT.deviceId!),
       points: [DEMO_EV_POINT],
     },
   ];
@@ -3284,6 +3300,7 @@ export class DemoBackend implements Backend {
       ...d,
       partnerId: d.partnerId ?? null,
       qrToken: boxToken(d),
+      qrCode: boxCode(d),
       lastSeenAt: seen,
       points: d.points.map((p) => ({ ...p, lastSeenAt: seen })),
     }));
@@ -3311,6 +3328,7 @@ export class DemoBackend implements Backend {
       createdAt: new Date().toISOString(),
       partnerId: null,
       qrToken: randomBoxToken(),
+      qrCode: newBoxCode(),
       points: Array.from({ length: outlets }, (_, i) => ({
         id: `cp-${externalId}-${i + 1}`,
         stationId: input.stationId,
@@ -3367,8 +3385,9 @@ export class DemoBackend implements Backend {
     const all = state.devices ?? seedDevices();
     if (!all.some((d) => d.externalId === externalId)) throw new BackendError("unknown", "not_found");
     const qrToken = randomBoxToken();
-    this.save({ ...state, devices: all.map((d) => (d.externalId === externalId ? { ...d, qrToken } : d)) });
-    return qrToken;
+    const qrCode = newBoxCode();
+    this.save({ ...state, devices: all.map((d) => (d.externalId === externalId ? { ...d, qrToken, qrCode } : d)) });
+    return qrCode;
   }
 
   async setDevicePartner(externalId: string, partnerId: string | null) {
@@ -7929,7 +7948,7 @@ export class DemoBackend implements Backend {
   /** As outletInfo() in worker/charging.ts. */
   async chargeOutlet(token: string): Promise<ChargeOutletInfo> {
     const state = this.load();
-    const device = (state.devices ?? seedDevices()).find((d) => boxToken(d) === token);
+    const device = (state.devices ?? seedDevices()).find((d) => boxCode(d) === token || boxToken(d) === token);
     const station = device && state.stations.find((s) => s.id === device.stationId);
     if (!device || !station) throw new BackendError("unknown", "not_found");
     const me = state.profile?.id ?? null;

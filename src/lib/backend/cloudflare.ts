@@ -1489,8 +1489,8 @@ export class CloudflareBackend implements Backend {
   }
 
   async renewBoxQr(externalId: string) {
-    const { qrToken } = await this.call<{ qrToken: string }>("POST", `/api/admin/devices/${encodeURIComponent(externalId)}/qr`, {});
-    return qrToken;
+    const { qrCode } = await this.call<{ qrCode: string }>("POST", `/api/admin/devices/${encodeURIComponent(externalId)}/qr`, {});
+    return qrCode;
   }
 
   async stopSelfCharge(id: string) {
