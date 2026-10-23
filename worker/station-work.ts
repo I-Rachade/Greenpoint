@@ -545,6 +545,19 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     if (existing.station_id !== stationId) throw new ApiError("request_conflict", 409);
     return toSwap(existing);
   }
+  try {
+    return await bookSwap(c, stationId, input, actor);
+  } catch (err) {
+    // A copy of this request (a double tap, a retry) booked the swap meanwhile and used the code:
+    // answer with that swap, not with "code used", or staff would take the price again in cash.
+    const booked = await swapByRequest(c.db, input.requestId);
+    if (!booked) throw err;
+    if (booked.station_id !== stationId) throw new ApiError("request_conflict", 409);
+    return toSwap(booked);
+  }
+}
+
+async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: StationActor): Promise<SwapEntry> {
   const db = c.db;
   const type = input.customerType;
   const station = await stationInfo(db, stationId);
