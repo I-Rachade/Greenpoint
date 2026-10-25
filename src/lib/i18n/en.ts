@@ -2824,6 +2824,7 @@ export const en: Dictionary = {
     outside_share_zone: "Park the vehicle within the zone of a Share station to end the ride.",
     provider_unavailable: "The payment could not be started. Please try again shortly.",
     forbidden: "Not allowed.",
+    admin_access_required: "Admin accounts sign in through the back office only.",
     wallet_disabled: "Green Credit is not available yet.",
     wallet_frozen: "Your Green Credit is blocked. Please contact support.",
     insufficient_balance: "Not enough credit.",

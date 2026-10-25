@@ -1974,7 +1974,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/auth\/register$/,
     async (c) => {
       const body = await readJson<{ contact?: string; phone?: string; code: string; pin: string }>(c.request);
-      return register(c.env, body.contact ?? body.phone ?? "", body.code, body.pin);
+      return register(c.env, c.request, body.contact ?? body.phone ?? "", body.code, body.pin);
     },
   ],
   [
@@ -1982,7 +1982,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/auth\/register-fleet$/,
     async (c) => {
       const body = await readJson<{ contact?: string; code: string; pin: string; fleetName: string }>(c.request);
-      return registerFleetManager(c.env, body.contact ?? "", body.code, body.pin, body.fleetName);
+      return registerFleetManager(c.env, c.request, body.contact ?? "", body.code, body.pin, body.fleetName);
     },
   ],
   [
@@ -1990,7 +1990,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/auth\/register-merchant$/,
     async (c) => {
       const body = await readJson<{ contact?: string; code: string; pin: string; shop: MerchantShopInput }>(c.request);
-      return registerMerchant(c.env, body.contact ?? "", body.code, body.pin, body.shop);
+      return registerMerchant(c.env, c.request, body.contact ?? "", body.code, body.pin, body.shop);
     },
   ],
   [
@@ -1999,7 +1999,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     async (c) => {
       const body = await readJson<{ contact?: string; phone?: string; pin: string }>(c.request);
       await countIpRequest(c.db, c.request, "login");
-      return signIn(c.env, body.contact ?? body.phone ?? "", body.pin);
+      return signIn(c.env, c.request, body.contact ?? body.phone ?? "", body.pin);
     },
   ],
   [

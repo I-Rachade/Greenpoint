@@ -2,6 +2,31 @@
 
 Erreichbar unter `/admin`, nur für Nutzer mit Rolle `admin`. Alle Seiten aktualisieren sich live (bei jeder Status- oder Reservierungsänderung und alle 30 Sekunden).
 
+## Eigene Adresse: admin.poinderecharge.com (Cloudflare Access)
+
+Das Backoffice bekommt eine eigene Adresse, vor der **Cloudflare Access** steht: Erst nach der Anmeldung bei Access (E-Mail-Code und Fingerabdruck oder Face ID) lädt überhaupt eine Seite. Dahinter folgt wie bisher der Login mit Nummer und PIN.
+
+So hängt es zusammen:
+
+- **Worker `pointderecharge-admin`** (`wrangler.admin.jsonc`, Code `worker/admin-gateway.ts`): prüft bei jeder Anfrage den Ausweis von Access (Header `Cf-Access-Jwt-Assertion`, RS256-signiert, `worker/access.ts`), liefert die Seiten aus `out/` und gibt `/api/*` per Service Binding an `pointderecharge-app` weiter. Ohne `ACCESS_TEAM_DOMAIN` und `ACCESS_AUD` antwortet er nur mit 503.
+- **API** (`pointderecharge-app`): Ist dort `ADMIN_ACCESS_REQUIRED=1` gesetzt, bekommt ein Admin-Konto nur noch mit gültigem Access-Ausweis eine Sitzung, und eine bestehende Admin-Sitzung gilt nur bei Anfragen mit Ausweis. Eine gestohlene PIN oder ein abgefangener SMS-Code reichen dann nicht mehr; über `app.poinderecharge.com` und die Handy-Apps kommt kein Admin mehr hinein (Meldung `admin_access_required`). Kunden, Personal und alle anderen Rollen merken nichts davon.
+- Solange `ADMIN_ACCESS_REQUIRED` nicht gesetzt ist, ändert sich am bisherigen `/admin` nichts. So lässt sich die neue Adresse erst ausprobieren und dann scharf schalten.
+
+### Einrichten (einmalig, im Cloudflare-Dashboard)
+
+1. **Zero Trust aktivieren:** Dashboard > **Zero Trust**. Beim ersten Öffnen einen Team-Namen wählen (z. B. `poinderecharge`) und den **Free**-Plan (bis 50 Nutzer). Die Team-Domain ist dann `https://<team>.cloudflareaccess.com`.
+2. **Admin-Worker anlegen:** **Workers & Pages > Create > Import a repository**, dasselbe Repository, Production branch wie bei `pointderecharge-app`. Unter **Build**: Deploy command `npx wrangler deploy -c wrangler.admin.jsonc`, Variable `NODE_VERSION` = `22`. Der erste Deploy legt `admin.poinderecharge.com` an; die Seite antwortet bis Schritt 4 mit 503.
+3. **Access vor den Worker stellen:** **Workers & Pages > pointderecharge-admin > Domains** (bzw. **Settings > Domains & Routes**) > **Cloudflare Access** einschalten, für Produktion und Previews. Bei „Wer darf sich anmelden“ nur die eigene E-Mail-Adresse eintragen. Danach unter **Zero Trust > Access controls > Applications** die neue Anwendung öffnen und den **Application Audience (AUD) Tag** kopieren.
+4. **Werte eintragen**, jeweils unter **Settings > Variables and secrets** (Laufzeit, nicht Build):
+   - bei `pointderecharge-admin`: `ACCESS_TEAM_DOMAIN` = `https://<team>.cloudflareaccess.com`, `ACCESS_AUD` = der AUD-Tag
+   - bei `pointderecharge-app`: dieselben zwei Werte (noch **ohne** `ADMIN_ACCESS_REQUIRED`)
+5. **Fingerabdruck dazu (empfohlen):** **Zero Trust > Access controls > Access settings > Allow multi-factor authentication**, „Biometrics“ (und gern „Security key“) erlauben; in der Anwendung aus Schritt 3 MFA verlangen. Gerät anmelden unter `https://<team>.cloudflareaccess.com/AddMfaDevice`.
+6. **Turnstile:** Im Turnstile-Widget den Hostnamen `admin.poinderecharge.com` ergänzen, sonst schlägt der Login-Code dort fehl.
+7. **Testen:** `https://admin.poinderecharge.com` öffnen, bei Access anmelden, dann wie gewohnt mit Nummer und PIN. In einem privaten Fenster ohne Access-Anmeldung muss „Access denied“ bzw. die Access-Anmeldeseite kommen.
+8. **Scharf schalten** (erst wenn Schritt 7 klappt): bei `pointderecharge-app` `ADMIN_ACCESS_REQUIRED` = `1` setzen. Ab dann geht das Backoffice nur noch über `admin.poinderecharge.com`. Zurück: den Wert löschen.
+
+## Seiten
+
 | Seite | Inhalt |
 |---|---|
 | **Tableau de bord** `/admin` | Kennzahlen (Stationen, unbestätigte Status, laufende Reservierungen, Reservierungen 7 Tage, Abschluss- und Nichterscheinen-Quote, Nutzer, vernetzte Steckdosen), Reservierungen pro Tag (14 Tage) und die Liste „À vérifier“ mit Auffälligkeiten |

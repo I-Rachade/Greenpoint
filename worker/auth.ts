@@ -3,6 +3,7 @@ import { type Contact, parseContact } from "../shared/contact";
 import { cleanFleetName } from "../shared/fleet";
 import { validPinFormat, weakPin } from "../shared/pin";
 import type { Profile, UserRole } from "../shared/types";
+import { adminAllowed } from "./access";
 import type { Env } from "./env";
 import { ApiError, nowIso, randomDigits, sha256, uuid } from "./http";
 import type { MerchantShopInput } from "../shared/merchants";
@@ -310,7 +311,7 @@ function isAdminContact(env: Env, contact: Contact): boolean {
  * Registration and "PIN forgotten": checks the code (SMS or e-mail), sets the PIN,
  * creates the user if new, and opens a session. A new PIN ends every other session of the user.
  */
-export async function register(env: Env, rawContact: string, rawCode: string, rawPin: string) {
+export async function register(env: Env, request: Request, rawContact: string, rawCode: string, rawPin: string) {
   const contact = contactOrThrow(rawContact);
   const column = contactColumn(contact);
   const pin = String(rawPin ?? "").trim();
@@ -339,7 +340,7 @@ export async function register(env: Env, rawContact: string, rawCode: string, ra
       )
         .bind(now, id, id, JSON.stringify({ [column]: contact.value, role }))
         .run();
-      return openSession(env, user);
+      return openSession(env, request, user);
     }
   }
   await env.DB.batch([
@@ -349,7 +350,7 @@ export async function register(env: Env, rawContact: string, rawCode: string, ra
     ),
     env.DB.prepare("delete from sessions where user_id = ?").bind(user.id),
   ]);
-  return openSession(env, user);
+  return openSession(env, request, user);
 }
 
 /**
@@ -360,7 +361,7 @@ export async function register(env: Env, rawContact: string, rawCode: string, ra
  * A number or address that already has an account is refused (one role per account):
  * whoever is also a customer registers the fleet with another number or address.
  */
-export async function registerFleetManager(env: Env, rawContact: string, rawCode: string, rawPin: string, rawName: unknown) {
+export async function registerFleetManager(env: Env, request: Request, rawContact: string, rawCode: string, rawPin: string, rawName: unknown) {
   const contact = contactOrThrow(rawContact);
   const column = contactColumn(contact);
   const pin = String(rawPin ?? "").trim();
@@ -397,7 +398,7 @@ export async function registerFleetManager(env: Env, rawContact: string, rawCode
   }
   const user = await findUser();
   if (!user) throw new ApiError("unknown", 500);
-  return openSession(env, user);
+  return openSession(env, request, user);
 }
 
 /**
@@ -406,7 +407,7 @@ export async function registerFleetManager(env: Env, rawContact: string, rawCode
  * the membership as the shop's merchant are made together, and a session opens. Until an
  * admin approves the shop, its members only see the map and the stations (merchant_not_approved).
  */
-export async function registerMerchant(env: Env, rawContact: string, rawCode: string, rawPin: string, rawShop: unknown) {
+export async function registerMerchant(env: Env, request: Request, rawContact: string, rawCode: string, rawPin: string, rawShop: unknown) {
   const contact = contactOrThrow(rawContact);
   const column = contactColumn(contact);
   const pin = String(rawPin ?? "").trim();
@@ -444,11 +445,11 @@ export async function registerMerchant(env: Env, rawContact: string, rawCode: st
   }
   const user = await findUser();
   if (!user) throw new ApiError("unknown", 500);
-  return openSession(env, user);
+  return openSession(env, request, user);
 }
 
 /** Everyday login with phone number or e-mail address, and PIN. A few wrong PINs lock the account for a while. */
-export async function signIn(env: Env, rawContact: string, rawPin: string) {
+export async function signIn(env: Env, request: Request, rawContact: string, rawPin: string) {
   const contact = contactOrThrow(rawContact);
   const pin = String(rawPin ?? "").trim();
   if (!validPinFormat(pin)) throw new ApiError("invalid_pin");
@@ -461,7 +462,7 @@ export async function signIn(env: Env, rawContact: string, rawPin: string) {
   // Same answer for unknown contacts and wrong PINs, so the login does not reveal who has an account.
   if (!user?.pin_hash) throw new ApiError("invalid_pin");
   await checkPin(env, user.id, pin, user);
-  return openSession(env, user);
+  return openSession(env, request, user);
 }
 
 interface PinState {
@@ -507,7 +508,13 @@ export async function verifyPin(env: Env, userId: string, rawPin: unknown) {
   await checkPin(env, userId, pin, state);
 }
 
-async function openSession(env: Env, user: UserRow): Promise<{ token: string; profile: Profile }> {
+/**
+ * Opens a session. With ADMIN_ACCESS_REQUIRED an admin account only gets one through the
+ * back office (Cloudflare Access, worker/access.ts): a known PIN or a fresh login code alone
+ * is not enough. Checked after the PIN, so this answer says nothing to someone without it.
+ */
+async function openSession(env: Env, request: Request, user: UserRow): Promise<{ token: string; profile: Profile }> {
+  if (user.role === "admin" && !(await adminAllowed(env, request))) throw new ApiError("admin_access_required", 403);
   const now = nowIso();
   const token = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
     .replace(/\+/g, "-")
@@ -545,7 +552,10 @@ export async function currentUser(env: Env, request: Request): Promise<Profile |
   )
     .bind(await sha256(token), nowIso(), new Date(Date.now() - STAFF_SESSION_DAYS * 86_400_000).toISOString())
     .first<UserRow>();
-  return row ? toProfile(row) : null;
+  if (!row) return null;
+  // An admin session only counts with Access as well (see openSession), on every request.
+  if (row.role === "admin" && !(await adminAllowed(env, request))) return null;
+  return toProfile(row);
 }
 
 async function requireUser(env: Env, request: Request): Promise<Profile> {

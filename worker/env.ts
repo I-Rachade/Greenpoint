@@ -15,6 +15,12 @@ export interface Env {
   ADMIN_PHONES?: string;
   /** E-mail addresses that become admin on their first login, e.g. "chef@poinderecharge.com". */
   ADMIN_EMAILS?: string;
+  /** Cloudflare Access team domain of the back office, e.g. "https://<team>.cloudflareaccess.com" (worker/access.ts, docs/BACKOFFICE.md). */
+  ACCESS_TEAM_DOMAIN?: string;
+  /** Application Audience (AUD) tag of the back office's Access application. */
+  ACCESS_AUD?: string;
+  /** "1": admin accounts only sign in and act through the back office, with a valid Access token. */
+  ADMIN_ACCESS_REQUIRED?: string;
   /** Most login SMS sent per hour across all numbers (cost protection). Default 30. */
   OTP_HOURLY_LIMIT?: string;
   /** "paygate" switches from the simulated payment provider to real payments (needs PAYGATE_AUTH_TOKEN). */

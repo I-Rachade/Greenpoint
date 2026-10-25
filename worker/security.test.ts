@@ -12,6 +12,7 @@ import { fakeD1 } from "./test-d1";
 // Security review 2026-10-19: limits that must hold with parallel requests too.
 
 const PHONE = "+22890000001";
+const LOGIN = new Request("https://app.poinderecharge.com/api/auth/login", { method: "POST" });
 
 async function setup() {
   const { db, d1 } = fakeD1();
@@ -26,28 +27,28 @@ describe("PIN lock", () => {
   it("counts parallel wrong PINs one by one, so a burst cannot try more than the limit", async () => {
     const { env } = await setup();
     const guesses = Array.from({ length: 40 }, (_, i) => String(1000 + i));
-    const answers = await Promise.all(guesses.map((pin) => code(signIn(env, PHONE, pin))));
+    const answers = await Promise.all(guesses.map((pin) => code(signIn(env, LOGIN, PHONE, pin))));
     expect(answers.filter((a) => a === "invalid_pin").length).toBe(4);
     expect(answers.filter((a) => a === "pin_locked").length).toBe(36);
     // Locked: even the right PIN is refused now.
-    expect(await code(signIn(env, PHONE, "4826"))).toBe("pin_locked");
+    expect(await code(signIn(env, LOGIN, PHONE, "4826"))).toBe("pin_locked");
   });
 
   it("locks longer each time and forgets the locks after the right PIN", async () => {
     const { db, env } = await setup();
-    for (let i = 0; i < 5; i++) await code(signIn(env, PHONE, "1111"));
+    for (let i = 0; i < 5; i++) await code(signIn(env, LOGIN, PHONE, "1111"));
     const first = db.prepare("select pin_locked_until, pin_lock_count from users where id = 'ama'").get() as { pin_locked_until: string; pin_lock_count: number };
     expect(first.pin_lock_count).toBe(1);
     // The lock ran out: five more wrong PINs lock for twice as long.
     db.prepare("update users set pin_locked_until = '2000-01-01T00:00:00.000Z' where id = 'ama'").run();
-    for (let i = 0; i < 5; i++) await code(signIn(env, PHONE, "1111"));
+    for (let i = 0; i < 5; i++) await code(signIn(env, LOGIN, PHONE, "1111"));
     const second = db.prepare("select pin_locked_until, pin_lock_count from users where id = 'ama'").get() as { pin_locked_until: string; pin_lock_count: number };
     expect(second.pin_lock_count).toBe(2);
     const minutes = (Date.parse(second.pin_locked_until) - Date.now()) / 60_000;
     expect(minutes).toBeGreaterThan(29);
     expect(minutes).toBeLessThanOrEqual(30);
     db.prepare("update users set pin_locked_until = null where id = 'ama'").run();
-    expect(await code(signIn(env, PHONE, "4826"))).toBe("ok");
+    expect(await code(signIn(env, LOGIN, PHONE, "4826"))).toBe("ok");
     expect(db.prepare("select pin_failures, pin_lock_count from users where id = 'ama'").get()).toMatchObject({ pin_failures: 0, pin_lock_count: 0 });
   });
 
