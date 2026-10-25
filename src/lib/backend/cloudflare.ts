@@ -24,7 +24,7 @@ import type { Features } from "../features";
 import type { Device, DeviceInput } from "../iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "../parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
-import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
+import type { AdminOperator, MyStaffInvite, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
 import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "../point-partners";
 import type { Promotion, PromotionInput } from "../promo";
 import type {
@@ -151,6 +151,8 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "parcel_not_arrived",
   "not_a_driver",
   "phone_required",
+  "hold_limit",
+  "captcha_failed",
   "driver_busy",
   "driver_not_found",
   "too_far",
@@ -228,6 +230,8 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "swap_required",
   "driver_pass_invalid",
   "driver_pass_expired",
+  "driver_pass_required",
+  "pickup_code_required",
   "role_change_blocked",
   "fleet_not_approved",
   "fleet_locked",
@@ -368,8 +372,12 @@ export class CloudflareBackend implements Backend {
     };
   }
 
-  async sendCode(contact: string) {
-    await this.call("POST", "/api/auth/send", { contact });
+  async sendCode(contact: string, captcha?: string) {
+    await this.call("POST", "/api/auth/send", { contact, captcha });
+  }
+
+  async captchaSiteKey() {
+    return (await this.call<{ siteKey: string | null }>("GET", "/api/auth/captcha")).siteKey;
   }
 
   register(contact: string, code: string, pin: string) {
@@ -495,8 +503,27 @@ export class CloudflareBackend implements Backend {
     return this.call<OwnerView>("GET", "/api/owner");
   }
 
-  async ownerAddStaff(stationId: string, contact: string) {
+  async ownerInviteStaff(stationId: string, contact: string) {
     await this.call("POST", "/api/owner/staff", { stationId, contact });
+  }
+
+  ownerRevokeStaffInvite(inviteId: string) {
+    return this.act("POST", `/api/owner/staff-invites/${encodeURIComponent(inviteId)}/revoke`);
+  }
+
+  myStaffInvites() {
+    return this.call<MyStaffInvite[]>("GET", "/api/staff-invites");
+  }
+
+  async acceptStaffInvite(inviteId: string) {
+    await this.act("POST", `/api/staff-invites/${encodeURIComponent(inviteId)}/accept`);
+    // The account is a staff account now: the menu follows the role.
+    const profile = await this.getProfile();
+    this.authListeners.forEach((fn) => fn(profile));
+  }
+
+  declineStaffInvite(inviteId: string) {
+    return this.act("POST", `/api/staff-invites/${encodeURIComponent(inviteId)}/decline`);
   }
 
   async ownerRemoveStaff(stationId: string, userId: string) {
@@ -712,6 +739,10 @@ export class CloudflareBackend implements Backend {
     return this.call<StationCash[]>("GET", `/api/owner/cash${stationId ? `?stationId=${encodeURIComponent(stationId)}` : ""}`);
   }
 
+  myStationCash(stationId: string) {
+    return this.call<StationCash | null>("GET", `/api/stations/${encodeURIComponent(stationId)}/cash`);
+  }
+
   async closeCashDay(input: HandoverInput) {
     const handover = await this.call<CashHandover>("POST", "/api/owner/cash/handovers", input);
     this.changed();
@@ -827,8 +858,8 @@ export class CloudflareBackend implements Backend {
     return parcel;
   }
 
-  async pickUpParcel(stationId: string, codeOrQr: string) {
-    const parcel = await this.call<Parcel>("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels/pickup`, { code: codeOrQr });
+  async pickUpParcel(stationId: string, codeOrQr: string, trackingNo?: string) {
+    const parcel = await this.call<Parcel>("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels/pickup`, { code: codeOrQr, trackingNo });
     this.changed();
     return parcel;
   }
@@ -998,6 +1029,10 @@ export class CloudflareBackend implements Backend {
     return this.act("POST", `/api/jobs/${encodeURIComponent(id)}/cancel`);
   }
 
+  confirmCourierReceipt(jobId: string) {
+    return this.act("POST", `/api/jobs/${encodeURIComponent(jobId)}/confirm-receipt`);
+  }
+
   stationDrivers(stationId: string) {
     return this.call<StationDrivers>("GET", `/api/stations/${encodeURIComponent(stationId)}/drivers`);
   }
@@ -1050,6 +1085,14 @@ export class CloudflareBackend implements Backend {
 
   assignJob(jobId: string, driverId: string) {
     return this.act("POST", `/api/admin/jobs/${encodeURIComponent(jobId)}/assign`, { driverId });
+  }
+
+  approveCourierProof(jobId: string) {
+    return this.act("POST", `/api/admin/jobs/${encodeURIComponent(jobId)}/approve-proof`);
+  }
+
+  rejectCourierProof(jobId: string, reason: string) {
+    return this.act("POST", `/api/admin/jobs/${encodeURIComponent(jobId)}/reject-proof`, { reason });
   }
 
   setDriverManager(driverId: string, contact: string | null) {
@@ -1401,6 +1444,11 @@ export class CloudflareBackend implements Backend {
 
   async setCreditMax(maxXof: number) {
     await this.call("POST", "/api/admin/wallet/max", { maxXof });
+    this.changed();
+  }
+
+  async setChargeHold(chargeHoldXof: number) {
+    await this.call("POST", "/api/admin/wallet/charge-hold", { chargeHoldXof });
     this.changed();
   }
 

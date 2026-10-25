@@ -325,6 +325,7 @@ function JobRow({ job, drivers, stationName, onReport }: { job: DeliveryJob; dri
   const run = useRun(onReport);
   const open = OPEN_JOB_STATUSES.includes(job.status);
   const canAssign = job.status === "open" || job.status === "assigned";
+  const [rejectReason, setRejectReason] = useState("");
   return (
     <tr>
       <td className={td}>{when(job.createdAt)}</td>
@@ -348,6 +349,16 @@ function JobRow({ job, drivers, stationName, onReport }: { job: DeliveryJob; dri
         <JobStatusPill status={job.status} kind={job.kind} noDriver={job.noDriver} forShop={job.forShop} />
         {job.driver && <div className="mt-1 text-xs">{job.driver.name}</div>}
         {job.proofKey && <DocLink fileKey={job.proofKey} label="📷" />}
+        {job.proofReview === "pending" && (
+          <div className="mt-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">
+            {t.drivers.admin.proofPending}
+          </div>
+        )}
+        {job.proofReview === "rejected" && (
+          <div className="mt-1 rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-900 dark:bg-red-900/40 dark:text-red-100">
+            {format(t.drivers.admin.proofRejected, { reason: job.proofRejectReason ?? "" })}
+          </div>
+        )}
       </td>
       <td className={td}>
         <div className="flex flex-col items-start gap-1">
@@ -365,6 +376,31 @@ function JobRow({ job, drivers, stationName, onReport }: { job: DeliveryJob; dri
             <button type="button" className={smallBtn} onClick={() => window.confirm(t.drivers.admin.confirmCancelJob) && void run(() => backend.cancelJob(job.id))}>
               {t.drivers.admin.cancelJob}
             </button>
+          )}
+          {job.proofReview === "pending" && (
+            <button type="button" className={smallBtn} onClick={() => window.confirm(t.drivers.admin.confirmApproveProof) && void run(() => backend.approveCourierProof(job.id))}>
+              {t.drivers.admin.approveProof}
+            </button>
+          )}
+          {job.proofReview === "pending" && (
+            <div className="flex flex-wrap items-center gap-1">
+              <input
+                className={`${field} w-40`}
+                value={rejectReason}
+                maxLength={300}
+                placeholder={t.drivers.admin.rejectReason}
+                aria-label={t.drivers.admin.rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+              />
+              <button
+                type="button"
+                className={smallBtn}
+                disabled={!rejectReason.trim()}
+                onClick={() => window.confirm(t.drivers.admin.confirmRejectProof) && void run(() => backend.rejectCourierProof(job.id, rejectReason.trim()))}
+              >
+                {t.drivers.admin.rejectProof}
+              </button>
+            </div>
           )}
         </div>
       </td>

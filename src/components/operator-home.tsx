@@ -34,7 +34,7 @@ const TILE_ICON: Record<StationTile, ComponentType<{ size?: number }>> = {
   share: ScooterIcon,
 };
 
-function Tile({ tile, hint }: { tile: StationTile; hint: string }) {
+function Tile({ tile, hint, label }: { tile: StationTile; hint: string; label?: string }) {
   const { t } = useI18n();
   const Icon = TILE_ICON[tile];
   return (
@@ -43,7 +43,7 @@ function Tile({ tile, hint }: { tile: StationTile; hint: string }) {
       className="flex min-h-32 flex-col items-center justify-center gap-2 rounded-2xl bg-gp-forest p-3 text-center text-white shadow-sm active:scale-[0.99]"
     >
       <Icon size={36} />
-      <span className="text-lg font-semibold leading-tight">{t.work.tiles[tile]}</span>
+      <span className="text-lg font-semibold leading-tight">{label ?? t.work.tiles[tile]}</span>
       <span className="text-sm leading-snug text-white/80">{hint}</span>
     </Link>
   );
@@ -125,14 +125,21 @@ function StationHome({ station }: { station: StationView }) {
   );
   const { data: reservations } = useLiveQuery(() => backend.stationReservations(station.id), station.id);
   const active = (reservations ?? []).filter((r) => effectiveStatus(r, now) === "active").length;
-  const tiles = stationTiles(station.activeServices ?? [], station.greenCredit, !!share && (share.enabled || share.vehicles.length > 0 || share.unpaid.length > 0));
+  const tiles = stationTiles(
+    station.activeServices ?? [],
+    station.greenCredit,
+    station.isOwn,
+    !!share && (share.enabled || share.vehicles.length > 0 || share.unpaid.length > 0),
+  );
+  // An own station without Green Credit: the tile only opens the staff's cash closing.
+  const cashOnly = !station.greenCredit;
   const hint: Record<StationTile, string> = {
     swap: t.work.tileHints.swap,
     counter: format(t.work.tileHints.counter, { n: station.status.fullBatteries }),
     charging: format(t.work.tileHints.charging, { n: freePlaces(station) }),
     parcels: t.work.tileHints.parcels,
     reservations: format(t.work.tileHints.reservations, { n: active }),
-    credit: t.work.tileHints.credit,
+    credit: cashOnly ? t.stationCash.myCashHint : t.work.tileHints.credit,
     share: format(t.work.tileHints.share, { n: share?.vehicles.length ?? 0 }),
   };
   return (
@@ -146,7 +153,7 @@ function StationHome({ station }: { station: StationView }) {
       ) : (
         <div className="grid grid-cols-2 gap-3">
           {tiles.map((tile) => (
-            <Tile key={tile} tile={tile} hint={hint[tile]} />
+            <Tile key={tile} tile={tile} hint={hint[tile]} label={tile === "credit" && cashOnly ? t.stationCash.myCash : undefined} />
           ))}
         </div>
       )}

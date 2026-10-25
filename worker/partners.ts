@@ -272,6 +272,8 @@ async function copyParcelEvents(env: Env) {
 /** Posts one message to the partner's webhook. */
 async function post(url: string, secret: string, type: string, id: string, body: string): Promise<{ status: number | null; error: string | null }> {
   const timestamp = Math.floor(Date.now() / 1000);
+  // Checked again before each send: an address saved before the rules got stricter is not called.
+  if (!validWebhookUrl(url)) return { status: null, error: "invalid_webhook_url" };
   try {
     const res = await fetch(url, {
       method: "POST",

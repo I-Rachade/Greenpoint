@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { useErrorMessage } from "@/lib/hooks";
+import { StationCashCard } from "@/components/owner/cash";
+import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
 import type { StationView } from "@/lib/types";
 import { CREDIT_TOPUP_MIN_XOF, parseAmount, parseCreditCode, type CounterCredit } from "@/lib/wallet";
@@ -25,8 +26,34 @@ export function CreditPage() {
   const { t } = useI18n();
   return (
     <WorkShell title={t.wallet.staff.title}>
-      {({ station }) => (station.greenCredit ? <CreditCounter key={station.id} station={station} /> : <EmptyState text={t.wallet.staff.notHere} />)}
+      {({ station }) =>
+        // My cash also without Green Credit here: swaps, charges and parcels paid in cash count too (0057).
+        <div className="space-y-4">
+          {station.greenCredit ? <CreditCounter key={station.id} station={station} /> : !station.isOwn && <EmptyState text={t.wallet.staff.notHere} />}
+          <MyCash key={`cash:${station.id}`} stationId={station.id} />
+        </div>
+      }
     </WorkShell>
+  );
+}
+
+/**
+ * At our own stations (0051, 0057): the cash this staff member took since their last closing
+ * (Green Credit loaded, swaps, charges and parcels paid in cash), closed at the end of the shift
+ * (worker/station-cash.ts). Partner stations: the owner
+ * closes the station's day in the backoffice instead, so nothing shows here.
+ */
+function MyCash({ stationId }: { stationId: string }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const { data, reload } = useLiveQuery(() => backend.myStationCash(stationId).then((cash) => ({ cash })), stationId);
+  if (!data?.cash) return null;
+  return (
+    <div className="space-y-2">
+      <h2 className="font-heading text-lg font-semibold">{t.stationCash.myCash}</h2>
+      <p className="text-sm text-gp-muted">{t.stationCash.myCashIntro}</p>
+      <StationCashCard cash={data.cash} admin={false} onChanged={reload} />
+    </div>
   );
 }
 

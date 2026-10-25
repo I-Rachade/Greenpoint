@@ -37,7 +37,11 @@ function cardProvider(env: Env): CheckoutProvider {
 
 /** Asks the provider that took this top-up for its status. */
 function fetchStatus(env: Env, t: TopupRow): Promise<ProviderStatus> {
-  return t.network === "card" ? cardProvider(env).fetchStatus(t.identifier) : provider(env).fetchStatus(t.identifier);
+  const pay = t.network === "card" ? cardProvider(env) : provider(env);
+  // Taken by another provider than the Worker runs now (e.g. the simulation since): no status from
+  // the simulation may credit a real top-up, so it stays pending until that provider answers again.
+  if (pay.name !== t.provider) return Promise.resolve({ status: "pending" });
+  return pay.fetchStatus(t.identifier);
 }
 
 function audit(env: Env, actor: string | null, action: "insert" | "update", t: TopupRow, changes: Record<string, unknown>) {

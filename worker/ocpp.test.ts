@@ -358,12 +358,15 @@ describe("OCPP charges by QR code", () => {
     };
     expect(start.idTagInfo.status).toBe("Accepted");
     await handleOcppCall(d1, ID, "StopTransaction", { transactionId: start.transactionId, meterStop: 1400, timestamp: new Date().toISOString() });
-    // The energy is final: the charge is taken from the Green Credit at once.
-    expect(sessions(db)).toEqual([{ status: "paid", energy_wh: 400 }]);
-    const tx = db.prepare("select type, amount_xof, balance_after_xof from wallet_transactions").all() as { type: string; amount_xof: number; balance_after_xof: number }[];
-    expect(tx).toHaveLength(1);
-    expect(tx[0]).toMatchObject({ type: "charge", balance_after_xof: 5000 - tx[0].amount_xof });
-    expect(tx[0].amount_xof).toBeGreaterThan(0);
+    // The energy is final: the price is booked from the 3000 FCFA held when it started (the
+    // charge hold cap, of the 5000 FCFA balance), the rest comes back (0052).
+    const paid = db.prepare("select status, energy_wh, amount_xof from charging_sessions").get() as { status: string; energy_wh: number; amount_xof: number };
+    expect(paid).toMatchObject({ status: "paid", energy_wh: 400 });
+    expect(paid.amount_xof).toBeGreaterThan(0);
+    expect(db.prepare("select type, attribute, status, amount_xof, balance_after_xof from wallet_transactions order by rowid").all()).toEqual([
+      { type: "charge", attribute: "send", status: "success", amount_xof: 3000, balance_after_xof: 2000 },
+      { type: "charge", attribute: "received", status: "success", amount_xof: 3000 - paid.amount_xof, balance_after_xof: 5000 - paid.amount_xof },
+    ]);
   });
 });
 
@@ -471,7 +474,7 @@ describe("OCPP charges by card", () => {
     // The account's other card waits until this charge is paid: its Green Credit is spoken for.
     expect((await start(d1, CARD, 2)).idTagInfo.status).toBe("Blocked");
     expect((await start(d1, "CARD3", 1)).idTagInfo.status).toBe("Invalid");
-    await setChargeCardBlocked(d1, ADMIN, CARD, post({ blocked: true }));
+    await setChargeCardBlocked({ DB: d1 } as unknown as Env, ADMIN, CARD, post({ blocked: true }));
     expect((await start(d1, CARD, 2)).idTagInfo.status).toBe("Blocked");
     expect((await listChargeCards(d1)).find((c) => c.idTag === CARD)).toMatchObject({ customer: { id: "kofi" }, blocked: true });
   });
@@ -517,5 +520,92 @@ describe("M1 card numbers", () => {
     await handleOcppCall(d1, ID, "Authorize", { idTag: "012EAAA3" });
     await saveChargeCard(d1, ADMIN, post({ idTag: "2745839105", contact: "+22896123456" }));
     expect(await listChargeCards(d1)).toEqual([expect.objectContaining({ idTag: "012EAAA3", customer: expect.objectContaining({ id: "kofi" }) })]);
+  });
+});
+
+describe("charging hardening (0052)", () => {
+  const ADMIN = { id: "admin", phone: "+22890000001", email: null, fullName: "Admin", role: "admin" } as const;
+  const KOFI = { phone: "+22896123456" } as const;
+  const CARD = "04A3F21B7C";
+  const post = (body: object) => new Request("https://x", { method: "POST", body: JSON.stringify(body) });
+  const start = (d1: D1Database, idTag: string, meterStart: number, connectorId = 1) =>
+    handleOcppCall(d1, ID, "StartTransaction", { connectorId, idTag, meterStart, timestamp: new Date().toISOString() }) as Promise<{
+      transactionId: number;
+      idTagInfo: { status: string };
+    }>;
+  const meter = (d1: D1Database, transactionId: number, wh: number) =>
+    handleOcppCall(d1, ID, "MeterValues", { connectorId: 1, transactionId, meterValue: [{ timestamp: new Date().toISOString(), sampledValue: [{ value: String(wh) }] }] });
+  const charge = (db: ReturnType<typeof fakeD1>["db"]) =>
+    db.prepare("select status, energy_wh, stopped_by, amount_xof from charging_sessions order by started_at").all() as { status: string; energy_wh: number; amount_xof: number }[];
+
+  async function withCard(role = "rider") {
+    const s = await setup();
+    const now = new Date().toISOString();
+    s.db.exec(`
+      insert into users (id, phone, full_name, role, created_at) values ('kofi', '${KOFI.phone}', 'Kofi', '${role}', '${now}');
+      update stations set green_credit = 1;
+      insert into wallets (user_id, balance_xof, created_at, updated_at) values ('kofi', 5000, '${now}', '${now}');
+    `);
+    await handleOcppCall(s.d1, ID, "BootNotification", { chargePointVendor: "V", chargePointModel: "M" });
+    await handleOcppCall(s.d1, ID, "StatusNotification", { connectorId: 1, status: "Available", errorCode: "NoError" });
+    return s;
+  }
+
+  it("keep an OCPP charge point without password away from a Green Credit station", async () => {
+    const { db, d1, env } = await setup();
+    const open = { externalId: "OPEN-1", stationId: "st", outlets: 1, link: "own_server", protocol: "ocpp1.6", ocppNoPassword: true } as const;
+    await createDevice(d1, open, "admin");
+    expect(await (await handleOcppUpgrade(upgrade(undefined, "ocpp1.6", "OPEN-1"), env, "OPEN-1")).text()).toBe("connected");
+    // The station takes Green Credit now: the open charge point is refused until it gets a key.
+    db.exec("update stations set green_credit = 1");
+    expect((await handleOcppUpgrade(upgrade(undefined, "ocpp1.6", "OPEN-1"), env, "OPEN-1")).status).toBe(401);
+    await expect(createDevice(d1, { ...open, externalId: "OPEN-2" }, "admin")).rejects.toMatchObject({ code: "ocpp_key_required" });
+    expect(db.prepare("select count(*) n from devices where external_id = 'OPEN-2'").get()).toEqual({ n: 0 });
+  });
+
+  it("take the highest OCPP reading, and let only the charge's own transaction change it once stopped", async () => {
+    const { db, d1, env, requests } = await withCard();
+    await saveChargeCard(d1, ADMIN, post({ idTag: CARD, contact: KOFI.phone }));
+    const tx1 = await start(d1, CARD, 5000);
+    expect(tx1.idTagInfo.status).toBe("Accepted");
+    // The credit is held when the charge starts, up to the charge hold cap (3000 FCFA by default).
+    expect(db.prepare("select balance_xof from wallets").get()).toEqual({ balance_xof: 2000 });
+    await meter(d1, tx1.transactionId, 5600);
+    // A lower reading is no new count on OCPP: the energy stays.
+    await meter(d1, tx1.transactionId, 5300);
+    expect(charge(db)[0]).toMatchObject({ status: "charging", energy_wh: 600 });
+
+    // The card is reported stolen: blocking it stops its charge on the charge point.
+    await setChargeCardBlocked(env, ADMIN, CARD, post({ blocked: true }));
+    expect(charge(db)[0]).toMatchObject({ status: "stopped", stopped_by: "admin" });
+    expect(requests.some((r) => r.body.includes("RemoteStopTransaction"))).toBe(true);
+    // The stop names the charge's transaction: its last energy still counts.
+    await handleOcppCall(d1, ID, "StopTransaction", { transactionId: tx1.transactionId, meterStop: 5800, timestamp: new Date().toISOString() });
+
+    // The blocked card is swiped again and refused, but the charge point draws power anyway:
+    // those readings name another transaction and never reach the stopped charge.
+    const tx2 = await start(d1, CARD, 5800);
+    expect(tx2.idTagInfo.status).toBe("Blocked");
+    await meter(d1, tx2.transactionId, 6500);
+    await handleOcppCall(d1, ID, "StatusNotification", { connectorId: 1, status: "Charging", errorCode: "NoError" });
+    expect(charge(db)[0]).toMatchObject({ status: "paid", energy_wh: 800, amount_xof: 120 });
+    // Paid from the hold, the rest is back.
+    expect(db.prepare("select balance_xof from wallets").get()).toEqual({ balance_xof: 4880 });
+  });
+
+  it("refuse cards of accounts that are not customers, and while Green Credit is off", async () => {
+    const { db, d1 } = await withCard("driver");
+    await expect(saveChargeCard(d1, ADMIN, post({ idTag: CARD, contact: KOFI.phone }))).rejects.toMatchObject({ code: "not_a_customer" });
+    // Linked while still a customer, the account became a staff account: the card no longer charges.
+    db.exec("update users set role = 'rider'");
+    await saveChargeCard(d1, ADMIN, post({ idTag: CARD, contact: KOFI.phone }));
+    expect(await handleOcppCall(d1, ID, "Authorize", { idTag: CARD })).toEqual({ idTagInfo: { status: "Accepted" } });
+    db.exec("update users set role = 'operator'");
+    expect(await handleOcppCall(d1, ID, "Authorize", { idTag: CARD })).toEqual({ idTagInfo: { status: "Blocked" } });
+    // A customer's card, with the Green Credit module switched off (as walletAccess for a QR charge).
+    db.exec("update users set role = 'rider'; update app_settings set value = '0' where key = 'wallet_enabled'");
+    expect(await handleOcppCall(d1, ID, "Authorize", { idTag: CARD })).toEqual({ idTagInfo: { status: "Blocked" } });
+    expect((await start(d1, CARD, 0)).idTagInfo.status).toBe("Blocked");
+    expect(db.prepare("select count(*) n from charging_sessions").get()).toEqual({ n: 0 });
   });
 });

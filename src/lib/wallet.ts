@@ -8,7 +8,7 @@
 // Amounts are whole francs (XOF has no subunit), so every amount is an integer.
 
 export type WalletTxType =
-  | "transfer" // user -> user; no longer possible, kept for the history
+  | "transfer" // user -> user; kept for old history, the database refuses new ones (0055)
   | "admin_adjust" // correction or cash refund by an admin
   | "topup" // cash at a Green Credit station's counter (formerly also Flooz or T-Money)
   | "charge" // a charge or a battery swap paid from the credit (worker/charging.ts, worker/station-work.ts)
@@ -52,6 +52,11 @@ export interface WalletTransaction {
   counterparty: string | null;
   remark: string | null;
   createdAt: string;
+  /**
+   * A Green Credit charge (0052): "held" is the amount taken when it started (status "pending"
+   * while it runs), "refund" what came back of it once the real price was known.
+   */
+  hold?: "held" | "refund";
 }
 
 /** What the signed-in user sees on the Green Credit page. */
@@ -159,6 +164,8 @@ export interface AdminWallet {
   enabled: boolean;
   /** Highest balance a customer may hold (0 = no limit). */
   maxXof: number;
+  /** The most a Green Credit charge holds of the credit (its limit); the rest stays free for a swap. */
+  chargeHoldXof: number;
   /** Every active station, with whether it is a Green Credit station. */
   stations: (GreenCreditStation & { greenCredit: boolean })[];
   totals: {
@@ -178,6 +185,8 @@ export interface WalletAdjustInput {
   direction: "add" | "subtract" | "refund";
   amountXof: number;
   remark: string;
+  /** One per backoffice submission (reused when it is retried): the worker books it once. */
+  idempotencyKey?: string;
 }
 
 /** A positive whole number of francs within the sanity bound, or null. */

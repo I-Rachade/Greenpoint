@@ -93,6 +93,7 @@ export type AuditTable =
   | "merchants"
   | "merchant_members"
   | "merchant_invites"
+  | "staff_invites"
   | "merchant_drivers"
   | "merchant_checkins"
   | "merchant_addresses"
@@ -142,6 +143,7 @@ export const AUDIT_TABLES: AuditTable[] = [
   "merchants",
   "merchant_members",
   "merchant_invites",
+  "staff_invites",
   "merchant_drivers",
   "merchant_checkins",
   "merchant_addresses",

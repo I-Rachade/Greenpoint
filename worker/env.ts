@@ -41,6 +41,10 @@ export interface Env {
   XINGKE_API_TOKEN?: string;
   /** Credential the Xingke platform sends with its callbacks to /api/devices/xingke (secret). */
   XINGKE_CALLBACK_TOKEN?: string;
+  /** Cloudflare Turnstile secret key (secret); with TURNSTILE_SITE_KEY, a login code needs the widget's token. */
+  TURNSTILE_SECRET?: string;
+  /** Cloudflare Turnstile site key, shown to the login form (GET /api/auth/captcha). */
+  TURNSTILE_SITE_KEY?: string;
   /** "tutrack" switches the Share trackers from the simulation to Tutrack (needs both TUTRACK_ACCESS values), see docs/SHARE.md. */
   SHARE_TRACKER_PROVIDER?: string;
   /** Tutrack open API access key (secret). */

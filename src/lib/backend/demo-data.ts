@@ -3,8 +3,9 @@ import type { EvCharger } from "../ev-chargers";
 import type { ChargingPoint, Operator, Station, StationStatus } from "../types";
 import type { Amenity } from "../station-extras";
 
-// Example stations in Lomé (approximate positions). Phone numbers are placeholders; Deckon has
-// neither phone nor staff, so the demo shows a greyed-out station that cannot be reserved.
+// Example stations in Lomé (approximate positions). Phone numbers are placeholders. Only the
+// Grand Marché has staff (DEMO_STAFF), so it is the one the demo can reserve; stations without
+// phone or staff show greyed out (isUnattended in src/lib/station-extras.ts).
 export const DEMO_OPERATORS: Operator[] = [
   { id: "op-poinderecharge", name: "poinderecharge", isOwn: true },
   { id: "op-example", name: "Exemple Opérateur", isOwn: false },
@@ -25,7 +26,7 @@ export const DEMO_STATIONS: Station[] = [
     chargingSlots: 6,
     batteryCapacity: 12,
     openingHours: "00:00-24:00",
-    phone: null,
+    phone: "+22822000000",
     isSolar: true,
   },
   {

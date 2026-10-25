@@ -48,9 +48,10 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/repair-centers": ALL,
   "GET /api/operators": ALL,
   "GET /api/stations/:id/reviews": ALL,
-  "POST /api/stations/:id/reviews": SIGNED,
+  "POST /api/stations/:id/reviews": CUSTOMER,
   "DELETE /api/reviews/:id": SIGNED, // one's own review
   "GET /api/me": ALL,
+  "GET /api/auth/captcha": ALL,
   "POST /api/auth/send": ALL,
   "POST /api/auth/register": ALL,
   "POST /api/auth/register-fleet": ALL,
@@ -71,11 +72,13 @@ const POLICY: Record<string, Role[]> = {
   "DELETE /api/owner/staff": OWNER,
   "POST /api/owner/stations/:id": OWNER,
   "POST /api/owner/staff/move": OWNER,
+  "POST /api/owner/staff-invites/:id/revoke": OWNER,
   "POST /api/owner/reassignments/:id/resolve": OWNER,
   "GET /api/owner/live": OWNER,
   "GET /api/owner/report": OWNER,
   "GET /api/owner/cash": OWNER,
-  "POST /api/owner/cash/handovers": OWNER,
+  "POST /api/owner/cash/handovers": STATION, // staff close their own Green Credit at our stations (0051)
+  "GET /api/stations/:id/cash": STATION,
   "GET /api/station-services": OWNER,
   "POST /api/station-services/request": ["owner"], // the owner asks, the admin decides
   "POST /api/admin/station-services/decide": ADMIN,
@@ -117,6 +120,7 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/admin/wallet": ADMIN,
   "POST /api/admin/wallet/enabled": ADMIN,
   "POST /api/admin/wallet/max": ADMIN,
+  "POST /api/admin/wallet/charge-hold": ADMIN,
   "POST /api/admin/stations/:id/green-credit": ADMIN,
   "POST /api/admin/wallet/adjust": ADMIN,
   "POST /api/admin/wallet/freeze": ADMIN,
@@ -219,6 +223,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/jobs/courier": BOOKING,
   "POST /api/parcels/:id/delivery": CUSTOMER,
   "POST /api/jobs/:id/cancel": BOOKING, // a shop's member cancels the shop's trips
+  "POST /api/jobs/:id/confirm-receipt": BOOKING, // the sender or a member of the shop that booked the courier
   "GET /api/merchant": MERCHANT,
   "POST /api/merchant/bookings": MERCHANT,
   "GET /api/merchant/activity": MERCHANT,
@@ -237,6 +242,9 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/merchant-invites": ALL, // empty when signed out
   "POST /api/merchant-invites/:id/accept": SIGNED, // an invite to the caller's own number
   "POST /api/merchant-invites/:id/decline": SIGNED,
+  "GET /api/staff-invites": ALL, // empty when signed out
+  "POST /api/staff-invites/:id/accept": SIGNED, // an invite to the caller's own phone number or e-mail address
+  "POST /api/staff-invites/:id/decline": SIGNED,
   "GET /api/merchant-assignments": APPROVER,
   "POST /api/merchant-assignments/:id/:id": APPROVER,
   "GET /api/driver/shops": DRIVER,
@@ -257,6 +265,8 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/admin/fleet": ADMIN,
   "POST /api/admin/driver-settings": ADMIN,
   "POST /api/admin/jobs/:id/assign": ADMIN,
+  "POST /api/admin/jobs/:id/approve-proof": ADMIN,
+  "POST /api/admin/jobs/:id/reject-proof": ADMIN,
   "POST /api/admin/stations": ADMIN,
   "POST /api/admin/stations/:id/active": ADMIN,
   "GET /api/admin/snapshot": ADMIN,
@@ -425,5 +435,6 @@ describe("R2: route × role matrix", () => {
       if (status !== 401) wrong.push(`${name}: ${status}`);
     }
     expect(wrong).toEqual([]);
-  });
+    // One fresh database copy per route: slow on a busy machine, like the test above.
+  }, 60_000);
 });

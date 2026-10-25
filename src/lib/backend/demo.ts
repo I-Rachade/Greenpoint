@@ -120,7 +120,7 @@ import {
   type SwapOwner,
 } from "../station-cash";
 import { validBatteryType, type BatteryType, type BatteryTypeInput } from "../battery-types";
-import { DEMO_STAFF, demoHistory, demoReassignments, demoUsers } from "../admin/demo-seed";
+import { DEMO_OWNERS, DEMO_STAFF, demoHistory, demoReassignments, demoUsers } from "../admin/demo-seed";
 import { cleanOpeningHours } from "../opening-hours";
 import { emptyDays, periodStart, reportPeriod, type Handover, type OwnerLive, type OwnerReport, type ReportPeriod, type StaffStats } from "../owner-backoffice";
 import {
@@ -143,9 +143,11 @@ import {
   newTrackingNo,
   PARCEL_CODE_LOCK_MINUTES,
   PARCEL_MAX_CODE_FAILURES,
+  PARCEL_STATION_MAX_CODE_FAILURES,
   PARCEL_PICKUP_DAYS,
   needsLabel,
   OPEN_PARCEL_STATUSES,
+  normalizeTrackingNo,
   parseHandoverInput,
   parsePickupInput,
   parseParcelScan,
@@ -188,6 +190,7 @@ import {
   newDriverCode,
   parseDriverBadge,
   checkDriverPass,
+  isDriverPassFormat,
   fleetTag,
   signDriverPass,
   OPEN_JOB_EXPIRY_MINUTES,
@@ -240,9 +243,11 @@ import {
   driverLimit,
   FLEET_INVITE_DAYS,
   FLEET_TIERS,
+  fitsFleet,
   fleetRange,
   jobForManager,
   managesFleet,
+  openJobForManager,
   STANDARD_DRIVER_LIMIT,
   statsUnlocked,
   type AdminFleet,
@@ -298,7 +303,17 @@ import {
   type GreenpointRewardInput,
   type GreenpointView,
 } from "../greenpoint";
-import { OPERATOR_NAME_MAX, validPrice, type AdminOperator, type OperatorInput, type OwnerStationInput, type OwnerView } from "../operators";
+import {
+  OPERATOR_NAME_MAX,
+  STAFF_INVITE_DAYS,
+  STAFF_INVITE_LIMIT,
+  validPrice,
+  type AdminOperator,
+  type MyStaffInvite,
+  type OperatorInput,
+  type OwnerStationInput,
+  type OwnerView,
+} from "../operators";
 import {
   POINT_PARTNER_NAME_MAX,
   type AdminPointPartner,
@@ -385,7 +400,7 @@ type DemoHandover = CashHandover & { createdById: string; decidedById: string | 
 
 /** A stored closing as the API shows it, without who made and decided it. */
 function handoverView(h: DemoHandover): CashHandover {
-  const view: CashHandover & Partial<Pick<DemoHandover, "createdById" | "decidedById">> = { ...h };
+  const view: CashHandover & Partial<Pick<DemoHandover, "createdById" | "decidedById">> = { ...h, staffId: h.staffId ?? null };
   delete view.createdById;
   delete view.decidedById;
   return view;
@@ -405,7 +420,7 @@ interface DemoState {
   promotions?: Promotion[];
   devices?: Device[];
   /** Parcel depot; parcels keep their pickup code here (demo only). */
-  parcels?: Parcel[];
+  parcels?: DemoParcel[];
   parcelDepots?: ParcelDepot[];
   batteryTypes?: BatteryType[];
   /** Electric car chargers, assigned to a station or not. */
@@ -417,7 +432,8 @@ interface DemoState {
   /** Full batteries per battery type, by station id then type id (default: the station's total spread over its types). */
   typeBatteries?: Record<string, Record<string, number>>;
   parcelSizes?: ParcelSizeTier[];
-  parcelCodeFailures?: { stationId: string; at: string }[];
+  /** stationId: the key (station, "parcel:<id>" or "job:<id>"); atStation: the counter it was typed at (0058). */
+  parcelCodeFailures?: { stationId: string; at: string; atStation?: string }[];
   /** Collection runs and parcel scans (plan phase 7), as parcel_runs and parcel_scans (migration 0034). */
   parcelRuns?: DemoRun[];
   parcelScans?: DemoScan[];
@@ -501,6 +517,8 @@ interface DemoState {
   merchantMembers?: DemoMember[];
   /** Employee invites, newest first (merchant_invites). */
   merchantInvites?: DemoMerchantInvite[];
+  /** Staff invites, oldest first (staff_invites, 0050). */
+  staffInvites?: DemoStaffInvite[];
   /** Favorite and assigned drivers of the shops (merchant_drivers). */
   merchantDrivers?: DemoMerchantDriver[];
   /** Check-ins of assigned drivers, newest first (merchant_checkins). */
@@ -536,6 +554,19 @@ interface DemoMember {
 
 interface DemoMerchantInvite extends MerchantInvite {
   merchantId: string;
+  userId: string | null;
+}
+
+/** As table staff_invites (0050): made for a phone number or e-mail address, account or not. */
+interface DemoStaffInvite {
+  id: string;
+  stationId: string;
+  contact: string;
+  invitedBy: string;
+  status: "pending" | "accepted" | "declined" | "revoked" | "expired";
+  createdAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
   userId: string | null;
 }
 
@@ -637,7 +668,11 @@ interface DemoServiceRow {
 }
 
 /** `partnerId`: the socket's point partner when the charge started (charging_sessions.partner_id). */
-type DemoCharge = ChargeSession & { userId: string | null; pointId: string; startedBy?: string; partnerId?: string | null };
+/** `paidBy`: who marked it paid in cash at the counter (as charging_sessions.paid_by). */
+type DemoCharge = ChargeSession & { userId: string | null; pointId: string; startedBy?: string; partnerId?: string | null; paidBy?: string | null };
+
+/** `createdById`: who stored it at the counter and took the cash (as parcels.created_by). */
+type DemoParcel = Parcel & { createdById?: string };
 
 type DemoPointPartner = { id: string; name: string; contactPhone: string | null; status: PointPartnerStatus; createdAt: string };
 
@@ -654,11 +689,13 @@ interface DemoWallet {
   balances: Record<string, number>;
   frozen: string[];
   /** Ledger, newest first, with the idempotency key of each payment. */
-  transactions: (AdminWalletTransaction & { key?: string; stationId?: string })[];
+  transactions: (AdminWalletTransaction & { key?: string; stationId?: string; staffId?: string })[];
   /** Green Credit stations (0047); absent: every demo station, so it can be tried right away. */
   creditStations?: string[];
   /** Highest balance (0 = no limit). */
   maxXof?: number;
+  /** The most a Green Credit charge holds (app_settings.green_credit_charge_hold_xof). */
+  chargeHoldXof?: number;
   /** Counter codes shown after the PIN (credit_codes). */
   codes?: { code: string; userId: string; expiresAt: string; used: boolean }[];
 }
@@ -667,6 +704,8 @@ interface DemoWallet {
 export const DEMO_WALLET_START = 25_000;
 /** The demo's balance limit, as migration 0047. */
 const DEMO_CREDIT_MAX = 50_000;
+/** What a Green Credit charge holds at most when no admin set it, as CHARGE_HOLD_DEFAULT_XOF in worker/wallet.ts. */
+const DEMO_CHARGE_HOLD = 3000;
 
 /** Signs the demo's driver passes (app_settings.driver_pass_secret on Cloudflare). */
 const DEMO_PASS_SECRET = "demo-driver-pass";
@@ -713,6 +752,8 @@ function freshState(): DemoState {
     profile: null,
     users: demoUsers(now),
     staff: DEMO_STAFF,
+    // Afi runs poinderecharge's stations, so they count as staffed (isUnattended) and can be reserved.
+    operatorOwners: DEMO_OWNERS,
     inactive: [],
     audit: [],
     promotions: [demoPromotion(now)],
@@ -1176,7 +1217,9 @@ export class DemoBackend implements Backend {
         parcelPoint,
         batteryTypes,
         evChargers,
-        hasStaff: (state.staff ?? DEMO_STAFF).some((a) => a.stationId === s.id),
+        // Staff of the station or an owner of its operator, as the Worker counts them.
+        hasStaff:
+          (state.staff ?? DEMO_STAFF).some((a) => a.stationId === s.id) || (state.operatorOwners ?? []).some((x) => x.operatorId === s.operatorId),
       };
     });
   }
@@ -1243,6 +1286,11 @@ export class DemoBackend implements Backend {
 
   onAuthChange(callback: (profile: Profile | null) => void) {
     return this.subscribe(() => callback(this.profileOf(this.load())));
+  }
+
+  /** The demo sends no codes, so it needs no robot check. */
+  async captchaSiteKey() {
+    return null;
   }
 
   async sendCode() {
@@ -1418,6 +1466,7 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const profile = this.requireProfile(state);
     if (profile.role !== "customer") throw new BackendError("forbidden");
+    if (!profile.phone) throw new BackendError("phone_required");
     const kind = kindFrom(kindOrType);
     if (!kind) throw new BackendError("unknown", "bad_request");
     const now = new Date();
@@ -2560,7 +2609,7 @@ export class DemoBackend implements Backend {
   private withStaff(state: DemoState, stationId: string, userId: string): DemoState {
     const staff = state.staff ?? DEMO_STAFF;
     const user = (state.users ?? demoUsers(new Date())).find((u) => u.id === userId);
-    if (user?.role === "fleet_manager" || user?.role === "driver") throw new BackendError("has_other_role");
+    if (user?.role === "fleet_manager" || user?.role === "driver" || user?.role === "merchant") throw new BackendError("has_other_role");
     if (!user) throw new BackendError("account_not_found");
     const current = staff.find((a) => a.userId === userId);
     if (current?.stationId === stationId) return state;
@@ -2697,6 +2746,16 @@ export class DemoBackend implements Backend {
           createdAt: r.createdAt,
           ...this.label(state, r.userId),
         })),
+      // The contact as the owner typed it, masked; never the name of an account that has it.
+      invites: this.staffInvitesOf(state)
+        .filter((i) => i.status === "pending" && ids.has(i.stationId))
+        .map((i) => ({
+          id: i.id,
+          stationId: i.stationId,
+          label: personLabel({ fullName: null, phone: i.contact.includes("@") ? null : i.contact, email: i.contact.includes("@") ? i.contact : null }),
+          createdAt: i.createdAt,
+          expiresAt: i.expiresAt,
+        })),
       prices: stations.map((s) => ({
         stationId: s.id,
         swapXof: swapPrice(state, s),
@@ -2706,10 +2765,116 @@ export class DemoBackend implements Backend {
     };
   }
 
-  async ownerAddStaff(stationId: string, contact: string) {
+  // Staff invites (as worker/api.ts, migration 0050) ------------------------------------
+
+  /** Open invites whose time ran out are 'expired' (expireStaffInvites in worker/api.ts). */
+  private staffInvitesOf(state: DemoState): DemoStaffInvite[] {
+    const now = new Date().toISOString();
+    return (state.staffInvites ?? []).map((i) => (i.status === "pending" && i.expiresAt <= now ? { ...i, status: "expired" as const, decidedAt: i.expiresAt } : i));
+  }
+
+  /** The same answer whether an account has the contact or not; the checks run on accepting. */
+  async ownerInviteStaff(stationId: string, rawContact: string) {
     const state = this.load();
-    this.requireOwnerOf(state, stationId);
-    this.save(this.withStaff(state, stationId, this.accountByContact(state, contact).id));
+    const profile = this.requireOwnerOf(state, stationId);
+    const contact = parseContact(rawContact ?? "");
+    if (!contact) throw new BackendError((rawContact ?? "").includes("@") ? "invalid_contact" : "phone_not_allowed");
+    if (!this.activeStations(state).some((s) => s.id === stationId)) throw new BackendError("station_not_found");
+    const invites = this.staffInvitesOf(state);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + STAFF_INVITE_DAYS * 86_400_000).toISOString();
+    const open = invites.find((i) => i.stationId === stationId && i.contact === contact.value && i.status === "pending");
+    // Inviting again gives the open invite a new expiry.
+    if (open) return this.save({ ...state, staffInvites: invites.map((i) => (i === open ? { ...i, expiresAt } : i)) });
+    if (invites.filter((i) => i.stationId === stationId && i.status === "pending").length >= STAFF_INVITE_LIMIT) throw new BackendError("invite_limit");
+    const invite: DemoStaffInvite = {
+      id: crypto.randomUUID(),
+      stationId,
+      contact: contact.value,
+      invitedBy: profile.id,
+      status: "pending",
+      createdAt: now.toISOString(),
+      expiresAt,
+      decidedAt: null,
+      userId: null,
+    };
+    this.save(withAudit({ ...state, staffInvites: [...invites, invite] }, { table: "staff_invites", action: "insert", rowId: invite.id, stationId, changes: { contact: contact.value } }));
+  }
+
+  async ownerRevokeStaffInvite(inviteId: string) {
+    const state = this.load();
+    this.requireAnyOwner(state);
+    const invites = this.staffInvitesOf(state);
+    const invite = invites.find((i) => i.id === inviteId);
+    if (!invite) throw new BackendError("invite_not_found");
+    this.requireOwnerOf(state, invite.stationId);
+    if (invite.status !== "pending") throw new BackendError("invite_not_found");
+    const now = new Date().toISOString();
+    this.save(
+      withAudit(
+        { ...state, staffInvites: invites.map((i) => (i.id === inviteId ? { ...i, status: "revoked" as const, decidedAt: now } : i)) },
+        { table: "staff_invites", action: "update", rowId: inviteId, stationId: invite.stationId, changes: { status: ["pending", "revoked"] } },
+      ),
+    );
+  }
+
+  async myStaffInvites(): Promise<MyStaffInvite[]> {
+    const state = this.load();
+    const profile = state.profile;
+    if (!profile || (!profile.phone && !profile.email)) return [];
+    const stations = this.activeStations(state);
+    return this.staffInvitesOf(state)
+      .filter((i) => i.status === "pending" && (i.contact === profile.phone || i.contact === profile.email) && stations.some((s) => s.id === i.stationId))
+      .map((i) => {
+        const station = stations.find((s) => s.id === i.stationId)!;
+        return { id: i.id, stationName: station.name, operatorName: state.operators.find((o) => o.id === station.operatorId)?.name ?? "", expiresAt: i.expiresAt };
+      });
+  }
+
+  /** The open invite for the signed-in account's contact, at an active station its inviter still runs. */
+  private staffInviteForMe(state: DemoState, profile: Profile, inviteId: string): DemoStaffInvite {
+    const invite = this.staffInvitesOf(state).find((i) => i.id === inviteId);
+    const station = invite && this.activeStations(state).find((s) => s.id === invite.stationId);
+    const inviter = invite && (state.users ?? demoUsers(new Date())).find((u) => u.id === invite.invitedBy);
+    const stillRuns = !!station && (inviter?.role === "admin" || (!!inviter && ownedOperators(state, inviter.id).includes(station.operatorId)));
+    if (!invite || invite.status !== "pending" || !stillRuns || (invite.contact !== profile.phone && invite.contact !== profile.email)) throw new BackendError("invite_not_found");
+    return invite;
+  }
+
+  /** As acceptStaffInvite in worker/api.ts: the checks of an assignment (withStaff) run now. */
+  async acceptStaffInvite(inviteId: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const invite = this.staffInviteForMe(state, profile, inviteId);
+    const now = new Date().toISOString();
+    const staffed = this.withStaff(state, invite.stationId, profile.id);
+    const role = (staffed.users ?? []).find((u) => u.id === profile.id)?.role ?? profile.role;
+    const invites = this.staffInvitesOf(state).map((i) =>
+      i.id === invite.id
+        ? { ...i, status: "accepted" as const, decidedAt: now, userId: profile.id }
+        : i.status === "pending" && (i.contact === profile.phone || i.contact === profile.email)
+          ? { ...i, status: "expired" as const, decidedAt: now }
+          : i,
+    );
+    this.save(
+      withAudit(
+        { ...staffed, staffInvites: invites, profile: staffed.profile ? { ...staffed.profile, role } : staffed.profile },
+        { table: "staff_invites", action: "update", rowId: invite.id, stationId: invite.stationId, userId: profile.id, changes: { status: ["pending", "accepted"] } },
+      ),
+    );
+  }
+
+  async declineStaffInvite(inviteId: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const invite = this.staffInviteForMe(state, profile, inviteId);
+    const now = new Date().toISOString();
+    this.save(
+      withAudit(
+        { ...state, staffInvites: this.staffInvitesOf(state).map((i) => (i.id === invite.id ? { ...i, status: "declined" as const, decidedAt: now, userId: profile.id } : i)) },
+        { table: "staff_invites", action: "update", rowId: invite.id, stationId: invite.stationId, userId: profile.id, changes: { status: ["pending", "declined"] } },
+      ),
+    );
   }
 
   async ownerRemoveStaff(stationId: string, userId: string) {
@@ -2962,11 +3127,73 @@ export class DemoBackend implements Backend {
     });
   }
 
+  /**
+   * Our own stations, one balance per staff member: the cash they took at the counter, Green Credit
+   * loaded, swaps, charges and parcels paid in cash, each for whoever took it (as cashOfOwnStations;
+   * the demo has no history before 0057, so every kind counts from the month's start).
+   */
+  private ownStationCashOf(state: DemoState, ids: string[] | null, staffId: string | null = null, now = new Date()): StationCash[] {
+    const own = state.stations.filter((st) => st.isOwn && (!ids || ids.includes(st.id)));
+    const handovers = (state.cashHandovers ?? []).filter((h) => h.staffId);
+    const items: (CashItem & { stationId: string; staffId: string })[] = [
+      ...this.wallet(state)
+        .transactions.filter((t) => t.type === "topup" && t.stationId && t.staffId)
+        .map((t) => ({ stationId: t.stationId!, staffId: t.staffId!, kind: "creditXof" as const, at: t.createdAt, amountXof: t.amountXof })),
+      ...(state.swaps ?? [])
+        .filter((x) => x.payment === "cash" && this.swapOwnerOfEntry(state, x) === "poinderecharge")
+        .map((x) => ({ stationId: x.stationId, staffId: x.staffId, kind: "swapsXof" as const, at: x.createdAt, amountXof: x.amountXof })),
+      ...(state.charges ?? [])
+        .filter((c) => c.status === "paid" && c.paidAt && c.paymentMethod === "cash" && c.paidBy)
+        .map((c) => ({ stationId: c.stationId, staffId: c.paidBy!, kind: "chargesXof" as const, at: c.paidAt!, amountXof: c.amountXof })),
+      ...this.parcelsOf(state)
+        .filter((p) => p.paymentMethod === "cash" && p.paidAt && p.status !== "cancelled" && p.createdById)
+        .map((p) => ({ stationId: p.fromStationId, staffId: p.createdById!, kind: "parcelsXof" as const, at: p.paidAt!, amountXof: p.priceFcfa })),
+    ];
+    const out: StationCash[] = [];
+    for (const st of own) {
+      const people = new Set([...items.filter((t) => t.stationId === st.id).map((t) => t.staffId), ...handovers.filter((h) => h.stationId === st.id).map((h) => h.staffId!)]);
+      if (staffId) {
+        people.clear();
+        people.add(staffId);
+      }
+      for (const person of people) {
+        out.push(
+          stationCash(
+            {
+              stationId: st.id,
+              stationName: st.name,
+              operatorName: state.operators.find((o) => o.id === st.operatorId)?.name ?? "",
+              swapOwner: "poinderecharge",
+              commissionPct: 0,
+              commissionMode: "monthly",
+              start: monthStartOf(now),
+              cash: items
+                .filter((t) => t.stationId === st.id && t.staffId === person)
+                .map((t): CashItem => ({ kind: t.kind, at: t.at, amountXof: t.amountXof })),
+              sales: [],
+              handovers: handovers.filter((h) => h.stationId === st.id && h.staffId === person).map(handoverView),
+              staff: { id: person, name: this.personName(state, person) ?? "?" },
+            },
+            now,
+          ),
+        );
+      }
+    }
+    return out.sort((a, b) => a.stationName.localeCompare(b.stationName) || a.staffName!.localeCompare(b.staffName!));
+  }
+
   async ownerCash(stationId: string | null): Promise<StationCash[]> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    if (profile.role === "admin" && !stationId) return this.stationCashOf(state, null);
-    return this.stationCashOf(state, this.backofficeStations(state, stationId).ids);
+    const ids = profile.role === "admin" && !stationId ? null : this.backofficeStations(state, stationId).ids;
+    return [...this.stationCashOf(state, ids), ...this.ownStationCashOf(state, ids)];
+  }
+
+  async myStationCash(stationId: string): Promise<StationCash | null> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    if (!this.roleAt(state, profile, stationId)) throw new BackendError("forbidden");
+    return this.ownStationCashOf(state, [stationId], profile.id)[0] ?? null;
   }
 
   async closeCashDay(input: HandoverInput): Promise<CashHandover> {
@@ -2974,9 +3201,13 @@ export class DemoBackend implements Backend {
     if (error) throw new BackendError(error as BackendErrorCode);
     const state = this.load();
     const profile = this.requireProfile(state);
-    this.backofficeStations(state, input.stationId);
+    const own = !!state.stations.find((st) => st.id === input.stationId)?.isOwn;
+    const staffId = own ? (input.staffId ?? profile.id) : null;
+    if (staffId === profile.id) {
+      if (!this.roleAt(state, profile, input.stationId)) throw new BackendError("forbidden");
+    } else this.backofficeStations(state, input.stationId);
     const now = new Date();
-    const [cash] = this.stationCashOf(state, [input.stationId], now);
+    const [cash] = own ? this.ownStationCashOf(state, [input.stationId], staffId, now) : this.stationCashOf(state, [input.stationId], now);
     if (!cash) throw new BackendError("own_station");
     if (cash.dueXof !== input.expectedDueXof) throw new BackendError("cash_changed");
     const handover: CashHandover = {
@@ -2998,6 +3229,7 @@ export class DemoBackend implements Backend {
       decidedBy: null,
       decidedAt: null,
       rejectReason: null,
+      staffId,
     };
     const next = withAudit(
       { ...state, cashHandovers: [{ ...handover, createdById: profile.id, decidedById: null }, ...(state.cashHandovers ?? [])] },
@@ -3570,7 +3802,7 @@ export class DemoBackend implements Backend {
   // Parcel depot --------------------------------------------------------------
 
   /** Parcels past their pickup deadline go into storage (the Worker does this in a daily job). */
-  private parcelsOf(state: DemoState): Parcel[] {
+  private parcelsOf(state: DemoState): DemoParcel[] {
     const now = new Date().toISOString();
     return (state.parcels ?? []).map((p) =>
       p.status === "arrived" && p.pickupDeadline && p.pickupDeadline <= now
@@ -3626,7 +3858,8 @@ export class DemoBackend implements Backend {
         const received = mine(p.recipient);
         return {
           ...p,
-          pickupCode: received && p.status === "arrived" ? p.pickupCode : undefined,
+          // The sender sees the code too, to pass it on to the recipient.
+          pickupCode: p.status === "arrived" ? p.pickupCode : undefined,
           direction: received ? "received" : "sent",
           history: this.historyOf(state, p),
         } as Parcel;
@@ -3704,7 +3937,7 @@ export class DemoBackend implements Backend {
     const recipient = this.demoAccount(sender.state, recipientPhone, recipientName);
     state = recipient.state;
     const now = new Date().toISOString();
-    const parcel: Parcel = {
+    const parcel: DemoParcel = {
       id: crypto.randomUUID(),
       trackingNo: newTrackingNo(),
       fromStationId: stationId,
@@ -3720,6 +3953,7 @@ export class DemoBackend implements Backend {
       paidAt: now,
       status: "deposited",
       createdAt: now,
+      createdById: staff.id,
       inTransitAt: null,
       arrivedAt: null,
       pickedUpAt: null,
@@ -3835,7 +4069,7 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const { profile, role } = this.stationActor(state, stationId);
     if (!this.depotOpen(state, stationId)) throw new BackendError("depot_inactive");
-    const driver = this.byBadge(state, badge);
+    const driver = await this.byBadge(state, badge);
     const ids = [...new Set(parcelIds)];
     if (!ids.length) throw new BackendError("unknown", "no parcels");
     const parcels = this.parcelsOf(state);
@@ -3968,29 +4202,40 @@ export class DemoBackend implements Backend {
     return { ...arrived, pickupCode: undefined };
   }
 
-  async pickUpParcel(stationId: string, codeOrQr: string): Promise<Parcel> {
+  async pickUpParcel(stationId: string, codeOrQr: string, trackingNo?: string): Promise<Parcel> {
     const state = this.load();
     this.stationActor(state, stationId);
-    const since = Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000;
-    const failures = (state.parcelCodeFailures ?? []).filter((f) => f.stationId === stationId && new Date(f.at).getTime() > since);
-    if (failures.length >= PARCEL_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    // As pickUpParcel in worker/parcels.ts: the number finds the parcel, only the code hands it over.
     const input = parseHandoverInput(codeOrQr);
+    if (!input) throw new BackendError("wrong_pickup_code");
+    const typedNo = trackingNo ? normalizeTrackingNo(trackingNo) : null;
+    if (trackingNo && !typedNo) throw new BackendError("parcel_not_found");
+    if (input.trackingNo && typedNo && input.trackingNo !== typedNo) throw new BackendError("wrong_pickup_code");
+    const number = input.trackingNo ?? typedNo;
     const parcels = this.parcelsOf(state);
-    const parcel = input
-      ? parcels.find(
-          (p) =>
-            p.toStationId === stationId &&
-            p.status === "arrived" &&
-            (input.code ? p.pickupCode === input.code : true) &&
-            (!input.trackingNo || p.trackingNo === input.trackingNo),
-        )
-      : undefined;
-    if (parcel?.deliveryStatus === "out_for_delivery") throw new BackendError("parcel_with_driver");
+    const known = number ? parcels.find((p) => p.trackingNo === number) : undefined;
+    if (number) {
+      if (!known) throw new BackendError("parcel_not_found");
+      if (known.toStationId !== stationId || known.status !== "arrived") throw new BackendError("parcel_not_arrived");
+      if (known.deliveryStatus === "out_for_delivery") throw new BackendError("parcel_with_driver");
+    }
+    if (!input.code) throw new BackendError("pickup_code_required");
+    // Wrong codes lock that parcel, or bare codes at the station; and all of them at this station together, above a ceiling.
+    const key = known ? `parcel:${known.id}` : stationId;
+    const since = Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000;
+    const recent = (state.parcelCodeFailures ?? []).filter((f) => new Date(f.at).getTime() > since);
+    if (recent.filter((f) => f.stationId === key).length >= PARCEL_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    if (recent.filter((f) => f.atStation === stationId).length >= PARCEL_STATION_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    const parcel = known
+      ? known.pickupCode === input.code
+        ? known
+        : undefined
+      : parcels.find((p) => p.toStationId === stationId && p.status === "arrived" && p.pickupCode === input.code);
     if (!parcel) {
-      this.save({ ...state, parcelCodeFailures: [...failures, { stationId, at: new Date().toISOString() }] });
-      if (input && !input.code && parcels.some((p) => p.trackingNo === input.trackingNo)) throw new BackendError("parcel_not_arrived");
+      this.save({ ...state, parcelCodeFailures: [...(state.parcelCodeFailures ?? []), { stationId: key, at: new Date().toISOString(), atStation: stationId }] });
       throw new BackendError("wrong_pickup_code");
     }
+    if (parcel.deliveryStatus === "out_for_delivery") throw new BackendError("parcel_with_driver");
     const done: Parcel = { ...parcel, status: "picked_up", pickedUpAt: new Date().toISOString(), pickupCode: undefined };
     // The recipient came in person after booking a home delivery: the trip is off.
     const jobs = (state.jobs ?? []).map((j) =>
@@ -4173,6 +4418,8 @@ export class DemoBackend implements Backend {
       doneAt: j.doneAt,
       proofKey: j.proofKey,
       ...(j.merchantId ? { forShop: true as const } : {}),
+      ...(j.proofReview ? { proofReview: j.proofReview } : {}),
+      ...(j.proofReview === "rejected" && j.proofRejectReason ? { proofRejectReason: j.proofRejectReason } : {}),
     };
   }
 
@@ -4893,31 +5140,85 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const { driver, job } = this.myDemoJob(state, id);
     if (job.kind !== "ride" && job.kind !== "courier") throw new BackendError("job_wrong_status");
-    if (job.kind === "courier") this.checkCourierHandover(state, job, code);
+    // Handed over with the photo alone: the driver's share waits for the sender or an admin (finishRide in worker/drivers.ts).
+    const byPhoto = job.kind === "courier" && this.checkCourierHandover(state, job, code) === "photo";
     const from: JobStatus[] = hasDoorStep(job) ? ["picked_up", "at_door"] : ["picked_up"];
-    const jobs = this.updateJob(state, job.id, from, { status: "done", doneAt: new Date().toISOString() });
+    const jobs = this.updateJob(state, job.id, from, { status: "done", doneAt: new Date().toISOString(), ...(byPhoto ? { proofReview: "pending" as const } : {}) });
     this.saveJobs(
       state,
       jobs,
-      { table: "delivery_jobs", action: "update", rowId: job.id, userId: driver.userId, changes: { status: [job.status, "done"], collect_fcfa: job.collectFcfa } },
+      {
+        table: "delivery_jobs",
+        action: "update",
+        rowId: job.id,
+        userId: driver.userId,
+        changes: { status: [job.status, "done"], collect_fcfa: job.collectFcfa, ...(byPhoto ? { proof_review: "pending" } : {}) },
+      },
       {
         greenpoint: this.tripGreenpoint(state, driver.userId, job, job.driverStationId),
         ledger: [
           // A courier (and a shop's ride) was paid when the trip started.
           ...(collectsAtStart(job) || !job.collectFcfa ? [] : [this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null)]),
-          ...this.earning(state, job, driver.userId, null),
+          ...(byPhoto ? [] : this.earning(state, job, driver.userId, null)),
           ...(state.ledger ?? []),
         ],
       },
     );
   }
 
+  /** The held share of a courier handed over by photo is booked, once (approveCourierProof in worker/drivers.ts). */
+  private approveProof(state: DemoState, job: DemoJob, by: "sender" | "admin") {
+    if (job.kind !== "courier" || job.status !== "done" || job.proofReview !== "pending" || !job.driverId) throw new BackendError("job_wrong_status");
+    this.saveJobs(
+      state,
+      (state.jobs ?? []).map((j) => (j.id === job.id ? { ...j, proofReview: "approved" as const } : j)),
+      { table: "delivery_jobs", action: "update", rowId: job.id, userId: job.driverId, changes: { proof_review: ["pending", "approved"], by } },
+      { ledger: [...this.earning(state, job, job.driverId, null), ...(state.ledger ?? [])] },
+    );
+  }
+
+  async confirmCourierReceipt(jobId: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const shop = profile.role === "merchant" ? this.membershipOf(state, profile.id)?.shop : null;
+    if (!shop) this.refuseNonCustomer(profile);
+    const job = (state.jobs ?? []).find((j) => j.id === jobId);
+    if (!job) throw new BackendError("job_not_found");
+    const mine = shop ? job.merchantId === shop.id : job.customerUserId === profile.id;
+    if (profile.role !== "admin" && !mine) throw new BackendError("forbidden");
+    this.approveProof(state, job, mine ? "sender" : "admin");
+  }
+
+  async approveCourierProof(jobId: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const job = (state.jobs ?? []).find((j) => j.id === jobId);
+    if (!job) throw new BackendError("job_not_found");
+    this.approveProof(state, job, "admin");
+  }
+
+  /** As rejectProof in worker/drivers.ts: the held share is not booked, and the trip can no longer be approved. */
+  async rejectCourierProof(jobId: string, reason: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const why = reason.trim();
+    if (!why || why.length > 300) throw new BackendError("unknown", "bad_request");
+    const job = (state.jobs ?? []).find((j) => j.id === jobId);
+    if (!job) throw new BackendError("job_not_found");
+    if (job.kind !== "courier" || job.status !== "done" || job.proofReview !== "pending" || !job.driverId) throw new BackendError("job_wrong_status");
+    this.saveJobs(
+      state,
+      (state.jobs ?? []).map((j) => (j.id === job.id ? { ...j, proofReview: "rejected" as const, proofRejectReason: why } : j)),
+      { table: "delivery_jobs", action: "update", rowId: job.id, userId: job.driverId, changes: { proof_review: ["pending", "rejected"], reason: why } },
+    );
+  }
+
   /** Courier at the door, as checkCourierHandover() in worker/drivers.ts: the recipient's code, or a photo without one. */
-  private checkCourierHandover(state: DemoState, job: DemoJob, code: string | undefined) {
+  private checkCourierHandover(state: DemoState, job: DemoJob, code: string | undefined): "code" | "photo" {
     const typed = (code ?? "").replace(/\s/g, "");
     if (!typed) {
       if (!job.proofKey) throw new BackendError("proof_required");
-      return;
+      return "photo";
     }
     const lockKey = `job:${job.id}`;
     const since = Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000;
@@ -4927,6 +5228,7 @@ export class DemoBackend implements Backend {
       this.save({ ...state, parcelCodeFailures: [...(state.parcelCodeFailures ?? []), { stationId: lockKey, at: new Date().toISOString() }] });
       throw new BackendError("wrong_pickup_code");
     }
+    return "code";
   }
 
   async myJobs(): Promise<DeliveryJob[]> {
@@ -5182,8 +5484,18 @@ export class DemoBackend implements Backend {
     };
   }
 
-  private byBadge(state: DemoState, badge: string): DemoDriver {
-    const code = parseDriverBadge(badge);
+  /** As driverByBadge (worker/drivers.ts): a pass is checked; `needPass` (settlement) refuses the typed code. */
+  private async byBadge(state: DemoState, badge: string, needPass = false): Promise<DemoDriver> {
+    let code: string | null;
+    if (isDriverPassFormat(badge)) {
+      const pass = await checkDriverPass(DEMO_PASS_SECRET, badge);
+      if (!pass.ok) throw new BackendError(pass.error);
+      code = pass.code;
+    } else if (needPass) {
+      throw new BackendError("driver_pass_required");
+    } else {
+      code = parseDriverBadge(badge);
+    }
     const driver = (state.drivers ?? []).find((d) => d.code === code);
     if (!code || !this.drives(state, driver)) throw new BackendError("driver_not_found");
     return driver;
@@ -5206,7 +5518,7 @@ export class DemoBackend implements Backend {
   async driverAtStation(stationId: string, badge: string): Promise<DriverAtStation> {
     const state = this.load();
     this.requireStaff(state);
-    const d = this.byBadge(state, badge);
+    const d = await this.byBadge(state, badge);
     const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === d.vehicleId);
     const { handOver, receive } = this.stationJobs(state, stationId, d.userId);
     return {
@@ -5227,7 +5539,7 @@ export class DemoBackend implements Backend {
   async handToDriver(stationId: string, badge: string, jobId: string, parcelCode: string) {
     const state = this.load();
     const { profile, role } = this.stationActor(state, stationId);
-    const d = this.byBadge(state, badge);
+    const d = await this.byBadge(state, badge);
     const { handOver: job } = this.stationJobs(state, stationId, d.userId, jobId);
     if (!job || job.id !== jobId) throw new BackendError("job_wrong_status");
     this.tripParcel(state, job, parcelCode);
@@ -5252,7 +5564,7 @@ export class DemoBackend implements Backend {
   async receiveFromDriver(stationId: string, badge: string, jobId: string, parcelCode: string) {
     const loaded = this.load();
     const { profile, role } = this.stationActor(loaded, stationId);
-    const d = this.byBadge(loaded, badge);
+    const d = await this.byBadge(loaded, badge);
     const { receive: job } = this.stationJobs(loaded, stationId, d.userId, jobId);
     if (!job || job.id !== jobId) throw new BackendError("job_wrong_status");
     this.tripParcel(loaded, job, parcelCode);
@@ -5298,7 +5610,7 @@ export class DemoBackend implements Backend {
   async settleDriver(stationId: string, badge: string, amountFcfa: number) {
     const state = this.load();
     const actor = this.stationActor(state, stationId);
-    const d = this.byBadge(state, badge);
+    const d = await this.byBadge(state, badge, true);
     const current = this.balanceOfDriver(state, d.userId);
     if (amountFcfa !== current) throw new BackendError("balance_changed");
     if (current < 0 && (state.driverPayouts ?? []).some((p) => p.driverId === d.userId && p.status === "requested")) throw new BackendError("payout_pending");
@@ -5672,6 +5984,21 @@ export class DemoBackend implements Backend {
       fleet = this.fleetInfo(state, row);
     }
     const drivers = this.managedDrivers(state).sort((a, b) => a.fullName.localeCompare(b.fullName));
+    const views = drivers.map((d) => this.viewDriver(state, d, false));
+    const settings = this.settingsOf(state);
+    const maxKg = (size: string) => (state.parcelSizes ?? DEFAULT_PARCEL_SIZES).find((t) => t.size === size)?.maxWeightKg ?? 50;
+    // As fleetView in worker/fleet.ts: a manager sees only open trips their drivers could take, without the door.
+    const open = (state.jobs ?? [])
+      .filter((j) => j.status === "open")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, 100)
+      .map((j) => this.viewJob(state, j));
+    const openJobs =
+      profile.role === "admin"
+        ? open.map(jobForManager)
+        : open
+            .filter((j) => fitsFleet(j, j.weightKg ?? maxKg(j.size), drivers.map((d, i) => ({ status: d.status, vehicle: views[i].vehicle })), settings))
+            .map(openJobForManager);
     return {
       fleet,
       drivers: drivers.map((d) => {
@@ -5695,12 +6022,8 @@ export class DemoBackend implements Backend {
             .slice(0, 30)
             .map((i) => this.viewInvite(i))
         : [],
-      openJobs: (state.jobs ?? [])
-        .filter((j) => j.status === "open")
-        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-        .slice(0, 100)
-        .map((j) => jobForManager(this.viewJob(state, j))),
-      settings: this.settingsOf(state),
+      openJobs,
+      settings,
     };
   }
 
@@ -7225,6 +7548,10 @@ export class DemoBackend implements Backend {
     return this.wallet(state).maxXof ?? DEMO_CREDIT_MAX;
   }
 
+  private chargeHold(state: DemoState): number {
+    return this.wallet(state).chargeHoldXof ?? DEMO_CHARGE_HOLD;
+  }
+
   async myWallet(): Promise<WalletView> {
     const state = this.load();
     const profile = this.walletAccess(state);
@@ -7308,6 +7635,7 @@ export class DemoBackend implements Backend {
       userLabel: [user.fullName, user.phone ?? user.email].filter(Boolean).join(" · "),
       adminId: null,
       stationId,
+      staffId: actor.profile.id,
     };
     const used = this.useCreditCode(w, input.code);
     this.save({ ...state, wallet: { ...used, balances: { ...w.balances, [user.id]: before + amount }, transactions: [tx, ...w.transactions].slice(0, 500) } });
@@ -7324,6 +7652,7 @@ export class DemoBackend implements Backend {
     return {
       enabled: w.enabled,
       maxXof: this.creditMax(state),
+      chargeHoldXof: this.chargeHold(state),
       stations: state.stations.map((x) => ({ id: x.id, name: x.name, greenCredit: credit.has(x.id) })),
       totals: {
         balancesXof: [...ids].reduce((n, id) => n + this.balance(w, id), 0),
@@ -7383,6 +7712,18 @@ export class DemoBackend implements Backend {
     this.save(withAudit({ ...state, wallet: { ...this.wallet(state), maxXof } }, { table: "wallets", action: "update", rowId: "green_credit_max_xof", changes: { maxXof } }));
   }
 
+  async setChargeHold(chargeHoldXof: number) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!Number.isInteger(chargeHoldXof) || chargeHoldXof < 1 || chargeHoldXof > 10_000_000) throw new BackendError("unknown", "bad_request");
+    this.save(
+      withAudit(
+        { ...state, wallet: { ...this.wallet(state), chargeHoldXof } },
+        { table: "wallets", action: "update", rowId: "green_credit_charge_hold_xof", changes: { chargeHoldXof } },
+      ),
+    );
+  }
+
   async setStationGreenCredit(stationId: string, enabled: boolean) {
     const state = this.load();
     this.requireAdmin(state);
@@ -7405,6 +7746,10 @@ export class DemoBackend implements Backend {
     if (!remark) throw new BackendError("unknown", "bad_request");
     const user = this.findWalletUser(state, input.contact);
     const w = this.wallet(state);
+    // One booking per (admin, key), as worker/wallet.ts adjustBalance: a repeat answers the first.
+    const key = input.idempotencyKey ? `adjust:${state.profile?.id ?? ""}:${input.idempotencyKey}` : undefined;
+    const first = key ? w.transactions.find((x) => x.key === key && x.userId === user.id && x.type === "admin_adjust") : undefined;
+    if (first) return first;
     const after = this.balance(w, user.id) + (input.direction === "add" ? amount : -amount);
     if (after < 0) throw new BackendError("insufficient_balance");
     const tx: AdminWalletTransaction = {
@@ -7426,7 +7771,10 @@ export class DemoBackend implements Backend {
     };
     this.save(
       withAudit(
-        { ...state, wallet: { ...w, balances: { ...w.balances, [user.id]: after }, transactions: [tx, ...w.transactions].slice(0, 500) } },
+        {
+          ...state,
+          wallet: { ...w, balances: { ...w.balances, [user.id]: after }, transactions: [{ ...tx, ...(key ? { key } : {}) }, ...w.transactions].slice(0, 500) },
+        },
         { table: "wallets", action: "insert", rowId: tx.id, userId: user.id, changes: { direction: input.direction, amount_xof: amount, remark } },
       ),
     );
@@ -7684,7 +8032,7 @@ export class DemoBackend implements Backend {
 
   /** A running demo charge gains energy with time; the price follows. */
   private chargeView(c: DemoCharge, now = Date.now()): ChargeSession {
-    const { userId: _userId, pointId: _pointId, startedBy: _startedBy, partnerId: _partnerId, ...rest } = c;
+    const { userId: _userId, pointId: _pointId, startedBy: _startedBy, partnerId: _partnerId, paidBy: _paidBy, ...rest } = c;
     const view: ChargeSession = c.userId && c.startedBy === c.userId ? { ...rest, selfStarted: true } : rest;
     if (c.status !== "charging") return view;
     const energyWh = Math.round(((now - new Date(c.startedAt).getTime()) / 3_600_000) * DEMO_CHARGE_WATTS);
@@ -7800,11 +8148,12 @@ export class DemoBackend implements Backend {
       this.checkPickupCode(state, reservation, input.pickupCode);
     }
     const users = state.users ?? demoUsers(new Date());
-    const text = contactFromCode(input.contact ?? "");
+    // Without a reservation only the customer's one-time Green Credit code names them; without it, an anonymous cash charge.
+    const code = (input.creditCode ?? "").trim();
     const customer = reservation
       ? (users.find((u) => u.id === reservation.userId) ?? (state.profile?.id === reservation.userId ? state.profile : null))
-      : text
-        ? this.findWalletUser(state, text)
+      : code
+        ? this.creditCodeOwner(state, code)
         : null;
     if (customer?.id === staff.id) throw new BackendError("own_reservation");
     // The reservation used now: the one named, else the customer's outlet reservation here (this outlet
@@ -7835,7 +8184,9 @@ export class DemoBackend implements Backend {
       paidAt: null,
       greenpoints: 0,
     };
-    this.save({ ...state, reservations, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
+    // The code is used once, by this start.
+    const wallet = !reservation && code ? this.useCreditCode(this.wallet(state), code) : state.wallet;
+    this.save({ ...state, wallet, reservations, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
     return this.chargeView(charge);
   }
 
@@ -7875,7 +8226,7 @@ export class DemoBackend implements Backend {
   }
 
   /** Paid: the greenpoints follow the kWh for an app customer at a solar station (as chargeEarnStatement). */
-  private payCharge(state: DemoState, id: string, method: ChargeSession["paymentMethod"]): DemoState {
+  private payCharge(state: DemoState, id: string, method: ChargeSession["paymentMethod"], paidBy: string | null = null): DemoState {
     const c = (state.charges ?? []).find((x) => x.id === id);
     if (!c || c.status !== "stopped" || c.amountXof <= 0) throw new BackendError("charge_wrong_status");
     let next = state;
@@ -7904,15 +8255,15 @@ export class DemoBackend implements Backend {
       }
     }
     const charges = (next.charges ?? []).map((x) =>
-      x.id === id ? { ...x, status: "paid" as const, paymentMethod: method, paidAt: new Date().toISOString(), greenpoints: points } : x,
+      x.id === id ? { ...x, status: "paid" as const, paymentMethod: method, paidAt: new Date().toISOString(), greenpoints: points, paidBy } : x,
     );
     return { ...next, charges };
   }
 
   async payChargeCash(stationId: string, id: string): Promise<ChargeSession> {
     const state = this.load();
-    this.stationActor(state, stationId);
-    const next = this.payCharge(state, id, "cash");
+    const { profile } = this.stationActor(state, stationId);
+    const next = this.payCharge(state, id, "cash", profile.id);
     this.save(next);
     return this.chargeView(next.charges!.find((c) => c.id === id)!);
   }
@@ -8027,8 +8378,9 @@ export class DemoBackend implements Backend {
     }
     const w = this.wallet(state);
     if (w.frozen.includes(profile.id)) throw new BackendError("wallet_frozen");
-    const balance = this.balance(w, profile.id);
-    if (balance < Math.max(info.tariff.minXof, 5)) throw new BackendError("insufficient_balance");
+    // As chargeHoldFrom() in worker/charging.ts: the charge may cost the balance up to the cap.
+    const limit = Math.min(this.balance(w, profile.id), this.chargeHold(state));
+    if (limit < Math.max(info.tariff.minXof, 5)) throw new BackendError("insufficient_balance");
     const used = this.reservationToUse(state, profile.id, info.stationId, pointId, info.ev);
     const reservations = used ? state.reservations.map((r) => (r.id === used.id ? { ...r, status: "completed" as const } : r)) : state.reservations;
     const charge: DemoCharge = {
@@ -8052,7 +8404,7 @@ export class DemoBackend implements Backend {
       paymentMethod: null,
       paidAt: null,
       greenpoints: 0,
-      creditLimitXof: balance,
+      creditLimitXof: limit,
     };
     this.save({ ...state, reservations, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
     return this.chargeView(charge);

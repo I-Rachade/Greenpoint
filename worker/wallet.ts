@@ -21,10 +21,11 @@ import {
   type WalletView,
 } from "../src/lib/wallet";
 import { verifyPin } from "./auth";
+import { withCounterCodeTry } from "./code-tries";
 import type { Env } from "./env";
 import { ApiError, nowIso, readJson, sha256, uuid } from "./http";
 import { notifyUser } from "./notify";
-import { refuseNonCustomer } from "./roles";
+import { notCustomerRole, refuseNonCustomer } from "./roles";
 
 // Green Credit (migration 0047, formerly the Cashplus wallet): a closed prepaid credit for
 // energy, loaded in cash at the counter of a Green Credit station and spent on what belongs
@@ -47,6 +48,7 @@ interface TxRow {
   counterparty_label: string | null;
   remark: string | null;
   admin_id: string | null;
+  details?: string | null;
   created_at: string;
 }
 
@@ -61,7 +63,19 @@ interface UserRow {
 const HISTORY_LIMIT = 50;
 const ADMIN_HISTORY_LIMIT = 300;
 
+/** A Green Credit charge's hold (taken when it starts) or what came back of it (0052). */
+function holdOf(r: TxRow): "held" | "refund" | null {
+  if (r.type !== "charge" || !r.details) return null;
+  try {
+    const d = JSON.parse(r.details) as { hold?: unknown; holdRefund?: unknown };
+    return d.hold ? "held" : d.holdRefund ? "refund" : null;
+  } catch {
+    return null;
+  }
+}
+
 function toTransaction(r: TxRow): WalletTransaction {
+  const hold = holdOf(r);
   return {
     id: r.id,
     trxId: r.trx_id,
@@ -75,11 +89,12 @@ function toTransaction(r: TxRow): WalletTransaction {
     counterparty: r.counterparty_label,
     remark: r.remark,
     createdAt: r.created_at,
+    ...(hold ? { hold } : {}),
   };
 }
 
-async function walletEnabled(env: Env): Promise<boolean> {
-  const row = await env.DB.prepare("select value from app_settings where key = 'wallet_enabled'").first<{ value: string }>();
+async function walletEnabled(db: D1Database): Promise<boolean> {
+  const row = await db.prepare("select value from app_settings where key = 'wallet_enabled'").first<{ value: string }>();
   return row?.value === "1";
 }
 
@@ -87,10 +102,20 @@ async function walletEnabled(env: Env): Promise<boolean> {
 export async function walletAccess(env: Env, user: Profile): Promise<{ enabled: boolean; testMode: boolean }> {
   // Drivers are never customers (R11); their former balance waits in a customer account (0031).
   refuseNonCustomer(user);
-  const enabled = await walletEnabled(env);
+  const enabled = await walletEnabled(env.DB);
   if (enabled) return { enabled, testMode: false };
   if (user.role === "admin") return { enabled, testMode: true };
   throw new ApiError("wallet_disabled", 403);
+}
+
+/**
+ * Whether an account may spend its Green Credit without signing in itself (a card linked to it,
+ * worker/charge-cards.ts): the same rule as walletAccess, read from the database.
+ */
+export async function accountSpendsCredit(db: D1Database, userId: string): Promise<boolean> {
+  const row = await db.prepare("select role from users where id = ?").bind(userId).first<{ role: string }>();
+  if (!row || notCustomerRole(row.role)) return false;
+  return row.role === "admin" || (await walletEnabled(db));
 }
 
 function ensureWallet(env: Env, userId: string, now: string) {
@@ -138,15 +163,55 @@ export async function creditMax(db: D1Database): Promise<number> {
   return Number.isInteger(n) && n > 0 ? n : 0;
 }
 
+/** What a Green Credit charge holds at most when no admin set it (app_settings.green_credit_charge_hold_xof). */
+export const CHARGE_HOLD_DEFAULT_XOF = 3000;
+const CHARGE_HOLD_MAX_XOF = 10_000_000;
+
+/**
+ * The most a Green Credit charge takes from the credit when it starts (its limit), set in the
+ * backoffice: the rest of the balance stays free for a battery swap meanwhile.
+ */
+export async function chargeHoldCap(db: D1Database): Promise<number> {
+  const row = await db.prepare("select value from app_settings where key = 'green_credit_charge_hold_xof'").first<{ value: string }>();
+  const n = Number(row?.value);
+  return Number.isInteger(n) && n > 0 ? n : CHARGE_HOLD_DEFAULT_XOF;
+}
+
+/**
+ * Green Credit belongs to what is poinderecharge's own: our stations, and shop stations whose
+ * battery swap is ours (0045), and partner stations with a socket of ours (0039). Only those may be
+ * designated, and only those accept it.
+ */
+const OURS_SQL =
+  "(coalesce(o.is_own, 0) = 1 or s.swap_owner = 'poinderecharge' or exists (select 1 from devices d where d.station_id = s.id and d.partner_id is null))";
+const CREDIT_STATION_SQL = `select s.id, s.name from stations s left join operators o on o.id = s.operator_id where s.green_credit = 1 and ${OURS_SQL}`;
+
 /** The active stations that load and accept Green Credit. */
 async function creditStations(db: D1Database): Promise<GreenCreditStation[]> {
-  const { results } = await db.prepare("select id, name from stations where green_credit = 1 and is_active = 1 order by name").all<GreenCreditStation>();
+  const { results } = await db.prepare(`${CREDIT_STATION_SQL} and s.is_active = 1 order by s.name`).all<GreenCreditStation>();
   return results;
+}
+
+/**
+ * A Green Credit charge of the user started before 0052 that runs or waits to be settled: its
+ * limit is the whole balance and nothing was taken when it started, so no other payment may spend
+ * the credit meanwhile. Since 0052 a charge takes its limit from the credit when it starts
+ * (credit_held_xof), and other payments simply find less credit; this guard can go once no such
+ * old charge is open. Bind the user's id.
+ */
+export const OPEN_CREDIT_CHARGE_SQL =
+  "exists (select 1 from charging_sessions where user_id = ? and credit_limit_xof is not null and credit_held_xof is null and status in ('charging', 'stopped'))";
+
+/** Refuses a payment from Green Credit while a Green Credit charge of the user holds the credit. */
+export async function refuseWhileCreditCharging(db: D1Database, userId: string) {
+  if (await db.prepare(`select ${OPEN_CREDIT_CHARGE_SQL} as open`).bind(userId).first<{ open: number }>().then((r) => r?.open)) {
+    throw new ApiError("charge_unpaid", 409);
+  }
 }
 
 /** Whether this station loads and accepts Green Credit (designated in the backoffice). */
 export async function isCreditStation(db: D1Database, stationId: string): Promise<boolean> {
-  return !!(await db.prepare("select 1 from stations where id = ? and green_credit = 1").bind(stationId).first());
+  return !!(await db.prepare(`${CREDIT_STATION_SQL} and s.id = ?`).bind(stationId).first());
 }
 
 // Users ------------------------------------------------------------------------
@@ -227,14 +292,19 @@ export async function creditCodeOwner(db: D1Database, rawCode: unknown): Promise
 
 /**
  * Marks a counter code used, for the batch that spends or loads with it. The statements after it
- * only apply when `usedSql` holds: this request was the one that used the code.
+ * only apply when `usedSql` holds: this request was the one that used the code (a fresh id per
+ * request, not the time, which two parallel requests can share).
  */
-export function spendCreditCode(db: D1Database, hash: string, stationId: string, purpose: "topup" | "swap", at: string) {
+export function spendCreditCode(db: D1Database, hash: string, stationId: string, purpose: "topup" | "swap" | "charge", at: string) {
+  const request = uuid();
   return {
     statement: db
-      .prepare("update credit_codes set used_at = ?, used_at_station = ?, used_for = ? where code_hash = ? and used_at is null and expires_at > ?")
-      .bind(at, stationId, purpose, hash, at),
-    usedSql: `exists (select 1 from credit_codes where code_hash = '${hash}' and used_at = '${at}' and used_for = '${purpose}')`,
+      .prepare(
+        "update credit_codes set used_at = ?, used_at_station = ?, used_for = ?, used_by_request = ? where code_hash = ? and used_at is null and expires_at > ?",
+      )
+      .bind(at, stationId, purpose, request, hash, at),
+    // Both values are made here (a hex hash and a uuid), never typed by anyone.
+    usedSql: `exists (select 1 from credit_codes where code_hash = '${hash}' and used_by_request = '${request}' and used_for = '${purpose}')`,
   };
 }
 
@@ -242,8 +312,9 @@ async function requireCreditStation(db: D1Database, stationId: string) {
   if (!(await isCreditStation(db, stationId))) throw new ApiError("credit_not_accepted", 409);
 }
 
-async function customerForCode(env: Env, rawCode: unknown) {
-  const owner = await creditCodeOwner(env.DB, rawCode);
+async function customerForCode(env: Env, staff: Profile, rawCode: unknown) {
+  // Staff type someone else's code: many wrong ones stop them for a while (worker/code-tries.ts).
+  const owner = await withCounterCodeTry(env.DB, staff.id, "credit", () => creditCodeOwner(env.DB, rawCode));
   const wallet = await env.DB.prepare("select balance_xof, status from wallets where user_id = ?")
     .bind(owner.user.id)
     .first<{ balance_xof: number; status: string }>();
@@ -258,7 +329,7 @@ export async function counterCredit(env: Env, user: Profile, isStaffOf: StaffChe
   if (!(await isStaffOf(user, stationId))) throw new ApiError("forbidden", 403);
   await requireCreditStation(env.DB, stationId);
   const { code } = await readJson<{ code?: unknown }>(request);
-  const c = await customerForCode(env, code);
+  const c = await customerForCode(env, user, code);
   return { customer: label(c.user), balanceXof: c.balance, maxTopupXof: maxTopup(c.balance, await creditMax(env.DB)) };
 }
 
@@ -274,7 +345,7 @@ export async function topUpCredit(env: Env, user: Profile, isStaffOf: StaffCheck
   const input = await readJson<{ code?: unknown; amountXof?: unknown }>(request);
   const amount = parseAmount(input.amountXof);
   if (amount === null || amount < CREDIT_TOPUP_MIN_XOF) throw new ApiError("invalid_amount");
-  const c = await customerForCode(env, input.code);
+  const c = await customerForCode(env, user, input.code);
   if (c.user.id === user.id) throw new ApiError("own_reservation");
   const limit = maxTopup(c.balance, await creditMax(db));
   if (limit !== null && amount > limit) throw new ApiError("credit_limit_reached");
@@ -346,9 +417,10 @@ export async function adminWallet(env: Env, url: URL): Promise<AdminWallet> {
     params.push(userId);
   }
   const filter = where.length ? `where ${where.join(" and ")}` : "";
-  const [enabled, maxXof, stations, totals, rows] = await Promise.all([
-    walletEnabled(env),
+  const [enabled, maxXof, chargeHoldXof, stations, totals, rows] = await Promise.all([
+    walletEnabled(env.DB),
     creditMax(env.DB),
+    chargeHoldCap(env.DB),
     env.DB.prepare("select id, name, green_credit from stations where is_active = 1 order by name").all<{ id: string; name: string; green_credit: number }>(),
     env.DB.prepare(
       `select (select coalesce(sum(balance_xof), 0) from wallets) as balances,
@@ -366,6 +438,7 @@ export async function adminWallet(env: Env, url: URL): Promise<AdminWallet> {
   return {
     enabled,
     maxXof,
+    chargeHoldXof,
     stations: stations.results.map((s) => ({ id: s.id, name: s.name, greenCredit: !!s.green_credit })),
     totals: {
       balancesXof: totals?.balances ?? 0,
@@ -412,13 +485,33 @@ export async function setCreditMax(env: Env, admin: Profile, request: Request) {
   ]);
 }
 
+/** POST /api/admin/wallet/charge-hold { chargeHoldXof }: the most a Green Credit charge holds of the credit. */
+export async function setChargeHold(env: Env, admin: Profile, request: Request) {
+  const { chargeHoldXof } = await readJson<{ chargeHoldXof?: unknown }>(request);
+  const value = Number(chargeHoldXof);
+  if (!Number.isInteger(value) || value < 1 || value > CHARGE_HOLD_MAX_XOF) throw new ApiError("bad_request");
+  const now = nowIso();
+  await env.DB.batch([
+    env.DB.prepare(
+      `insert into app_settings (key, value, updated_by, updated_at) values ('green_credit_charge_hold_xof', ?1, ?2, ?3)
+       on conflict (key) do update set value = ?1, updated_by = ?2, updated_at = ?3`,
+    ).bind(String(value), admin.id, now),
+    auditWallet(env, admin.id, "update", "green_credit_charge_hold_xof", { chargeHoldXof: value }),
+  ]);
+}
+
 /** POST /api/admin/stations/:id/green-credit { enabled }: designates a station that loads and accepts Green Credit. */
 export async function setStationGreenCredit(env: Env, admin: Profile, stationId: string, request: Request) {
   const { enabled } = await readJson<{ enabled?: unknown }>(request);
   if (typeof enabled !== "boolean") throw new ApiError("bad_request");
   const db = env.DB;
-  const s = await db.prepare("select green_credit from stations where id = ?").bind(stationId).first<{ green_credit: number }>();
+  const s = await db
+    .prepare(`select s.green_credit, ${OURS_SQL} as ours from stations s left join operators o on o.id = s.operator_id where s.id = ?`)
+    .bind(stationId)
+    .first<{ green_credit: number; ours: number }>();
   if (!s) throw new ApiError("not_found", 404);
+  // A partner's station cannot take Green Credit: it is spent only on what is ours.
+  if (enabled && !s.ours) throw new ApiError("credit_not_accepted", 409);
   if (!!s.green_credit === enabled) return { ok: true };
   await db.batch([
     db.prepare("update stations set green_credit = ? where id = ?").bind(enabled ? 1 : 0, stationId),
@@ -433,6 +526,11 @@ export async function setStationGreenCredit(env: Env, admin: Profile, stationId:
  * Admin correction (spec 1.4.11), or a cash refund (the customer got the money back, e.g. to
  * close the account; the only way credit ever leaves as money): one ledger row; a subtraction
  * can never make a balance negative.
+ *
+ * idempotencyKey (optional, sent by the backoffice once per submission): the correction is
+ * booked once per (admin, key). The key is kept on the ledger row as "adjust:<admin>:<key>",
+ * so the unique index (user_id, idempotency_key) of 0009 makes a repeat break the batch; a
+ * repeated key answers the first booking. Without a key, every request books (older clients).
  */
 export async function adjustBalance(env: Env, admin: Profile, request: Request): Promise<WalletTransaction> {
   const input = await readJson<Partial<WalletAdjustInput>>(request);
@@ -441,7 +539,20 @@ export async function adjustBalance(env: Env, admin: Profile, request: Request):
   if (input.direction !== "add" && input.direction !== "subtract" && input.direction !== "refund") throw new ApiError("bad_request");
   const remark = cleanRemark(input.remark);
   if (!remark) throw new ApiError("bad_request");
+  let key: string | null = null;
+  if (input.idempotencyKey !== undefined && input.idempotencyKey !== null) {
+    if (typeof input.idempotencyKey !== "string" || !/^[\w-]{8,64}$/.test(input.idempotencyKey)) throw new ApiError("bad_request");
+    key = `adjust:${admin.id}:${input.idempotencyKey}`;
+  }
   const target = await findUser(env, input.contact);
+  const booked = async () =>
+    key
+      ? await env.DB.prepare("select * from wallet_transactions where user_id = ? and idempotency_key = ? and type = 'admin_adjust'")
+          .bind(target.id, key)
+          .first<TxRow>()
+      : null;
+  const first = await booked();
+  if (first) return toTransaction(first);
   const now = nowIso();
   const id = uuid();
   const sign = input.direction === "add" ? 1 : -1;
@@ -451,8 +562,8 @@ export async function adjustBalance(env: Env, admin: Profile, request: Request):
       env.DB.prepare("update wallets set balance_xof = balance_xof + ?, updated_at = ? where user_id = ?").bind(sign * amount, now, target.id),
       env.DB.prepare(
         `insert into wallet_transactions (id, trx_id, user_id, type, attribute, amount_xof, fee_xof, total_xof, balance_after_xof,
-           remark, admin_id, details, created_at)
-         values (?1, ?2, ?3, 'admin_adjust', ?4, ?5, 0, ?5, (select balance_xof from wallets where user_id = ?3), ?6, ?7, ?8, ?9)`,
+           remark, admin_id, details, created_at, idempotency_key)
+         values (?1, ?2, ?3, 'admin_adjust', ?4, ?5, 0, ?5, (select balance_xof from wallets where user_id = ?3), ?6, ?7, ?8, ?9, ?10)`,
       ).bind(
         id,
         newTrxId("admin_adjust"),
@@ -463,10 +574,15 @@ export async function adjustBalance(env: Env, admin: Profile, request: Request):
         admin.id,
         JSON.stringify({ device: device(request), ...(input.direction === "refund" ? { cashRefund: true } : {}) }),
         now,
+        key,
       ),
       auditWallet(env, admin.id, "insert", id, { direction: input.direction, amount_xof: amount, remark }, target.id),
     ]);
   } catch (err) {
+    // The same submission booked in between (a double click): its booking is the answer, even
+    // when this batch broke on the balance check before reaching the key's unique index.
+    const again = await booked();
+    if (again) return toTransaction(again);
     if (/CHECK constraint failed/i.test((err as Error).message ?? "")) throw new ApiError("insufficient_balance");
     throw err;
   }

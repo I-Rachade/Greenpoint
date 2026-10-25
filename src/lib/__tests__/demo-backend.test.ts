@@ -531,6 +531,54 @@ describe("DemoBackend driver phase 2 (as in the Worker)", () => {
     expect((await backend.driverHome()).payout).toMatchObject({ status: "paid", reference: "FL-1" });
   });
 
+  it("holds the share of a courier handed over by photo until the sender confirms, and settles cash only for the pass", async () => {
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    await backend.setDriversEnabled(true);
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.joinDriverQueue("st-be", HOME);
+    await asRole(backend, "customer");
+    const job = await backend.bookCourier({ pickup: HOME, dropoff: { lat: 6.13, lng: 1.22, note: "Porte bleue" }, recipientPhone: "+22897200001", content: "Pagne", size: "S" });
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.acceptJob(job.id);
+    await backend.boardRide(job.id);
+    // No FileReader in Node: a stand-in that reads every photo as the same data URL.
+    vi.stubGlobal(
+      "FileReader",
+      class {
+        result = "data:image/jpeg;base64,AQID";
+        onload: (() => void) | null = null;
+        readAsDataURL() {
+          this.onload?.();
+        }
+      },
+    );
+    await backend.uploadDeliveryPhoto(job.id, new File([new Uint8Array([1, 2, 3])], "door.jpg", { type: "image/jpeg" }));
+    vi.unstubAllGlobals();
+    await backend.finishRide(job.id);
+    expect((await backend.driverHome()).ledger.map((e) => e.kind)).toEqual(["collected"]);
+
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    expect((await backend.adminDrivers()).jobs.find((j) => j.id === job.id)?.proofReview).toBe("pending");
+    await asRole(backend, "customer");
+    expect((await backend.myJobs()).find((j) => j.id === job.id)?.proofReview).toBe("pending");
+    await backend.confirmCourierReceipt(job.id);
+    await expect(backend.confirmCourierReceipt(job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    const home = await backend.driverHome();
+    expect(home.ledger.map((e) => e.kind).sort()).toEqual(["collected", "earning"]);
+    const pass = (await backend.driverPass()).payload;
+
+    // The driver hands in the cash at the counter: the typed code is not enough, the pass is.
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    setActiveStation("st-be");
+    await expect(backend.settleDriver("st-be", home.driver!.code!, home.driver!.balanceFcfa)).rejects.toMatchObject({ code: "driver_pass_required" });
+    await expect(backend.settleDriver("st-be", pass.replace(/.$/, (c) => (c === "0" ? "1" : "0")), home.driver!.balanceFcfa)).rejects.toMatchObject({ code: "driver_pass_invalid" });
+    await backend.settleDriver("st-be", pass, home.driver!.balanceFcfa);
+    setActiveStation(null);
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    expect((await backend.driverHome()).driver!.balanceFcfa).toBe(0);
+  });
+
   it("adds a nearby parcel trip to a busy driver's tour", async () => {
     await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
     await backend.setDriversEnabled(true);
@@ -697,5 +745,19 @@ describe("DemoBackend station cash (as worker/station-cash.ts)", () => {
     // A shop station: swaps are ours; commission kept back on what is ours (the top-up is not a sale).
     await backend.saveStationCashSettings(PARTNER_STATION, { swapOwner: "poinderecharge", commissionPct: 10, commissionMode: "deduct" });
     expect((await backend.ownerCash(PARTNER_STATION))[0]).toMatchObject({ type: "shop", commissionXof: 0, dueXof: 2000 });
+  });
+
+  it("closes the Green Credit a staff member loaded at an own station (0051)", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    const me = (await backend.getProfile())!.id;
+    const memory = (backend as unknown as { memory: { wallet?: unknown } }).memory;
+    const at = new Date().toISOString();
+    memory.wallet = { enabled: true, balances: {}, frozen: [], transactions: [{ id: "t1", type: "topup", amountXof: 800, createdAt: at, stationId: STATION, staffId: me }] };
+    expect(await backend.myStationCash(STATION)).toMatchObject({ type: "own", staffId: me, dueXof: 800, lines: { creditXof: 800 } });
+    expect((await backend.ownerCash(STATION)).map((s) => s.staffId)).toEqual([me]);
+    const h = await backend.closeCashDay({ stationId: STATION, method: "cash", reference: "Caisse", amountXof: 800, expectedDueXof: 800 });
+    expect(h).toMatchObject({ staffId: me, dueXof: 800 });
+    expect(await backend.myStationCash(STATION)).toMatchObject({ dueXof: 0, pendingXof: 800 });
   });
 });

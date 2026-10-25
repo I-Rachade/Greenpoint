@@ -121,6 +121,8 @@ export async function startPayment(env: Env, user: Profile, request: Request): P
   if (typeof body.reservationId !== "string" || !PAYMENT_NETWORKS.includes(network)) throw new ApiError("bad_request");
   const phone = typeof body.phone === "string" ? normalizeTogoPhone(body.phone) : null;
   if (!phone) throw new ApiError("phone_not_allowed");
+  // The simulated provider marks payments paid without money: customers never pay against it.
+  if (!mobilePaymentOffered(env, user)) throw new ApiError("payment_not_offered", 409);
 
   const r = await env.DB.prepare(
     `select r.id, r.user_id, r.station_id, r.type, r.status, r.expires_at,
@@ -260,13 +262,23 @@ async function createPayment(
   }
 }
 
+/**
+ * The provider that took payment `p`, or null when the Worker now runs another one: a status
+ * from the simulation must never settle a real payment, nor the other way round.
+ */
+function providerOf(env: Env, p: Pick<PaymentRow, "provider">): PaymentProvider | null {
+  const pay = provider(env);
+  return pay.name === p.provider ? pay : null;
+}
+
 /** POST /api/payments/:id/refresh: the app asks again when the callback is late. */
 export async function refreshPayment(env: Env, user: Profile, id: string): Promise<Payment> {
   const p = await env.DB.prepare("select * from payments where id = ?").bind(id).first<PaymentRow>();
   if (!p || p.user_id !== user.id) throw new ApiError("not_found", 404);
-  if (p.status !== "pending") return toPayment(p);
+  const pay = providerOf(env, p);
+  if (p.status !== "pending" || !pay) return toPayment(p);
   try {
-    const s = await provider(env).fetchStatus(p.identifier);
+    const s = await pay.fetchStatus(p.identifier);
     return toPayment(s.status === "pending" ? p : await applyStatus(env, null, p, s));
   } catch (err) {
     console.error("payment refresh", p.identifier, err);
@@ -311,9 +323,10 @@ export async function paymentCallback(env: Env, request: Request): Promise<Respo
 
   const p = await env.DB.prepare("select * from payments where identifier = ?").bind(identifier).first<PaymentRow>();
   // Unknown or already settled: acknowledge so the provider stops retrying.
-  if (!p || p.status !== "pending") return new Response("ok");
+  const pay = p && providerOf(env, p);
+  if (!p || p.status !== "pending" || !pay) return new Response("ok");
   try {
-    const s = await provider(env).fetchStatus(identifier);
+    const s = await pay.fetchStatus(identifier);
     if (s.status !== "pending") await applyStatus(env, null, p, s);
     return new Response("ok");
   } catch (err) {

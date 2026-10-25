@@ -152,7 +152,7 @@ describe("DemoBackend parcel depot", () => {
     setActiveStation(null);
   });
 
-  it("goes from drop-off to pickup, and only the recipient sees the code", async () => {
+  it("goes from drop-off to pickup, and recipient and sender see the code, staff never", async () => {
     await as("operator");
     const parcel = await backend.createParcel(FROM, input);
     expect(parcel.size).toBe("M");
@@ -178,7 +178,8 @@ describe("DemoBackend parcel depot", () => {
     await as("customer", "+22890112233");
     const [sent] = await backend.myParcels();
     expect(sent.direction).toBe("sent");
-    expect(sent.pickupCode).toBeUndefined();
+    // The sender may pass the code on to the recipient.
+    expect(sent.pickupCode).toBe(mine.pickupCode);
 
     await adminAt(TO);
     await expect(backend.pickUpParcel(TO, mine.pickupCode === "000000" ? "111111" : "000000")).rejects.toMatchObject({
@@ -188,7 +189,7 @@ describe("DemoBackend parcel depot", () => {
     expect(done.status).toBe("picked_up");
   });
 
-  it("hands a parcel out with its number alone, and says when it is not waiting here", async () => {
+  it("finds a parcel by its number but hands it out only for the code, and says when it is not waiting here", async () => {
     await as("operator");
     const parcel = await backend.createParcel(FROM, input);
     // Staff of FROM have no rights at TO.
@@ -197,7 +198,29 @@ describe("DemoBackend parcel depot", () => {
     await expect(backend.pickUpParcel(TO, parcel.trackingNo)).rejects.toMatchObject({ code: "parcel_not_arrived" });
     setActiveStation(null);
     await carry(parcel);
-    const done = await backend.pickUpParcel(TO, parcel.trackingNo.toLowerCase());
+    await expect(backend.pickUpParcel(TO, parcel.trackingNo.toLowerCase())).rejects.toMatchObject({ code: "pickup_code_required" });
+    await as("customer", "+22891445566");
+    const code = (await backend.myParcels()).find((p) => p.id === parcel.id)!.pickupCode!;
+    await adminAt(TO);
+    await expect(backend.pickUpParcel(TO, code === "000000" ? "111111" : "000000", parcel.trackingNo)).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    const done = await backend.pickUpParcel(TO, code, parcel.trackingNo.toLowerCase());
+    expect(done.status).toBe("picked_up");
+  });
+
+  it("locks wrong codes for one parcel without stopping bare codes at the station", async () => {
+    await as("operator");
+    const parcel = await backend.createParcel(FROM, input);
+    await carry(parcel);
+    await as("customer", "+22891445566");
+    const code = (await backend.myParcels()).find((p) => p.id === parcel.id)!.pickupCode!;
+    const wrong = code === "000000" ? "111111" : "000000";
+    await adminAt(TO);
+    for (let i = 0; i < 5; i++) {
+      await expect(backend.pickUpParcel(TO, wrong, parcel.trackingNo)).rejects.toMatchObject({ code: "wrong_pickup_code" });
+    }
+    await expect(backend.pickUpParcel(TO, code, parcel.trackingNo)).rejects.toMatchObject({ code: "code_locked" });
+    // Typed bare, the code counts against the station's own limit, which is untouched.
+    const done = await backend.pickUpParcel(TO, code);
     expect(done.status).toBe("picked_up");
   });
 

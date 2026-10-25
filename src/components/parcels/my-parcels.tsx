@@ -120,8 +120,9 @@ function ParcelCard({
         <br />
         {t.parcels.content} : {p.content} · {t.parcels.size} {p.size}
       </div>
-      {received && p.status === "arrived" && p.pickupCode && (
-        // Pops in when the parcel arrives: this is what the recipient has been waiting for.
+      {p.status === "arrived" && p.pickupCode && (
+        // Pops in when the parcel arrives: this is what the recipient has been waiting for. The
+        // sender sees it too, to pass it on (the counter hands out only for this code).
         <div className="animate-gp-pop flex flex-wrap items-center gap-4 rounded-lg bg-gp-green/10 p-3">
           <QrImage text={pickupQrPayload(p.trackingNo, p.pickupCode)} label={t.parcels.pickupCode} size={180} />
           <div className="space-y-1">
@@ -130,7 +131,7 @@ function ParcelCard({
             <div className="text-sm">{[to?.name, to?.address].filter(Boolean).join(", ")}</div>
             {to?.openingHours && <div className="text-xs text-gp-muted">{to.openingHours}</div>}
             {p.pickupDeadline && <div className="text-sm font-medium">{format(t.parcels.deadline, { date: when(p.pickupDeadline) })}</div>}
-            <div className="text-xs text-gp-muted">{t.parcels.showCode}</div>
+            <div className="text-xs text-gp-muted">{received ? t.parcels.showCode : t.parcels.passCode}</div>
           </div>
         </div>
       )}

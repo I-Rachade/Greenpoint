@@ -11,18 +11,14 @@ export class ApiError extends Error {
 }
 
 /** Origins allowed to call the API: the web app and the Android/iOS app (Capacitor). */
-const ALLOWED_ORIGINS = [
-  "https://app.poinderecharge.com",
-  "https://localhost",
-  "capacitor://localhost",
-  "http://localhost",
-  "http://localhost:3000",
-  "http://localhost:8787",
-];
+const ALLOWED_ORIGINS = ["https://app.poinderecharge.com", "https://localhost", "capacitor://localhost", "http://localhost"];
+/** The dev servers (next dev, wrangler dev), only for a Worker that itself runs locally. */
+const DEV_ORIGINS = ["http://localhost:3000", "http://localhost:8787"];
 
 export function corsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("Origin");
-  if (!origin || !ALLOWED_ORIGINS.includes(origin)) return {};
+  const local = ["localhost", "127.0.0.1"].includes(new URL(request.url).hostname);
+  if (!origin || !(ALLOWED_ORIGINS.includes(origin) || (local && DEV_ORIGINS.includes(origin)))) return {};
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",

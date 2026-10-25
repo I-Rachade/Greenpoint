@@ -274,7 +274,8 @@ export type Ingest = (
   extra?: Pick<DeviceEvent, "allOutlets" | "ack">,
 ) => Promise<{ updated: number } | { error: string }>;
 
-function sameSecret(given: string | null, expected: string): boolean {
+/** Compares secrets (or their hashes) in constant time. */
+export function sameSecret(given: string | null, expected: string): boolean {
   if (!given || given.length !== expected.length) return false;
   let diff = 0;
   for (let i = 0; i < given.length; i++) diff |= given.charCodeAt(i) ^ expected.charCodeAt(i);

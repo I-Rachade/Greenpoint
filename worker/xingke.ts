@@ -238,7 +238,8 @@ async function answerCard(env: Env, cb: XingkeCallback) {
   }
   const charging = credit !== null && !!outlet;
   // The platform's own id for the device, as it called us.
-  const answer = xingkeAuthorizeResponse(card, credit);
+  // A balance inquiry shows the whole credit; a start, what the charge may spend (its hold).
+  const answer = xingkeAuthorizeResponse(card, credit !== null && card.intent === "BalanceInquiry" ? (swipe.balanceXof ?? credit) : credit);
   const result = await sendXingkeCommand(env, cb.deviceId, answer);
   // Kept with the device's events, so a card the device showed nothing for can be traced.
   await db

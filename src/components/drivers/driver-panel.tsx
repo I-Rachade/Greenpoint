@@ -894,6 +894,10 @@ function History({ jobs, stations }: { jobs: DeliveryJob[]; stations: StationVie
             <span className="flex-1">{route(j, name)}</span>
             <JobStatusPill status={j.status} kind={j.kind} forShop={j.forShop} />
             <span className="font-mono text-xs">{fcfa(j.fareFcfa)}</span>
+            {j.proofReview === "pending" && <span className="w-full text-xs text-amber-700 dark:text-amber-300">{t.drivers.page.proofPending}</span>}
+            {j.proofReview === "rejected" && (
+              <span className="w-full text-xs text-red-700 dark:text-red-300">{format(t.drivers.page.proofRejected, { reason: j.proofRejectReason ?? "" })}</span>
+            )}
           </li>
         ))}
       </ul>
