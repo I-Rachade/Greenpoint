@@ -1,7 +1,7 @@
 // Customer reviews of stations: 1 to 5 stars and an optional comment.
 // One review per customer and station; writing again replaces the old one.
-import { cleanReview, shortName, type ReviewInput, type StationReview } from "../src/lib/station-extras";
-import type { Profile } from "../src/lib/types";
+import { cleanReview, shortName, type ReviewInput, type StationReview } from "../shared/station-extras";
+import type { Profile } from "../shared/types";
 import { ApiError, nowIso, uuid } from "./http";
 import { refuseNonCustomer } from "./roles";
 

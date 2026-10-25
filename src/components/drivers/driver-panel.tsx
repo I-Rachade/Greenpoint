@@ -18,20 +18,20 @@ import {
   type DriverPass,
   type FleetVehicleType,
   type FormerAccount,
-} from "@/lib/drivers";
-import { directionsUrl, distanceMeters, formatDistance, type LatLng } from "@/lib/geo";
+} from "@shared/drivers";
+import { directionsUrl, distanceMeters, formatDistance, type LatLng } from "@shared/geo";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { measuresOf, type ParcelInfo, type ParcelSize } from "@/lib/parcels";
+import { measuresOf, type ParcelInfo, type ParcelSize } from "@shared/parcels";
 import { SizePicker } from "../parcels/size-picker";
-import type { StationView } from "@/lib/types";
+import type { StationView } from "@shared/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
 import { QrImage } from "../parcels/qr-image";
 import { Button, Countdown, Input } from "../ui";
-import { PIN_LENGTH } from "@/lib/pin";
+import { PIN_LENGTH } from "@shared/pin";
 import { FleetInvitesCard } from "./fleet-invites";
 import { DriverShopsSection } from "./driver-shops";
 import { PositionReporter } from "./position-reporter";

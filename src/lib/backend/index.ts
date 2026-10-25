@@ -3,7 +3,7 @@ import { CloudflareBackend } from "./cloudflare";
 import { DemoBackend } from "./demo";
 
 export * from "./backend";
-export { DemoBackend, DEMO_CODE, HOSTED_DEMO } from "./demo";
+export { DEMO_CODE, HOSTED_DEMO } from "./demo-flags";
 
 let instance: Backend | null = null;
 

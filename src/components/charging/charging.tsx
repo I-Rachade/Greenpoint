@@ -8,20 +8,20 @@ import {
   formatDuration,
   formatKwh,
   type ChargeSession,
-} from "@/lib/charging";
-import type { CounterCard } from "@/lib/charge-cards";
-import { parseCreditCode } from "@/lib/wallet";
-import { displayStatus } from "@/lib/iot/charging-points";
+} from "@shared/charging";
+import type { CounterCard } from "@shared/charge-cards";
+import { parseCreditCode } from "@shared/wallet";
+import { displayStatus } from "@shared/iot/charging-points";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
-import type { ChargingPoint, StationView } from "@/lib/types";
+import type { ChargingPoint, StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
 import { QrImage } from "../parcels/qr-image";
 import { canScanQr, QrScanner } from "../parcels/qr-scanner";
 
-// Charging at a socket (src/lib/charging.ts): the staff screen, the customer's charges and "Mon code".
+// Charging at a socket (shared/charging.ts): the staff screen, the customer's charges and "Mon code".
 
 const input = "w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-base dark:border-white/20 dark:bg-zinc-900";
 const button = "rounded-full bg-gp-green-dark px-4 py-2 text-sm font-semibold text-white disabled:opacity-50";

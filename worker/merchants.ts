@@ -3,9 +3,9 @@
 // worker/drivers.ts with the rules of worker/merchant-rules.ts. Here: the shop's backoffice
 // (view, bookings log, activity log, shop details), the team and its invites, favorite and
 // assigned drivers with their approval, check-in and check-out, and the admin's Merchants page.
-// Shared rules in src/lib/merchants.ts, tables in 0035_merchants.sql.
-import { BUSY_JOB_STATUSES, freshPosition, newDriverCode, parseDriverBadge, type FleetVehicleType, type JobStatus } from "../src/lib/drivers";
-import type { LatLng } from "../src/lib/geo";
+// Shared rules in shared/merchants.ts, tables in 0035_merchants.sql.
+import { BUSY_JOB_STATUSES, freshPosition, newDriverCode, parseDriverBadge, type FleetVehicleType, type JobStatus } from "../shared/drivers";
+import type { LatLng } from "../shared/geo";
 import {
   cleanRate,
   employeeLimit,
@@ -48,9 +48,9 @@ import {
   type MerchantToday,
   type MerchantView,
   type MyMerchantInvite,
-} from "../src/lib/merchants";
-import { normalizeTogoPhone } from "../src/lib/phone";
-import type { Profile } from "../src/lib/types";
+} from "../shared/merchants";
+import { normalizeTogoPhone } from "../shared/phone";
+import type { Profile } from "../shared/types";
 import {
   balance,
   BUSY_SQL,

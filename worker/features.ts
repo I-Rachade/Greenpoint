@@ -1,5 +1,5 @@
-import { effectiveFeatures, type Features } from "../src/lib/features";
-import type { Profile } from "../src/lib/types";
+import { effectiveFeatures, type Features } from "../shared/features";
+import type { Profile } from "../shared/types";
 import type { Env } from "./env";
 import { ApiError, nowIso } from "./http";
 

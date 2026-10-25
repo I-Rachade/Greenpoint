@@ -1,4 +1,4 @@
-import { normalizeTogoPhone } from "./phone";
+import { normalizeTogoPhone } from "@shared/phone";
 
 /** A country offered in the dialling-code picker of the login page. */
 export interface PhoneCountry {

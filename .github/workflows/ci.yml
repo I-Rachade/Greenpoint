@@ -23,3 +23,13 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # The production build (as Cloudflare and the mobile apps make it) must not ship the
+      # in-browser demo backend: its marker is the demo's storage key (src/lib/backend/demo.ts).
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_BACKEND: cloudflare
+      - run: |
+          if grep -rl "poinderecharge-demo" out; then
+            echo "The production build contains the demo backend."
+            exit 1
+          fi

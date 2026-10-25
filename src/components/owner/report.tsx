@@ -4,7 +4,7 @@ import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { CountUp, useReducedMotion } from "@/components/ui";
 import { useLiveQuery } from "@/lib/hooks";
-import { byMonth, type DayStats, type OwnerReport, type ReportPeriod, type StaffStats } from "@/lib/owner-backoffice";
+import { byMonth, type DayStats, type OwnerReport, type ReportPeriod, type StaffStats } from "@shared/owner-backoffice";
 import { Loaded, ResponsiveRows, Section, useXof } from "./shared";
 
 /** Settlement (W12: cash for poinderecharge apart, never in the revenue) and statistics of the period. */

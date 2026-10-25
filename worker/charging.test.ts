@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { chargePrice, type ChargeSession, type StationCharging } from "../src/lib/charging";
-import type { Profile } from "../src/lib/types";
+import { chargePrice, type ChargeSession, type StationCharging } from "../shared/charging";
+import type { Profile } from "../shared/types";
 import { hashPin } from "./auth";
 import { chargeStartFailed, creditFollowUp, payCash, payWithMobile, payWithWallet, myCharges, saveChargeTariff, settlePrepaidCharges, stopCharge } from "./charging";
 import { getWallet } from "./wallet";

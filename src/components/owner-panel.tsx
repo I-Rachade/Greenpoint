@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState, type ComponentType, type SVGProps } from "react";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { ReportPeriod } from "@/lib/owner-backoffice";
+import type { ReportPeriod } from "@shared/owner-backoffice";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
 import { BatteryIcon, CheckCircleIcon, ClipboardIcon, HistoryIcon, PulseIcon, StoreIcon, UsersIcon, WalletIcon } from "./icons";

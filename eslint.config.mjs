@@ -18,6 +18,57 @@ const eslintConfig = defineConfig([
     // Local Cloudflare Worker state and bundles.
     ".wrangler/**",
   ]),
+  // Three parts that stay apart (docs/ARCHITEKTUR.md): the app in src/, the API in worker/
+  // and the contract both use in shared/. The app reaches the API only over /api.
+  {
+    files: ["shared/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "^(@/|react|next)|(^|/)(src|worker)(/|$)",
+              message: "shared/ runs in the app and in the Worker: it imports only from shared/.",
+            },
+          ],
+        },
+      ],
+      "no-restricted-globals": ["error", "window", "document", "localStorage", "sessionStorage", "navigator"],
+    },
+  },
+  {
+    files: ["worker/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "^@/|(^|/)src(/|$)",
+              message: "The Worker never imports the app: code both need lives in shared/.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "(^|/)worker(/|$)",
+              message: "The app reaches the Worker only over /api (src/lib/backend/cloudflare.ts).",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

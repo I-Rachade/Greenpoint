@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
-import { formatKwh, type AdminCharging, type ChargeTariffInput } from "@/lib/charging";
+import { formatKwh, type AdminCharging, type ChargeTariffInput } from "@shared/charging";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
 import { ChargeCardsManager } from "./charge-cards-manager";

@@ -1,8 +1,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { signWebhook, validWebhookUrl } from "../src/lib/partners";
-import type { Profile } from "../src/lib/types";
+import { signWebhook, validWebhookUrl } from "../shared/partners";
+import type { Profile } from "../shared/types";
 import type { Env } from "./env";
 import { markLabelPrinted, type ParcelCtx } from "./parcels";
 import { departRun, receiveParcel, scanRunParcel, startRun } from "./parcel-runs";

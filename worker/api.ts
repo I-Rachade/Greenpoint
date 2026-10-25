@@ -1,18 +1,18 @@
 import { captchaSiteKey, checkCaptcha, countIpRequest } from "./ip-limits";
-import { offersCharging, offersSwap, withinOpeningHours } from "../src/lib/availability";
-import { depotPoints, hasAnyPoint } from "../src/lib/station-points";
-import { cleanAmenities, cleanMainActivity, cleanPhotos, isUnattended, type ReviewInput } from "../src/lib/station-extras";
+import { offersCharging, offersSwap, withinOpeningHours } from "../shared/availability";
+import { depotPoints, hasAnyPoint } from "../shared/station-points";
+import { cleanAmenities, cleanMainActivity, cleanPhotos, isUnattended, type ReviewInput } from "../shared/station-extras";
 import { deleteReview, saveReview, stationReviews } from "./reviews";
-import type { BatteryTypeInput } from "../src/lib/battery-types";
-import type { EvChargerInput } from "../src/lib/ev-chargers";
+import type { BatteryTypeInput } from "../shared/battery-types";
+import type { EvChargerInput } from "../shared/ev-chargers";
 import { deleteEvCharger, evChargersByStation, listEvChargers, saveEvCharger } from "./ev-chargers";
-import type { RepairCenterInput } from "../src/lib/repair-centers";
+import type { RepairCenterInput } from "../shared/repair-centers";
 import { deleteRepairCenter, listRepairCenters, saveRepairCenter } from "./repair-centers";
 import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements } from "./battery-types";
 import { batteryDetail, listBatteries, lookupBattery, registerBatteries, setBatteryStatus } from "./batteries";
-import type { BatteryStatusInput, RegisterBatteriesInput } from "../src/lib/batteries";
+import type { BatteryStatusInput, RegisterBatteriesInput } from "../shared/batteries";
 import { capacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
-import type { StationRole } from "../src/lib/station-work";
+import type { StationRole } from "../shared/station-work";
 import {
   checkPickupCode,
   evTargetSql,
@@ -26,8 +26,8 @@ import {
   toReservation,
   type ReservationRow,
 } from "./reservations";
-import { kindFrom, typeOfKind } from "../src/lib/reservations";
-import type { BatteryEventInput, SwapFilter, SwapInput } from "../src/lib/station-work";
+import { kindFrom, typeOfKind } from "../shared/reservations";
+import type { BatteryEventInput, SwapFilter, SwapInput } from "../shared/station-work";
 import {
   ADMIN_HISTORY_DAYS,
   ADMIN_PAGE_SIZE,
@@ -37,9 +37,9 @@ import {
   type AuditEntry,
   type AuditTable,
   type ChargingPointInfo,
-} from "../src/lib/admin/types";
-import type { CodeChannel } from "../src/lib/backend/backend";
-import { parseContact } from "../src/lib/contact";
+} from "../shared/admin/types";
+import type { CodeChannel } from "../shared/api";
+import { parseContact } from "../shared/contact";
 import {
   OPERATOR_NAME_MAX,
   STAFF_INVITE_DAYS,
@@ -51,15 +51,15 @@ import {
   type OwnerStationInput,
   type OwnerView,
   validPrice,
-} from "../src/lib/operators";
-import { cleanOpeningHours } from "../src/lib/opening-hours";
-import { reportPeriod } from "../src/lib/owner-backoffice";
+} from "../shared/operators";
+import { cleanOpeningHours } from "../shared/opening-hours";
+import { reportPeriod } from "../shared/owner-backoffice";
 import { ownerLive, ownerReport } from "./owner";
 import { closeCashDay, decideHandover, myStationCash, ownerCash, saveStationCashSettings } from "./station-cash";
-import type { HandoverInput, StationCashSettings } from "../src/lib/station-cash";
-import { normalizeTogoPhone } from "../src/lib/phone";
-import { personLabel } from "../src/lib/wallet";
-import { MAX_PROMO_IMAGE_BYTES, pickPromotion, safeImage, safeLink, type Promotion, type PromotionInput } from "../src/lib/promo";
+import type { HandoverInput, StationCashSettings } from "../shared/station-cash";
+import { normalizeTogoPhone } from "../shared/phone";
+import { personLabel } from "../shared/wallet";
+import { MAX_PROMO_IMAGE_BYTES, pickPromotion, safeImage, safeLink, type Promotion, type PromotionInput } from "../shared/promo";
 import {
   MAX_UNUSED_RESERVATIONS_PER_DAY,
   RESERVATION_MINUTES,
@@ -70,7 +70,7 @@ import {
   type StationInput,
   type StationView,
   type UserRole,
-} from "../src/lib/types";
+} from "../shared/types";
 import {
   addContact,
   currentUser,
@@ -97,8 +97,8 @@ import {
   startOutlet,
   stopOutlet,
 } from "./devices";
-import { normalizeDeviceId, type DeviceInput } from "../src/lib/iot/devices";
-import type { PointPartnerInput } from "../src/lib/point-partners";
+import { normalizeDeviceId, type DeviceInput } from "../shared/iot/devices";
+import type { PointPartnerInput } from "../shared/point-partners";
 import {
   addPointPartnerAccount,
   adminPointPartners,
@@ -109,7 +109,7 @@ import {
   setPointPartnerStatus,
 } from "./point-partners";
 import { handleXingkeCallback } from "./xingke";
-import type { ParcelDepotInput, ParcelInput, ParcelMeasures } from "../src/lib/parcels";
+import type { ParcelDepotInput, ParcelInput, ParcelMeasures } from "../shared/parcels";
 import {
   adminParcels,
   cancelParcel,
@@ -167,7 +167,7 @@ import {
   uploadDriverDocument,
   uploadProof,
 } from "./drivers";
-import type { DriverApplication, DriverDecision, FleetVehicleInput, PickupBooking, RideBooking, CourierBooking } from "../src/lib/drivers";
+import type { DriverApplication, DriverDecision, FleetVehicleInput, PickupBooking, RideBooking, CourierBooking } from "../shared/drivers";
 import {
   acceptInvite,
   adminFleets,
@@ -186,7 +186,7 @@ import {
   setDriverManager,
   setFleetTier,
 } from "./fleet";
-import type { FleetDecision, FleetInviteAnswer, FleetTier } from "../src/lib/fleet";
+import type { FleetDecision, FleetInviteAnswer, FleetTier } from "../shared/fleet";
 import {
   acceptMerchantInvite,
   addMerchantDriver,
@@ -226,9 +226,9 @@ import type {
   MerchantShopInput,
   MerchantStatsQuery,
   MerchantTier,
-} from "../src/lib/merchants";
-import type { PartnerInput } from "../src/lib/partners";
-import { PARTNER_API_BASE } from "../src/lib/partners";
+} from "../shared/merchants";
+import type { PartnerInput } from "../shared/partners";
+import { PARTNER_API_BASE } from "../shared/partners";
 import {
   acceptBooking,
   adminPartners,
@@ -248,7 +248,7 @@ import { registerPushToken, removePushToken } from "./push";
 import { webPushKey } from "./web-push";
 import { adminPayouts, decidePayout } from "./trip-payments";
 import { activeServices, decideService, listStationServices, requestService, requireService, setService } from "./services";
-import { customerStation } from "../src/lib/station-services";
+import { customerStation } from "../shared/station-services";
 import { DB_CUSTOMER, refuseNonCustomer, roleFromDb, roleToDb } from "./roles";
 import { claimFormerAccount, sendFormerAccountCode } from "./former-accounts";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
@@ -554,7 +554,7 @@ class Ctx {
       heldTargetsByStation(this.db),
     ]);
     return results.map((r) => {
-      // What active reservations hold here: per battery type, outlet and car charger (src/lib/reservations.ts).
+      // What active reservations hold here: per battery type, outlet and car charger (shared/reservations.ts).
       const holds = held.get(r.id) ?? new Map<string, number>();
       const station = {
         ...toStationView(r),
@@ -589,7 +589,7 @@ function int(value: unknown): number {
  * Riders only. A swap reservation names a battery type the station has a free full
  * battery of; a charging reservation names a free connected outlet or car charger, or,
  * at a station without connected outlets, takes a free place of the staff's count.
- * Holding never changes the battery counter (src/lib/reservations.ts).
+ * Holding never changes the battery counter (shared/reservations.ts).
  */
 async function reserve(c: Ctx, input: { stationId?: unknown; kind?: unknown; type?: unknown; target?: unknown }): Promise<Reservation> {
   const user = await c.requireUser();
@@ -946,7 +946,7 @@ function stationRow(input: StationInput) {
     has_battery: input.kind === "parcel" ? 0 : 1,
     vehicle_types: JSON.stringify((input.vehicleTypes ?? []).filter((v) => VEHICLE_TYPES.includes(v))),
     battery_capacity: int(input.batteryCapacity),
-    // Days and times, never empty (src/lib/opening-hours.ts).
+    // Days and times, never empty (shared/opening-hours.ts).
     opening_hours: cleanOpeningHours(input.openingHours) ?? (() => {
       throw new ApiError("opening_hours_invalid");
     })(),
@@ -969,7 +969,7 @@ const CONNECTED_OUTLETS_SQL = (station: string) =>
 
 /**
  * Creates or updates a station, and its parcel depot when the input has one. A station must
- * offer at least one of swap, charging, parcel counter or parcel lockers (src/lib/station-points.ts).
+ * offer at least one of swap, charging, parcel counter or parcel lockers (shared/station-points.ts).
  */
 async function saveStation(c: Ctx, id: string | null, input: StationInput) {
   const admin = await c.requireAdmin();

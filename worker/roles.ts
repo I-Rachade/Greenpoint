@@ -1,4 +1,4 @@
-import type { UserRole } from "../src/lib/types";
+import type { UserRole } from "../shared/types";
 import { ApiError } from "./http";
 
 /**

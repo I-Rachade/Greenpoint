@@ -14,12 +14,12 @@ import {
   type HomePoint,
   type BookableVehicleType,
   type TripPayment,
-} from "@/lib/drivers";
-import { distanceMeters, type LatLng } from "@/lib/geo";
+} from "@shared/drivers";
+import { distanceMeters, type LatLng } from "@shared/geo";
 import { useErrorMessage, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { PARCEL_SIZES, type Parcel, type ParcelInfo, type ParcelSize } from "@/lib/parcels";
-import type { StationView } from "@/lib/types";
+import { PARCEL_SIZES, type Parcel, type ParcelInfo, type ParcelSize } from "@shared/parcels";
+import type { StationView } from "@shared/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "../app-provider";
 import { SizePicker } from "../parcels/size-picker";

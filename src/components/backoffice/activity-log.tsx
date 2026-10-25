@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
-import { AUDIT_TABLES, type AuditEntry, type AuditFilter, type AuditTable } from "@/lib/admin/types";
+import { AUDIT_TABLES, type AuditEntry, type AuditFilter, type AuditTable } from "@shared/admin/types";
 import { useLiveQuery } from "@/lib/hooks";
 import { field, indexSnapshot, Loading, Pill, StaleNotice, Table, td, th, useAdminSnapshot, useDateTime, userLabel } from "./shared";
 

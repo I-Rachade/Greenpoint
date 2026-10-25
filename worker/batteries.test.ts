@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { BatteryDetail, BatteryList, BatteryLookup, RegisterBatteriesResult } from "../src/lib/batteries";
-import type { SwapEntry } from "../src/lib/station-work";
+import type { BatteryDetail, BatteryList, BatteryLookup, RegisterBatteriesResult } from "../shared/batteries";
+import type { SwapEntry } from "../shared/station-work";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { sha256 } from "./http";

@@ -8,7 +8,7 @@ import { SERVICE_TONE } from "@/components/owner-panel";
 import { Badge, Button, Card, EmptyState, Input, useToast } from "@/components/ui";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { serviceDisplay, type StationServiceInfo } from "@/lib/station-services";
+import { serviceDisplay, type StationServiceInfo } from "@shared/station-services";
 import { Loading, StaleNotice, useDateTime } from "./shared";
 
 const key = (s: Pick<StationServiceInfo, "stationId" | "service">) => `${s.stationId}:${s.service}`;

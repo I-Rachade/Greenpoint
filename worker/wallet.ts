@@ -1,5 +1,5 @@
-import { parseContact } from "../src/lib/contact";
-import type { Profile } from "../src/lib/types";
+import { parseContact } from "../shared/contact";
+import type { Profile } from "../shared/types";
 import {
   CREDIT_CODE_MINUTES,
   CREDIT_TOPUP_MIN_XOF,
@@ -19,7 +19,7 @@ import {
   type WalletTransaction,
   type WalletTxType,
   type WalletView,
-} from "../src/lib/wallet";
+} from "../shared/wallet";
 import { verifyPin } from "./auth";
 import { withCounterCodeTry } from "./code-tries";
 import type { Env } from "./env";
@@ -32,7 +32,7 @@ import { notCustomerRole, refuseNonCustomer } from "./roles";
 // to poinderecharge (worker/charging.ts, worker/station-work.ts). No transfers, no withdrawals,
 // no online top-ups. Every booking is one D1 batch, which D1 runs as a single transaction: if
 // any statement fails (an overdrawn wallet breaks the balance check, a repeated idempotency key
-// breaks its unique index), nothing of the batch is written. See src/lib/wallet.ts.
+// breaks its unique index), nothing of the batch is written. See shared/wallet.ts.
 
 interface TxRow {
   id: string;

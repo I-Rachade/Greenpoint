@@ -17,7 +17,7 @@ import {
   type ShareTrackPoint,
   type ShareVehicleInput,
   type ShareVehicleStatus,
-} from "@/lib/share";
+} from "@shared/share";
 import { card, field, Loading, Pill, StaleNotice, Table, td, th, useDateTime } from "./shared";
 
 type Tab = "vehicles" | "stations" | "tariffs" | "checks" | "rides" | "incidents";
@@ -30,7 +30,7 @@ const ghost = "rounded-full border border-black/15 px-3 py-1.5 text-sm dark:bord
 const ADMIN_STATES: ShareVehicleStatus[] = ["available", "charging", "maintenance", "lost"];
 
 /**
- * Backoffice "Share" (src/lib/share.ts, worker/share.ts): the module switch, the vehicles and
+ * Backoffice "Share" (shared/share.ts, worker/share.ts): the module switch, the vehicles and
  * their trackers, the stations that take them, the prices, the customers' checks, the rides
  * and the incidents.
  */

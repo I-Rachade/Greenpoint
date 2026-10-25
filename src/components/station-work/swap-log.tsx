@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
-import { SWAP_CUSTOMER_TYPES, type SwapCustomerType } from "@/lib/station-work";
-import type { StationView } from "@/lib/types";
+import { SWAP_CUSTOMER_TYPES, type SwapCustomerType } from "@shared/station-work";
+import type { StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { useI18n } from "../i18n-provider";
 import { LoadFailed } from "../load-state";

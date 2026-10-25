@@ -150,7 +150,7 @@ export interface SwapInput {
   requestId: string;
   batteryTypeId?: CounterKey | null;
   customerType: SwapCustomerType;
-  /** Battery numbers (scan or type); required at a station with battery types (battery register, src/lib/batteries.ts). */
+  /** Battery numbers (scan or type); required at a station with battery types (battery register, shared/batteries.ts). */
   batteryIn?: string | null;
   batteryOut?: string | null;
   /** app paid in cash (and optionally first purchase): the customer's phone, e-mail or app QR. */
@@ -159,7 +159,7 @@ export interface SwapInput {
   payment?: "cash" | "wallet";
   /**
    * Green Credit payment: the one-time code the customer's app shows after they typed their PIN
-   * on their phone (src/lib/wallet.ts). Without a reservation, `contact` may carry it instead.
+   * on their phone (shared/wallet.ts). Without a reservation, `contact` may carry it instead.
    */
   creditCode?: string | null;
   /** fleet: the driver's QR code or code. */

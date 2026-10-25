@@ -11,22 +11,22 @@ import type {
   ShareVehicleKind,
   ShareVehicleStatus,
   StationShare,
-} from "../share";
-import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "../batteries";
-import type { BatteryType, BatteryTypeInput } from "../battery-types";
-import type { AdminCharging, ChargeOutletInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
-import type { ChargeCard, ChargeCardInput, CounterCard } from "../charge-cards";
-import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
-import type { OwnerLive, OwnerReport, ReportPeriod } from "../owner-backoffice";
-import type { EvCharger, EvChargerInput } from "../ev-chargers";
-import type { RepairCenter, RepairCenterInput } from "../repair-centers";
-import type { Features } from "../features";
-import type { Device, DeviceInput } from "../iot/devices";
-import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "../parcels";
-import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
-import type { AdminOperator, MyStaffInvite, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
-import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "../point-partners";
-import type { Promotion, PromotionInput } from "../promo";
+} from "@shared/share";
+import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "@shared/batteries";
+import type { BatteryType, BatteryTypeInput } from "@shared/battery-types";
+import type { AdminCharging, ChargeOutletInfo, ChargeSession, ChargeTariffInput, StationCharging } from "@shared/charging";
+import type { ChargeCard, ChargeCardInput, CounterCard } from "@shared/charge-cards";
+import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "@shared/admin/types";
+import type { OwnerLive, OwnerReport, ReportPeriod } from "@shared/owner-backoffice";
+import type { EvCharger, EvChargerInput } from "@shared/ev-chargers";
+import type { RepairCenter, RepairCenterInput } from "@shared/repair-centers";
+import type { Features } from "@shared/features";
+import type { Device, DeviceInput } from "@shared/iot/devices";
+import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "@shared/parcels";
+import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "@shared/partners";
+import type { AdminOperator, MyStaffInvite, OperatorInput, OwnerStationInput, OwnerView } from "@shared/operators";
+import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "@shared/point-partners";
+import type { Promotion, PromotionInput } from "@shared/promo";
 import type {
   AdminGreenpoint,
   GreenpointFactors,
@@ -34,8 +34,8 @@ import type {
   GreenpointRedemption,
   GreenpointRewardInput,
   GreenpointView,
-} from "../greenpoint";
-import type { AdminWallet, CounterCredit, CreditCode, CreditTopupInput, CreditTopupResult, WalletAdjustInput, WalletTransaction, WalletView } from "../wallet";
+} from "@shared/greenpoint";
+import type { AdminWallet, CounterCredit, CreditCode, CreditTopupInput, CreditTopupResult, WalletAdjustInput, WalletTransaction, WalletView } from "@shared/wallet";
 import type {
   AbandonReason,
   AdminDrivers,
@@ -58,8 +58,8 @@ import type {
   PayoutNetwork,
   DriverPayout,
   AdminDriverPayout,
-} from "../drivers";
-import type { ReviewInput, StationReview } from "../station-extras";
+} from "@shared/drivers";
+import type { ReviewInput, StationReview } from "@shared/station-extras";
 import type {
   AdminFleet,
   FleetDecision,
@@ -70,7 +70,7 @@ import type {
   FleetTier,
   FleetView,
   MyFleetInvite,
-} from "../fleet";
+} from "@shared/fleet";
 import type {
   AdminMerchant,
   DriverShops,
@@ -91,8 +91,8 @@ import type {
   MerchantTier,
   MerchantView,
   MyMerchantInvite,
-} from "../merchants";
-import type { LatLng } from "../geo";
+} from "@shared/merchants";
+import type { LatLng } from "@shared/geo";
 import type {
   Operator,
   VehicleType,
@@ -102,13 +102,13 @@ import type {
   StationInput,
   StationView,
   UserRole,
-} from "../types";
-import type { StationService, StationServiceInfo } from "../station-services";
+} from "@shared/types";
+import type { StationService, StationServiceInfo } from "@shared/station-services";
 import { getActiveStation } from "../active-station";
-import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEntry, type SwapFilter, type SwapInput } from "../station-work";
-import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "../station-cash";
+import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEntry, type SwapFilter, type SwapInput } from "@shared/station-work";
+import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "@shared/station-cash";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
-import { kindFrom, type ReservationKind } from "../reservations";
+import { kindFrom, type ReservationKind } from "@shared/reservations";
 import { storedPushToken, storePushToken } from "../push";
 
 const TOKEN_KEY = "poinderecharge-session";
@@ -298,7 +298,7 @@ export class CloudflareBackend implements Backend {
     const headers: Record<string, string> = {};
     const token = this.token;
     if (token) headers.Authorization = `Bearer ${token}`;
-    // Station actions carry the station the person works at now (src/lib/station-work.ts).
+    // Station actions carry the station the person works at now (shared/station-work.ts).
     const active = typeof window === "undefined" ? null : getActiveStation();
     if (active) headers[ACTIVE_STATION_HEADER] = active;
     let payload: BodyInit | undefined;

@@ -7,9 +7,9 @@ import { useApp } from "./app-provider";
 import { BoxIcon, ListIcon, MapIcon, QrIcon, ScooterIcon, StoreIcon, TruckIcon, UserIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
-import { isStationStaff } from "@/lib/operators";
-import { isDriverAccount } from "@/lib/drivers";
-import { isMerchantAccount } from "@/lib/merchants";
+import { isStationStaff } from "@shared/operators";
+import { isDriverAccount } from "@shared/drivers";
+import { isMerchantAccount } from "@shared/merchants";
 
 /** Screens without the tab bar: sign-in, and the staff and admin tools. */
 const HIDDEN_PREFIXES = ["/login", "/admin", "/operator"];

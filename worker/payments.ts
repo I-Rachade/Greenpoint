@@ -1,6 +1,6 @@
-import { normalizeTogoPhone } from "../src/lib/phone";
-import type { Profile } from "../src/lib/types";
-import { swapOwnerOf, type SwapOwner } from "../src/lib/station-cash";
+import { normalizeTogoPhone } from "../shared/phone";
+import type { Profile } from "../shared/types";
+import { swapOwnerOf, type SwapOwner } from "../shared/station-cash";
 import type { Env } from "./env";
 import { TOPUP_IDENTIFIER_PREFIX, topupCallback } from "./wallet-topups";
 import { chargePaymentSucceeded } from "./charging";

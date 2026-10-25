@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_DRIVER_SETTINGS, driverBadgePayload, driverEarning, fareFor, OPEN_JOB_EXPIRY_MINUTES, signDriverPass, type FleetVehicleType } from "../src/lib/drivers";
-import { distanceMeters } from "../src/lib/geo";
-import type { Profile } from "../src/lib/types";
+import { DEFAULT_DRIVER_SETTINGS, driverBadgePayload, driverEarning, fareFor, OPEN_JOB_EXPIRY_MINUTES, signDriverPass, type FleetVehicleType } from "../shared/drivers";
+import { distanceMeters } from "../shared/geo";
+import type { Profile } from "../shared/types";
 import {
   abandonJob,
   acceptJob,

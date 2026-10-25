@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import { useState, type FormEvent, type ReactNode } from "react";
-import { offersCharging, offersSwap } from "@/lib/availability";
+import { offersCharging, offersSwap } from "@shared/availability";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { Device } from "@/lib/iot/devices";
-import type { Parcel, ParcelDepot } from "@/lib/parcels";
-import { batteryTypeLabel, groupByBrand, type BatteryType } from "@/lib/battery-types";
-import { placeholderPhoto } from "@/lib/station-extras";
-import { hasAnyPoint, kindFor } from "@/lib/station-points";
-import { VEHICLE_TYPES, type StationInput, type StationView } from "@/lib/types";
+import type { Device } from "@shared/iot/devices";
+import type { Parcel, ParcelDepot } from "@shared/parcels";
+import { batteryTypeLabel, groupByBrand, type BatteryType } from "@shared/battery-types";
+import { placeholderPhoto } from "@shared/station-extras";
+import { hasAnyPoint, kindFor } from "@shared/station-points";
+import { VEHICLE_TYPES, type StationInput, type StationView } from "@shared/types";
 import { useApp } from "./app-provider";
 import { StationMediaFields, StationReviewsAdmin } from "./backoffice/station-media";
 import { BatteryIcon, BoltIcon, BoxIcon, CarIcon, SunIcon } from "./icons";

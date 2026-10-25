@@ -5,7 +5,7 @@ import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { POINT_PARTNER_NAME_MAX, type AdminPointPartner, type PointPartnerInput } from "@/lib/point-partners";
+import { POINT_PARTNER_NAME_MAX, type AdminPointPartner, type PointPartnerInput } from "@shared/point-partners";
 import { card, field, indexSnapshot, Loading, Pill, StaleNotice, useAdminSnapshot } from "./shared";
 
 const button = "rounded-full bg-gp-green-dark px-3 py-1 text-xs text-white disabled:opacity-30";

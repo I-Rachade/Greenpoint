@@ -3,8 +3,8 @@
 import { useState, type ReactNode } from "react";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { needsLabel, type Parcel, type ParcelRun } from "@/lib/parcels";
-import type { StationView } from "@/lib/types";
+import { needsLabel, type Parcel, type ParcelRun } from "@shared/parcels";
+import type { StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";

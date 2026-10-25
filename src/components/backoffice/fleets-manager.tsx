@@ -6,7 +6,7 @@ import { ConfirmSheet } from "@/components/confirm-sheet";
 import { useI18n } from "@/components/i18n-provider";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { AdminFleet, FleetStatus } from "@/lib/fleet";
+import type { AdminFleet, FleetStatus } from "@shared/fleet";
 import { card, Loading, Pill, StaleNotice, useDateTime } from "./shared";
 
 const button = "min-h-11 rounded-full bg-gp-green-dark px-4 text-sm text-white disabled:opacity-30";

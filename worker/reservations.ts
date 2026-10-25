@@ -1,5 +1,5 @@
 // Reservations by type (plan phase 4): what a reservation holds, its pickup code with a
-// lock after wrong tries, and the SQL other modules share. Rules in src/lib/reservations.ts,
+// lock after wrong tries, and the SQL other modules share. Rules in shared/reservations.ts,
 // schema in migrations/0001_init.sql and 0029_reservation_kind.sql.
 
 import {
@@ -7,9 +7,9 @@ import {
   RESERVATION_MAX_CODE_FAILURES,
   type ReservationKind,
   type ReservationTargetKind,
-} from "../src/lib/reservations";
-import type { Reservation, ReservationType } from "../src/lib/types";
-import { personLabel } from "../src/lib/wallet";
+} from "../shared/reservations";
+import type { Reservation, ReservationType } from "../shared/types";
+import { personLabel } from "../shared/wallet";
 import { withCodeTry } from "./code-tries";
 import { ApiError, nowIso } from "./http";
 

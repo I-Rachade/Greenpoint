@@ -1,11 +1,11 @@
-import type { CodeChannel } from "../src/lib/backend/backend";
-import { type Contact, parseContact } from "../src/lib/contact";
-import { cleanFleetName } from "../src/lib/fleet";
-import { validPinFormat, weakPin } from "../src/lib/pin";
-import type { Profile, UserRole } from "../src/lib/types";
+import type { CodeChannel } from "../shared/api";
+import { type Contact, parseContact } from "../shared/contact";
+import { cleanFleetName } from "../shared/fleet";
+import { validPinFormat, weakPin } from "../shared/pin";
+import type { Profile, UserRole } from "../shared/types";
 import type { Env } from "./env";
 import { ApiError, nowIso, randomDigits, sha256, uuid } from "./http";
-import type { MerchantShopInput } from "../src/lib/merchants";
+import type { MerchantShopInput } from "../shared/merchants";
 import { cleanShop } from "./merchant-rules";
 import { roleFromDb, roleToDb } from "./roles";
 

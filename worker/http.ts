@@ -1,4 +1,4 @@
-import type { BackendErrorCode } from "../src/lib/backend/backend";
+import type { BackendErrorCode } from "../shared/api";
 
 /** An error the app understands; the code is translated in the UI. */
 export class ApiError extends Error {

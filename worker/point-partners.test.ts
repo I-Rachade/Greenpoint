@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { OwnerReport } from "../src/lib/owner-backoffice";
-import type { AdminPointPartner, PointPartnerDashboard } from "../src/lib/point-partners";
-import type { Device } from "../src/lib/iot/devices";
-import type { Profile } from "../src/lib/types";
+import type { OwnerReport } from "../shared/owner-backoffice";
+import type { AdminPointPartner, PointPartnerDashboard } from "../shared/point-partners";
+import type { Device } from "../shared/iot/devices";
+import type { Profile } from "../shared/types";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { sha256 } from "./http";

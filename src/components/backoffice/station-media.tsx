@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useErrorMessage, useLiveQuery, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { AMENITIES, MAIN_ACTIVITIES, MAX_STATION_PHOTOS, type Amenity, type MainActivity } from "@/lib/station-extras";
+import { AMENITIES, MAIN_ACTIVITIES, MAX_STATION_PHOTOS, type Amenity, type MainActivity } from "@shared/station-extras";
 import { useApp } from "../app-provider";
 import { shrinkImage } from "../drivers/shared";
 import { CameraIcon, StarIcon, TrashIcon } from "../icons";

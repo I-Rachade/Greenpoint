@@ -2,11 +2,11 @@
 
 import { useState, type ComponentType, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
-import { isDriverPassFormat, type DeliveryJob, type DriverAtStation, type JobDriver } from "@/lib/drivers";
+import { isDriverPassFormat, type DeliveryJob, type DriverAtStation, type JobDriver } from "@shared/drivers";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { DriverPart } from "@/lib/parcel-sections";
-import type { StationView } from "@/lib/types";
+import type { StationView } from "@shared/types";
 import { BoxInIcon, BoxOutIcon, QrIcon, QueueIcon } from "../icons";
 import { MenuTile } from "../parcels/menu-tile";
 import { useApp } from "../app-provider";

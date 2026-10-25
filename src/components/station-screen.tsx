@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { distanceMeters } from "@/lib/geo";
+import { distanceMeters } from "@shared/geo";
 import { useLiveQuery } from "@/lib/hooks";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";

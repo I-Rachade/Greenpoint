@@ -6,7 +6,7 @@ import { QrImage } from "@/components/parcels/qr-image";
 import { BackendError } from "@/lib/backend";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
-import { creditCodePayload, formatCreditCode, type CreditCode, type WalletTransaction, type WalletView } from "@/lib/wallet";
+import { creditCodePayload, formatCreditCode, type CreditCode, type WalletTransaction, type WalletView } from "@shared/wallet";
 import { useApp } from "../app-provider";
 import { useI18n } from "../i18n-provider";
 import { LoadFailed, OfflineNotice } from "../load-state";

@@ -3,14 +3,14 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { DEFAULT_FILTER, isOpenNow, rankStations, stationAvailability, type StationFilter } from "@/lib/availability";
-import { formatDistance } from "@/lib/geo";
+import { DEFAULT_FILTER, isOpenNow, rankStations, stationAvailability, type StationFilter } from "@shared/availability";
+import { formatDistance } from "@shared/geo";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { allBrands } from "@/lib/battery-types";
+import { allBrands } from "@shared/battery-types";
 import { useBrandPref } from "@/lib/prefs";
-import { hasRestArea } from "@/lib/station-extras";
-import { VEHICLE_TYPES, type StationView, type VehicleType } from "@/lib/types";
+import { hasRestArea } from "@shared/station-extras";
+import { VEHICLE_TYPES, type StationView, type VehicleType } from "@shared/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
 import { BellIcon, ChevronIcon, FilterIcon, SearchIcon } from "./icons";
@@ -55,7 +55,7 @@ export function StationFinder() {
   const { data: stations, error, reload } = useLiveQuery(() => backend.listStations());
   // Workshops only add markers; without them the map works as before.
   const { data: workshops } = useLiveQuery(() => backend.listRepairCenters().catch(() => []));
-  // Share vehicles parked at their stations (src/lib/share.ts), only while the module is on.
+  // Share vehicles parked at their stations (shared/share.ts), only while the module is on.
   const { data: share } = useLiveQuery(() => (features.share ? backend.shareOverview().then((o) => o.stations).catch(() => []) : Promise.resolve([])), String(features.share));
   const [filter, setFilter] = useState<StationFilter>(DEFAULT_FILTER);
   const [, setBrandPref] = useBrandPref();

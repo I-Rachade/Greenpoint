@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useState, type ComponentType } from "react";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { stationTiles, type StationTile } from "@/lib/station-work";
-import type { StationView } from "@/lib/types";
+import { stationTiles, type StationTile } from "@shared/station-work";
+import type { StationView } from "@shared/types";
 import { useApp } from "./app-provider";
 import { ConfirmSheet } from "./confirm-sheet";
 import { BatteryIcon, BoltIcon, BoxIcon, ClipboardIcon, ScooterIcon, WalletIcon } from "./icons";
@@ -118,7 +118,7 @@ function StationHome({ station }: { station: StationView }) {
   const { t } = useI18n();
   const { backend, features } = useApp();
   const now = useNow(15_000);
-  // Share (src/lib/share.ts): a tile at stations that take Share vehicles, while the module is on.
+  // Share (shared/share.ts): a tile at stations that take Share vehicles, while the module is on.
   const { data: share } = useLiveQuery(
     () => (features.share ? backend.stationShare(station.id).catch(() => null) : Promise.resolve(null)),
     `${station.id}:${features.share}`,

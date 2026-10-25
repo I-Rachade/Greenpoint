@@ -3,16 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { DemoBackend, DEMO_CODE, HOSTED_DEMO } from "@/lib/backend";
+import { DEMO_CODE, HOSTED_DEMO } from "@/lib/backend";
 import { format } from "@/lib/i18n/format";
 import { useApp } from "./app-provider";
 import { BellIcon, GearIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
-import { isStationStaff, runsOperator, worksAtStations } from "@/lib/operators";
-import { ownsPoints } from "@/lib/point-partners";
-import { isDriverAccount } from "@/lib/drivers";
-import { isMerchantAccount } from "@/lib/merchants";
+import { isStationStaff, runsOperator, worksAtStations } from "@shared/operators";
+import { ownsPoints } from "@shared/point-partners";
+import { isDriverAccount } from "@shared/drivers";
+import { isMerchantAccount } from "@shared/merchants";
 
 export function Header() {
   const { t, locale, setLocale } = useI18n();
@@ -61,7 +61,7 @@ export function Header() {
           <button
             type="button"
             className="underline"
-            onClick={() => backend instanceof DemoBackend && backend.reset()}
+            onClick={() => backend.reset?.()}
           >
             {t.demo.reset}
           </button>

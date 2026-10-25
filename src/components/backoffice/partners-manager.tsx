@@ -6,7 +6,7 @@ import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { Partner, PartnerEventLog, PartnerInput } from "@/lib/partners";
+import type { Partner, PartnerEventLog, PartnerInput } from "@shared/partners";
 import { ParcelsModuleSwitch } from "./parcels-manager";
 import { card, field, Loading, Pill, StaleNotice, Table, td, th, useDateTime } from "./shared";
 

@@ -1,9 +1,9 @@
 // Station types and the daily cash handover (migration 0045): what a partner station took for
 // poinderecharge, its closings and the admin's confirmation, the host's commission and the
 // late alert. At our own stations (0051, 0057): the cash each staff member took at the counter
-// (Green Credit top-ups, swaps, charges, parcels), closed per staff member. Types and the balance rule: src/lib/station-cash.ts.
+// (Green Credit top-ups, swaps, charges, parcels), closed per staff member. Types and the balance rule: shared/station-cash.ts.
 
-import type { AuditTable } from "../src/lib/admin/types";
+import type { AuditTable } from "../shared/admin/types";
 import {
   cleanCommissionMode,
   cleanSwapOwner,
@@ -22,9 +22,9 @@ import {
   type StationCash,
   type StationCashSettings,
   type SwapOwner,
-} from "../src/lib/station-cash";
-import type { Profile } from "../src/lib/types";
-import { personLabel } from "../src/lib/wallet";
+} from "../shared/station-cash";
+import type { Profile } from "../shared/types";
+import { personLabel } from "../shared/wallet";
 import type { Env } from "./env";
 import { ApiError, nowIso, uuid } from "./http";
 import { notifyUser } from "./notify";

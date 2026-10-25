@@ -16,7 +16,7 @@ import {
   type HandoverMethod,
   type HandoverStatus,
   type StationCash,
-} from "@/lib/station-cash";
+} from "@shared/station-cash";
 import { Loaded, Section, useWhen, useXof } from "./shared";
 
 const STATUS_TONE: Record<HandoverStatus, BadgeTone> = { pending: "amber", confirmed: "green", rejected: "red" };

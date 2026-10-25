@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
-import { reservableOutlets, reservableTypes } from "../reservations";
-import { boxFromCode, boxQrUrl, newBoxCode, shortLinkRedirect, socketQrUrl, validBoxToken } from "../charging";
+import { reservableOutlets, reservableTypes } from "@shared/reservations";
+import { boxFromCode, boxQrUrl, newBoxCode, shortLinkRedirect, socketQrUrl, validBoxToken } from "@shared/charging";
 
 // Runs without a browser: the demo falls back to in-memory storage.
 const STATION = "st-grand-marche"; // open around the clock in the demo data

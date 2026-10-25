@@ -1,11 +1,11 @@
-import type { BatteryType } from "../battery-types";
-import type { EvCharger } from "../ev-chargers";
-import type { ChargingPoint, Operator, Station, StationStatus } from "../types";
-import type { Amenity } from "../station-extras";
+import type { BatteryType } from "@shared/battery-types";
+import type { EvCharger } from "@shared/ev-chargers";
+import type { ChargingPoint, Operator, Station, StationStatus } from "@shared/types";
+import type { Amenity } from "@shared/station-extras";
 
 // Example stations in Lomé (approximate positions). Phone numbers are placeholders. Only the
 // Grand Marché has staff (DEMO_STAFF), so it is the one the demo can reserve; stations without
-// phone or staff show greyed out (isUnattended in src/lib/station-extras.ts).
+// phone or staff show greyed out (isUnattended in shared/station-extras.ts).
 export const DEMO_OPERATORS: Operator[] = [
   { id: "op-poinderecharge", name: "poinderecharge", isOwn: true },
   { id: "op-example", name: "Exemple Opérateur", isOwn: false },

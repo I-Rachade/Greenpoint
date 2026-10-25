@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { MyStaffInvite } from "@/lib/operators";
+import type { MyStaffInvite } from "@shared/operators";
 import { useApp } from "./app-provider";
 import { ConfirmSheet } from "./confirm-sheet";
 import { useI18n } from "./i18n-provider";

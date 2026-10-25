@@ -3,9 +3,9 @@
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
-import { boxQrUrl, socketQrUrl } from "@/lib/charging";
-import { displayStatus } from "@/lib/iot/charging-points";
-import { canSwitch, DEVICE_LINKS, MAX_OUTLETS, type Device, type DeviceInput } from "@/lib/iot/devices";
+import { boxQrUrl, socketQrUrl } from "@shared/charging";
+import { displayStatus } from "@shared/iot/charging-points";
+import { canSwitch, DEVICE_LINKS, MAX_OUTLETS, type Device, type DeviceInput } from "@shared/iot/devices";
 import { useErrorMessage, useLiveQuery, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { QrImage } from "../parcels/qr-image";
@@ -23,7 +23,7 @@ export function DevicesManager() {
   const relativeTime = useRelativeTime();
   const now = useNow(30_000);
   const { data: devices, error, reload } = useLiveQuery(() => backend.listDevices());
-  // Who owns each socket (src/lib/point-partners.ts): poinderecharge unless a partner is chosen.
+  // Who owns each socket (shared/point-partners.ts): poinderecharge unless a partner is chosen.
   const { data: partners } = useLiveQuery(() => backend.adminPointPartners());
   const { data: snap, error: snapError, reload: reloadSnap } = useAdminSnapshot();
   const [adding, setAdding] = useState(false);

@@ -3,10 +3,10 @@
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
-import { formatKg, type GreenpointFactors, type GreenpointReward, type GreenpointRewardInput } from "@/lib/greenpoint";
+import { formatKg, type GreenpointFactors, type GreenpointReward, type GreenpointRewardInput } from "@shared/greenpoint";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
-import { FLEET_VEHICLE_TYPES } from "@/lib/drivers";
-import { VEHICLE_TYPES } from "@/lib/types";
+import { FLEET_VEHICLE_TYPES } from "@shared/drivers";
+import { VEHICLE_TYPES } from "@shared/types";
 import { card, field, Loading, Pill, StaleNotice, Table, td, th, useDateTime } from "./shared";
 
 type Message = { ok: boolean; text: string } | null;

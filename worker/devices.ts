@@ -1,6 +1,6 @@
-import { DEVICE_OFFLINE_MINUTES } from "../src/lib/iot/charging-points";
-import { deviceKeyError, handleDeviceRequest, type Ingest } from "../src/lib/iot/device-events";
-import { xingkeOrderNumber, xingkeStartCommand, xingkeStopCommand } from "../src/lib/iot/xingke-commands";
+import { DEVICE_OFFLINE_MINUTES } from "../shared/iot/charging-points";
+import { deviceKeyError, handleDeviceRequest, type Ingest } from "../shared/iot/device-events";
+import { xingkeOrderNumber, xingkeStartCommand, xingkeStopCommand } from "../shared/iot/xingke-commands";
 import {
   XINGKE_ID,
   xingkeMessageId,
@@ -8,7 +8,7 @@ import {
   xingkeStopRequest,
   xingkeTransactionId,
   type XingkeCommand,
-} from "../src/lib/iot/xingke-cloud";
+} from "../shared/iot/xingke-cloud";
 import {
   commandRoute,
   normalizeDeviceId,
@@ -19,18 +19,18 @@ import {
   type DeviceInput,
   type DeviceLink,
   type DeviceProtocol,
-} from "../src/lib/iot/devices";
-import type { ChargingPoint, ChargingPointStatus } from "../src/lib/types";
+} from "../shared/iot/devices";
+import type { ChargingPoint, ChargingPointStatus } from "../shared/types";
 import type { Env } from "./env";
 import { ApiError, nowIso, sha256, uuid } from "./http";
 import { dispatchXingkeCommand } from "./xingke";
 import { evTargetSql } from "./reservations";
-import { ocppIdTag, ocppKey, remoteStartRequest, remoteStopRequest } from "../src/lib/iot/ocpp";
+import { ocppIdTag, ocppKey, remoteStartRequest, remoteStopRequest } from "../shared/iot/ocpp";
 import { sendOcppCommand } from "./ocpp";
 import { earnStatement } from "./greenpoint";
 import { chargeReadingStatement, creditFollowUp, hasOpenCharge } from "./charging";
 import { isCreditStation } from "./wallet";
-import { newBoxCode } from "../src/lib/charging";
+import { newBoxCode } from "../shared/charging";
 
 // Connected sockets (e.g. LoRa). See docs/steckdosen-lora.md.
 

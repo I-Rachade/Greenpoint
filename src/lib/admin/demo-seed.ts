@@ -1,5 +1,5 @@
-import { RESERVATION_MINUTES, type Reservation, type ReservationStatus, type ReservationType } from "../types";
-import type { AdminUser, StaffAssignment } from "./types";
+import { RESERVATION_MINUTES, type Reservation, type ReservationStatus, type ReservationType } from "@shared/types";
+import type { AdminUser, StaffAssignment } from "@shared/admin/types";
 
 // Example users and history for the backoffice in demo mode. The ids
 // `demo-<role>` are the ones the demo login uses (see DemoBackend.verifyCode).

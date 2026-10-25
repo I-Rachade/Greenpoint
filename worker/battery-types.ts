@@ -1,8 +1,8 @@
-import { batteryTypeLabel, validBatteryType, type BatteryType, type BatteryTypeInput, type StationBatteryType } from "../src/lib/battery-types";
-import type { AuditEntry, AuditTable } from "../src/lib/admin/types";
+import { batteryTypeLabel, validBatteryType, type BatteryType, type BatteryTypeInput, type StationBatteryType } from "../shared/battery-types";
+import type { AuditEntry, AuditTable } from "../shared/admin/types";
 import { ApiError, nowIso, uuid } from "./http";
 
-// Battery types of the motorbike brands, and which ones each station swaps. See src/lib/battery-types.ts and migration 0017_battery_types.sql.
+// Battery types of the motorbike brands, and which ones each station swaps. See shared/battery-types.ts and migration 0017_battery_types.sql.
 
 interface Ctx {
   db: D1Database;

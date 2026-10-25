@@ -7,8 +7,8 @@ import { useI18n } from "@/components/i18n-provider";
 import { Badge, Button, Input, useToast } from "@/components/ui";
 import { useErrorMessage } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { OperatorStaff, OwnerView, StaffInvite, StaffReassignment } from "@/lib/operators";
-import type { StationView } from "@/lib/types";
+import type { OperatorStaff, OwnerView, StaffInvite, StaffReassignment } from "@shared/operators";
+import type { StationView } from "@shared/types";
 import { useLongDate } from "../merchants/shared";
 import { Section, useWhen } from "./shared";
 

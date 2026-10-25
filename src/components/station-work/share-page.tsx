@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
-import { STAFF_VEHICLE_STATUSES, type ShareRide, type ShareVehicleStatus } from "@/lib/share";
-import type { StationView } from "@/lib/types";
+import { STAFF_VEHICLE_STATUSES, type ShareRide, type ShareVehicleStatus } from "@shared/share";
+import type { StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";

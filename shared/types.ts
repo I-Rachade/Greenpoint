@@ -59,7 +59,7 @@ export interface ChargingPoint {
   outlet: number | null;
   powerWatts: number | null;
   lastSeenAt: string | null;
-  /** Station list only: an active reservation holds this outlet (src/lib/reservations.ts). */
+  /** Station list only: an active reservation holds this outlet (shared/reservations.ts). */
   reserved?: boolean;
   /** Customers may start a charge here by scanning the outlet's QR code (set in the backoffice). */
   qrStart?: boolean;
@@ -109,7 +109,7 @@ export interface Reservation {
   pickupCode?: string;
   /** Set when the reservation was cancelled for the customer, e.g. "station_closed". */
   cancelReason?: string | null;
-  /** What it holds (src/lib/reservations.ts); missing on rows saved before kinds existed. */
+  /** What it holds (shared/reservations.ts); missing on rows saved before kinds existed. */
   kind?: ReservationKind;
   /** Battery type, outlet or car charger id; null = any free place (or a station without battery types). */
   target?: string | null;
@@ -128,13 +128,13 @@ export interface Profile {
   email: string | null;
   fullName: string | null;
   role: UserRole;
-  /** Set when the user applied as a driver (src/lib/drivers.ts). */
+  /** Set when the user applied as a driver (shared/drivers.ts). */
   driverStatus?: "pending" | "active" | "rejected" | "suspended" | null;
   /** Operators this person runs (operator accounts, see operators.ts). */
   ownerOf?: string[];
-  /** Merchant accounts: the shop and whether this is its merchant (src/lib/merchants.ts). */
+  /** Merchant accounts: the shop and whether this is its merchant (shared/merchants.ts). */
   merchant?: { id: string; name: string; status: "pending" | "approved" | "rejected" | "suspended"; isOwner: boolean } | null;
-  /** Accounts of a point partner, who owns charging sockets (src/lib/point-partners.ts). */
+  /** Accounts of a point partner, who owns charging sockets (shared/point-partners.ts). */
   pointPartner?: { id: string; name: string; status: "active" | "suspended" } | null;
 }
 

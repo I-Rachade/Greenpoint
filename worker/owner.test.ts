@@ -1,9 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
-import type { AdminReservationPage } from "../src/lib/admin/types";
-import type { MyStaffInvite, OwnerView } from "../src/lib/operators";
-import type { OwnerLive, OwnerReport } from "../src/lib/owner-backoffice";
-import type { BatteryEventView, StationCounter } from "../src/lib/station-work";
+import type { AdminReservationPage } from "../shared/admin/types";
+import type { MyStaffInvite, OwnerView } from "../shared/operators";
+import type { OwnerLive, OwnerReport } from "../shared/owner-backoffice";
+import type { BatteryEventView, StationCounter } from "../shared/station-work";
 import { handleApi } from "./api";
 import { hashPin } from "./auth";
 import type { Env } from "./env";

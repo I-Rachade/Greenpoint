@@ -3,8 +3,8 @@
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
-import { EV_CONNECTORS, MAX_EV_POWER_KW, type EvCharger, type EvChargerInput } from "@/lib/ev-chargers";
-import type { Device } from "@/lib/iot/devices";
+import { EV_CONNECTORS, MAX_EV_POWER_KW, type EvCharger, type EvChargerInput } from "@shared/ev-chargers";
+import type { Device } from "@shared/iot/devices";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { card, field, Loading, Pill, StaleNotice, useAdminSnapshot } from "./shared";

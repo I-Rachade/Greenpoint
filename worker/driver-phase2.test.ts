@@ -6,8 +6,8 @@ import type { Env } from "./env";
 import { sha256 } from "./http";
 import { fakeD1 } from "./test-d1";
 import { b64url, fromB64url } from "./web-push";
-import type { DeliveryJob, DriverHome } from "../src/lib/drivers";
-import type { FleetView } from "../src/lib/fleet";
+import type { DeliveryJob, DriverHome } from "../shared/drivers";
+import type { FleetView } from "../shared/fleet";
 
 // Driver phase 2 (planung/fahrer.md): live position of drivers on duty.
 

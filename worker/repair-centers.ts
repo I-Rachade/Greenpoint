@@ -1,9 +1,9 @@
-import type { AuditEntry, AuditTable } from "../src/lib/admin/types";
-import { cleanRepairCenter, type RepairCenter, type RepairCenterInput } from "../src/lib/repair-centers";
+import type { AuditEntry, AuditTable } from "../shared/admin/types";
+import { cleanRepairCenter, type RepairCenter, type RepairCenterInput } from "../shared/repair-centers";
 import { ApiError, nowIso, uuid } from "./http";
 
 // Repair workshops away from stations: listed in the app, managed in the backoffice.
-// See src/lib/repair-centers.ts and migration 0046_repair_centers.sql.
+// See shared/repair-centers.ts and migration 0046_repair_centers.sql.
 
 interface Ctx {
   db: D1Database;

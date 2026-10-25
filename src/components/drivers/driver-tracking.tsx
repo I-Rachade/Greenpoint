@@ -1,11 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { freshPosition, type DeliveryJob } from "@/lib/drivers";
-import { distanceMeters, formatDistance, type LatLng } from "@/lib/geo";
+import { freshPosition, type DeliveryJob } from "@shared/drivers";
+import { distanceMeters, formatDistance, type LatLng } from "@shared/geo";
 import { useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { StationView } from "@/lib/types";
+import type { StationView } from "@shared/types";
 import { useI18n } from "../i18n-provider";
 import { useClock } from "../merchants/shared";
 import type { TrackPoint } from "./track-map";

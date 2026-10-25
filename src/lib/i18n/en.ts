@@ -3099,7 +3099,7 @@ export const en: Dictionary = {
     allDay: "24/7",
     closesAt: "Closes at {time}",
     closedToday: "Closed today",
-    /** Monday first, as the ISO weekdays of src/lib/opening-hours.ts. */
+    /** Monday first, as the ISO weekdays of shared/opening-hours.ts. */
     weekdays: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
     weekdaysLong: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
     share: "Share",

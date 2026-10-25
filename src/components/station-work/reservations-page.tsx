@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { reservationKind, staffFlowHref } from "@/lib/reservations";
-import type { Reservation, StationView } from "@/lib/types";
+import { reservationKind, staffFlowHref } from "@shared/reservations";
+import type { Reservation, StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { BatteryIcon, BoltIcon, CarIcon } from "../icons";
 import { useI18n } from "../i18n-provider";

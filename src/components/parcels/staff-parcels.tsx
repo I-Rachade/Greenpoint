@@ -5,12 +5,12 @@ import { useState, type ComponentType, type FormEvent, type ReactNode } from "re
 import { useDateTime } from "@/components/backoffice/shared";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { measuresOf, PARCEL_SIZES, parseHandoverInput, type Parcel, type ParcelInfo, type ParcelInput, type ParcelSize } from "@/lib/parcels";
-import type { StationBooking } from "@/lib/partners";
+import { measuresOf, PARCEL_SIZES, parseHandoverInput, type Parcel, type ParcelInfo, type ParcelInput, type ParcelSize } from "@shared/parcels";
+import type { StationBooking } from "@shared/partners";
 import { isDriverPart, type ParcelSection } from "@/lib/parcel-sections";
-import type { StationView } from "@/lib/types";
-import { fareFor } from "@/lib/drivers";
-import { distanceMeters } from "@/lib/geo";
+import type { StationView } from "@shared/types";
+import { fareFor } from "@shared/drivers";
+import { distanceMeters } from "@shared/geo";
 import { useApp } from "../app-provider";
 import {
   BackIcon,

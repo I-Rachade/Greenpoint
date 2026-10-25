@@ -4,10 +4,10 @@ import { useState } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { effectiveReservationStatus } from "@/lib/admin/insights";
-import type { AdminUser } from "@/lib/admin/types";
+import type { AdminUser } from "@shared/admin/types";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { UserRole } from "@/lib/types";
+import type { UserRole } from "@shared/types";
 import { field, indexSnapshot, Loading, StaleNotice, Table, td, th, useAdminSnapshot, useDateTime, userContact, userLabel } from "./shared";
 
 const ROLES: UserRole[] = ["customer", "operator", "fleet_manager", "admin"];

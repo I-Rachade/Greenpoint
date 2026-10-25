@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import type { JobStatus } from "@/lib/drivers";
+import type { JobStatus } from "@shared/drivers";
 import { useErrorMessage } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { useI18n } from "../i18n-provider";

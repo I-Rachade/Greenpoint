@@ -13,17 +13,17 @@ import {
   offersSwap,
   stockBatteries,
   withinOpeningHours,
-} from "@/lib/availability";
-import { batteryTypeLabel } from "@/lib/battery-types";
-import { directionsUrl, formatDistance } from "@/lib/geo";
-import { displayStatus, type ChargingPointDisplay } from "@/lib/iot/charging-points";
+} from "@shared/availability";
+import { batteryTypeLabel } from "@shared/battery-types";
+import { directionsUrl, formatDistance } from "@shared/geo";
+import { displayStatus, type ChargingPointDisplay } from "@shared/iot/charging-points";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { loginHref } from "@/lib/next-path";
-import { AMENITIES, isUnattended, stationPhotos } from "@/lib/station-extras";
+import { AMENITIES, isUnattended, stationPhotos } from "@shared/station-extras";
 import { useBrandPref } from "@/lib/prefs";
-import { freeOfType, reservableEvChargers, reservableOutlets, reservableTypes, type ReservationKind } from "@/lib/reservations";
-import { RESERVATION_MINUTES, type Reservation, type StationView } from "@/lib/types";
+import { freeOfType, reservableEvChargers, reservableOutlets, reservableTypes, type ReservationKind } from "@shared/reservations";
+import { RESERVATION_MINUTES, type Reservation, type StationView } from "@shared/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
 import { ConfirmSheet } from "./confirm-sheet";
@@ -133,7 +133,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
   const shared = useActiveReservation(station.id)?.reservation ?? null;
   const activeHere = reserved && isHolding(reserved, now) ? reserved : shared;
 
-  /** The type or outlet picker (src/lib/reservations.ts): only what is free now is offered. */
+  /** The type or outlet picker (shared/reservations.ts): only what is free now is offered. */
   const [picker, setPicker] = useState<"swap" | "outlet" | null>(null);
   const [choice, setChoice] = useState<string | null>(null);
   const [allTypes, setAllTypes] = useState(false);

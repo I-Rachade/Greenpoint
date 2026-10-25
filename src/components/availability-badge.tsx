@@ -1,6 +1,6 @@
 "use client";
 
-import type { Availability } from "@/lib/availability";
+import type { Availability } from "@shared/availability";
 import { useI18n } from "./i18n-provider";
 
 // Status colours from the design rules (tokens in globals.css): green available, orange low,

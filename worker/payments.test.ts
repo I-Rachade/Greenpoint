@@ -8,7 +8,7 @@ import {
   safeEqual,
 } from "./payment-providers";
 import { myPayments, paymentCallback, refreshPayment, startPayment } from "./payments";
-import type { Profile } from "../src/lib/types";
+import type { Profile } from "../shared/types";
 import { fakeD1 } from "./test-d1";
 
 const OWN_OPERATOR = "00000000-0000-4000-8000-000000000001";

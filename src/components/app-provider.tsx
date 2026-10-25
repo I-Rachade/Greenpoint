@@ -2,8 +2,8 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { getBackend, type Backend } from "@/lib/backend";
-import { sameFeatures, UNKNOWN_FEATURES, type Features } from "@/lib/features";
-import type { Profile } from "@/lib/types";
+import { sameFeatures, UNKNOWN_FEATURES, type Features } from "@shared/features";
+import type { Profile } from "@shared/types";
 import { PushRegistrar } from "./push-registrar";
 
 interface AppContextValue {

@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useErrorMessage } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { StationView } from "@/lib/types";
+import type { StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { useI18n } from "../i18n-provider";
 

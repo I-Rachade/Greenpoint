@@ -2,12 +2,12 @@
 
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { isHolding, offersCharging } from "@/lib/availability";
+import { isHolding, offersCharging } from "@shared/availability";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { displayStatus, isConnected, isOffline } from "@/lib/iot/charging-points";
-import { reservationKind } from "@/lib/reservations";
-import type { Reservation, StationView } from "@/lib/types";
+import { displayStatus, isConnected, isOffline } from "@shared/iot/charging-points";
+import { reservationKind } from "@shared/reservations";
+import type { Reservation, StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { StaffCharging } from "../charging/charging";
 import { GreenpointStaff } from "../greenpoint/greenpoint-staff";

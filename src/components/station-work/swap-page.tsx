@@ -2,13 +2,13 @@
 
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { isHolding } from "@/lib/availability";
-import { batteryNumbersRequired, type BatteryLookup } from "@/lib/batteries";
-import { reservationKind } from "@/lib/reservations";
+import { isHolding } from "@shared/availability";
+import { batteryNumbersRequired, type BatteryLookup } from "@shared/batteries";
+import { reservationKind } from "@shared/reservations";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
-import { newRequestId, SWAP_CUSTOMER_TYPES, takesBatteryIn, type StationCounter, type SwapCustomerType, type SwapInput } from "@/lib/station-work";
-import type { Reservation, StationView } from "@/lib/types";
+import { newRequestId, SWAP_CUSTOMER_TYPES, takesBatteryIn, type StationCounter, type SwapCustomerType, type SwapInput } from "@shared/station-work";
+import type { Reservation, StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { GreenpointStaff } from "../greenpoint/greenpoint-staff";

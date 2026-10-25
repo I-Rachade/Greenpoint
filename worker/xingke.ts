@@ -1,4 +1,4 @@
-import { deviceKeyError, toIngestOutlets } from "../src/lib/iot/device-events";
+import { deviceKeyError, toIngestOutlets } from "../shared/iot/device-events";
 import {
   commandStatus,
   parseXingkeCallback,
@@ -10,7 +10,7 @@ import {
   XingkeCallbackError,
   type XingkeCallback,
   type XingkeCommand,
-} from "../src/lib/iot/xingke-cloud";
+} from "../shared/iot/xingke-cloud";
 import { swipeCard } from "./charge-cards";
 import { chargeStartFailed, chargeStopFailed, creditFollowUp, openCardCharge } from "./charging";
 import { ingest, recountFreeSlots, startCardOutlet } from "./devices";

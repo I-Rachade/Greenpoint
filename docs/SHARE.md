@@ -5,7 +5,7 @@ Radius **irgendeiner** Share-Station zurück. Das Ziel bei der Reservierung dien
 Bezahlt wird nach der Fahrt: Flooz/T-Money, Green Credit (mit PIN) oder bar beim Personal der
 Station, an der die Fahrt endete.
 
-Code: `src/lib/share.ts` (Typen, Preisberechnung), `worker/share.ts` (Server),
+Code: `shared/share.ts` (Typen, Preisberechnung), `worker/share.ts` (Server),
 `worker/tutrack.ts` (Tracker-API), `worker/tutrack-bridge.ts` und `worker/mqtt.ts` (MQTT-Push),
 Migration `worker/migrations/0060_share.sql`. App: `/share` (Tab „Share“, ersetzt den Tab
 „Stations“, solange Share an ist; die Stationsliste bleibt über die Karte erreichbar),

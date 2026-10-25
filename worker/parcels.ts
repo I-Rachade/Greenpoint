@@ -1,7 +1,7 @@
-// Parcel depot (phase 1, at the counter). See src/lib/parcels.ts for the shared
+// Parcel depot (phase 1, at the counter). See shared/parcels.ts for the shared
 // rules and planung/paketdepot.md for the plan.
-import type { AuditEntry, AuditTable } from "../src/lib/admin/types";
-import { normalizeTogoPhone } from "../src/lib/phone";
+import type { AuditEntry, AuditTable } from "../shared/admin/types";
+import { normalizeTogoPhone } from "../shared/phone";
 import {
   newTrackingNo,
   OPEN_PARCEL_STATUSES,
@@ -28,9 +28,9 @@ import {
   type ParcelSize,
   type ParcelSizeTier,
   type ParcelStatus,
-} from "../src/lib/parcels";
-import type { DeliveryStatus } from "../src/lib/drivers";
-import type { Profile } from "../src/lib/types";
+} from "../shared/parcels";
+import type { DeliveryStatus } from "../shared/drivers";
+import type { Profile } from "../shared/types";
 import type { Env } from "./env";
 import { cancelParcelJob, createExpressJob, driverSettings, bookableVehicles } from "./drivers";
 import { requireDrivers } from "./features";

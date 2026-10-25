@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
-import type { SwapEntry } from "../src/lib/station-work";
-import type { Reservation, StationView } from "../src/lib/types";
+import type { SwapEntry } from "../shared/station-work";
+import type { Reservation, StationView } from "../shared/types";
 import { handleApi } from "./api";
 import { hashPin } from "./auth";
 import type { Env } from "./env";

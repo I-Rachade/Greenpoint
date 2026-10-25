@@ -37,7 +37,7 @@ export type EvPoint = Pick<ChargingPoint, "id" | "status" | "deviceId" | "outlet
 
 /** A charger as the app shows it at its station. */
 export type StationEvCharger = Pick<EvCharger, "id" | "name" | "connector" | "powerKw"> & {
-  /** Station list only: an active reservation holds this charger (src/lib/reservations.ts). */
+  /** Station list only: an active reservation holds this charger (shared/reservations.ts). */
   reserved?: boolean;
   /** Connected chargers: the outlet that switches and meters it. */
   point?: EvPoint;

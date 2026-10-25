@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { BackendError } from "@/lib/backend";
-import { distanceMeters, formatDistance, type LatLng } from "@/lib/geo";
+import { distanceMeters, formatDistance, type LatLng } from "@shared/geo";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
 import {
@@ -17,14 +17,14 @@ import {
   type ShareStation,
   type ShareTariff,
   type ShareVehicle,
-} from "@/lib/share";
+} from "@shared/share";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
 import { LoadFailed, OfflineNotice } from "../load-state";
 
-// The Share tab (src/lib/share.ts, worker/share.ts): Share stations with their vehicles, the
+// The Share tab (shared/share.ts, worker/share.ts): Share stations with their vehicles, the
 // customer's check, the open ride and the rides still to pay. Share stations also show on the map.
 
 const input = "w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-base dark:border-white/20 dark:bg-zinc-900";

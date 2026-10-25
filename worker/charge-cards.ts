@@ -1,5 +1,5 @@
-import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, type ChargeCard, type CounterCard } from "../src/lib/charge-cards";
-import type { Profile } from "../src/lib/types";
+import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, type ChargeCard, type CounterCard } from "../shared/charge-cards";
+import type { Profile } from "../shared/types";
 import { findCustomer, linkedCardCredit, socketIsOurs, stopCardCharges } from "./charging";
 import { withCounterCodeTry } from "./code-tries";
 import type { Env } from "./env";

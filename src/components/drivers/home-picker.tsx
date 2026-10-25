@@ -3,7 +3,7 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Map as MapLibreMap, Marker, NavigationControl } from "maplibre-gl";
 import { useEffect, useRef } from "react";
-import { LOME_CENTER, type LatLng } from "@/lib/geo";
+import { LOME_CENTER, type LatLng } from "@shared/geo";
 import { MAP_STYLE } from "../station-map";
 
 /** A small map: tapping it (or dragging the pin) sets the customer's home. */

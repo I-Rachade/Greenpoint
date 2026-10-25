@@ -1,5 +1,6 @@
-import type { AdminShare, ShareMe, ShareOverview, ShareRide, ShareTrackPoint, StationShare } from "../share";
-import { countHolding, isHolding, offersCharging, offersSwap, withinOpeningHours } from "../availability";
+import { DEMO_CODE, HOSTED_DEMO } from "./demo-flags";
+import type { AdminShare, ShareMe, ShareOverview, ShareRide, ShareTrackPoint, StationShare } from "@shared/share";
+import { countHolding, isHolding, offersCharging, offersSwap, withinOpeningHours } from "@shared/availability";
 import {
   MAX_UNUSED_RESERVATIONS_PER_DAY,
   RESERVATION_MINUTES,
@@ -15,7 +16,7 @@ import {
   type StationView,
   type UserRole,
   type VehicleType,
-} from "../types";
+} from "@shared/types";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
 import { applyDemoSwapBattery, resolveDemoBattery, seedDemoBatteries, type DemoBattery, type DemoBatteryEvent, type DemoSwapBattery } from "./demo-batteries";
 import {
@@ -34,7 +35,7 @@ import {
   type BatteryView,
   type RegisterBatteriesInput,
   type RegisterBatteriesResult,
-} from "../batteries";
+} from "@shared/batteries";
 import {
   freeOfType,
   heldTargets,
@@ -44,7 +45,7 @@ import {
   reservationKind,
   typeOfKind,
   type ReservationKind,
-} from "../reservations";
+} from "@shared/reservations";
 import { getActiveStation } from "../active-station";
 import {
   applyBatteryEvent,
@@ -68,7 +69,7 @@ import {
   type SwapFilter,
   type SwapInput,
   type SwapPayment,
-} from "../station-work";
+} from "@shared/station-work";
 import {
   chargePrice,
   contactFromCode,
@@ -83,8 +84,8 @@ import {
   type ChargeTariff,
   type ChargeTariffInput,
   type StationCharging,
-} from "../charging";
-import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, type ChargeCard, type ChargeCardInput, type CounterCard } from "../charge-cards";
+} from "@shared/charging";
+import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, type ChargeCard, type ChargeCardInput, type CounterCard } from "@shared/charge-cards";
 import {
   DEMO_CHARGING_POINTS,
   DEMO_OPERATORS,
@@ -99,8 +100,8 @@ import {
   demoReviews,
   type DemoReview,
 } from "./demo-data";
-import { cleanAmenities, cleanMainActivity, cleanPhotos, cleanReview, isUnattended, ratingOf, shortName, type ReviewInput, type StationReview } from "../station-extras";
-import { depotPoints, hasAnyPoint, kindFor } from "../station-points";
+import { cleanAmenities, cleanMainActivity, cleanPhotos, cleanReview, isUnattended, ratingOf, shortName, type ReviewInput, type StationReview } from "@shared/station-extras";
+import { depotPoints, hasAnyPoint, kindFor } from "@shared/station-points";
 import {
   cleanSwapOwner,
   COMMISSION_MODES,
@@ -118,11 +119,11 @@ import {
   type StationCash,
   type StationCashSettings,
   type SwapOwner,
-} from "../station-cash";
-import { validBatteryType, type BatteryType, type BatteryTypeInput } from "../battery-types";
+} from "@shared/station-cash";
+import { validBatteryType, type BatteryType, type BatteryTypeInput } from "@shared/battery-types";
 import { DEMO_OWNERS, DEMO_STAFF, demoHistory, demoReassignments, demoUsers } from "../admin/demo-seed";
-import { cleanOpeningHours } from "../opening-hours";
-import { emptyDays, periodStart, reportPeriod, type Handover, type OwnerLive, type OwnerReport, type ReportPeriod, type StaffStats } from "../owner-backoffice";
+import { cleanOpeningHours } from "@shared/opening-hours";
+import { emptyDays, periodStart, reportPeriod, type Handover, type OwnerLive, type OwnerReport, type ReportPeriod, type StaffStats } from "@shared/owner-backoffice";
 import {
   ADMIN_HISTORY_DAYS,
   ADMIN_PAGE_SIZE,
@@ -134,10 +135,10 @@ import {
   type AuditEntry,
   type AuditFilter,
   type StaffAssignment,
-} from "../admin/types";
-import { validPinFormat, weakPin } from "../pin";
-import { effectiveFeatures, type Features } from "../features";
-import { MAX_PROMO_IMAGE_BYTES, pickPromotion, type Promotion, type PromotionInput } from "../promo";
+} from "@shared/admin/types";
+import { validPinFormat, weakPin } from "@shared/pin";
+import { effectiveFeatures, type Features } from "@shared/features";
+import { MAX_PROMO_IMAGE_BYTES, pickPromotion, type Promotion, type PromotionInput } from "@shared/promo";
 import {
   DEFAULT_PARCEL_SIZES,
   newTrackingNo,
@@ -164,7 +165,7 @@ import {
   type ParcelRunStatus,
   type ParcelScanKind,
   type ParcelSizeTier,
-} from "../parcels";
+} from "@shared/parcels";
 import {
   BOOKING_DAYS,
   keyPrefix,
@@ -176,8 +177,8 @@ import {
   type PartnerInput,
   type PartnerKey,
   type StationBooking,
-} from "../partners";
-import { normalizeTogoPhone } from "../phone";
+} from "@shared/partners";
+import { normalizeTogoPhone } from "@shared/phone";
 import {
   balanceOf,
   BUSY_JOB_STATUSES,
@@ -235,9 +236,9 @@ import {
   type DriverPayout,
   type PayoutNetwork,
   type TripPayment,
-} from "../drivers";
-import { distanceMeters, type LatLng } from "../geo";
-import { parseContact } from "../contact";
+} from "@shared/drivers";
+import { distanceMeters, type LatLng } from "@shared/geo";
+import { parseContact } from "@shared/contact";
 import {
   cleanFleetName,
   driverLimit,
@@ -261,7 +262,7 @@ import {
   type FleetTier,
   type FleetView,
   type MyFleetInvite,
-} from "../fleet";
+} from "@shared/fleet";
 import {
   CREDIT_CODE_MINUTES,
   CREDIT_TOPUP_MIN_XOF,
@@ -280,7 +281,7 @@ import {
   type WalletAdjustInput,
   type WalletTransaction,
   type WalletView,
-} from "../wallet";
+} from "@shared/wallet";
 import {
   DEFAULT_FACTORS,
   dayStart,
@@ -302,7 +303,7 @@ import {
   type GreenpointReward,
   type GreenpointRewardInput,
   type GreenpointView,
-} from "../greenpoint";
+} from "@shared/greenpoint";
 import {
   OPERATOR_NAME_MAX,
   STAFF_INVITE_DAYS,
@@ -313,7 +314,7 @@ import {
   type OperatorInput,
   type OwnerStationInput,
   type OwnerView,
-} from "../operators";
+} from "@shared/operators";
 import {
   POINT_PARTNER_NAME_MAX,
   type AdminPointPartner,
@@ -321,11 +322,11 @@ import {
   type PointPartnerDashboard,
   type PointPartnerInput,
   type PointPartnerStatus,
-} from "../point-partners";
-import { validEvCharger, type EvCharger, type EvChargerInput } from "../ev-chargers";
-import { cleanRepairCenter, type RepairCenter, type RepairCenterInput } from "../repair-centers";
-import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
-import { ocppKey } from "../iot/ocpp";
+} from "@shared/point-partners";
+import { validEvCharger, type EvCharger, type EvChargerInput } from "@shared/ev-chargers";
+import { cleanRepairCenter, type RepairCenter, type RepairCenterInput } from "@shared/repair-centers";
+import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "@shared/iot/devices";
+import { ocppKey } from "@shared/iot/ocpp";
 import {
   cleanMerchantName,
   cleanRate,
@@ -372,7 +373,7 @@ import {
   type MerchantToday,
   type MerchantView,
   type MyMerchantInvite,
-} from "../merchants";
+} from "@shared/merchants";
 import {
   customerStation,
   globalServices,
@@ -381,16 +382,11 @@ import {
   type ServiceRequestStatus,
   type StationService,
   type StationServiceInfo,
-} from "../station-services";
+} from "@shared/station-services";
 
+// CI (.github/workflows/ci.yml) looks for "poinderecharge-demo" to prove production builds leave this file out.
 const STORAGE_KEY = "poinderecharge-demo-v3";
-/** Every demo registration accepts this SMS code. */
-export const DEMO_CODE = "123456";
-/**
- * True when this build was made by Cloudflare (see next.config.ts) but set to the
- * demo backend. Visitors then see a clear notice and can only try the customer view.
- */
-export const HOSTED_DEMO = process.env.NEXT_PUBLIC_HOSTED_BUILD === "1" && process.env.NEXT_PUBLIC_BACKEND === "demo";
+export { DEMO_CODE, HOSTED_DEMO };
 
 function pickupCode(): string {
   return String(Math.floor(Math.random() * 10_000)).padStart(4, "0");
@@ -439,7 +435,7 @@ interface DemoState {
   parcelScans?: DemoScan[];
   /** Wrong pickup codes per reservation (as reservation_code_failures, migration 0029). */
   reservationCodeFailures?: { reservationId: string; at: string }[];
-  /** Drivers (see src/lib/drivers.ts). */
+  /** Drivers (see shared/drivers.ts). */
   drivers?: DemoDriver[];
   fleet?: FleetVehicle[];
   jobs?: DemoJob[];
@@ -1680,7 +1676,7 @@ export class DemoBackend implements Backend {
     return user ? personLabel(user) : null;
   }
 
-  // Station work (src/lib/station-work.ts), as worker/station-work.ts ------------------
+  // Station work (shared/station-work.ts), as worker/station-work.ts ------------------
 
   /** The person's role at the station, or null without rights there (as roleAtStation() in the Worker). */
   private roleAt(state: DemoState, profile: Profile, stationId: string): StationRole | null {
@@ -2069,7 +2065,7 @@ export class DemoBackend implements Backend {
     }
     const before = id ? state.stations.find((s) => s.id === id) : undefined;
     const extras = id ? DEMO_STATION_EXTRAS[id] : undefined;
-    // Days and times, never empty (src/lib/opening-hours.ts), as in worker/api.ts.
+    // Days and times, never empty (shared/opening-hours.ts), as in worker/api.ts.
     const openingHours = cleanOpeningHours(fields.openingHours);
     if (!openingHours) throw new BackendError("opening_hours_invalid");
     const station: Station = {

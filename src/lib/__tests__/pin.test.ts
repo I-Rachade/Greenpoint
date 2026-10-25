@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
-import { validPinFormat, weakPin } from "../pin";
+import { validPinFormat, weakPin } from "@shared/pin";
 
 describe("PIN rules", () => {
   it("needs exactly four digits", () => {
