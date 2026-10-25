@@ -1,0 +1,27 @@
+// Cloudflare Worker for the back office on its own address (worker/admin-gateway.ts).
+// Cloudflare Access stands in front of admin.poinderecharge.com; this Worker checks its
+// token again, serves the web app's pages and passes /api/* to the app Worker.
+// Deploy: `npx wrangler deploy -c wrangler.admin.jsonc`. Setup: docs/BACKOFFICE.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pointderecharge-admin",
+  "main": "worker/admin-gateway.ts",
+  "compatibility_date": "2025-10-01",
+  "build": { "command": "npm run build" },
+  "routes": [{ "pattern": "admin.poinderecharge.com", "custom_domain": true }],
+  // Only the address above; no second *.workers.dev address next to it.
+  "workers_dev": false,
+  "assets": {
+    "directory": "./out",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    // Every request runs the Worker first, so none gets past the Access check.
+    "run_worker_first": true
+  },
+  // The API with its database stays in the app Worker; the back office calls it directly.
+  "services": [{ "binding": "API", "service": "pointderecharge-app" }],
+  // ACCESS_TEAM_DOMAIN and ACCESS_AUD are set in the dashboard; keep them on deploy.
+  "keep_vars": true,
+  "observability": { "enabled": true },
+  "previews": {}
+}

@@ -18,6 +18,7 @@ Unter **Workers & Pages > pointderecharge-app > Settings > Build**:
 - **Variables and secrets** (Build): `NODE_VERSION` = `22`. Die früheren `NEXT_PUBLIC_SUPABASE_…`-Werte werden nicht mehr gebraucht und können gelöscht werden.
 - Jeder Push auf den Production branch veröffentlicht automatisch.
 - Domain: `wrangler.jsonc` legt `app.poinderecharge.com` beim Deploy als Custom domain an.
+- Das Backoffice läuft zusätzlich als eigener Worker **`pointderecharge-admin`** (`wrangler.admin.jsonc`, Deploy command `npx wrangler deploy -c wrangler.admin.jsonc`) unter `admin.poinderecharge.com` hinter Cloudflare Access, siehe [BACKOFFICE.md](BACKOFFICE.md#eigene-adresse-adminpoinderecharge-com-cloudflare-access).
 - Der Worker heißt weiter `pointderecharge-app`, obwohl die App jetzt poinderecharge heißt; ein Umbenennen würde einen neuen Worker erfordern. Der Worker `greenpoint` gehört der Landingpage und bleibt unverändert.
 
 ## 3. Einstellungen des Workers (Laufzeit)
@@ -41,6 +42,8 @@ Unter **Workers & Pages > pointderecharge-app > Settings > Variables and secrets
 | `EMAIL_HOURLY_LIMIT` | Text, optional | höchstens so viele Code-E-Mails pro Stunde insgesamt (Standard 100) |
 | `TURNSTILE_SITE_KEY` | Text, optional | Site-Key von Cloudflare Turnstile; zusammen mit `TURNSTILE_SECRET` verlangt das Login-Formular vor jedem Code die Roboter-Prüfung. Im Turnstile-Widget die Hostnamen der Website und `localhost` (Android- und iOS-App) eintragen. |
 | `TURNSTILE_SECRET` | Secret, optional | Secret-Key von Cloudflare Turnstile. Ohne beide Werte gibt es keine Prüfung; das Limit pro IP (10 Codes pro Stunde, 60 PIN-Logins in 15 Minuten) gilt immer. |
+| `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` | Text, optional | Cloudflare Access des Backoffice (`https://<team>.cloudflareaccess.com` und AUD-Tag der Access-Anwendung); auch beim Worker `pointderecharge-admin` setzen. Siehe [BACKOFFICE.md](BACKOFFICE.md#eigene-adresse-adminpoinderecharge-com-cloudflare-access) |
+| `ADMIN_ACCESS_REQUIRED` | Text, optional | `1`: Admin-Konten melden sich nur noch über `admin.poinderecharge.com` mit Access an. Erst setzen, wenn die Access-Anmeldung dort funktioniert. |
 | `FCM_SERVICE_ACCOUNT` | Secret, optional | Push-Benachrichtigungen (Fahrer phase 2): der ganze JSON-Schlüssel eines Firebase-Dienstkontos, siehe Abschnitt 7a. Ohne ihn wird kein Push verschickt, E-Mails gehen weiter. |
 
 Didit: Konto auf https://business.didit.me anlegen, Guthaben aufladen (Telefon-Verifizierung ist erst nach der ersten Aufladung aktiv), unter der Anwendung den API-Schlüssel kopieren. Kosten: 0,04 $ pro verschickten Code plus Gebühr des Netzes je nach Land und Kanal (https://docs.didit.me/getting-started/phone-verification-pricing); die Prüfung des Codes ist kostenlos. Die App nimmt nur +228-Nummern an, damit keine teuren Codes ins Ausland gehen. Didit lehnt Wegwerf- und Internet-Nummern bei der Registrierung ab. SMS kosten nur bei Registrierung und vergessener PIN; der tägliche Login mit PIN ist kostenlos.

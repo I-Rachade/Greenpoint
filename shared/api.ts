@@ -80,6 +80,7 @@ export type BackendErrorCode =
   | "outside_share_zone"
   | "provider_unavailable"
   | "forbidden"
+  | "admin_access_required"
   | "wallet_disabled"
   | "wallet_frozen"
   | "insufficient_balance"

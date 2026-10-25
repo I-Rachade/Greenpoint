@@ -2824,6 +2824,7 @@ export const fr = {
     outside_share_zone: "Garez le véhicule dans la zone d'une station Share pour terminer le trajet.",
     provider_unavailable: "Le paiement n'a pas pu être lancé. Réessayez dans un instant.",
     forbidden: "Action non autorisée.",
+    admin_access_required: "Les comptes administrateur se connectent uniquement par le back-office.",
     wallet_disabled: "Le Green Credit n'est pas encore disponible.",
     wallet_frozen: "Votre Green Credit est bloqué. Contactez le support.",
     insufficient_balance: "Crédit insuffisant.",
