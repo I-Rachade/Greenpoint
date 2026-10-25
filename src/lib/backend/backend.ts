@@ -136,6 +136,8 @@ export class BackendError extends Error {
  */
 export interface Backend {
   readonly mode: "demo" | "cloudflare";
+  /** Demo only: back to the sample data (the banner's reset button). */
+  reset?(): void;
 
   // Stations (public)
   listStations(): Promise<StationView[]>;

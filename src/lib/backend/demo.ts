@@ -1,3 +1,4 @@
+import { DEMO_CODE, HOSTED_DEMO } from "./demo-flags";
 import type { AdminShare, ShareMe, ShareOverview, ShareRide, ShareTrackPoint, StationShare } from "@shared/share";
 import { countHolding, isHolding, offersCharging, offersSwap, withinOpeningHours } from "@shared/availability";
 import {
@@ -383,14 +384,9 @@ import {
   type StationServiceInfo,
 } from "@shared/station-services";
 
+// CI (.github/workflows/ci.yml) looks for "poinderecharge-demo" to prove production builds leave this file out.
 const STORAGE_KEY = "poinderecharge-demo-v3";
-/** Every demo registration accepts this SMS code. */
-export const DEMO_CODE = "123456";
-/**
- * True when this build was made by Cloudflare (see next.config.ts) but set to the
- * demo backend. Visitors then see a clear notice and can only try the customer view.
- */
-export const HOSTED_DEMO = process.env.NEXT_PUBLIC_HOSTED_BUILD === "1" && process.env.NEXT_PUBLIC_BACKEND === "demo";
+export { DEMO_CODE, HOSTED_DEMO };
 
 function pickupCode(): string {
   return String(Math.floor(Math.random() * 10_000)).padStart(4, "0");

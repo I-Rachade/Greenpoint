@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { DemoBackend, DEMO_CODE, HOSTED_DEMO } from "@/lib/backend";
+import { DEMO_CODE, HOSTED_DEMO } from "@/lib/backend";
 import { format } from "@/lib/i18n/format";
 import { useApp } from "./app-provider";
 import { BellIcon, GearIcon } from "./icons";
@@ -61,7 +61,7 @@ export function Header() {
           <button
             type="button"
             className="underline"
-            onClick={() => backend instanceof DemoBackend && backend.reset()}
+            onClick={() => backend.reset?.()}
           >
             {t.demo.reset}
           </button>
