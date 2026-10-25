@@ -22,11 +22,11 @@ Steckdose --LoRa--> Gateway --4G--> Netzwerkserver (TTN / ChirpStack)
 
 - `worker/migrations/0003_devices.sql`: Tabellen `devices` und `device_messages`, Spalten `outlet` und `energy_wh` an `charging_points`.
 - `worker/devices.ts`: nimmt Meldungen an, legt Geräte an, zählt freie Plätze.
-- `src/lib/iot/device-events.ts`: liest die Formate (wird auch in den Tests geprüft).
-- `src/lib/iot/charging-points.ts`: "offline", wenn ein Gerät 15 Minuten nichts meldet.
+- `shared/iot/device-events.ts`: liest die Formate (wird auch in den Tests geprüft).
+- `shared/iot/charging-points.ts`: "offline", wenn ein Gerät 15 Minuten nichts meldet.
 - `worker/migrations/0004_device_commands.sql`: Warteschlange für Schaltbefehle (`device_commands`).
-- `src/lib/iot/xingke-commands.ts`: baut die Xingke-Befehle des Textprotokolls (Ausgang ein/aus).
-- `src/lib/iot/xingke-cloud.ts` und `worker/xingke.ts`: Befehle und Callbacks der Xingke-Cloud-API.
+- `shared/iot/xingke-commands.ts`: baut die Xingke-Befehle des Textprotokolls (Ausgang ein/aus).
+- `shared/iot/xingke-cloud.ts` und `worker/xingke.ts`: Befehle und Callbacks der Xingke-Cloud-API.
 
 ## Einrichten
 
@@ -49,7 +49,7 @@ Der Kunde kann eine Ladung selbst starten, ohne Personal: Er scannt den QR-Code 
 
 - **Einschalten:** im Backoffice unter **Prises connectées** pro Ausgang „Recharge par QR-Code“ anhaken (Standard: aus). Geht nur bei Steckdosen, die sich fernschalten lassen (Xingke, OCPP). Danach zeigt „QR-Code“ den Code zum Ausdrucken und Aufkleben.
 - **Der QR-Code** ist ein kurzer Link, einer pro Steckdose: `https://app.poinderecharge.com/q/<devices.qr_code>`, z. B. `https://app.poinderecharge.com/q/k7q2xp9a`. Der Code hat 8 Zeichen aus `0-9a-z` (zufällig, nicht aus der Geräte-ID abgeleitet). Der Aufkleber neben einem Ausgang hat ein Zeichen mehr, die Ausgangsnummer: `1`–`9`, dann `a`–`g` für 10–16 (z. B. `…/q/k7q2xp9a3` für Ausgang 3). Der Link hat 41–42 Zeichen und ergibt einen QR-Code der Version 3 (29×29 Punkte) statt Version 5 (37×37) beim alten langen Link; günstige Handys lesen ihn leichter.
-- **Weiterleitung:** Der Worker beantwortet `/q/<code>` mit einer temporären Weiterleitung (302) auf `/recharge?o=<code>&s=<ausgang>`. Wohin der Link führt, lässt sich so später ändern, ohne neue Aufkleber zu drucken. Die App erkennt den kurzen Link auch direkt beim Scannen (`boxFromCode` in `src/lib/charging.ts`).
+- **Weiterleitung:** Der Worker beantwortet `/q/<code>` mit einer temporären Weiterleitung (302) auf `/recharge?o=<code>&s=<ausgang>`. Wohin der Link führt, lässt sich so später ändern, ohne neue Aufkleber zu drucken. Die App erkennt den kurzen Link auch direkt beim Scannen (`boxFromCode` in `shared/charging.ts`).
 - **Ältere Aufkleber** mit `https://app.poinderecharge.com/recharge?o=<devices.qr_token>` (32 Hex-Zeichen, `&s=<ausgang>` für einen Ausgang) funktionieren weiter. „Renouveler“ im Backoffice erneuert beide, danach gelten nur die neuen Aufkleber. Die ganz alten Codes pro Ausgang (`/recharge?p=…`) funktionieren nicht mehr.
 - Er öffnet sich mit der Handy-Kamera im Browser; in der App gibt es „Scanner le QR-Code d'une prise“ auf der Stationsseite und auf `/recharge`.
 - **Der Server prüft** (`startSelfCharge` in `worker/charging.ts`): Option an, Dienst „charging“ der Station frei, Ausgang meldet sich in den letzten 15 Minuten, ist frei, nicht von jemand anderem reserviert (auch nicht als letzter freier Platz für eine Reservierung ohne Ausgang), und der Kunde hat keine andere Ladung, die läuft oder noch bezahlt werden muss. Hat der Kunde selbst eine Reservierung an der Station, wird sie eingelöst.

@@ -5,7 +5,7 @@ Andere Apps (Online-Shops, Lieferdienste) buchen über eine REST-API einen Paket
 - Doku für Entwickler (Französisch): `https://app.poinderecharge.com/developpeurs`
 - Technische Referenz: `https://app.poinderecharge.com/partner-api/openapi.json` (OpenAPI 3.1, lässt sich in Postman importieren)
 - Basis-Adresse: `https://app.poinderecharge.com/api/partner/v1`
-- Code: `worker/partners.ts`, `src/lib/partners.ts`, Migration `worker/migrations/0008_partner_api.sql`, Tests `worker/partners.test.ts`
+- Code: `worker/partners.ts`, `shared/partners.ts`, Migration `worker/migrations/0008_partner_api.sql`, Tests `worker/partners.test.ts`
 
 ## Einen Partner freischalten
 
