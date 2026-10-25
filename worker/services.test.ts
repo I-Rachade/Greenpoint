@@ -1,9 +1,9 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { ParcelInfo } from "../src/lib/parcels";
-import type { StationService, StationServiceInfo } from "../src/lib/station-services";
-import type { StationView } from "../src/lib/types";
+import type { ParcelInfo } from "../shared/parcels";
+import type { StationService, StationServiceInfo } from "../shared/station-services";
+import type { StationView } from "../shared/types";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { setDriversEnabled, setLiteEnabled, setParcelsEnabled } from "./features";

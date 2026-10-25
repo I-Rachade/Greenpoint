@@ -1,8 +1,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { AdminOperator, MyStaffInvite, OwnerView } from "../src/lib/operators";
-import type { StationInput, StationView } from "../src/lib/types";
+import type { AdminOperator, MyStaffInvite, OwnerView } from "../shared/operators";
+import type { StationInput, StationView } from "../shared/types";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { sha256 } from "./http";

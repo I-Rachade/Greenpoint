@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { customerCode } from "@/lib/charging";
+import { customerCode } from "@shared/charging";
 import { format } from "@/lib/i18n/format";
 import { useLiveQuery } from "@/lib/hooks";
-import { isStationStaff } from "@/lib/operators";
-import { pickupQrPayload } from "@/lib/parcels";
-import { reservationQrPayload } from "@/lib/reservations";
+import { isStationStaff } from "@shared/operators";
+import { pickupQrPayload } from "@shared/parcels";
+import { reservationQrPayload } from "@shared/reservations";
 import { useApp } from "./app-provider";
 import { BoxIcon, QrIcon, TicketIcon, UserIcon, WalletIcon } from "./icons";
 import { useI18n } from "./i18n-provider";

@@ -1,5 +1,5 @@
 // Battery register (migration 0041_batteries.sql): every swap battery by its number, per
-// brand, with its own history. Shared rules and types in src/lib/batteries.ts.
+// brand, with its own history. Shared rules and types in shared/batteries.ts.
 // recordSwap() (worker/station-work.ts) links its batteries with resolveSwapBattery() and
 // swapBatteryStatements(); the rest is the register pages (admins, owners read-only).
 
@@ -22,10 +22,10 @@ import {
   type BatteryView,
   type RegisterBatteriesInput,
   type RegisterBatteriesResult,
-} from "../src/lib/batteries";
-import { cleanBatteryLabel, type StationRole } from "../src/lib/station-work";
-import type { Profile } from "../src/lib/types";
-import { personLabel } from "../src/lib/wallet";
+} from "../shared/batteries";
+import { cleanBatteryLabel, type StationRole } from "../shared/station-work";
+import type { Profile } from "../shared/types";
+import { personLabel } from "../shared/wallet";
 import { ApiError, nowIso, uuid } from "./http";
 import { roleAtStation, type StationActor } from "./station-work";
 

@@ -1,4 +1,4 @@
-import { newTrxId, TOPUP_NETWORK_LABEL, type WalletTopup } from "../src/lib/wallet";
+import { newTrxId, TOPUP_NETWORK_LABEL, type WalletTopup } from "../shared/wallet";
 import type { Env } from "./env";
 import { nowIso, uuid } from "./http";
 import { cardProviderFromEnv, providerFromEnv, type CheckoutProvider, type PaymentProvider, type ProviderStatus } from "./payment-providers";

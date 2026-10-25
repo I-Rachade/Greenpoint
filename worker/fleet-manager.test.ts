@@ -5,7 +5,7 @@ import { hashPin } from "./auth";
 import type { Env } from "./env";
 import { sha256 } from "./http";
 import { fakeD1 } from "./test-d1";
-import type { FleetInvite, FleetRemoval, FleetStatement, FleetView, MyFleetInvite } from "../src/lib/fleet";
+import type { FleetInvite, FleetRemoval, FleetStatement, FleetView, MyFleetInvite } from "../shared/fleet";
 
 // Fleet managers (plan phase 6): registration and approval (M1), fleet managers are not
 // customers (R11), invites only to free numbers or empty customer accounts (R12), the

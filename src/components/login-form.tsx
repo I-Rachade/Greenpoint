@@ -7,20 +7,20 @@ import { HOSTED_DEMO } from "@/lib/backend";
 import { useErrorMessage } from "@/lib/hooks";
 import { LEGAL_PATHS } from "@/lib/legal/content";
 import { safeNextPath } from "@/lib/next-path";
-import { normalizeEmail, type Contact } from "@/lib/contact";
+import { normalizeEmail, type Contact } from "@shared/contact";
 import { DEFAULT_PHONE_COUNTRY, PHONE_COUNTRIES, phoneWithCountry } from "@/lib/countries";
 import { format } from "@/lib/i18n/format";
-import { PIN_LENGTH } from "@/lib/pin";
-import type { Profile, UserRole } from "@/lib/types";
+import { PIN_LENGTH } from "@shared/pin";
+import type { Profile, UserRole } from "@shared/types";
 import { useApp } from "./app-provider";
 import { CountryPicker } from "./country-picker";
 import { useI18n } from "./i18n-provider";
 import { MailIcon, PhoneIcon } from "./icons";
 import { OtpInput } from "./otp-input";
 import { Turnstile } from "./turnstile";
-import { runsOperator } from "@/lib/operators";
-import { cleanFleetName, FLEET_NAME_MAX } from "@/lib/fleet";
-import type { MerchantShopInput } from "@/lib/merchants";
+import { runsOperator } from "@shared/operators";
+import { cleanFleetName, FLEET_NAME_MAX } from "@shared/fleet";
+import type { MerchantShopInput } from "@shared/merchants";
 import { EMPTY_SHOP, ShopFields, useShopProblem } from "./merchants/shop-fields";
 
 // On the public site the demo only offers the customer view (anyone could otherwise "log in" as admin).

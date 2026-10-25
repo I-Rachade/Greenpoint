@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
-import { parseSerials, sortBrands } from "../batteries";
+import { parseSerials, sortBrands } from "@shared/batteries";
 
 // Battery register in the demo backend: the same rules as worker/batteries.ts (tested in
 // worker/batteries.test.ts), so the demo behaves like the Worker.

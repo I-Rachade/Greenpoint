@@ -16,11 +16,11 @@ import {
   type DriverStatus,
   type FleetVehicle,
   type FleetVehicleType,
-} from "@/lib/drivers";
-import { formatDistance } from "@/lib/geo";
+} from "@shared/drivers";
+import { formatDistance } from "@shared/geo";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { PARCEL_SIZES, type ParcelSize } from "@/lib/parcels";
+import { PARCEL_SIZES, type ParcelSize } from "@shared/parcels";
 import { card, field, Loading, Pill, Table, td, th, useDateTime } from "./shared";
 
 type Report = (msg: string, ok: boolean) => void;
@@ -63,7 +63,7 @@ function DocLink({ fileKey, label }: { fileKey: string; label: string }) {
   );
 }
 
-/** Who manages the driver (src/lib/fleet.ts): linked by the manager's phone or e-mail. */
+/** Who manages the driver (shared/fleet.ts): linked by the manager's phone or e-mail. */
 function ManagerCell({ driver, onReport }: { driver: Driver; onReport: Report }) {
   const { t } = useI18n();
   const { backend } = useApp();

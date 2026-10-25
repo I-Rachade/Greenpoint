@@ -1,7 +1,7 @@
 import QRCode from "qrcode";
 import type { Dictionary } from "@/lib/i18n/fr";
-import { firstName, labelQrPayload, liabilityLimit, maskPhone, slipQrText, type Parcel } from "@/lib/parcels";
-import type { StationView } from "@/lib/types";
+import { firstName, labelQrPayload, liabilityLimit, maskPhone, slipQrText, type Parcel } from "@shared/parcels";
+import type { StationView } from "@shared/types";
 
 /** 80 mm receipt printers print 576 dots per line. */
 const WIDTH = 576;

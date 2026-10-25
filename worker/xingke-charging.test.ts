@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import type { ChargeSession } from "../src/lib/charging";
-import type { Profile } from "../src/lib/types";
+import type { ChargeSession } from "../shared/charging";
+import type { Profile } from "../shared/types";
 import { hashPin } from "./auth";
 import type { Env } from "./env";
 import { roleToDb } from "./roles";

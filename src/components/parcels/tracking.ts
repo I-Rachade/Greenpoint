@@ -1,5 +1,5 @@
-import { OPEN_JOB_STATUSES, type DeliveryJob } from "@/lib/drivers";
-import { sortHistory, type Parcel, type ParcelHistoryEntry } from "@/lib/parcels";
+import { OPEN_JOB_STATUSES, type DeliveryJob } from "@shared/drivers";
+import { sortHistory, type Parcel, type ParcelHistoryEntry } from "@shared/parcels";
 
 /** The four steps a customer follows: handed in, on the way, at the station, collected (or delivered home). */
 export type TrackStepKey = "deposited" | "in_transit" | "arrived" | "picked_up" | "delivered";

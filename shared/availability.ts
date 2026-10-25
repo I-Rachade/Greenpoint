@@ -15,7 +15,7 @@ export function offersSwap(kind: StationKind): boolean {
 }
 
 /**
- * Whether `now` falls inside the opening hours (src/lib/opening-hours.ts: "07:00-21:00",
+ * Whether `now` falls inside the opening hours (shared/opening-hours.ts: "07:00-21:00",
  * "Mo-Sa 07:00-21:00", "Mo-Fr 08:00-19:00; Sa 08:00-15:00", Lomé time = UTC). Ranges past midnight
  * work; any other text counts as open.
  */
@@ -87,7 +87,7 @@ export function countHolding(
   let batteries = 0;
   for (const r of reservations) {
     if (r.stationId !== stationId || !isHolding(r, now)) continue;
-    // A car charger's hold is not a motorbike place (src/lib/reservations.ts).
+    // A car charger's hold is not a motorbike place (shared/reservations.ts).
     const kind = r.kind ?? (r.type === "battery" ? "swap" : "charging_point");
     if (kind === "swap") batteries++;
     else if (r.targetKind !== "ev") slots++;

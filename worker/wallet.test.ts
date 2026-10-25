@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
-import type { Profile } from "../src/lib/types";
+import type { Profile } from "../shared/types";
 import { hashPin } from "./auth";
 import type { Env } from "./env";
 import { ApiError } from "./http";

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
-import { applyBatteryEvent, roleAt, stationTiles, takesBatteryIn } from "../station-work";
+import { applyBatteryEvent, roleAt, stationTiles, takesBatteryIn } from "@shared/station-work";
 
 // Station work in the demo backend: the same rules as worker/station-work.ts (tested in
 // worker/station-work.test.ts), so the demo behaves like the Worker.
@@ -141,14 +141,14 @@ describe("DemoBackend station work", () => {
 
 describe("scanner codes", () => {
   it("reads back a reservation QR code and nothing else", async () => {
-    const { reservationQrPayload, parseReservationQr } = await import("../reservations");
+    const { reservationQrPayload, parseReservationQr } = await import("@shared/reservations");
     expect(parseReservationQr(reservationQrPayload("res-42", "4821"))).toEqual({ id: "res-42", code: "4821" });
     expect(parseReservationQr("4821")).toBeNull();
     expect(parseReservationQr("poinderecharge:resa:res-42:48")).toBeNull();
   });
 
   it("tells a customer's own code from other text", async () => {
-    const { customerCode, isCustomerCode, contactFromCode } = await import("../charging");
+    const { customerCode, isCustomerCode, contactFromCode } = await import("@shared/charging");
     expect(isCustomerCode(customerCode("+22890551234"))).toBe(true);
     expect(contactFromCode(customerCode("+22890551234"))).toBe("+22890551234");
     expect(isCustomerCode("+22890551234")).toBe(false);

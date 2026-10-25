@@ -1,10 +1,10 @@
 "use client";
 
-import { isOpenNow } from "@/lib/availability";
+import { isOpenNow } from "@shared/availability";
 import { useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { type Amenity, stationPhotos } from "@/lib/station-extras";
-import type { StationView } from "@/lib/types";
+import { type Amenity, stationPhotos } from "@shared/station-extras";
+import type { StationView } from "@shared/types";
 import {
   BenchIcon,
   CupIcon,
@@ -19,7 +19,7 @@ import {
   WifiIcon,
   WrenchIcon,
 } from "./icons";
-import { parseOpeningSchedule, todayHours, type Weekday } from "@/lib/opening-hours";
+import { parseOpeningSchedule, todayHours, type Weekday } from "@shared/opening-hours";
 import { useI18n } from "./i18n-provider";
 
 // Pieces shared by the station cards and the station screen: photos, stars, amenities.
@@ -40,7 +40,7 @@ export const AMENITY_ICONS: Record<Amenity, typeof StarIcon> = {
 
 /**
  * Opening hours as people read them: "24h/24", "lun–sam 07:00 – 21:00", "lun, mer, ven 08:00 – 18:00",
- * "lun–ven 08:00 – 19:00 · sam 08:00 – 15:00" (src/lib/opening-hours.ts). Older free text is shown as it is.
+ * "lun–ven 08:00 – 19:00 · sam 08:00 – 15:00" (shared/opening-hours.ts). Older free text is shown as it is.
  */
 export function useHoursLabel() {
   const { t } = useI18n();

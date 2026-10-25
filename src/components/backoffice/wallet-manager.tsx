@@ -4,10 +4,10 @@ import { useRef, useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { ConfirmSheet } from "@/components/confirm-sheet";
 import { useI18n } from "@/components/i18n-provider";
-import { parseContact } from "@/lib/contact";
+import { parseContact } from "@shared/contact";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
-import { parseAmount, type AdminWallet, type WalletAdjustInput } from "@/lib/wallet";
+import { parseAmount, type AdminWallet, type WalletAdjustInput } from "@shared/wallet";
 import { card, field, Loading, Pill, StaleNotice, Table, td, th, useAdminSnapshot, useDateTime, userLabel } from "./shared";
 
 type Message = { ok: boolean; text: string } | null;

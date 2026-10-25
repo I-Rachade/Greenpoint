@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
-import { cleanOpeningHours, formatOpeningHours, openAt, parseOpeningHours, todayHours } from "../opening-hours";
-import { byMonth, emptyDays, periodStart, reportPeriod } from "../owner-backoffice";
+import { cleanOpeningHours, formatOpeningHours, openAt, parseOpeningHours, todayHours } from "@shared/opening-hours";
+import { byMonth, emptyDays, periodStart, reportPeriod } from "@shared/owner-backoffice";
 
 // Plan phase 8 in the demo backend: the same rules as the Worker (worker/owner.test.ts,
 // worker/migration-0033.test.ts, worker/role-matrix.test.ts).

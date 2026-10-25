@@ -1,8 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
-import { DRIVER_PASS_MINUTES, signDriverPass, type DriverPass } from "../src/lib/drivers";
-import { applyBatteryEvent, type BatteryEventView, type StationCounter, type SwapEntry } from "../src/lib/station-work";
-import type { StationView } from "../src/lib/types";
+import { DRIVER_PASS_MINUTES, signDriverPass, type DriverPass } from "../shared/drivers";
+import { applyBatteryEvent, type BatteryEventView, type StationCounter, type SwapEntry } from "../shared/station-work";
+import type { StationView } from "../shared/types";
 import { handleApi } from "./api";
 import { hashPin } from "./auth";
 import type { Env } from "./env";

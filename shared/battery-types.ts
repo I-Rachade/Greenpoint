@@ -17,7 +17,7 @@ export interface BatteryType {
 /** A type a station swaps, with how many of its batteries are full there. */
 export interface StationBatteryType extends BatteryType {
   fullBatteries: number;
-  /** Station list only: full batteries of this type held by active reservations (src/lib/reservations.ts). */
+  /** Station list only: full batteries of this type held by active reservations (shared/reservations.ts). */
   reserved?: number;
 }
 

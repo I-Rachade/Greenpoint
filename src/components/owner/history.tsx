@@ -4,8 +4,8 @@ import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { EmptyState } from "@/components/ui";
 import { useLiveQuery } from "@/lib/hooks";
-import type { ReportPeriod } from "@/lib/owner-backoffice";
-import type { BatteryEventView, SwapEntry } from "@/lib/station-work";
+import type { ReportPeriod } from "@shared/owner-backoffice";
+import type { BatteryEventView, SwapEntry } from "@shared/station-work";
 import { Loaded, ResponsiveRows, Section, useWhen, useXof } from "./shared";
 
 /** Swap log and counter history of one station over the period (owners and admins only). */

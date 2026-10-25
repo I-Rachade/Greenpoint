@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { boxFromCode, outletParam, type ChargeOutletSocket, type ChargePointState } from "@/lib/charging";
+import { boxFromCode, outletParam, type ChargeOutletSocket, type ChargePointState } from "@shared/charging";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
 import { loginHref } from "@/lib/next-path";
@@ -13,7 +13,7 @@ import { PageTitle } from "../page-title";
 import { canScanQr, QrScanner } from "../parcels/qr-scanner";
 import { MyCharges } from "./charging";
 
-// Charging by QR code (src/lib/charging.ts): the customer scans the one sticker on a socket
+// Charging by QR code (shared/charging.ts): the customer scans the one sticker on a socket
 // box (?o=), sees the station, the price and every outlet of the box, picks a free one and
 // starts the charge with the PIN of their Green Credit, which pays it in advance (worker/charging.ts
 // selfCharge). The running charge and its stop button are in MyCharges below.

@@ -1,8 +1,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { GreenpointReceipt, GreenpointRedemption, GreenpointView } from "../src/lib/greenpoint";
-import type { Reservation } from "../src/lib/types";
+import type { GreenpointReceipt, GreenpointRedemption, GreenpointView } from "../shared/greenpoint";
+import type { Reservation } from "../shared/types";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { tripStatement } from "./greenpoint";

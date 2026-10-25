@@ -1,6 +1,6 @@
-import { isHolding } from "../availability";
-import { RESERVATION_MINUTES, type Reservation, type ReservationStatus, type UserRole } from "../types";
-import type { AdminSnapshot, AdminStation, ChargingPointInfo } from "./types";
+import { isHolding } from "@shared/availability";
+import { RESERVATION_MINUTES, type Reservation, type ReservationStatus, type UserRole } from "@shared/types";
+import type { AdminSnapshot, AdminStation, ChargingPointInfo } from "@shared/admin/types";
 
 /** A status nobody has confirmed for this long is treated as uncertain. */
 export const STALE_STATUS_HOURS = 2;

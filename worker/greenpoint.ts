@@ -19,10 +19,10 @@ import {
   type GreenpointRedemption,
   type GreenpointReward,
   type GreenpointView,
-} from "../src/lib/greenpoint";
-import type { FleetVehicleType } from "../src/lib/drivers";
-import { VEHICLE_TYPES, type Profile, type ReservationType, type VehicleType } from "../src/lib/types";
-import { personLabel } from "../src/lib/wallet";
+} from "../shared/greenpoint";
+import type { FleetVehicleType } from "../shared/drivers";
+import { VEHICLE_TYPES, type Profile, type ReservationType, type VehicleType } from "../shared/types";
+import { personLabel } from "../shared/wallet";
 import { withCounterCodeTry } from "./code-tries";
 import type { Env } from "./env";
 import { ApiError, nowIso, randomDigits, readJson, uuid } from "./http";
@@ -30,7 +30,7 @@ import { notCustomerRole } from "./roles";
 
 // greenpoint: CO2 saved and points for rewards. Every movement is a row in
 // greenpoint_ledger; the balance and the CO2 total are sums over it. Rules:
-// planung/greenpoint-nutzung.md, shared logic: src/lib/greenpoint.ts.
+// planung/greenpoint-nutzung.md, shared logic: shared/greenpoint.ts.
 
 interface LedgerRow {
   id: string;

@@ -13,8 +13,8 @@ import {
   type BatteryHistoryEntry,
   type BatteryStatus,
   type BatteryView,
-} from "@/lib/batteries";
-import { batteryTypeLabel, groupByBrand } from "@/lib/battery-types";
+} from "@shared/batteries";
+import { batteryTypeLabel, groupByBrand } from "@shared/battery-types";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 
@@ -27,7 +27,7 @@ const chip = (active: boolean) =>
 const input = "min-h-11 rounded-xl border border-gp-border bg-gp-surface px-3 text-base sm:text-sm";
 
 /**
- * The battery register (src/lib/batteries.ts): batteries per brand with their own history.
+ * The battery register (shared/batteries.ts): batteries per brand with their own history.
  * Admins (/admin/batteries) register numbers and change a status; owners (backoffice tab)
  * read the batteries of their stations. `stationId`: only those that went through it.
  */

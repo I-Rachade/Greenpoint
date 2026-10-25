@@ -2,9 +2,9 @@
 
 import dynamic from "next/dynamic";
 import { useState } from "react";
-import { inServiceArea } from "@/lib/drivers";
-import type { LatLng } from "@/lib/geo";
-import { cleanMerchantName, MERCHANT_ADDRESS_MAX, MERCHANT_NAME_MAX, type MerchantShopInput } from "@/lib/merchants";
+import { inServiceArea } from "@shared/drivers";
+import type { LatLng } from "@shared/geo";
+import { cleanMerchantName, MERCHANT_ADDRESS_MAX, MERCHANT_NAME_MAX, type MerchantShopInput } from "@shared/merchants";
 import { usePosition } from "@/lib/use-position";
 import { useI18n } from "../i18n-provider";
 

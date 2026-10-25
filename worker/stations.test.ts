@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { StationInput, StationView } from "../src/lib/types";
+import type { StationInput, StationView } from "../shared/types";
 import { handleApi } from "./api";
 import { createDevice, deleteDevice } from "./devices";
 import type { Env } from "./env";

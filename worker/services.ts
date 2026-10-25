@@ -1,4 +1,4 @@
-// Service unlock per station (plan W11, invariant R8). See src/lib/station-services.ts
+// Service unlock per station (plan W11, invariant R8). See shared/station-services.ts
 // and migration 0026_station_services.sql.
 //
 // serviceActive() is the one place that decides whether a service runs at a station:
@@ -15,9 +15,9 @@ import {
   type ServiceRequestStatus,
   type StationService,
   type StationServiceInfo,
-} from "../src/lib/station-services";
-import type { Profile } from "../src/lib/types";
-import { personLabel } from "../src/lib/wallet";
+} from "../shared/station-services";
+import type { Profile } from "../shared/types";
+import { personLabel } from "../shared/wallet";
 import { featuresOf } from "./features";
 import { ApiError, nowIso } from "./http";
 import type { ParcelCtx } from "./parcels";

@@ -2,16 +2,16 @@
 
 import Link from "next/link";
 import { MyCharges } from "./charging/charging";
-import { isHolding } from "@/lib/availability";
-import { directionsUrl } from "@/lib/geo";
+import { isHolding } from "@shared/availability";
+import { directionsUrl } from "@shared/geo";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { MAX_UNUSED_RESERVATIONS_PER_DAY, STATION_COOLDOWN_MINUTES, type Reservation, type ReservationStatus } from "@/lib/types";
+import { MAX_UNUSED_RESERVATIONS_PER_DAY, STATION_COOLDOWN_MINUTES, type Reservation, type ReservationStatus } from "@shared/types";
 import { useState } from "react";
 import { useApp } from "./app-provider";
 import { ConfirmSheet } from "./confirm-sheet";
 import { BatteryIcon, BoltIcon, CarIcon, ListIcon, NavigateIcon } from "./icons";
-import { reservationKind } from "@/lib/reservations";
+import { reservationKind } from "@shared/reservations";
 import { useI18n } from "./i18n-provider";
 import { LoadFailed, OfflineNotice } from "./load-state";
 import { PageTitle } from "./page-title";

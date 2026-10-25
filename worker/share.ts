@@ -1,5 +1,5 @@
-import type { AuditEntry, AuditTable } from "../src/lib/admin/types";
-import { distanceMeters } from "../src/lib/geo";
+import type { AuditEntry, AuditTable } from "../shared/admin/types";
+import { distanceMeters } from "../shared/geo";
 import {
   cleanShareStation,
   cleanTariff,
@@ -36,10 +36,10 @@ import {
   type ShareVehicleKind,
   type ShareVehicleStatus,
   type StationShare,
-} from "../src/lib/share";
-import type { LatLng } from "../src/lib/geo";
-import type { Profile } from "../src/lib/types";
-import { newTrxId, personLabel } from "../src/lib/wallet";
+} from "../shared/share";
+import type { LatLng } from "../shared/geo";
+import type { Profile } from "../shared/types";
+import { newTrxId, personLabel } from "../shared/wallet";
 import { verifyPin } from "./auth";
 import { walletAccess } from "./wallet";
 import type { Env } from "./env";
@@ -51,7 +51,7 @@ import { featuresOf, storedShare } from "./features";
 import { refuseNonCustomer } from "./roles";
 import { trackerFromEnv, TrackerError, tutrackTime, type Tracker, type TrackerAction } from "./tutrack";
 
-// Share (migration 0060_share.sql, src/lib/share.ts, docs/SHARE.md): customers rent a vehicle
+// Share (migration 0060_share.sql, shared/share.ts, docs/SHARE.md): customers rent a vehicle
 // at a Share station and hand it back within the radius of any Share station. The server
 // unlocks the ignition through the tracker when the ride starts and locks it when it ends, and
 // computes the price; the app never names an amount. Paid after the ride with Flooz/T-Money

@@ -1,12 +1,12 @@
 // Point partners (partenaires propriétaires, migration 0039): who owns a charging socket.
 // Without a partner the socket is ours, at any station. An admin creates the partner, links
 // its accounts and gives it sockets; its accounts see a read-only dashboard of their sockets.
-// Types and rules: src/lib/point-partners.ts.
+// Types and rules: shared/point-partners.ts.
 
-import type { AuditTable } from "../src/lib/admin/types";
-import { parseContact } from "../src/lib/contact";
-import { periodStart, type ReportPeriod } from "../src/lib/owner-backoffice";
-import { normalizeTogoPhone } from "../src/lib/phone";
+import type { AuditTable } from "../shared/admin/types";
+import { parseContact } from "../shared/contact";
+import { periodStart, type ReportPeriod } from "../shared/owner-backoffice";
+import { normalizeTogoPhone } from "../shared/phone";
 import {
   POINT_PARTNER_NAME_MAX,
   type AdminPointPartner,
@@ -14,10 +14,10 @@ import {
   type PointPartnerDashboard,
   type PointPartnerInput,
   type PointPartnerStatus,
-} from "../src/lib/point-partners";
-import { normalizeDeviceId } from "../src/lib/iot/devices";
-import type { ChargingPointStatus, Profile } from "../src/lib/types";
-import { personLabel } from "../src/lib/wallet";
+} from "../shared/point-partners";
+import { normalizeDeviceId } from "../shared/iot/devices";
+import type { ChargingPointStatus, Profile } from "../shared/types";
+import { personLabel } from "../shared/wallet";
 import { ApiError, nowIso, uuid } from "./http";
 
 interface PartnerCtx {

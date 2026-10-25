@@ -1,5 +1,5 @@
 // Drivers: express trips between stations, pickups at a customer's home, home
-// deliveries, rides (the customer themselves from A to B) and couriers (a parcel door to door). Shared rules in src/lib/drivers.ts, plan in planung/fahrer.md.
+// deliveries, rides (the customer themselves from A to B) and couriers (a parcel door to door). Shared rules in shared/drivers.ts, plan in planung/fahrer.md.
 import {
   ABANDON_REASONS,
   balanceOf,
@@ -54,8 +54,8 @@ import {
   withAllVehicles,
   jobFits,
   type StationDrivers,
-} from "../src/lib/drivers";
-import { distanceMeters, type LatLng } from "../src/lib/geo";
+} from "../shared/drivers";
+import { distanceMeters, type LatLng } from "../shared/geo";
 import {
   PARCEL_CODE_LOCK_MINUTES,
   PARCEL_MAX_CODE_FAILURES,
@@ -65,9 +65,9 @@ import {
   validMeasures,
   type ParcelMeasures,
   type ParcelSize,
-} from "../src/lib/parcels";
-import { normalizeTogoPhone } from "../src/lib/phone";
-import type { Profile } from "../src/lib/types";
+} from "../shared/parcels";
+import { normalizeTogoPhone } from "../shared/phone";
+import type { Profile } from "../shared/types";
 import type { Env } from "./env";
 import { driversEnabled, requireDrivers } from "./features";
 import { requireService, unlockedStations, unlockedSql } from "./services";
@@ -75,7 +75,7 @@ import { tripStatement } from "./greenpoint";
 import { formerAccountOf } from "./former-accounts";
 import { DB_CUSTOMER, DB_DRIVER, refuseNonCustomer } from "./roles";
 import { autoCheckouts, bookingShop, hourlyTrip, membershipOf, openCheckin, type MerchantRow } from "./merchant-rules";
-import { FAVORITE_ROUND_MINUTES } from "../src/lib/merchants";
+import { FAVORITE_ROUND_MINUTES } from "../shared/merchants";
 import { ApiError, nowIso, randomDigits, uuid } from "./http";
 import { EMAIL_FROM, notifyPerson, type Message } from "./notify";
 import { noticeOf, sendPush } from "./push";
@@ -424,7 +424,7 @@ export async function busyJobs(db: D1Database, driverId: string): Promise<JobRow
   return results;
 }
 
-/** jobFits (src/lib/drivers.ts) for a row. */
+/** jobFits (shared/drivers.ts) for a row. */
 function rowFits(job: Pick<JobRow, "kind" | "vehicle_type" | "passengers" | "size">, type: FleetVehicleType, weightKg: number, s: DriverSettings): boolean {
   return jobFits({ kind: job.kind, vehicleType: job.vehicle_type, passengers: job.passengers, size: job.size }, type, weightKg, s);
 }
@@ -797,7 +797,7 @@ export async function passSecret(db: D1Database): Promise<string> {
 }
 
 /**
- * The signed QR code the driver shows at a station (src/lib/drivers.ts, R10): staff hand
+ * The signed QR code the driver shows at a station (shared/drivers.ts, R10): staff hand
  * over parcels with it, and a battery swap billed to the driver's fleet needs it.
  */
 export async function driverPass(c: ParcelCtx): Promise<DriverPass> {
@@ -1461,7 +1461,7 @@ export async function stationDrivers(c: ParcelCtx, stationId: string): Promise<S
 }
 
 /**
- * The driver by what staff scanned or typed. A signed pass (src/lib/drivers.ts, R10) must be
+ * The driver by what staff scanned or typed. A signed pass (shared/drivers.ts, R10) must be
  * genuine and not expired, also where the typed code would do (parcel handovers, runs): a
  * forged or old pass is refused, not read as its code. `needPass`: only a valid pass will do
  * (cash settlement); the typed code or the old static QR gets 409 driver_pass_required.

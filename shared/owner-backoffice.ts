@@ -12,7 +12,7 @@
 //   hosts them (migration 0039): at a partner's station the charges are not its revenue, and
 //   the cash it took for them is owed to poinderecharge too.
 // - At a shop station the swapping is poinderecharge's as well (0045): its swaps are not the
-//   shop's revenue either. What a partner owes is handed over daily (src/lib/station-cash.ts).
+//   shop's revenue either. What a partner owes is handed over daily (shared/station-cash.ts).
 
 import type { Reservation } from "./types";
 

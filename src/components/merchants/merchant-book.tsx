@@ -2,11 +2,11 @@
 
 import dynamic from "next/dynamic";
 import { useState, type FormEvent } from "react";
-import { fareFor, inServiceArea, MAX_PASSENGERS, type DeliveryJob, type DropoffPoint, type HomePoint } from "@/lib/drivers";
-import { distanceMeters, type LatLng } from "@/lib/geo";
+import { fareFor, inServiceArea, MAX_PASSENGERS, type DeliveryJob, type DropoffPoint, type HomePoint } from "@shared/drivers";
+import { distanceMeters, type LatLng } from "@shared/geo";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
-import type { MerchantAddress, MerchantInfo, MerchantJob } from "@/lib/merchants";
-import type { ParcelInfo } from "@/lib/parcels";
+import type { MerchantAddress, MerchantInfo, MerchantJob } from "@shared/merchants";
+import type { ParcelInfo } from "@shared/parcels";
 import { format } from "@/lib/i18n/format";
 import { useApp } from "../app-provider";
 import { BookCourier, BookPickup, DropoffFields, JobDetails, scrollIntoViewOnce } from "../drivers/customer-jobs";

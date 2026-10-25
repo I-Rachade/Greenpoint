@@ -15,7 +15,7 @@ import {
   XCircleIcon,
 } from "@/components/icons";
 import { computeKpis, findAnomalies, reservationsPerDay, STALE_STATUS_HOURS, type Finding } from "@/lib/admin/insights";
-import type { AdminSnapshot } from "@/lib/admin/types";
+import type { AdminSnapshot } from "@shared/admin/types";
 import { useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { LiteSwitch } from "./lite-switch";

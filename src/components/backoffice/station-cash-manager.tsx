@@ -6,7 +6,7 @@ import { useI18n } from "@/components/i18n-provider";
 import { cashKey, StationCashCard } from "@/components/owner/cash";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { COMMISSION_MODES, type CommissionMode, type StationCash, type SwapOwner } from "@/lib/station-cash";
+import { COMMISSION_MODES, type CommissionMode, type StationCash, type SwapOwner } from "@shared/station-cash";
 import { field, Loading, Pill, StaleNotice } from "./shared";
 
 /** The station type (who owns the swapping) and the host's commission, set by an admin only. */

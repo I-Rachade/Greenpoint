@@ -8,7 +8,7 @@ import { connectPacket, MQTT, MqttReader, pubackPacket, readPublish, subscribePa
 import { ingestTutrack, runShareTimers, setTrackerForTests } from "./share";
 import { fakeD1 } from "./test-d1";
 import { md5, simulatedTracker, statusFromDetail, tutrackTime, type Tracker, type TrackerAction } from "./tutrack";
-import type { ShareMe, ShareRide } from "../src/lib/share";
+import type { ShareMe, ShareRide } from "../shared/share";
 
 // Share (worker/share.ts): reserve, ride, hand back within a station's radius, pay.
 

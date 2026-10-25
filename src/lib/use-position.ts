@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Geolocation } from "@capacitor/geolocation";
-import type { LatLng } from "./geo";
+import type { LatLng } from "@shared/geo";
 import { isNativeApp } from "./native";
 
 export type PositionState = "locating" | "ok" | "denied";

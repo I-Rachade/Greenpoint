@@ -1,14 +1,14 @@
 // Station work (plan phase 3): battery counter, swaps with their log, active station.
-// Shared rules and types in src/lib/station-work.ts; tables in migrations 0027 and 0028.
+// Shared rules and types in shared/station-work.ts; tables in migrations 0027 and 0028.
 //
 // Every write here is one D1 batch (one transaction). The statements after the first
 // event only take effect while that event was written ("where exists ... request_id"),
 // so a refused step (no full battery, capacity reached) leaves nothing behind, and a
 // repeated request id breaks the unique index and changes nothing (R5).
 
-import { parseContact } from "../src/lib/contact";
-import { contactFromCode } from "../src/lib/charging";
-import { checkDriverPass, fleetTag } from "../src/lib/drivers";
+import { parseContact } from "../shared/contact";
+import { contactFromCode } from "../shared/charging";
+import { checkDriverPass, fleetTag } from "../shared/drivers";
 import { passSecret } from "./drivers";
 import {
   ACTIVE_STATION_HEADER,
@@ -33,11 +33,11 @@ import {
   type SwapFilter,
   type SwapInput,
   type SwapPayment,
-} from "../src/lib/station-work";
-import type { Profile } from "../src/lib/types";
-import { periodStart, reportPeriod } from "../src/lib/owner-backoffice";
-import { swapOwnerOf, type SwapOwner } from "../src/lib/station-cash";
-import { newTrxId, personLabel } from "../src/lib/wallet";
+} from "../shared/station-work";
+import type { Profile } from "../shared/types";
+import { periodStart, reportPeriod } from "../shared/owner-backoffice";
+import { swapOwnerOf, type SwapOwner } from "../shared/station-cash";
+import { newTrxId, personLabel } from "../shared/wallet";
 import type { Env } from "./env";
 import { featuresOf } from "./features";
 import { earnStatement } from "./greenpoint";
@@ -47,7 +47,7 @@ import { requireService } from "./services";
 import { creditCodeOwner, isCreditStation, OPEN_CREDIT_CHARGE_SQL, refuseWhileCreditCharging, spendCreditCode, walletAccess } from "./wallet";
 import { checkPickupCode, heldBatteriesSql, stillActive, type ReservationRow } from "./reservations";
 import { resolveSwapBattery, swapBatteryStatements, swapType } from "./batteries";
-import { batteryNumbersRequired } from "../src/lib/batteries";
+import { batteryNumbersRequired } from "../shared/batteries";
 
 export interface WorkCtx {
   env: Env;
@@ -504,7 +504,7 @@ async function creditCustomer(db: D1Database, raw: unknown, staffId: string): Pr
 }
 
 /**
- * A fleet driver by the signed pass their app shows (W7, R10, src/lib/drivers.ts): the
+ * A fleet driver by the signed pass their app shows (W7, R10, shared/drivers.ts): the
  * signature must be ours and not expired, the account an active driver account, and the
  * pass made for the fleet the driver belongs to now. A typed driver code is not enough:
  * the swap is billed to the fleet.

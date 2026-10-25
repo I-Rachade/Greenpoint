@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { OrderPage } from "@/components/drivers/my-trips";
 import { ParcelsGate } from "@/components/parcels/parcels-gate";
 import { RequireLogin } from "@/components/require-login";
-import { VEHICLE_SLUGS } from "@/lib/drivers";
+import { VEHICLE_SLUGS } from "@shared/drivers";
 
 export const dynamicParams = false;
 

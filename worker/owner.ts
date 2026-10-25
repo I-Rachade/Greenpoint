@@ -1,6 +1,6 @@
 // The owner's backoffice (plan phase 8): live queue, handovers, settlement and statistics of
 // the owner's stations, one or all of them; an admin sees every station. Staff get none (403).
-// Types and money rules (W12) in src/lib/owner-backoffice.ts.
+// Types and money rules (W12) in shared/owner-backoffice.ts.
 
 import {
   emptyDays,
@@ -10,10 +10,10 @@ import {
   type OwnerReport,
   type ReportPeriod,
   type StaffStats,
-} from "../src/lib/owner-backoffice";
-import type { SwapOwner } from "../src/lib/station-cash";
-import type { Profile } from "../src/lib/types";
-import { personLabel } from "../src/lib/wallet";
+} from "../shared/owner-backoffice";
+import type { SwapOwner } from "../shared/station-cash";
+import type { Profile } from "../shared/types";
+import { personLabel } from "../shared/wallet";
 import { ApiError, nowIso } from "./http";
 import { RESERVATION_SELECT, toReservation, type ReservationRow } from "./reservations";
 import { SWAP_OWNER_SQL } from "./station-cash";

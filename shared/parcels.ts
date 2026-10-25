@@ -212,7 +212,7 @@ export interface Parcel {
   lockerNo: number | null;
   /** Carried straight to station B by a driver instead of the collection run. */
   express: boolean;
-  /** Home delivery booked by the recipient (see src/lib/drivers.ts). */
+  /** Home delivery booked by the recipient (see shared/drivers.ts). */
   deliveryStatus: DeliveryStatus | null;
   /** The driver trip for this parcel (express, pickup or home delivery). */
   jobId: string | null;

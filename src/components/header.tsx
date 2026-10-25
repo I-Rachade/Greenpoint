@@ -9,10 +9,10 @@ import { useApp } from "./app-provider";
 import { BellIcon, GearIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
-import { isStationStaff, runsOperator, worksAtStations } from "@/lib/operators";
-import { ownsPoints } from "@/lib/point-partners";
-import { isDriverAccount } from "@/lib/drivers";
-import { isMerchantAccount } from "@/lib/merchants";
+import { isStationStaff, runsOperator, worksAtStations } from "@shared/operators";
+import { ownsPoints } from "@shared/point-partners";
+import { isDriverAccount } from "@shared/drivers";
+import { isMerchantAccount } from "@shared/merchants";
 
 export function Header() {
   const { t, locale, setLocale } = useI18n();

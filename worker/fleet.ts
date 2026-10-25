@@ -1,8 +1,8 @@
 // Fleet managers (plan phase 6): self-registered fleets approved by an admin, invites by phone
 // number that the driver confirms (W6, R12), the driver limit of the standard tier (R13),
 // manual dispatch of open trips, the swaps billed to the fleet and the statistics of an
-// unlocked fleet. Shared rules in src/lib/fleet.ts, table fleets in 0032_fleets.sql.
-import { parseContact } from "../src/lib/contact";
+// unlocked fleet. Shared rules in shared/fleet.ts, table fleets in 0032_fleets.sql.
+import { parseContact } from "../shared/contact";
 import {
   driverLimit,
   FLEET_INVITE_DAYS,
@@ -29,10 +29,10 @@ import {
   type FleetTier,
   type FleetView,
   type MyFleetInvite,
-} from "../src/lib/fleet";
-import { freshPosition, newDriverCode, type DriverPosition, type LedgerEntry } from "../src/lib/drivers";
-import { normalizeTogoPhone } from "../src/lib/phone";
-import type { Profile } from "../src/lib/types";
+} from "../shared/fleet";
+import { freshPosition, newDriverCode, type DriverPosition, type LedgerEntry } from "../shared/drivers";
+import { normalizeTogoPhone } from "../shared/phone";
+import type { Profile } from "../shared/types";
 import {
   balance,
   BUSY_SQL,

@@ -5,8 +5,8 @@ import { useI18n } from "@/components/i18n-provider";
 import { LoadFailed, StaleNotice } from "@/components/load-state";
 import { Card, SkeletonCard } from "@/components/ui";
 import { formatXof } from "@/lib/i18n/format";
-import type { ReportPeriod } from "@/lib/owner-backoffice";
-import { REPORT_PERIODS } from "@/lib/owner-backoffice";
+import type { ReportPeriod } from "@shared/owner-backoffice";
+import { REPORT_PERIODS } from "@shared/owner-backoffice";
 
 /** "25 000 FCFA" in the viewer's language. */
 export function useXof() {

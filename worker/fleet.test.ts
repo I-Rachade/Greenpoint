@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Profile } from "../src/lib/types";
+import type { Profile } from "../shared/types";
 import { acceptJob } from "./drivers";
 import type { Env } from "./env";
 import { fleetAssign, fleetStats, fleetView, setDriverManager } from "./fleet";

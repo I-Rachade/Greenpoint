@@ -6,9 +6,9 @@ import type { Env } from "./env";
 import { runDispatch } from "./drivers";
 import { sha256 } from "./http";
 import { fakeD1 } from "./test-d1";
-import type { DeliveryJob } from "../src/lib/drivers";
-import type { DriverShops, MerchantAddress, MerchantDriver, MerchantInvite, MerchantStats, MerchantView } from "../src/lib/merchants";
-import type { Profile } from "../src/lib/types";
+import type { DeliveryJob } from "../shared/drivers";
+import type { DriverShops, MerchantAddress, MerchantDriver, MerchantInvite, MerchantStats, MerchantView } from "../shared/merchants";
+import type { Profile } from "../shared/types";
 
 // Merchants (planung/marchand.md): registration and approval, the team with its limit, shop
 // bookings seen by every member, favorite and assigned drivers with approval, check-in and

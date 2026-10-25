@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { Pill, useDateTime } from "@/components/backoffice/shared";
-import type { DeliveryJob } from "@/lib/drivers";
+import type { DeliveryJob } from "@shared/drivers";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { pickupQrPayload, type Parcel, type ParcelInfo, type ParcelStatus } from "@/lib/parcels";
-import type { StationView } from "@/lib/types";
+import { pickupQrPayload, type Parcel, type ParcelInfo, type ParcelStatus } from "@shared/parcels";
+import type { StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { BookCourier, BookDelivery, BookPickup, JobDetails, MyJobs, scrollIntoViewOnce, useFocusedJob } from "../drivers/customer-jobs";
 import { BackTo, ChoiceTile, HowToList, InfoLink } from "../drivers/my-trips";

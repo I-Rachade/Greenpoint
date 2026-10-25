@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { Profile } from "../src/lib/types";
+import type { Profile } from "../shared/types";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { driversEnabled, getFeatures, PARCEL_ROUTE, setDriversEnabled, setLiteEnabled, setParcelsEnabled } from "./features";

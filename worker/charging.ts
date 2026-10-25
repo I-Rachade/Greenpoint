@@ -15,19 +15,19 @@ import {
   contactFromCode,
   newBoxCode,
   validBoxToken,
-} from "../src/lib/charging";
-import { parseContact } from "../src/lib/contact";
-import type { Profile } from "../src/lib/types";
-import { newTrxId, personLabel } from "../src/lib/wallet";
+} from "../shared/charging";
+import { parseContact } from "../shared/contact";
+import type { Profile } from "../shared/types";
+import { newTrxId, personLabel } from "../shared/wallet";
 import { verifyPin } from "./auth";
-import { canSwitch, type DeviceLink, type DeviceProtocol } from "../src/lib/iot/devices";
+import { canSwitch, type DeviceLink, type DeviceProtocol } from "../shared/iot/devices";
 import { liveFreePointsSql, newBoxToken, notEvPointSql, onlineSince, startOutlet, stopOutlet } from "./devices";
 import type { Env } from "./env";
 import { chargeEarnStatement } from "./greenpoint";
 import { ApiError, nowIso, readJson, uuid } from "./http";
 import { requireService, serviceActive } from "./services";
 import { cardBooking, cardTopupsSince } from "./charge-cards";
-import { cardStopReached } from "../src/lib/charge-cards";
+import { cardStopReached } from "../shared/charge-cards";
 import { mobilePaymentOffered, startChargePayment, type Payment } from "./payments";
 import { accountSpendsCredit, chargeHoldCap, creditCodeOwner, isCreditStation, OPEN_CREDIT_CHARGE_SQL, refuseWhileCreditCharging, spendCreditCode, walletAccess } from "./wallet";
 import { withCounterCodeTry } from "./code-tries";

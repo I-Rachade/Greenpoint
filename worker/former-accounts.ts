@@ -2,8 +2,8 @@
 // a new customer account without phone, e-mail or PIN. The driver, signed in on the driver
 // account, gives it a number or address of theirs (a code goes there) and a PIN; from then on
 // they sign in to it like to any customer account. Plan phase 5, "Folgen für bestehende Konten".
-import type { FormerAccount } from "../src/lib/drivers";
-import type { Profile } from "../src/lib/types";
+import type { FormerAccount } from "../shared/drivers";
+import type { Profile } from "../shared/types";
 import { assertContactFree, checkCode, checkPinFormat, contactColumn, contactOrThrow, deliverCode, hashPin } from "./auth";
 import type { Env } from "./env";
 import { ApiError, nowIso } from "./http";

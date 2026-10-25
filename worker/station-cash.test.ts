@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
-import type { CashHandover, StationCash } from "../src/lib/station-cash";
+import type { CashHandover, StationCash } from "../shared/station-cash";
 import { handleApi } from "./api";
 import { hashPin } from "./auth";
 import type { Env } from "./env";

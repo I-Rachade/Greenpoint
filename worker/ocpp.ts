@@ -1,5 +1,5 @@
-import { sameSecret, toIngestOutlets } from "../src/lib/iot/device-events";
-import { normalizeDeviceId } from "../src/lib/iot/devices";
+import { sameSecret, toIngestOutlets } from "../shared/iot/device-events";
+import { normalizeDeviceId } from "../shared/iot/devices";
 import {
   OCPP_HEARTBEAT_SECONDS,
   OCPP_ID,
@@ -19,7 +19,7 @@ import {
   type OcppCall,
   type OcppErrorFrame,
   type OcppResult,
-} from "../src/lib/iot/ocpp";
+} from "../shared/iot/ocpp";
 import { swipeCard } from "./charge-cards";
 import { cancelRefusedStart, cardStops, openCardCharge, settleCardCharges } from "./charging";
 import { ingest, recountFreeSlots } from "./devices";

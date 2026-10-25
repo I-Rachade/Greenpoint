@@ -16,7 +16,7 @@ import {
   parsePickupInput,
   pickupQrPayload,
   sizeFor,
-} from "../parcels";
+} from "@shared/parcels";
 
 describe("parcel sizes and prices", () => {
   const m = (lengthCm: number, widthCm: number, heightCm: number, weightKg: number) => ({ lengthCm, widthCm, heightCm, weightKg });

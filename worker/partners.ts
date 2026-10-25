@@ -1,6 +1,6 @@
 // Partner API: other apps book parcel transports with an API key and receive
 // every status change by webhook (signed) or by polling. Shared types and rules:
-// src/lib/partners.ts. Docs: docs/PARTNER-API.md, public/partner-api/openapi.json
+// shared/partners.ts. Docs: docs/PARTNER-API.md, public/partner-api/openapi.json
 // and the page /developpeurs.
 //
 // A booking waits for drop-off at station A. The staff there take it in
@@ -8,8 +8,8 @@
 // tracking number; from then on it follows the parcel depot (worker/parcels.ts).
 // Every row written to parcel_events for a partner parcel is copied into
 // partner_events and sent to the partner, so new statuses (drivers) need no change here.
-import { normalizeTogoPhone } from "../src/lib/phone";
-import { newTrackingNo, PARCEL_SIZES, type Parcel, type ParcelMeasures, type ParcelSize } from "../src/lib/parcels";
+import { normalizeTogoPhone } from "../shared/phone";
+import { newTrackingNo, PARCEL_SIZES, type Parcel, type ParcelMeasures, type ParcelSize } from "../shared/parcels";
 import {
   BOOKING_DAYS,
   keyPrefix,
@@ -27,7 +27,7 @@ import {
   type PartnerInput,
   type PartnerKey,
   type StationBooking,
-} from "../src/lib/partners";
+} from "../shared/partners";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, sha256, uuid } from "./http";
 import { unlockedSql } from "./services";

@@ -7,7 +7,7 @@ import { BoxInIcon, BoxOutIcon, ScooterIcon, TicketIcon, TruckIcon } from "@/com
 import { Badge, Countdown, EmptyState } from "@/components/ui";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { Handover, OwnerLive } from "@/lib/owner-backoffice";
+import type { Handover, OwnerLive } from "@shared/owner-backoffice";
 import { Loaded, ResponsiveRows, Section, useWhen, useXof } from "./shared";
 
 /** What goes on now: reservations holding, drivers in line, runs, parcels waiting, recent handovers. */

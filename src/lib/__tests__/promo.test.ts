@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
-import { isRunning, pickPromotion, safeImage, safeLink, type Promotion } from "../promo";
+import { isRunning, pickPromotion, safeImage, safeLink, type Promotion } from "@shared/promo";
 
 const NOW = new Date("2026-10-12T12:00:00Z");
 

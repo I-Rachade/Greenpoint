@@ -13,7 +13,7 @@ import {
   type MerchantDriverStatus,
   type MerchantPayMode,
   type MerchantView,
-} from "@/lib/merchants";
+} from "@shared/merchants";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { Notice, useFcfa } from "../drivers/shared";

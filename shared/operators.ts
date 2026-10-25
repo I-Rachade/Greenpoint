@@ -76,7 +76,7 @@ export interface OwnerView {
 
 /** The station details an operator account may change itself. Prices left out stay as they are. */
 export interface OwnerStationInput {
-  /** Days and times (src/lib/opening-hours.ts); never empty. */
+  /** Days and times (shared/opening-hours.ts); never empty. */
   openingHours: string;
   phone: string | null;
   swapXof?: number | null;

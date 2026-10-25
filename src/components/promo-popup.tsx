@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
 import { useOnboarding } from "@/lib/prefs";
-import { safeImage, safeLink, type Promotion } from "@/lib/promo";
+import { safeImage, safeLink, type Promotion } from "@shared/promo";
 
 /** The ad shows on the map only; other pages are never interrupted. */
 const MAP_PATH = "/";
