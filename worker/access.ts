@@ -64,6 +64,12 @@ async function teamKeys(cfg: AccessConfig, fetcher: typeof fetch, now: number, f
   return keys;
 }
 
+/** Logs why a token was refused (never the token itself) and refuses it. */
+function deny(reason: string, detail?: unknown): null {
+  console.warn("access denied:", reason, detail ?? "");
+  return null;
+}
+
 function base64UrlBytes(part: string): Uint8Array {
   if (!/^[A-Za-z0-9_-]*$/.test(part)) throw new Error("bad base64url");
   const b64 = part.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (part.length % 4)) % 4);
@@ -89,25 +95,27 @@ function base64UrlJson(part: string): Record<string, unknown> | null {
 export async function verifyAccessJwt(
   token: string,
   cfg: AccessConfig,
-  fetcher: typeof fetch = fetch,
+  // Called through a wrapper: the runtime's fetch must not be detached from the global scope.
+  fetcher: typeof fetch = (input, init) => fetch(input, init),
   now = Date.now(),
 ): Promise<AccessIdentity | null> {
   const parts = token.split(".");
-  if (parts.length !== 3) return null;
+  if (parts.length !== 3) return deny("malformed");
   const header = base64UrlJson(parts[0]);
   const payload = base64UrlJson(parts[1]);
-  if (!header || !payload) return null;
+  if (!header || !payload) return deny("malformed");
   // Only RS256: never "none" or a key type the token chooses itself.
-  if (header.alg !== "RS256" || typeof header.kid !== "string") return null;
+  if (header.alg !== "RS256" || typeof header.kid !== "string") return deny("alg", header.alg);
 
   const aud = payload.aud;
-  if (!(Array.isArray(aud) ? aud.includes(cfg.aud) : aud === cfg.aud)) return null;
-  if (payload.iss !== cfg.teamDomain) return null;
+  if (!(Array.isArray(aud) ? aud.includes(cfg.aud) : aud === cfg.aud)) return deny("aud", aud);
+  // Compared without a trailing slash, however the team domain was written.
+  if (String(payload.iss ?? "").replace(/\/+$/, "") !== cfg.teamDomain) return deny("iss", payload.iss);
   const seconds = now / 1000;
   // A minute of leeway for clocks that differ a little.
-  if (typeof payload.exp !== "number" || payload.exp < seconds - 60) return null;
-  if (typeof payload.nbf === "number" && payload.nbf > seconds + 60) return null;
-  if (typeof payload.sub !== "string") return null;
+  if (typeof payload.exp !== "number" || payload.exp < seconds - 60) return deny("expired", payload.exp);
+  if (typeof payload.nbf === "number" && payload.nbf > seconds + 60) return deny("not yet valid", payload.nbf);
+  if (typeof payload.sub !== "string") return deny("sub");
 
   let keys: Jwk[];
   try {
@@ -119,7 +127,7 @@ export async function verifyAccessJwt(
     return null;
   }
   const jwk = keys.find((k) => k.kid === header.kid);
-  if (!jwk) return null;
+  if (!jwk) return deny("unknown key", header.kid);
 
   try {
     const key = await crypto.subtle.importKey(
@@ -135,9 +143,9 @@ export async function verifyAccessJwt(
       base64UrlBytes(parts[2]),
       new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
     );
-    if (!ok) return null;
-  } catch {
-    return null;
+    if (!ok) return deny("signature");
+  } catch (err) {
+    return deny("verify failed", String(err));
   }
   return { email: typeof payload.email === "string" ? payload.email : null, sub: payload.sub };
 }
@@ -146,7 +154,8 @@ export async function verifyAccessJwt(
 export async function accessIdentity(env: AccessSettings, request: Request): Promise<AccessIdentity | null> {
   const cfg = accessConfig(env);
   const token = request.headers.get(ACCESS_HEADER);
-  if (!cfg || !token) return null;
+  if (!cfg) return null;
+  if (!token) return deny("no token");
   return verifyAccessJwt(token, cfg);
 }
 
