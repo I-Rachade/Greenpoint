@@ -7,7 +7,8 @@
   "name": "pointderecharge-admin",
   "main": "worker/admin-gateway.ts",
   "compatibility_date": "2025-10-01",
-  "build": { "command": "npm run build" },
+  // The back office build: the only one with the /admin pages (next.config.ts).
+  "build": { "command": "npm run build:admin" },
   "routes": [{ "pattern": "admin.poinderecharge.com", "custom_domain": true }],
   // Only the address above; no second *.workers.dev address next to it.
   "workers_dev": false,

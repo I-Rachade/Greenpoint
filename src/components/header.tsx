@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { DEMO_CODE, HOSTED_DEMO } from "@/lib/backend";
 import { format } from "@/lib/i18n/format";
+import { ADMIN_HOME } from "@/lib/config";
 import { useApp } from "./app-provider";
 import { BellIcon, GearIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
@@ -47,7 +48,7 @@ export function Header() {
     { href: "/exploitant", label: t.nav.owner, show: runsOperator(profile) },
     { href: "/proprietaire", label: t.nav.points, show: ownsPoints(profile) },
     { href: "/operator", label: t.nav.operator, show: worksAtStations(profile) },
-    { href: "/admin", label: t.nav.admin, show: profile?.role === "admin" },
+    { href: ADMIN_HOME, label: t.nav.admin, show: profile?.role === "admin" },
   ];
 
   return (

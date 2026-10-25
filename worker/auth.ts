@@ -301,12 +301,6 @@ const USER_COLUMNS = `id, phone, email, full_name, role, ${ownerOf("users")}, ${
 /** Column of users that holds this kind of contact. Fixed names only, never user input. */
 export const contactColumn = (contact: Contact) => (contact.kind === "phone" ? "phone" : "email");
 
-/** Numbers in ADMIN_PHONES and addresses in ADMIN_EMAILS become admin when they register. */
-function isAdminContact(env: Env, contact: Contact): boolean {
-  const list = listSetting(contact.kind === "phone" ? env.ADMIN_PHONES : env.ADMIN_EMAILS);
-  return list.some((entry) => parseContact(entry)?.value === contact.value);
-}
-
 /**
  * Registration and "PIN forgotten": checks the code (SMS or e-mail), sets the PIN,
  * creates the user if new, and opens a session. A new PIN ends every other session of the user.
@@ -325,7 +319,9 @@ export async function register(env: Env, request: Request, rawContact: string, r
     env.DB.prepare(`select ${USER_COLUMNS} from users where ${column} = ?`).bind(contact.value).first<UserRow>();
   let user = await findUser();
   if (!user) {
-    const role: UserRole = isAdminContact(env, contact) ? "admin" : "customer";
+    // Everyone starts as a customer. Admin is never given by a setting, only in the database
+    // (docs/DEPLOYMENT.md, "Rollen vergeben"), so no number or address can sign up as admin.
+    const role: UserRole = "customer";
     const id = uuid();
     await env.DB.prepare(
       `insert into users (id, ${column}, role, created_at, pin_hash) values (?, ?, ?, ?, ?) on conflict do nothing`,

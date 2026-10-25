@@ -41,7 +41,7 @@
   // Login codes by e-mail through Cloudflare Email Service. The domain must be
   // onboarded under Email Service > Email Sending (see docs/DEPLOYMENT.md).
   "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["noreply@poinderecharge.com"] }],
-  // Settings and secrets (ADMIN_PHONES, ADMIN_EMAILS, TEST_OTP, DIDIT_API_KEY, …) are set in the
+  // Settings and secrets (TEST_OTP, DIDIT_API_KEY, ACCESS_AUD, …) are set in the
   // dashboard; keep them on deploy. See worker/env.ts.
   "keep_vars": true,
   // Daily at 08:00 in Lomé (UTC): parcel pickup reminders and returns (worker/parcels.ts).
