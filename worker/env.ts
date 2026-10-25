@@ -11,10 +11,6 @@ export interface Env {
   DIDIT_CHANNEL?: string;
   /** Numbers or addresses that log in with a fixed code and get no SMS or e-mail, e.g. "+22890000001=123456,test@example.com=654321". */
   TEST_OTP?: string;
-  /** Numbers that become admin on their first login, e.g. "+22890000001". */
-  ADMIN_PHONES?: string;
-  /** E-mail addresses that become admin on their first login, e.g. "chef@poinderecharge.com". */
-  ADMIN_EMAILS?: string;
   /** Cloudflare Access team domain of the back office, e.g. "https://<team>.cloudflareaccess.com" (worker/access.ts, docs/BACKOFFICE.md). */
   ACCESS_TEAM_DOMAIN?: string;
   /** Application Audience (AUD) tag of the back office's Access application. */

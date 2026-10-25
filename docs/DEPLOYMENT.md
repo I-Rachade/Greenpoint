@@ -29,8 +29,6 @@ Unter **Workers & Pages > pointderecharge-app > Settings > Variables and secrets
 |---|---|---|
 | `DIDIT_API_KEY` | Secret | API-Schlüssel aus der Didit Business Console (verschickt die SMS-Codes für Registrierung, neue PIN und Kontolöschung) |
 | `DIDIT_CHANNEL` | Text, optional | `sms` (Standard) oder `whatsapp`; ist der Kanal für eine Nummer nicht verfügbar, schickt Didit eine SMS |
-| `ADMIN_PHONES` | Text | Nummern, die bei der **Registrierung** Admin werden, z. B. `+22890123456` (mehrere mit Komma) |
-| `ADMIN_EMAILS` | Text, optional | E-Mail-Adressen, die bei der **Registrierung** Admin werden, z. B. `chef@poinderecharge.com` (mehrere mit Komma) |
 | `DEVICE_WEBHOOK_SECRET` | Secret, optional | Schlüssel der vernetzten Steckdosen, siehe [steckdosen-lora.md](steckdosen-lora.md) |
 | `XINGKE_API_HOST`, `XINGKE_API_TOKEN`, `XINGKE_CALLBACK_TOKEN` | Text, Secret, Secret, optional | Xingke-Cloud-API für die Steckdosen, siehe [steckdosen-lora.md](steckdosen-lora.md#xingke-cloud-api) |
 | `SHARE_TRACKER_PROVIDER`, `TUTRACK_ACCESS_KEY`, `TUTRACK_ACCESS_SECRET` | Text, Secret, Secret, optional | GPS-Tracker der Share-Fahrzeuge (Tutrack); ohne sie laufen die Tracker als Simulation, siehe [SHARE.md](SHARE.md) |
@@ -60,7 +58,7 @@ Ohne diese Schritte schlägt nur der E-Mail-Versand fehl (Meldung „Une erreur 
 
 ## 4. Rollen vergeben
 
-- Admin: Nummer in `ADMIN_PHONES` (oder Adresse in `ADMIN_EMAILS`) eintragen, bevor sie sich registriert. Wer schon angemeldet war: in der Cloudflare-Konsole (**D1 > poinderecharge-db > Console**) `update users set role = 'admin' where phone = '+228…';` bzw. `where email = '…';`.
+- Admin: Jedes neue Konto ist zuerst Kunde; Admin wird man nur in der Datenbank. Die Person registriert sich normal, dann in der Cloudflare-Konsole (**D1 > poinderecharge-db > Console**) `update users set role = 'admin' where phone = '+228…';` bzw. `where email = '…';`. Mit `ADMIN_ACCESS_REQUIRED=1` braucht sie außerdem Zugang zu Cloudflare Access (siehe [BACKOFFICE.md](BACKOFFICE.md#eigene-adresse-adminpoinderecharge-com-cloudflare-access)). Früher machten `ADMIN_PHONES`/`ADMIN_EMAILS` Nummern bei der Registrierung zum Admin; das gibt es nicht mehr, die Variablen können im Dashboard gelöscht werden.
 - Danach vergibt der Admin alle Rollen im Backoffice unter **Utilisateurs**. Personal entsteht, indem man jemanden einer Station zuordnet.
 
 ## 5. Datenbank-Änderungen
@@ -95,14 +93,14 @@ Der zweite Cron-Trigger `* * * * *` schickt fällige Webhooks an Partner-Apps un
 
 ## 6. Lokal entwickeln
 
-- Nur Oberfläche, mit Beispieldaten im Browser: `npm run dev`.
+- Nur Oberfläche, mit Beispieldaten im Browser: `npm run dev`. Das Backoffice (`/admin`) gibt es nur mit `npm run dev:admin` (bzw. `npm run build:admin`); alle anderen Builds, auch die Handy-Apps, lassen es weg.
 - Mit echter API und lokaler Datenbank:
   1. `npx wrangler d1 migrations apply DB --local`
   2. Datei `.dev.vars` anlegen (wird nicht eingecheckt):
      ```
      TEST_OTP=+22890000001=123456,+22890000002=123456,test@example.com=123456
-     ADMIN_PHONES=+22890000001
      ```
+     Admin wird ein Konto nach der Registrierung mit `npx wrangler d1 execute DB --local --command "update users set role = 'admin' where phone = '+22890000001'"`.
   3. `NEXT_PUBLIC_BACKEND=cloudflare npm run dev:worker`, dann http://localhost:8787 öffnen.
 
 ## 7. Mobile App

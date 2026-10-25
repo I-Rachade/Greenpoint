@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:admin": "next dev",
     "build": "next build",
+    "build:admin": "next build",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit && tsc --noEmit -p worker && tsc --noEmit -p worker/tsconfig.test.json",

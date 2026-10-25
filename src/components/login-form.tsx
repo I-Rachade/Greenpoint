@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { HOSTED_DEMO } from "@/lib/backend";
+import { ADMIN_HOME } from "@/lib/config";
 import { useErrorMessage } from "@/lib/hooks";
 import { LEGAL_PATHS } from "@/lib/legal/content";
 import { safeNextPath } from "@/lib/next-path";
@@ -132,7 +133,7 @@ export function LoginForm({ fleet = false, merchant = false }: { fleet?: boolean
     const next = safeNextPath(new URLSearchParams(window.location.search).get("next"));
     router.push(
       profile.role === "admin"
-        ? "/admin"
+        ? ADMIN_HOME
         : runsOperator(profile)
           ? "/exploitant"
           : profile.role === "operator"

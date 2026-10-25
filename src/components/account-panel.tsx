@@ -4,7 +4,7 @@ import { MyCode } from "./charging/charging";
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import type { CodeChannel } from "@/lib/backend/backend";
-import { CONTACT_EMAIL } from "@/lib/config";
+import { ADMIN_HOME, CONTACT_EMAIL } from "@/lib/config";
 import { normalizeEmail } from "@shared/contact";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
@@ -120,7 +120,7 @@ export function AccountPanel() {
             {runsOperator(profile) && <MenuLink href="/exploitant" icon={StoreIcon} label={t.nav.owner} />}
             {ownsPoints(profile) && <MenuLink href="/proprietaire" icon={PlugIcon} label={t.nav.points} />}
             {worksAtStations(profile) && <MenuLink href="/operator" icon={StoreIcon} label={t.ui.tabs.myStation} />}
-            {profile.role === "admin" && <MenuLink href="/admin" icon={ShieldIcon} label={t.nav.admin} />}
+            {profile.role === "admin" && <MenuLink href={ADMIN_HOME} icon={ShieldIcon} label={t.nav.admin} />}
           </MenuGroup>
 
           <MenuGroup>
