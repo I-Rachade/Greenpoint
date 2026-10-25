@@ -1,7 +1,7 @@
 // Green Credit (formerly the Cashplus wallet): a closed prepaid credit in FCFA per user, for
 // energy only. It is loaded in cash at the counter of a station an admin designated and spent
 // there on what belongs to poinderecharge (a charge started by QR code, a battery swap, a
-// charge with a card linked to the account). No transfers, no withdrawals, no online top-ups;
+// charge with a card linked to the account), and on Share rides in the app. No transfers, no withdrawals, no online top-ups;
 // every payment needs the customer's PIN, typed on their own phone. Shared by the app, the
 // demo backend and the Worker. Plan: planung/credit-qr-plan.md (project folder).
 //
@@ -12,7 +12,7 @@ export type WalletTxType =
   | "admin_adjust" // correction or cash refund by an admin
   | "topup" // cash at a Green Credit station's counter (formerly also Flooz or T-Money)
   | "charge" // a charge or a battery swap paid from the credit (worker/charging.ts, worker/station-work.ts)
-  | "trip"; // a driver's trip paid from the balance, or its refund; no longer possible for new trips
+  | "trip"; // a Share ride paid from the credit (worker/share.ts); formerly a driver's trip or its refund
 
 /** Direction from the owner's point of view; a transfer has one row per side with the same trxId. */
 export type WalletTxAttribute = "send" | "received";

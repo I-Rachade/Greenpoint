@@ -7,6 +7,7 @@ import { stationAvailability } from "@/lib/availability";
 import { LOME_CENTER, type LatLng } from "@/lib/geo";
 import { format } from "@/lib/i18n/format";
 import type { RepairCenter } from "@/lib/repair-centers";
+import type { ShareStation } from "@/lib/share";
 import { isUnattended } from "@/lib/station-extras";
 import type { StationView } from "@/lib/types";
 import { AVAILABILITY_COLORS } from "./availability-badge";
@@ -20,6 +21,8 @@ interface Props {
   stations: StationView[];
   /** Repair workshops away from stations: a wrench marker with a small card, no selection. */
   workshops?: RepairCenter[];
+  /** Share stations: a pill with the number of vehicles parked there, a tap opens the Share tab. */
+  share?: ShareStation[];
   position: LatLng | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -112,7 +115,7 @@ function workshopCard(w: RepairCenter, labels: { title: string; call: string }):
   return box;
 }
 
-export function StationMap({ stations, workshops = [], position, selectedId, onSelect }: Props) {
+export function StationMap({ stations, workshops = [], share = [], position, selectedId, onSelect }: Props) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -209,6 +212,38 @@ export function StationMap({ stations, workshops = [], position, selectedId, onS
       workshopMarkersRef.current = [];
     };
   }, [workshops, t]);
+
+  // Share vehicles: a pill above the station's marker with the count of vehicles parked there.
+  const shareMarkersRef = useRef<Marker[]>([]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    for (const m of shareMarkersRef.current) m.remove();
+    shareMarkersRef.current = share.map((st) => {
+      const el = document.createElement("a");
+      el.href = `/share#share-${encodeURIComponent(st.stationId)}`;
+      el.setAttribute("aria-label", `${st.name}, ${format(t.share.stationLine, { n: st.vehicles.length, radius: st.radiusM })}`);
+      Object.assign(el.style, {
+        display: "block",
+        padding: "1px 6px",
+        borderRadius: "9999px",
+        border: "2px solid white",
+        boxShadow: "0 1px 4px rgba(0,0,0,.4)",
+        background: st.vehicles.length ? "var(--gp-forest)" : "#64748b",
+        color: "white",
+        fontSize: "11px",
+        fontWeight: "600",
+        lineHeight: "16px",
+        whiteSpace: "nowrap",
+      });
+      el.textContent = `🛵 ${st.vehicles.length}`;
+      return new Marker({ element: el, anchor: "bottom", offset: [0, -16] }).setLngLat([st.lng, st.lat]).addTo(map);
+    });
+    return () => {
+      for (const m of shareMarkersRef.current) m.remove();
+      shareMarkersRef.current = [];
+    };
+  }, [share, t]);
 
   // The map is removed with its markers; forget them too.
   useEffect(() => {

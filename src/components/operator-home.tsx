@@ -21,6 +21,7 @@ const TILE_HREF: Record<StationTile, string> = {
   parcels: "/operator/colis",
   reservations: "/operator/reservations",
   credit: "/operator/green-credit",
+  share: "/operator/share",
 };
 
 const TILE_ICON: Record<StationTile, ComponentType<{ size?: number }>> = {
@@ -30,6 +31,7 @@ const TILE_ICON: Record<StationTile, ComponentType<{ size?: number }>> = {
   parcels: BoxIcon,
   reservations: ClipboardIcon,
   credit: WalletIcon,
+  share: ScooterIcon,
 };
 
 function Tile({ tile, hint, label }: { tile: StationTile; hint: string; label?: string }) {
@@ -114,11 +116,21 @@ function OpenToggle({ station, activeReservations }: { station: StationView; act
 
 function StationHome({ station }: { station: StationView }) {
   const { t } = useI18n();
-  const { backend } = useApp();
+  const { backend, features } = useApp();
   const now = useNow(15_000);
+  // Share (src/lib/share.ts): a tile at stations that take Share vehicles, while the module is on.
+  const { data: share } = useLiveQuery(
+    () => (features.share ? backend.stationShare(station.id).catch(() => null) : Promise.resolve(null)),
+    `${station.id}:${features.share}`,
+  );
   const { data: reservations } = useLiveQuery(() => backend.stationReservations(station.id), station.id);
   const active = (reservations ?? []).filter((r) => effectiveStatus(r, now) === "active").length;
-  const tiles = stationTiles(station.activeServices ?? [], station.greenCredit, station.isOwn);
+  const tiles = stationTiles(
+    station.activeServices ?? [],
+    station.greenCredit,
+    station.isOwn,
+    !!share && (share.enabled || share.vehicles.length > 0 || share.unpaid.length > 0),
+  );
   // An own station without Green Credit: the tile only opens the staff's cash closing.
   const cashOnly = !station.greenCredit;
   const hint: Record<StationTile, string> = {
@@ -128,6 +140,7 @@ function StationHome({ station }: { station: StationView }) {
     parcels: t.work.tileHints.parcels,
     reservations: format(t.work.tileHints.reservations, { n: active }),
     credit: cashOnly ? t.stationCash.myCashHint : t.work.tileHints.credit,
+    share: format(t.work.tileHints.share, { n: share?.vehicles.length ?? 0 }),
   };
   return (
     <>

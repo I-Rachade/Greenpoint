@@ -1,3 +1,17 @@
+import type {
+  AdminShare,
+  ShareDocument,
+  ShareMe,
+  ShareOverview,
+  ShareRide,
+  ShareStationInput,
+  ShareTariffInput,
+  ShareTrackPoint,
+  ShareVehicleInput,
+  ShareVehicleKind,
+  ShareVehicleStatus,
+  StationShare,
+} from "../share";
 import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "../batteries";
 import type { BatteryType, BatteryTypeInput } from "../battery-types";
 import type { AdminCharging, ChargeOutletInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
@@ -177,6 +191,13 @@ export type BackendErrorCode =
   | "rate_limited"
   | "payment_not_offered"
   | "payment_exists"
+  | "share_not_verified"
+  | "share_unpaid"
+  | "share_ride_open"
+  | "share_price_missing"
+  | "share_ride_wrong_status"
+  | "share_reservation_expired"
+  | "outside_share_zone"
   | "provider_unavailable"
   | "forbidden"
   | "wallet_disabled"
@@ -565,7 +586,11 @@ export interface Backend {
   leaveDriverQueue(): Promise<void>;
   /** The driver app's position while on duty (driver phase 2); kept: false when off duty. */
   /** Signs this phone up for push notices of the signed-in account (planung/fahrer.md phase 2). */
-  registerPushToken(token: string, platform: "android" | "ios"): Promise<void>;
+  registerPushToken(token: string, platform: "android" | "ios" | "web"): Promise<void>;
+  /** This phone or browser gets no more notices (the token it registered). */
+  removePushToken(token: string): Promise<void>;
+  /** The key a browser subscribes to push notices with (web app, worker/web-push.ts). */
+  webPushKey(): Promise<{ publicKey: string }>;
   reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }): Promise<{ kept: boolean }>;
   acceptJob(id: string): Promise<void>;
   /** The trip goes to the next in line; the driver goes to the back. */
@@ -817,4 +842,43 @@ export interface Backend {
   deleteChargeCard(idTag: string): Promise<void>;
   /** Station staff: whose account a card is linked to, and its Green Credit (cards are no longer topped up). */
   counterCard(stationId: string, idTag: string): Promise<CounterCard>;
+
+  // Share: renting e-motorbikes from station to station (see src/lib/share.ts)
+  /** Share stations with the vehicles parked there, and the prices. Public; empty while the module is off. */
+  shareOverview(): Promise<ShareOverview>;
+  /** The customer's check, open ride, rides to pay and how to pay them. */
+  shareMe(): Promise<ShareMe>;
+  myShareRides(): Promise<ShareRide[]>;
+  /** A photo of the ID, a selfie or the licence (cars only); admins check them. */
+  uploadShareDocument(kind: ShareDocument, image: Blob): Promise<void>;
+  /** Reserves a vehicle (by id or its QR code), or starts right away with start: true. */
+  reserveShare(input: { vehicleId?: string; qrToken?: string; toStationId: string | null; helmet: boolean; start?: boolean }): Promise<ShareRide>;
+  shareRideAction(id: string, action: "start" | "cancel" | "pause" | "resume"): Promise<ShareRide>;
+  /** Hands the vehicle back; the position is the phone's while the trackers are simulated. */
+  endShareRide(id: string, position: LatLng | null): Promise<ShareRide>;
+  reportSharePosition(id: string, position: LatLng): Promise<void>;
+  reportShareProblem(id: string, note: string): Promise<ShareRide>;
+  payShareWallet(id: string, input: { pin: string; idempotencyKey: string }): Promise<ShareRide>;
+  /** Asks Flooz/T-Money for the money; returns the payment's id, to ask again with refreshChargePayment. */
+  payShareMobile(id: string, input: { network: "flooz" | "tmoney"; phone: string }): Promise<string>;
+  /** Station staff: vehicles parked here, rides heading here, rides to take cash for. */
+  stationShare(stationId: string): Promise<StationShare>;
+  setStationShareVehicle(stationId: string, vehicleId: string, status: ShareVehicleStatus): Promise<void>;
+  payShareCash(stationId: string, rideId: string): Promise<ShareRide>;
+  /** Backoffice (admins only). */
+  adminShare(): Promise<AdminShare>;
+  setShareEnabled(enabled: boolean): Promise<void>;
+  saveShareVehicle(id: string | null, input: ShareVehicleInput): Promise<void>;
+  deleteShareVehicle(id: string): Promise<void>;
+  setShareVehicleState(id: string, status: ShareVehicleStatus, stationId: string | null): Promise<void>;
+  shareVehicleCommand(id: string, action: "unlock" | "lock" | "locate"): Promise<void>;
+  saveShareStation(stationId: string, input: ShareStationInput): Promise<void>;
+  saveShareTariff(kind: ShareVehicleKind, input: ShareTariffInput): Promise<void>;
+  decideShareVerification(userId: string, approve: boolean, reason: string): Promise<void>;
+  adminEndShareRide(id: string, stationId: string | null, wrongDrop: boolean): Promise<void>;
+  waiveShareRide(id: string): Promise<void>;
+  shareRideTrack(id: string): Promise<ShareTrackPoint[]>;
+  resolveShareIncident(id: string, resolution: string): Promise<void>;
+  /** A customer's private photo as a blob URL (admins only). */
+  shareFileUrl(key: string): Promise<string>;
 }

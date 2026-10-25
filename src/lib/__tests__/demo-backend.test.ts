@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
 import { reservableOutlets, reservableTypes } from "../reservations";
-import { boxFromCode, boxQrUrl, socketQrUrl } from "../charging";
+import { boxFromCode, boxQrUrl, newBoxCode, shortLinkRedirect, socketQrUrl, validBoxToken } from "../charging";
 
 // Runs without a browser: the demo falls back to in-memory storage.
 const STATION = "st-grand-marche"; // open around the clock in the demo data
@@ -617,14 +617,36 @@ describe("outlet QR codes", () => {
     expect(boxFromCode("poinderecharge:id:+22890123456")).toBeNull();
   });
 
+  it("print a short link of 8 characters, the outlet as one more, which the Worker redirects", () => {
+    const code = "k7q2xp9a";
+    const url = boxQrUrl("https://app.poinderecharge.com/", code);
+    expect(url).toBe(`https://app.poinderecharge.com/q/${code}`);
+    expect(url.length).toBe(41);
+    expect(boxFromCode(url)).toEqual({ token: code, outlet: null });
+    expect(socketQrUrl("https://app.poinderecharge.com", code, 3)).toBe(`${url}3`);
+    expect(socketQrUrl("https://app.poinderecharge.com", code, 16)).toBe(`${url}g`);
+    expect(boxFromCode(`${url}c`)).toEqual({ token: code, outlet: 12 });
+    // Some scanners upper-case a link; the code is lower case.
+    expect(boxFromCode(url.toUpperCase())).toEqual({ token: code, outlet: null });
+    expect(shortLinkRedirect(`${code}3`)).toBe(`/recharge?o=${code}&s=3`);
+    expect(shortLinkRedirect(code)).toBe(`/recharge?o=${code}`);
+    expect(shortLinkRedirect(`${code}h`)).toBeNull();
+    expect(shortLinkRedirect("short")).toBeNull();
+    expect(newBoxCode()).toMatch(/^[0-9a-z]{8}$/);
+    expect(validBoxToken(newBoxCode())).toBe(true);
+  });
+
   it("lets the customer pick a free outlet of the scanned box", async () => {
     const backend = new DemoBackend();
     await backend.register("+22890999999", DEMO_CODE, "2580", "admin");
     const device = (await backend.listDevices()).find((d) => d.externalId === "DEMO-UL01")!;
     for (const p of device.points) await backend.setQrStart(p.id, true);
-    const token = device.qrToken!;
+    const token = device.qrCode!;
+    expect(token).toMatch(/^[0-9a-z]{8}$/);
     const info = await backend.chargeOutlet(token);
     expect(info.outlets.map((o) => o.outlet)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    // Stickers printed with the long token still open the box.
+    expect((await backend.chargeOutlet(device.qrToken!)).outlets).toHaveLength(8);
     await backend.register("+22890123456", DEMO_CODE, "2580", "customer");
     const first = info.outlets.find((o) => o.state === "free")!;
     await backend.startOutletCharge(token, first.pointId, "2580");
@@ -636,6 +658,8 @@ describe("outlet QR codes", () => {
     const renewed = await backend.renewBoxQr("DEMO-UL01");
     expect(renewed).not.toBe(token);
     await expect(backend.chargeOutlet(token)).rejects.toBeDefined();
+    await expect(backend.chargeOutlet(device.qrToken!)).rejects.toBeDefined();
+    expect((await backend.chargeOutlet(renewed)).outlets).toHaveLength(8);
   });
 });
 

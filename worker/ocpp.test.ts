@@ -122,6 +122,16 @@ describe("OCPP charge points", () => {
     expect(JSON.parse(rows[0].payload)).toMatchObject({ action: "OcppConnect", status: 401, path: `/api/devices/ocpp/k/***/${CP}`, userAgent: "XK" });
   });
 
+  it("keep every DataTransfer the charge point sends", async () => {
+    const { db, d1 } = await setup();
+    const answer = await handleOcppCall(d1, ID, "DataTransfer", { vendorId: "xingkeele", messageId: "Balance", data: '{"idTag":"3105713408"}' });
+    expect(answer).toEqual({ status: "UnknownVendorId" });
+    const rows = db.prepare("select external_id, payload from device_messages").all() as { external_id: string; payload: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].external_id).toBe(ID);
+    expect(JSON.parse(rows[0].payload)).toEqual({ action: "OcppDataTransfer", vendorId: "xingkeele", messageId: "Balance", data: '{"idTag":"3105713408"}' });
+  });
+
   it("boot, report status and are switched on and off", async () => {
     const { db, d1, env, requests } = await setup();
     const boot = await handleOcppCall(d1, ID, "BootNotification", { chargePointVendor: "Xingke", chargePointModel: "XK-16" });

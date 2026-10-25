@@ -245,6 +245,7 @@ import { notifyUser } from "./notify";
 import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setDriversEnabled, setLiteEnabled, setParcelsEnabled } from "./features";
 import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
 import { registerPushToken, removePushToken } from "./push";
+import { webPushKey } from "./web-push";
 import { adminPayouts, decidePayout } from "./trip-payments";
 import { activeServices, decideService, listStationServices, requestService, requireService, setService } from "./services";
 import { customerStation } from "../src/lib/station-services";
@@ -293,6 +294,38 @@ import {
   stationCharging,
   stopCharge,
 } from "./charging";
+import {
+  adminEndShareRide,
+  adminShare,
+  cancelShareRide,
+  decideShareVerification,
+  deleteShareVehicle,
+  endShareRide,
+  myShareRides,
+  pauseShareRide,
+  payShareRideCash,
+  payShareRideMobile,
+  payShareRideWallet,
+  reportSharePosition,
+  reportShareProblem,
+  reserveShareRide,
+  resolveShareIncident,
+  saveShareStation,
+  saveShareTariff,
+  saveShareVehicle,
+  setShareEnabled,
+  setShareVehicleState,
+  setStationVehicleStatus,
+  shareFile,
+  shareMe,
+  shareOverview,
+  shareRideTrack,
+  shareVehicleCommand,
+  startShareRide,
+  stationShare,
+  uploadShareDocument,
+  waiveShareRide,
+} from "./share";
 import { adjustChargeCard, counterCardInfo, deleteChargeCard, listChargeCards, saveChargeCard, setChargeCardBlocked } from "./charge-cards";
 
 // Rows as stored in D1 (snake_case, booleans as 0/1, JSON as text).
@@ -2487,6 +2520,7 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/admin\/driver-payouts$/, (c) => adminPayouts(c)],
   ["POST", /^\/api\/admin\/driver-payouts\/([\w-]+)$/, async (c, [id]) => decidePayout(c, id, await readJson<unknown>(c.request))],
   ["POST", /^\/api\/push\/token$/, async (c) => registerPushToken(c, await readJson<unknown>(c.request))],
+  ["GET", /^\/api\/push\/web-key$/, async (c) => (await c.requireUser(), webPushKey(c.db))],
   ["POST", /^\/api\/push\/token\/remove$/, async (c) => removePushToken(c, await readJson<unknown>(c.request))],
   ["POST", /^\/api\/driver\/jobs\/([\w-]+)\/board$/, (c, [id]) => boardRide(c, id)],
   [
@@ -2662,6 +2696,37 @@ const ROUTES: [string, RegExp, Handler][] = [
     async (c, [id]) => addPointPartnerAccount(c, id, (await readJson<{ contact?: string }>(c.request)).contact),
   ],
   ["DELETE", /^\/api\/admin\/point-partners\/([\w-]+)\/accounts\/([\w-]+)$/, (c, [id, userId]) => removePointPartnerAccount(c, id, userId)],
+  // Share: renting e-motorbikes from station to station (worker/share.ts, docs/SHARE.md)
+  ["GET", /^\/api\/share$/, (c) => shareOverview(c)],
+  ["GET", /^\/api\/share\/me$/, (c) => shareMe(c)],
+  ["GET", /^\/api\/share\/rides\/mine$/, (c) => myShareRides(c)],
+  ["POST", /^\/api\/share\/documents\/(id|selfie|licence)$/, (c, [kind]) => uploadShareDocument(c, kind)],
+  ["POST", /^\/api\/share\/rides$/, (c) => reserveShareRide(c)],
+  ["POST", /^\/api\/share\/rides\/([\w-]+)\/start$/, (c, [id]) => startShareRide(c, id)],
+  ["POST", /^\/api\/share\/rides\/([\w-]+)\/cancel$/, (c, [id]) => cancelShareRide(c, id)],
+  ["POST", /^\/api\/share\/rides\/([\w-]+)\/pause$/, (c, [id]) => pauseShareRide(c, id, true)],
+  ["POST", /^\/api\/share\/rides\/([\w-]+)\/resume$/, (c, [id]) => pauseShareRide(c, id, false)],
+  ["POST", /^\/api\/share\/rides\/([\w-]+)\/end$/, (c, [id]) => endShareRide(c, id)],
+  ["POST", /^\/api\/share\/rides\/([\w-]+)\/position$/, (c, [id]) => reportSharePosition(c, id)],
+  ["POST", /^\/api\/share\/rides\/([\w-]+)\/problem$/, (c, [id]) => reportShareProblem(c, id)],
+  ["POST", /^\/api\/share\/rides\/([\w-]+)\/pay\/mobile$/, (c, [id]) => payShareRideMobile(c, id)],
+  ["POST", /^\/api\/share\/rides\/([\w-]+)\/pay\/wallet$/, (c, [id]) => payShareRideWallet(c, id)],
+  ["GET", /^\/api\/stations\/([\w-]+)\/share$/, (c, [id]) => stationShare(c, id)],
+  ["POST", /^\/api\/stations\/([\w-]+)\/share\/vehicles\/([\w-]+)\/status$/, (c, [id, vehicleId]) => setStationVehicleStatus(c, id, vehicleId)],
+  ["POST", /^\/api\/stations\/([\w-]+)\/share\/rides\/([\w-]+)\/cash$/, (c, [id, rideId]) => payShareRideCash(c, id, rideId)],
+  ["POST", /^\/api\/admin\/features\/share$/, async (c) => setShareEnabled(c, (await readJson<{ enabled?: unknown }>(c.request)).enabled === true)],
+  ["GET", /^\/api\/admin\/share$/, (c) => adminShare(c)],
+  ["POST", /^\/api\/admin\/share\/vehicles$/, (c) => saveShareVehicle(c)],
+  ["DELETE", /^\/api\/admin\/share\/vehicles\/([\w-]+)$/, (c, [id]) => deleteShareVehicle(c, id)],
+  ["POST", /^\/api\/admin\/share\/vehicles\/([\w-]+)\/state$/, (c, [id]) => setShareVehicleState(c, id)],
+  ["POST", /^\/api\/admin\/share\/vehicles\/([\w-]+)\/command$/, (c, [id]) => shareVehicleCommand(c, id)],
+  ["POST", /^\/api\/admin\/share\/stations\/([\w-]+)$/, (c, [id]) => saveShareStation(c, id)],
+  ["POST", /^\/api\/admin\/share\/tariffs\/(emoto|escooter|car)$/, (c, [kind]) => saveShareTariff(c, kind)],
+  ["POST", /^\/api\/admin\/share\/verifications\/([\w-]+)$/, (c, [id]) => decideShareVerification(c, id)],
+  ["POST", /^\/api\/admin\/share\/rides\/([\w-]+)\/end$/, (c, [id]) => adminEndShareRide(c, id)],
+  ["POST", /^\/api\/admin\/share\/rides\/([\w-]+)\/waive$/, (c, [id]) => waiveShareRide(c, id)],
+  ["GET", /^\/api\/admin\/share\/rides\/([\w-]+)\/track$/, (c, [id]) => shareRideTrack(c, id)],
+  ["POST", /^\/api\/admin\/share\/incidents\/([\w-]+)\/resolve$/, (c, [id]) => resolveShareIncident(c, id)],
   ["GET", /^\/api\/point-partner$/, (c) => pointPartnerDashboard(c, reportPeriod(c.url.searchParams.get("days")))],
 ];
 
@@ -2710,6 +2775,7 @@ export const OPEN_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/staff-invites",
   "GET /api/jobs/mine",
   "GET /api/charging/outlets/:id",
+  "GET /api/share",
 ]);
 
 /** "GET /api/stations/:id/reviews" for the route's pattern: every capture group reads ":id". */
@@ -2738,6 +2804,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     // Private photos of drivers and door handovers: admins only, read as a file.
     const fileMatch = /^\/api\/admin\/driver-files\/((?:drivers|proofs)\/[\w/.-]+)$/.exec(url.pathname);
     if (fileMatch && request.method === "GET") return await driverFile(c, fileMatch[1]);
+    // The customers' ID photos for Share: admins only, too.
+    const shareFileMatch = /^\/api\/admin\/share-files\/(share\/[\w/.-]+)$/.exec(url.pathname);
+    if (shareFileMatch && request.method === "GET") return await shareFile(c, shareFileMatch[1]);
 
     if (url.pathname === "/api/devices/xingke") return await handleXingkeCallback(request, env);
     // Other apps authenticate with their API key (worker/partners.ts).

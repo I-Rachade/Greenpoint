@@ -40,11 +40,13 @@ export function BottomNav() {
   if (hidden) return null;
 
   // The lite version (backoffice switch) has no stations tab: the map, the scanner and the account.
+  // With Share on, its tab takes the stations tab's place: the station list stays one tap away on the map.
   // Favourites and alerts live on the account page; its tab carries the unread count.
   // Parcels and trips only show while the parcel module is on in the backoffice.
   const tabs = [
     { href: "/", label: t.ui.tabs.map, icon: MapIcon, active: pathname === "/", show: true },
-    { href: "/stations", label: t.ui.tabs.stations, icon: ListIcon, active: pathname.startsWith("/stations") || pathname.startsWith("/station"), show: !staff && !features.lite },
+    { href: "/stations", label: t.ui.tabs.stations, icon: ListIcon, active: pathname.startsWith("/stations") || pathname.startsWith("/station"), show: !staff && !features.lite && !features.share },
+    { href: "/share", label: t.ui.tabs.share, icon: ScooterIcon, active: pathname.startsWith("/share"), show: features.share && customer },
     { href: "/chauffeur", label: t.nav.driver, icon: ScooterIcon, active: pathname.startsWith("/chauffeur"), show: driver },
     { href: "/flotte", label: t.nav.fleet, icon: TruckIcon, active: pathname.startsWith("/flotte"), show: fleet && features.parcels },
     { href: "/marchand", label: t.merchant.nav, icon: StoreIcon, active: pathname.startsWith("/marchand"), show: merchant },

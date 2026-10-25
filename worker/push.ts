@@ -1,12 +1,15 @@
 import type { Env } from "./env";
 import { ApiError, nowIso } from "./http";
 import type { ParcelCtx } from "./parcels";
+import { parseSubscription, sendWebPush } from "./web-push";
 
 // Push notifications through Firebase Cloud Messaging (HTTP v1), planung/fahrer.md phase 2.
 // The app registers the phone's token after sign-in; the Worker sends a short notice next
-// to the e-mail. Without the FCM_SERVICE_ACCOUNT secret nothing is sent (see docs/DEPLOYMENT.md).
+// to the e-mail. Without the FCM_SERVICE_ACCOUNT secret no phone gets one (see docs/DEPLOYMENT.md).
+// Browsers of the web app sign up too (platform "web", token = their push subscription);
+// they are reached by standard Web Push, see worker/web-push.ts, without Firebase.
 
-export const PUSH_PLATFORMS = ["android", "ios"] as const;
+export const PUSH_PLATFORMS = ["android", "ios", "web"] as const;
 export type PushPlatform = (typeof PUSH_PLATFORMS)[number];
 
 export interface PushNotice {
@@ -28,6 +31,7 @@ export async function registerPushToken(c: Ctx, input: unknown): Promise<{ ok: t
   const { token, platform } = (input ?? {}) as { token?: unknown; platform?: unknown };
   if (typeof token !== "string" || !token.trim() || token.length > TOKEN_MAX) throw new ApiError("bad_request", 400);
   if (!PUSH_PLATFORMS.includes(platform as PushPlatform)) throw new ApiError("bad_request", 400);
+  if (platform === "web" && !parseSubscription(token)) throw new ApiError("bad_request", 400);
   const now = nowIso();
   await c.db.batch([
     // A phone that changes account moves its token over.
@@ -109,44 +113,61 @@ async function accessToken(sa: ServiceAccount): Promise<string> {
 }
 
 /**
- * Sends a notice to every phone of the account. Tokens Firebase no longer knows are removed.
- * Does nothing without FCM_SERVICE_ACCOUNT or tokens. Never throws.
+ * Sends a notice to every phone and browser of the account. Tokens Firebase or the browser
+ * no longer knows are removed. Phones need FCM_SERVICE_ACCOUNT. Never throws.
  */
 export async function sendPush(env: Env, userId: string, notice: PushNotice): Promise<number> {
   try {
-    const sa = serviceAccount(env);
-    if (!sa) return 0;
-    const { results } = await env.DB.prepare("select token from push_tokens where user_id = ?").bind(userId).all<{ token: string }>();
+    const { results } = await env.DB.prepare("select token, platform from push_tokens where user_id = ?")
+      .bind(userId)
+      .all<{ token: string; platform: string }>();
     if (!results.length) return 0;
-    const auth = await accessToken(sa);
-    let sent = 0;
-    await Promise.all(
-      results.map(async ({ token }) => {
-        const res = await fetch(`https://fcm.googleapis.com/v1/projects/${sa.project_id}/messages:send`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${auth}`, "content-type": "application/json" },
-          body: JSON.stringify({
-            message: {
-              token,
-              notification: { title: notice.title, body: notice.body },
-              data: notice.path ? { path: notice.path } : {},
-              android: { priority: "high", notification: { channel_id: "offers", sound: "default" } },
-              apns: { payload: { aps: { sound: "default" } } },
-            },
-          }),
-        });
-        if (res.ok) sent++;
-        else if (res.status === 404) {
-          // UNREGISTERED: the app was removed from that phone.
-          await env.DB.prepare("delete from push_tokens where token = ?").bind(token).run();
-        } else console.error("Push send failed", res.status);
-      }),
-    );
-    return sent;
+    const forget = (token: string) => env.DB.prepare("delete from push_tokens where token = ?").bind(token).run();
+    const counts = await Promise.all([
+      sendToPhones(env, results.filter((r) => r.platform !== "web").map((r) => r.token), notice, forget),
+      ...results
+        .filter((r) => r.platform === "web")
+        .map(async ({ token }) => {
+          const sub = parseSubscription(token);
+          const outcome = sub ? await sendWebPush(env.DB, sub, notice) : "gone";
+          if (outcome === "gone") await forget(token);
+          return outcome === "sent" ? 1 : 0;
+        }),
+    ]);
+    return counts.reduce((a, b) => a + b, 0);
   } catch (err) {
     console.error("Push failed", (err as Error).message);
     return 0;
   }
+}
+
+async function sendToPhones(env: Env, tokens: string[], notice: PushNotice, forget: (token: string) => Promise<unknown>): Promise<number> {
+  const sa = serviceAccount(env);
+  if (!sa || !tokens.length) return 0;
+  const auth = await accessToken(sa);
+  let sent = 0;
+  await Promise.all(
+    tokens.map(async (token) => {
+      const res = await fetch(`https://fcm.googleapis.com/v1/projects/${sa.project_id}/messages:send`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${auth}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          message: {
+            token,
+            notification: { title: notice.title, body: notice.body },
+            data: notice.path ? { path: notice.path } : {},
+            android: { priority: "high", notification: { channel_id: "offers", sound: "default" } },
+            apns: { payload: { aps: { sound: "default" } } },
+          },
+        }),
+      });
+      if (res.ok) sent++;
+      // UNREGISTERED: the app was removed from that phone.
+      else if (res.status === 404) await forget(token);
+      else console.error("Push send failed", res.status);
+    }),
+  );
+  return sent;
 }
 
 const APP_ORIGIN = "https://app.poinderecharge.com";

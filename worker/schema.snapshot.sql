@@ -115,6 +115,9 @@ CREATE INDEX device_messages_device_idx on device_messages (external_id, receive
 -- index devices_partner_idx
 CREATE INDEX devices_partner_idx on devices (partner_id) where partner_id is not null;
 
+-- index devices_qr_code
+CREATE UNIQUE INDEX devices_qr_code on devices (qr_code) where qr_code is not null;
+
 -- index devices_qr_token
 CREATE UNIQUE INDEX devices_qr_token on devices (qr_token) where qr_token is not null;
 
@@ -295,6 +298,9 @@ CREATE UNIQUE INDEX payments_one_per_charge on payments (charging_session_id) wh
 -- index payments_one_per_reservation
 CREATE UNIQUE INDEX payments_one_per_reservation on payments (reservation_id) where status in ('pending', 'succeeded');
 
+-- index payments_one_per_share_ride
+CREATE UNIQUE INDEX payments_one_per_share_ride on payments (share_ride_id) where share_ride_id is not null and status in ('pending', 'succeeded');
+
 -- index payments_user_idx
 CREATE INDEX payments_user_idx on payments (user_id, created_at);
 
@@ -324,6 +330,30 @@ CREATE INDEX reservations_user_idx on reservations (user_id, created_at);
 
 -- index sessions_user_idx
 CREATE INDEX sessions_user_idx on sessions (user_id);
+
+-- index share_incidents_one_open
+CREATE UNIQUE INDEX share_incidents_one_open on share_incidents (ride_id, kind) where resolved_at is null and ride_id is not null;
+
+-- index share_incidents_open_idx
+CREATE INDEX share_incidents_open_idx on share_incidents (resolved_at, created_at);
+
+-- index share_ride_points_ride_idx
+CREATE INDEX share_ride_points_ride_idx on share_ride_points (ride_id, at);
+
+-- index share_rides_one_per_user
+CREATE UNIQUE INDEX share_rides_one_per_user on share_rides (user_id) where status in ('reserved', 'riding', 'paused');
+
+-- index share_rides_one_per_vehicle
+CREATE UNIQUE INDEX share_rides_one_per_vehicle on share_rides (vehicle_id) where status in ('reserved', 'riding', 'paused');
+
+-- index share_rides_user_idx
+CREATE INDEX share_rides_user_idx on share_rides (user_id, created_at);
+
+-- index share_rides_vehicle_idx
+CREATE INDEX share_rides_vehicle_idx on share_rides (vehicle_id, created_at);
+
+-- index share_vehicles_station_idx
+CREATE INDEX share_vehicles_station_idx on share_vehicles (station_id, status);
 
 -- index staff_invites_contact_idx
 CREATE INDEX staff_invites_contact_idx on staff_invites (contact, status);
@@ -434,7 +464,7 @@ CREATE TABLE device_commands (id integer primary key autoincrement, external_id 
 CREATE TABLE device_messages (id integer primary key autoincrement, external_id text not null, received_at text not null, payload text not null -- JSON);
 
 -- table devices
-CREATE TABLE devices (external_id text primary key check (external_id = upper(external_id)), -- DevEUI or the vendor's id station_id text not null references stations (id) on delete cascade, vendor text not null default '', model text not null default '', link text not null default 'lorawan' check (link in ('lorawan', 'vendor_cloud', 'own_server')), outlets integer not null default 2 check (outlets between 1 and 16), last_seen_at text, created_at text not null , vendor_ref text, protocol text check (protocol in ('ocpp1.6')), ocpp_key_hash text, partner_id text references point_partners (id), qr_token text);
+CREATE TABLE devices (external_id text primary key check (external_id = upper(external_id)), -- DevEUI or the vendor's id station_id text not null references stations (id) on delete cascade, vendor text not null default '', model text not null default '', link text not null default 'lorawan' check (link in ('lorawan', 'vendor_cloud', 'own_server')), outlets integer not null default 2 check (outlets between 1 and 16), last_seen_at text, created_at text not null , vendor_ref text, protocol text check (protocol in ('ocpp1.6')), ocpp_key_hash text, partner_id text references point_partners (id), qr_token text, qr_code text);
 
 -- table driver_ledger
 CREATE TABLE driver_ledger (id text primary key, driver_id text not null, -- no foreign key: accounting stays when the account is deleted at text not null, kind text not null check (kind in ('collected', 'earning', 'settlement')), amount_fcfa integer not null, job_id text, station_id text, actor text);
@@ -551,7 +581,7 @@ CREATE TABLE partner_state (key text primary key, value text not null);
 CREATE TABLE partners (id text primary key, name text not null check (length(name) between 1 and 80), contact_email text, contact_phone text not null, -- sender of bookings that name none is_active integer not null default 1, webhook_url text, -- https; null = the partner polls GET /events webhook_secret text not null, -- signs webhooks (HMAC-SHA256) share_pickup_code integer not null default 0, -- send the recipient's pickup code to the partner created_by text, created_at text not null, updated_at text not null);
 
 -- table payments
-CREATE TABLE payments (id text primary key, -- Sent to the provider as our order reference; unique so a retry never pays twice. identifier text not null unique, -- Null once the rider deleted the account: the payment stays (accounting records), the person does not. user_id text references users (id) on delete set null, station_id text not null references stations (id), reservation_id text references reservations (id) on delete set null, amount_xof integer not null check (amount_xof > 0), network text not null check (network in ('flooz', 'tmoney')), phone text check (phone glob '+228[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'), -- wallet number; null after account deletion provider text not null, -- 'paygate', 'mock', later others provider_reference text, -- provider's transaction id (PayGate: tx_reference) status text not null default 'pending' check (status in ('pending', 'succeeded', 'failed', 'expired', 'cancelled')), failure_reason text, created_at text not null, updated_at text not null, paid_at text , charging_session_id text);
+CREATE TABLE payments (id text primary key, -- Sent to the provider as our order reference; unique so a retry never pays twice. identifier text not null unique, -- Null once the rider deleted the account: the payment stays (accounting records), the person does not. user_id text references users (id) on delete set null, station_id text not null references stations (id), reservation_id text references reservations (id) on delete set null, amount_xof integer not null check (amount_xof > 0), network text not null check (network in ('flooz', 'tmoney')), phone text check (phone glob '+228[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'), -- wallet number; null after account deletion provider text not null, -- 'paygate', 'mock', later others provider_reference text, -- provider's transaction id (PayGate: tx_reference) status text not null default 'pending' check (status in ('pending', 'succeeded', 'failed', 'expired', 'cancelled')), failure_reason text, created_at text not null, updated_at text not null, paid_at text , charging_session_id text, share_ride_id text);
 
 -- table point_partner_accounts
 CREATE TABLE point_partner_accounts (user_id text primary key references users (id) on delete cascade, partner_id text not null references point_partners (id) on delete cascade, created_at text not null);
@@ -576,6 +606,27 @@ CREATE TABLE reservations (id text primary key, user_id text not null references
 
 -- table sessions
 CREATE TABLE sessions (token_hash text primary key, user_id text not null references users (id) on delete cascade, created_at text not null, expires_at text not null);
+
+-- table share_incidents
+CREATE TABLE share_incidents (id text primary key, kind text not null check (kind in ('breakdown', 'damage', 'alarm', 'wrong_drop', 'long_ride', 'offline')), vehicle_id text references share_vehicles (id) on delete set null, ride_id text references share_rides (id) on delete set null, note text not null default '', created_at text not null, resolved_at text, resolved_by text, resolution text);
+
+-- table share_ride_points
+CREATE TABLE share_ride_points (ride_id text not null references share_rides (id) on delete cascade, at text not null, lat real not null, lng real not null, speed_kmh real);
+
+-- table share_rides
+CREATE TABLE share_rides (id text primary key, user_id text references users (id) on delete set null, vehicle_id text not null references share_vehicles (id), from_station_id text not null references stations (id), to_station_id text references stations (id) on delete set null, end_station_id text references stations (id) on delete set null, status text not null check (status in ('reserved', 'riding', 'paused', 'ended', 'cancelled')), helmet integer not null default 0 check (helmet in (0, 1)), reserved_at text not null, reserve_expires_at text, started_at text, paused_at text, paused_seconds integer not null default 0, ended_at text, ended_by text, -- the customer, or the admin who ended it by hand wrong_drop integer not null default 0 check (wrong_drop in (0, 1)), distance_m integer not null default 0, -- The tariff as it was when the ride started: a later price change does not touch it. unlock_xof integer not null default 0, minute_xof integer not null default 0, pause_minute_xof integer not null default 0, deposit_xof integer not null default 0, wrong_drop_xof integer not null default 0, amount_xof integer not null default 0, payment_status text not null default 'none' check (payment_status in ('none', 'unpaid', 'paid')), paid_with text check (paid_with in ('flooz', 'tmoney', 'wallet', 'cash', 'free')), paid_at text, paid_ref text, -- Green Credit transaction number of a ride paid from the credit cash_by text, -- staff who took the cash photos text not null default '[]', -- R2 keys of the photos at the start and the end created_at text not null);
+
+-- table share_stations
+CREATE TABLE share_stations (station_id text primary key references stations (id) on delete cascade, enabled integer not null default 1 check (enabled in (0, 1)), radius_m integer not null default 50 check (radius_m between 10 and 500), helmets integer not null default 0 check (helmets between 0 and 500), updated_at text not null);
+
+-- table share_tariffs
+CREATE TABLE share_tariffs (kind text primary key check (kind in ('emoto', 'escooter', 'car')), unlock_xof integer not null default 0 check (unlock_xof >= 0), minute_xof integer not null default 0 check (minute_xof >= 0), pause_minute_xof integer not null default 0 check (pause_minute_xof >= 0), deposit_xof integer not null default 0 check (deposit_xof >= 0), wrong_drop_xof integer not null default 0 check (wrong_drop_xof >= 0), is_active integer not null default 0 check (is_active in (0, 1)), updated_at text not null);
+
+-- table share_vehicles
+CREATE TABLE share_vehicles (id text primary key, kind text not null check (kind in ('emoto', 'escooter', 'car')), name text not null check (length(name) between 1 and 60), plate text not null default '', qr_token text not null unique, home_station_id text references stations (id) on delete set null, station_id text references stations (id) on delete set null, status text not null default 'maintenance' check (status in ('available', 'reserved', 'in_ride', 'charging', 'maintenance', 'lost')), tracker_id text unique, -- Tutrack deviceId imei text not null default '', sim text not null default '', unlock_command text not null default '', -- Tutrack cmdCategoryCode that releases the ignition lock_command text not null default '', -- … and the one that cuts it online integer not null default 0 check (online in (0, 1)), ignition integer check (ignition in (0, 1)), battery_percent integer check (battery_percent between 0 and 100), lat real, lng real, fix_at text, -- time of the last position (UTC) last_seen_at text, note text not null default '', created_at text not null);
+
+-- table share_verifications
+CREATE TABLE share_verifications (user_id text primary key references users (id) on delete cascade, status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')), id_key text, selfie_key text, licence_key text, submitted_at text, decided_at text, decided_by text, reject_reason text);
 
 -- table staff_invites
 CREATE TABLE staff_invites (id text primary key, station_id text not null references stations (id) on delete cascade, -- Normalised as lib/contact.ts: "+228…" or a lower-case e-mail address. contact text not null, invited_by text not null, status text not null default 'pending' check (status in ('pending', 'accepted', 'declined', 'revoked', 'expired')), created_at text not null, expires_at text not null, decided_at text, -- Who accepted or declined. user_id text);

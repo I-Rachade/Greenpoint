@@ -213,13 +213,13 @@ export function validAmount(n: unknown): n is number {
 // Station home -----------------------------------------------------------------------
 
 /** Tiles of the station home, each its own page; shown only while its service is active. */
-export type StationTile = "swap" | "counter" | "charging" | "parcels" | "reservations" | "credit";
+export type StationTile = "swap" | "counter" | "charging" | "parcels" | "reservations" | "credit" | "share";
 
 /**
  * The station's tiles; Green Credit only at a station an admin designated (0047). At our own
  * stations the same tile always shows, for the staff's own cash closing (0057).
  */
-export function stationTiles(active: readonly StationService[], greenCredit = false, isOwn = false): StationTile[] {
+export function stationTiles(active: readonly StationService[], greenCredit = false, isOwn = false, share = false): StationTile[] {
   const has = (s: StationService) => active.includes(s);
   const tiles: StationTile[] = [];
   if (has("swap")) tiles.push("swap", "counter");
@@ -227,6 +227,7 @@ export function stationTiles(active: readonly StationService[], greenCredit = fa
   if (has("parcels")) tiles.push("parcels");
   if (has("swap") || has("charging")) tiles.push("reservations");
   if (greenCredit || isOwn) tiles.push("credit");
+  if (share) tiles.push("share");
   return tiles;
 }
 

@@ -4,6 +4,7 @@ import { swapOwnerOf, type SwapOwner } from "../src/lib/station-cash";
 import type { Env } from "./env";
 import { TOPUP_IDENTIFIER_PREFIX, topupCallback } from "./wallet-topups";
 import { chargePaymentSucceeded } from "./charging";
+import { sharePaymentSucceeded } from "./share";
 import { ApiError, nowIso, readJson, uuid } from "./http";
 import {
   PAYMENT_NETWORKS,
@@ -16,7 +17,7 @@ import {
   type ProviderStatus,
 } from "./payment-providers";
 
-// Flooz / T-Money payments for reservations and for charges at a socket (worker/charging.ts).
+// Flooz / T-Money payments for reservations, for charges at a socket (worker/charging.ts) and for Share rides (worker/share.ts).
 // The price comes from the station or the charge, never from the app; the provider's callback is only a hint to ask the
 // provider for the status. See docs/ZAHLUNGEN.md.
 
@@ -27,6 +28,7 @@ interface PaymentRow {
   station_id: string;
   reservation_id: string | null;
   charging_session_id: string | null;
+  share_ride_id: string | null;
   amount_xof: number;
   network: PaymentNetwork;
   phone: string | null;
@@ -106,6 +108,9 @@ async function applyStatus(env: Env, actor: string | null, p: PaymentRow, s: Pro
   if (updated.status === "succeeded" && updated.charging_session_id) {
     await chargePaymentSucceeded(env, { ...updated, charging_session_id: updated.charging_session_id });
   }
+  if (updated.status === "succeeded" && updated.share_ride_id) {
+    await sharePaymentSucceeded(env, { ...updated, share_ride_id: updated.share_ride_id });
+  }
   return updated;
 }
 
@@ -149,7 +154,7 @@ export async function startPayment(env: Env, user: Profile, request: Request): P
   const price = r.type === "battery" ? r.price_battery_xof : r.price_slot_xof;
   const ours = r.type === "battery" ? swapOwnerOf(!!r.is_own, r.swap_owner) === "poinderecharge" : !!r.is_own;
   if (!ours || price == null) throw new ApiError("payment_not_offered", 409);
-  return createPayment(env, user, { stationId: r.station_id, reservationId: r.id, sessionId: null, amountXof: price, network, phone });
+  return createPayment(env, user, { stationId: r.station_id, reservationId: r.id, sessionId: null, shareRideId: null, amountXof: price, network, phone });
 }
 
 /** Whether a customer can pay a charge with Flooz/T-Money: never against the simulated provider, except admins testing. */
@@ -168,13 +173,35 @@ export async function startChargePayment(
   if (!PAYMENT_NETWORKS.includes(network)) throw new ApiError("bad_request");
   const phone = typeof body.phone === "string" ? normalizeTogoPhone(body.phone) : null;
   if (!phone) throw new ApiError("phone_not_allowed");
-  return createPayment(env, user, { stationId: charge.stationId, reservationId: null, sessionId: charge.sessionId, amountXof: charge.amountXof, network, phone });
+  return createPayment(env, user, { stationId: charge.stationId, reservationId: null, sessionId: charge.sessionId, shareRideId: null, amountXof: charge.amountXof, network, phone });
+}
+
+/** A Share ride's Flooz/T-Money payment (worker/share.ts); the caller checked the ride and its amount. */
+export async function startSharePayment(
+  env: Env,
+  user: Profile,
+  ride: { rideId: string; stationId: string; amountXof: number },
+  body: { network?: unknown; phone?: unknown },
+): Promise<Payment> {
+  const network = body.network as PaymentNetwork;
+  if (!PAYMENT_NETWORKS.includes(network)) throw new ApiError("bad_request");
+  const phone = typeof body.phone === "string" ? normalizeTogoPhone(body.phone) : null;
+  if (!phone) throw new ApiError("phone_not_allowed");
+  return createPayment(env, user, { stationId: ride.stationId, reservationId: null, sessionId: null, shareRideId: ride.rideId, amountXof: ride.amountXof, network, phone });
 }
 
 async function createPayment(
   env: Env,
   user: Profile,
-  input: { stationId: string; reservationId: string | null; sessionId: string | null; amountXof: number; network: PaymentNetwork; phone: string },
+  input: {
+    stationId: string;
+    reservationId: string | null;
+    sessionId: string | null;
+    shareRideId: string | null;
+    amountXof: number;
+    network: PaymentNetwork;
+    phone: string;
+  },
 ): Promise<Payment> {
   const { network, phone } = input;
   const price = input.amountXof;
@@ -188,6 +215,7 @@ async function createPayment(
     station_id: input.stationId,
     reservation_id: input.reservationId,
     charging_session_id: input.sessionId,
+    share_ride_id: input.shareRideId,
     amount_xof: price,
     network,
     phone,
@@ -201,9 +229,9 @@ async function createPayment(
   try {
     await env.DB.batch([
       env.DB.prepare(
-        `insert into payments (id, identifier, user_id, station_id, reservation_id, charging_session_id, amount_xof, network, phone, provider, status, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-      ).bind(row.id, row.identifier, row.user_id, row.station_id, row.reservation_id, row.charging_session_id, row.amount_xof, network, phone, pay.name, now, now),
+        `insert into payments (id, identifier, user_id, station_id, reservation_id, charging_session_id, share_ride_id, amount_xof, network, phone, provider, status, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      ).bind(row.id, row.identifier, row.user_id, row.station_id, row.reservation_id, row.charging_session_id, row.share_ride_id, row.amount_xof, network, phone, pay.name, now, now),
       audit(env, user.id, "insert", row, { amount_xof: price, network, provider: pay.name, status: "pending" }),
     ]);
   } catch (err) {

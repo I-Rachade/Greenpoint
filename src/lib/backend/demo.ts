@@ -1,3 +1,4 @@
+import type { AdminShare, ShareMe, ShareOverview, ShareRide, ShareTrackPoint, StationShare } from "../share";
 import { countHolding, isHolding, offersCharging, offersSwap, withinOpeningHours } from "../availability";
 import {
   MAX_UNUSED_RESERVATIONS_PER_DAY,
@@ -71,6 +72,7 @@ import {
 import {
   chargePrice,
   contactFromCode,
+  newBoxCode,
   DEFAULT_CHARGE_TARIFF,
   DEFAULT_EV_TARIFF,
   validTariff,
@@ -767,9 +769,21 @@ function randomBoxToken(): string {
   return [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** A demo box's short QR code: fixed per device, like demoBoxToken. */
+function demoBoxCode(externalId: string): string {
+  let h = 0;
+  for (const c of externalId) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return (h.toString(36) + "00000000").slice(0, 8);
+}
+
 /** Saved demo states from before one QR code per box have no token. */
 function boxToken(d: Device): string {
   return d.qrToken ?? demoBoxToken(d.externalId);
+}
+
+/** Saved demo states from before short QR codes have none. */
+function boxCode(d: Device): string {
+  return d.qrCode ?? demoBoxCode(d.externalId);
 }
 
 /** The connected socket of the "Déckon" station, as a device. */
@@ -789,6 +803,7 @@ function seedDevices(): Device[] {
       createdAt: "2026-10-01T08:00:00.000Z",
       partnerId: null,
       qrToken: demoBoxToken(first.deviceId!),
+      qrCode: demoBoxCode(first.deviceId!),
       points: DEMO_CHARGING_POINTS,
     },
     ...(
@@ -811,6 +826,7 @@ function seedDevices(): Device[] {
       createdAt: "2026-10-01T08:00:00.000Z",
       partnerId: null,
       qrToken: demoBoxToken(externalId),
+      qrCode: demoBoxCode(externalId),
       points: demoSocketPoints(stationId, externalId, outlets, free),
     })),
     {
@@ -827,6 +843,7 @@ function seedDevices(): Device[] {
       createdAt: "2026-10-01T08:00:00.000Z",
       partnerId: null,
       qrToken: demoBoxToken(DEMO_EV_POINT.deviceId!),
+      qrCode: demoBoxCode(DEMO_EV_POINT.deviceId!),
       points: [DEMO_EV_POINT],
     },
   ];
@@ -3515,6 +3532,7 @@ export class DemoBackend implements Backend {
       ...d,
       partnerId: d.partnerId ?? null,
       qrToken: boxToken(d),
+      qrCode: boxCode(d),
       lastSeenAt: seen,
       points: d.points.map((p) => ({ ...p, lastSeenAt: seen })),
     }));
@@ -3542,6 +3560,7 @@ export class DemoBackend implements Backend {
       createdAt: new Date().toISOString(),
       partnerId: null,
       qrToken: randomBoxToken(),
+      qrCode: newBoxCode(),
       points: Array.from({ length: outlets }, (_, i) => ({
         id: `cp-${externalId}-${i + 1}`,
         stationId: input.stationId,
@@ -3598,8 +3617,9 @@ export class DemoBackend implements Backend {
     const all = state.devices ?? seedDevices();
     if (!all.some((d) => d.externalId === externalId)) throw new BackendError("unknown", "not_found");
     const qrToken = randomBoxToken();
-    this.save({ ...state, devices: all.map((d) => (d.externalId === externalId ? { ...d, qrToken } : d)) });
-    return qrToken;
+    const qrCode = newBoxCode();
+    this.save({ ...state, devices: all.map((d) => (d.externalId === externalId ? { ...d, qrToken, qrCode } : d)) });
+    return qrCode;
   }
 
   async setDevicePartner(externalId: string, partnerId: string | null) {
@@ -4902,6 +4922,12 @@ export class DemoBackend implements Backend {
   /** As reportPosition() in worker/drivers.ts: kept only while the driver is on duty. */
   /** The demo runs in the browser: no push notices. */
   async registerPushToken() {}
+
+  async removePushToken() {}
+
+  async webPushKey(): Promise<{ publicKey: string }> {
+    throw new Error("unsupported");
+  }
 
   async reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }) {
     const state = this.load();
@@ -8279,7 +8305,7 @@ export class DemoBackend implements Backend {
   /** As outletInfo() in worker/charging.ts. */
   async chargeOutlet(token: string): Promise<ChargeOutletInfo> {
     const state = this.load();
-    const device = (state.devices ?? seedDevices()).find((d) => boxToken(d) === token);
+    const device = (state.devices ?? seedDevices()).find((d) => boxCode(d) === token || boxToken(d) === token);
     const station = device && state.stations.find((s) => s.id === device.stationId);
     if (!device || !station) throw new BackendError("unknown", "not_found");
     const me = state.profile?.id ?? null;
@@ -8574,6 +8600,123 @@ export class DemoBackend implements Backend {
     this.save({ ...state, chargeCards: (state.chargeCards ?? seedChargeCards()).filter((c) => c.idTag !== idTag) });
   }
 
+
+  // Share is not simulated in the demo: the module stays off there (demoFeatures), so the app never calls these.
+
+  async shareOverview(): Promise<ShareOverview> {
+    return { stations: [], tariffs: [] };
+  }
+
+  private shareOff(): never {
+    throw new BackendError("unknown", "not_found");
+  }
+
+  async shareMe(): Promise<ShareMe> {
+    return this.shareOff();
+  }
+
+  async myShareRides(): Promise<ShareRide[]> {
+    return [];
+  }
+
+  async uploadShareDocument(): Promise<void> {
+    this.shareOff();
+  }
+
+  async reserveShare(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async shareRideAction(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async endShareRide(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async reportSharePosition(): Promise<void> {}
+
+  async reportShareProblem(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async payShareWallet(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async payShareMobile(): Promise<string> {
+    return this.shareOff();
+  }
+
+  async stationShare(): Promise<StationShare> {
+    return this.shareOff();
+  }
+
+  async setStationShareVehicle(): Promise<void> {
+    this.shareOff();
+  }
+
+  async payShareCash(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async adminShare(): Promise<AdminShare> {
+    this.requireAdmin(this.load());
+    return { enabled: false, simulated: true, vehicles: [], stations: [], tariffs: [], rides: [], verifications: [], incidents: [] };
+  }
+
+  async setShareEnabled(): Promise<void> {
+    throw new BackendError("unknown", "Share is not available in the demo");
+  }
+
+  async saveShareVehicle(): Promise<void> {
+    this.shareOff();
+  }
+
+  async deleteShareVehicle(): Promise<void> {
+    this.shareOff();
+  }
+
+  async setShareVehicleState(): Promise<void> {
+    this.shareOff();
+  }
+
+  async shareVehicleCommand(): Promise<void> {
+    this.shareOff();
+  }
+
+  async saveShareStation(): Promise<void> {
+    this.shareOff();
+  }
+
+  async saveShareTariff(): Promise<void> {
+    this.shareOff();
+  }
+
+  async decideShareVerification(): Promise<void> {
+    this.shareOff();
+  }
+
+  async adminEndShareRide(): Promise<void> {
+    this.shareOff();
+  }
+
+  async waiveShareRide(): Promise<void> {
+    this.shareOff();
+  }
+
+  async shareRideTrack(): Promise<ShareTrackPoint[]> {
+    return [];
+  }
+
+  async resolveShareIncident(): Promise<void> {
+    this.shareOff();
+  }
+
+  async shareFileUrl(): Promise<string> {
+    return this.shareOff();
+  }
 }
 
 interface DemoChargeCard {

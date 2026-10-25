@@ -467,7 +467,7 @@ describe("one QR code per socket box", () => {
     const t = await setup();
     fund(t.db);
     fund(t.db, "admin");
-    t.db.exec(`update devices set qr_token = '${BOX}' where external_id = '123456'; update devices set qr_token = '${OTHER}' where external_id = '654321';`);
+    t.db.exec(`update devices set qr_token = '${BOX}', qr_code = 'box12345' where external_id = '123456'; update devices set qr_token = '${OTHER}' where external_id = '654321';`);
     await allow(t.env, "p1");
     await allow(t.env, "p2");
     await allow(t.env, "q1");
@@ -565,16 +565,24 @@ describe("one QR code per socket box", () => {
   it("gives new boxes a code and lets only an admin renew it, which voids the old sticker", async () => {
     const { db, env } = await boxes();
     expect((await api(env, "staff", "POST", "/api/admin/devices/123456/qr", {})).status).toBe(403);
-    const renewed = await api<{ qrToken: string }>(env, "admin", "POST", "/api/admin/devices/123456/qr", {});
+    const before = db.prepare("select qr_code from devices where external_id = '123456'").get() as { qr_code: string };
+    expect(before.qr_code).toMatch(/^[0-9a-z]{8}$/);
+    expect((await box(env, before.qr_code)).data.outlets).toHaveLength(2);
+    const renewed = await api<{ qrToken: string; qrCode: string }>(env, "admin", "POST", "/api/admin/devices/123456/qr", {});
     expect(renewed.data.qrToken).toMatch(/^[0-9a-f]{32}$/);
+    expect(renewed.data.qrCode).toMatch(/^[0-9a-z]{8}$/);
     expect((await box(env)).status).toBe(404);
+    expect((await box(env, before.qr_code)).status).toBe(404);
     expect((await box(env, renewed.data.qrToken)).data.outlets).toHaveLength(2);
+    expect((await box(env, renewed.data.qrCode)).data.outlets).toHaveLength(2);
     expect(db.prepare("select changes from audit_log where table_name = 'devices'").get()).toEqual({ changes: '{"qr_token":"renewed"}' });
 
     await api(env, "admin", "POST", "/api/admin/devices", { externalId: "a1b2c3d4e5f60708", stationId: "st", outlets: 3 });
     const fresh = db.prepare("select qr_token from devices where external_id = 'A1B2C3D4E5F60708'").get() as { qr_token: string } | undefined;
     expect(fresh?.qr_token).toMatch(/^[0-9a-f]{32}$/);
     expect(fresh?.qr_token).not.toBe(renewed.data.qrToken);
+    const code = db.prepare("select qr_code from devices where external_id = 'A1B2C3D4E5F60708'").get() as { qr_code: string } | undefined;
+    expect(code?.qr_code).toMatch(/^[0-9a-z]{8}$/);
   });
 });
 

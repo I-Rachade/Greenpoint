@@ -171,6 +171,21 @@ export async function handleOcppCall(db: D1Database, externalId: string, action:
       return {};
     }
     case "DataTransfer":
+      // Kept outside the trace window too: shows what a charge point asks of us, e.g. a card balance to display.
+      await db
+        .prepare("insert into device_messages (external_id, received_at, payload) values (?, ?, ?)")
+        .bind(
+          externalId,
+          nowIso(),
+          JSON.stringify({
+            action: "OcppDataTransfer",
+            vendorId: payload.vendorId,
+            messageId: payload.messageId,
+            // Shortened, never cut mid-JSON: other readers parse this column.
+            data: typeof payload.data === "string" ? payload.data.slice(0, 2000) : payload.data,
+          }),
+        )
+        .run();
       return { status: "UnknownVendorId" };
     case "DiagnosticsStatusNotification":
     case "FirmwareStatusNotification":
