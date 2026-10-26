@@ -130,6 +130,18 @@ export function newBoxCode(): string {
 }
 
 /**
+ * Short codes printed before the box was registered (stickers made in advance): the box gets
+ * this code instead of a new one when it is added, so its stickers work from the start.
+ */
+export const RESERVED_BOX_CODES: Readonly<Record<string, string>> = {
+  "101104": "tmwb69x6",
+  "101105": "utf4dpcg",
+  "101106": "shp980eo",
+  "101107": "13lrs2ho",
+  "101108": "gcc22nz7",
+};
+
+/**
  * The link printed as the box's QR code. With its short code (devices.qr_code) it is
  * https://app.poinderecharge.com/q/<code>, 41 characters: a version 3 QR code (29×29) instead of
  * version 5 (37×37) for the long /recharge?o=<token>, so cheap phones read it from further away.

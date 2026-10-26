@@ -239,6 +239,13 @@ describe("Xingke cloud", () => {
     expect(db.prepare("select free_slots from station_status").get()).toEqual({ free_slots: 1 });
   });
 
+  it("gives a box its short code printed in advance, and a new one otherwise", async () => {
+    const { db, d1 } = await setup();
+    await createDevice(d1 as unknown as D1Database, { externalId: "101104", stationId: "st", outlets: 10, link: "vendor_cloud", vendor: "Xingke" }, "admin");
+    expect(db.prepare("select qr_code from devices where external_id = '101104'").get()).toEqual({ qr_code: "tmwb69x6" });
+    expect(db.prepare(`select qr_code from devices where external_id != '101104'`).get()).toEqual({ qr_code: expect.stringMatching(/^[0-9a-z]{8}$/) });
+  });
+
   it("rejects wrong credentials and broken bodies", async () => {
     const { env } = await setup();
     expect((await handleXingkeCallback(callback(event("DeviceOnline", {}, "e1"), "wrong"), env)).status).toBe(401);
