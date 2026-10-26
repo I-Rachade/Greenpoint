@@ -30,7 +30,7 @@ import { sendOcppCommand } from "./ocpp";
 import { earnStatement } from "./greenpoint";
 import { chargeReadingStatement, creditFollowUp, hasOpenCharge } from "./charging";
 import { isCreditStation } from "./wallet";
-import { newBoxCode } from "../shared/charging";
+import { newBoxCode, RESERVED_BOX_CODES } from "../shared/charging";
 
 // Connected sockets (e.g. LoRa). See docs/steckdosen-lora.md.
 
@@ -297,7 +297,7 @@ export async function createDevice(db: D1Database, input: DeviceInput, actor: st
         `insert into devices (external_id, station_id, vendor, model, link, outlets, vendor_ref, protocol, ocpp_key_hash, qr_token, qr_code, created_at)
          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(externalId, stationId, vendor, model, link, outlets, vendorRef, protocol, key && (await sha256(key)), newBoxToken(), newBoxCode(), now),
+      .bind(externalId, stationId, vendor, model, link, outlets, vendorRef, protocol, key && (await sha256(key)), newBoxToken(), RESERVED_BOX_CODES[externalId] ?? newBoxCode(), now),
   ];
   for (let n = 1; n <= outlets; n++) {
     statements.push(
