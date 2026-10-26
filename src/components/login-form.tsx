@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Fragment, useEffect, useState, type FormEvent } from "react";
-import { HOSTED_DEMO } from "@/lib/backend";
+import { BackendError, HOSTED_DEMO } from "@/lib/backend";
 import { ADMIN_HOME } from "@/lib/config";
 import { useErrorMessage } from "@/lib/hooks";
 import { LEGAL_PATHS } from "@/lib/legal/content";
@@ -85,6 +85,8 @@ export function LoginForm({ fleet = false, merchant = false }: { fleet?: boolean
       if (captchaKey) setCaptchaReset((n) => n + 1);
     }
   }
+  /** The server asked for the robot check before the next PIN login (worker/security.ts, after failed tries). */
+  const [loginCaptcha, setLoginCaptcha] = useState(false);
   const captchaWidget = captchaKey ? <Turnstile siteKey={captchaKey} lang={locale} resetKey={captchaReset} onToken={setCaptcha} /> : null;
   const [error, setError] = useState<string | null>(null);
 
@@ -152,7 +154,18 @@ export function LoginForm({ fleet = false, merchant = false }: { fleet?: boolean
     e.preventDefault();
     const contact = contactOrError();
     if (!contact) return;
-    void run(async () => done(await backend.signIn(contact.value, pin, demoRole)));
+    void run(async () => {
+      const token = loginCaptcha ? (captcha ?? undefined) : undefined;
+      try {
+        done(await backend.signIn(contact.value, pin, demoRole, token));
+      } catch (err) {
+        if (err instanceof BackendError && err.code === "captcha_required") setLoginCaptcha(true);
+        throw err;
+      } finally {
+        // A token is good once: the widget checks again for the next try.
+        if (token) setCaptchaReset((n) => n + 1);
+      }
+    });
   }
 
   function sendCode(e: FormEvent) {
@@ -374,12 +387,13 @@ export function LoginForm({ fleet = false, merchant = false }: { fleet?: boolean
             {contactField}
             {pinField(t.login.pin, pin, setPin, "current-password")}
             {roleField}
+            {loginCaptcha && captchaWidget}
             <div className="text-right">
               <button type="button" className="text-sm font-medium text-gp-green-dark dark:text-gp-green" onClick={() => switchMode("reset")}>
                 {t.login.forgotPin}
               </button>
             </div>
-            <button type="submit" className={button} disabled={busy || pin.length < PIN_LENGTH}>
+            <button type="submit" className={button} disabled={busy || pin.length < PIN_LENGTH || (loginCaptcha && !!captchaKey && !captcha)}>
               {t.login.signIn}
             </button>
             <Link href="/flotte/inscription" className={`${link} flex min-h-11 items-center justify-center text-center`}>

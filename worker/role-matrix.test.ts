@@ -168,6 +168,8 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/stations/:id/parcels/pickup": STATION,
   "GET /api/stations/:id/bookings": STATION,
   "POST /api/stations/:id/bookings/:id/accept": STATION,
+  "GET /api/admin/security": ADMIN,
+  "POST /api/admin/security/unlock/:id": ADMIN,
   "GET /api/admin/partners": ADMIN,
   "POST /api/admin/partners": ADMIN,
   "POST /api/admin/partners/:id/keys": ADMIN,

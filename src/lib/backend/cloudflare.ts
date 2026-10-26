@@ -27,6 +27,7 @@ import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "@s
 import type { AdminOperator, MyStaffInvite, OperatorInput, OwnerStationInput, OwnerView } from "@shared/operators";
 import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "@shared/point-partners";
 import type { Promotion, PromotionInput } from "@shared/promo";
+import type { SecurityOverview } from "@shared/security";
 import type {
   AdminGreenpoint,
   GreenpointFactors,
@@ -153,6 +154,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "phone_required",
   "hold_limit",
   "captcha_failed",
+  "captcha_required",
   "driver_busy",
   "driver_not_found",
   "too_far",
@@ -316,11 +318,12 @@ export class CloudflareBackend implements Backend {
     } catch {
       throw new BackendError("unknown", "network");
     }
-    const data = (await res.json().catch(() => null)) as T & { error?: string };
+    const data = (await res.json().catch(() => null)) as T & { error?: string; retryAfter?: number };
     if (!res.ok) {
       const code = KNOWN_CODES.find((c) => c === data?.error) ?? "unknown";
       if (code === "not_authenticated" && token) this.dropSession();
-      throw new BackendError(code, data?.error);
+      const wait = Number(data?.retryAfter ?? res.headers.get("Retry-After")) || undefined;
+      throw new BackendError(code, data?.error, wait);
     }
     return data;
   }
@@ -385,8 +388,8 @@ export class CloudflareBackend implements Backend {
     return this.startSession("/api/auth/register", { contact, code: code.trim(), pin });
   }
 
-  signIn(contact: string, pin: string) {
-    return this.startSession("/api/auth/login", { contact, pin });
+  signIn(contact: string, pin: string, _demoRole?: UserRole, captcha?: string) {
+    return this.startSession("/api/auth/login", { contact, pin, captcha });
   }
 
   private async startSession(path: string, body: unknown) {
@@ -662,6 +665,14 @@ export class CloudflareBackend implements Backend {
     const q = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== null && value !== "") q.set(key, String(value));
     return this.call<AdminReservationPage>("GET", `/api/admin/reservations?${q}`);
+  }
+
+  adminSecurity() {
+    return this.call<SecurityOverview>("GET", "/api/admin/security");
+  }
+
+  async unlockAccount(userId: string) {
+    await this.call("POST", `/api/admin/security/unlock/${encodeURIComponent(userId)}`);
   }
 
   auditLog(filter: AuditFilter) {

@@ -30,6 +30,7 @@ import {
 } from "../shared/partners";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, sha256, uuid } from "./http";
+import { PARTNER_RETRY_SECONDS, partnerAllowed } from "./security";
 import { unlockedSql } from "./services";
 import { DB_CUSTOMER } from "./roles";
 import { cleanMeasures, cleanName, requireDepot, requireStaff, requireStationActor, sizes, storeParcel, tierFor, type ParcelCtx } from "./parcels";
@@ -378,6 +379,7 @@ const MESSAGES: Record<string, string> = {
   missing_api_key: "Send your API key as 'Authorization: Bearer pdr_live_…'.",
   invalid_api_key: "This API key does not exist or was revoked.",
   partner_inactive: "This partner account is switched off. Contact poinderecharge.",
+  rate_limited: "Too many requests: at most 60 a minute per partner. Wait for the number of seconds in Retry-After.",
   invalid_request: "A field is missing or invalid, see 'field'.",
   invalid_json: "The body is not valid JSON.",
   phone_not_allowed: "Only Togolese phone numbers (+228) are accepted.",
@@ -712,6 +714,10 @@ export async function handlePartnerApi(request: Request, env: Env): Promise<Resp
   const method = request.method;
   try {
     const partner = await authenticate(request, env);
+    // 60 requests a minute per partner (worker/security.ts), documented on /developpeurs.
+    if (!(await partnerAllowed(env, request, partner.id))) {
+      return partnerJson({ error: "rate_limited", message: MESSAGES.rate_limited }, 429, { "Retry-After": String(PARTNER_RETRY_SECONDS) });
+    }
     let m: RegExpExecArray | null;
     if (path === "/stations" && method === "GET") return partnerJson(await stationsForPartners(env.DB));
     if (path === "/prices" && method === "GET") {

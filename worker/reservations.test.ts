@@ -297,7 +297,7 @@ describe("wrong pickup codes (as parcels)", () => {
       ).then(async (res) => ({ status: res.status, body: await res.json() }));
     const wrong = r.pickupCode === "0000" ? "1111" : "0000";
     for (let i = 0; i < 5; i++) expect((await complete(wrong)).body).toEqual({ error: "wrong_pickup_code" });
-    expect(await complete(r.pickupCode!)).toEqual({ status: 429, body: { error: "code_locked" } });
+    expect(await complete(r.pickupCode!)).toEqual({ status: 429, body: { error: "code_locked", retryAfter: expect.any(Number) } });
     expect(status(db, r.id)).toBe("active");
   });
 

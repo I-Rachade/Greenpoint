@@ -1,4 +1,5 @@
 import { pruneIpRequests } from "./ip-limits";
+import { pruneSecurityEvents } from "./security-log";
 import { handleApi } from "./api";
 import { recountSilentFreeSlots } from "./devices";
 import { runDispatch } from "./drivers";
@@ -82,6 +83,7 @@ export default {
       }),
     );
     if (controller.cron === DAILY_CRON) ctx.waitUntil(pruneIpRequests(env.DB).catch((err) => console.error("ip limits", err)));
+    if (controller.cron === DAILY_CRON) ctx.waitUntil(pruneSecurityEvents(env.DB).catch((err) => console.error("security log", err)));
     if (controller.cron !== DAILY_CRON) ctx.waitUntil(runDispatch(env).catch((err) => console.error("dispatch", err)));
     if (controller.cron !== DAILY_CRON) ctx.waitUntil(runShareTimers(env).catch((err) => console.error("share timers", err)));
     if (controller.cron !== DAILY_CRON) ctx.waitUntil(ensureTutrackBridge(env).catch((err) => console.error("tutrack bridge", err)));

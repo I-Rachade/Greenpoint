@@ -66,6 +66,12 @@ export interface Env {
   TUTRACK_ENT_ID?: string;
   /** The one Durable Object that holds the Tutrack MQTT subscription (worker/tutrack-bridge.ts). */
   TUTRACK?: DurableObjectNamespace;
+  /** Request limits (Cloudflare rate limiting bindings, wrangler.jsonc; worker/security.ts). Absent: no limit. */
+  API_IP_LIMIT?: RateLimit;
+  API_USER_LIMIT?: RateLimit;
+  API_WRITE_LIMIT?: RateLimit;
+  API_STAFF_LIMIT?: RateLimit;
+  PARTNER_LIMIT?: RateLimit;
   /** One Durable Object per OCPP charge point, holding its WebSocket (wrangler.jsonc, worker/ocpp.ts). */
   OCPP?: DurableObjectNamespace;
 }

@@ -1,4 +1,5 @@
 import { captchaSiteKey, checkCaptcha, countIpRequest } from "./ip-limits";
+import { guardedSignIn, limitByIp, limitByUser, securityOverview, unlockAccount } from "./security";
 import { offersCharging, offersSwap, withinOpeningHours } from "../shared/availability";
 import { depotPoints, hasAnyPoint } from "../shared/station-points";
 import { cleanAmenities, cleanMainActivity, cleanPhotos, isUnattended, type ReviewInput } from "../shared/station-extras";
@@ -81,7 +82,6 @@ import {
   sendCode,
   sendContactCode,
   sendDeleteCode,
-  signIn,
   signOut,
 } from "./auth";
 import {
@@ -243,7 +243,7 @@ import {
 import type { Env } from "./env";
 import { notifyUser } from "./notify";
 import { getFeatures, PARCEL_ROUTE, parcelsEnabled, setDriversEnabled, setLiteEnabled, setParcelsEnabled } from "./features";
-import { ApiError, json, nowIso, randomDigits, readJson, uuid } from "./http";
+import { ApiError, errorResponse, json, nowIso, randomDigits, readJson, uuid } from "./http";
 import { registerPushToken, removePushToken } from "./push";
 import { webPushKey } from "./web-push";
 import { adminPayouts, decidePayout } from "./trip-payments";
@@ -1974,6 +1974,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/auth\/register$/,
     async (c) => {
       const body = await readJson<{ contact?: string; phone?: string; code: string; pin: string }>(c.request);
+      await countIpRequest(c.db, c.request, "login");
       return register(c.env, c.request, body.contact ?? body.phone ?? "", body.code, body.pin);
     },
   ],
@@ -1982,6 +1983,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/auth\/register-fleet$/,
     async (c) => {
       const body = await readJson<{ contact?: string; code: string; pin: string; fleetName: string }>(c.request);
+      await countIpRequest(c.db, c.request, "login");
       return registerFleetManager(c.env, c.request, body.contact ?? "", body.code, body.pin, body.fleetName);
     },
   ],
@@ -1990,6 +1992,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/auth\/register-merchant$/,
     async (c) => {
       const body = await readJson<{ contact?: string; code: string; pin: string; shop: MerchantShopInput }>(c.request);
+      await countIpRequest(c.db, c.request, "login");
       return registerMerchant(c.env, c.request, body.contact ?? "", body.code, body.pin, body.shop);
     },
   ],
@@ -1997,9 +2000,10 @@ const ROUTES: [string, RegExp, Handler][] = [
     "POST",
     /^\/api\/auth\/login$/,
     async (c) => {
-      const body = await readJson<{ contact?: string; phone?: string; pin: string }>(c.request);
+      const body = await readJson<{ contact?: string; phone?: string; pin: string; captcha?: string }>(c.request);
       await countIpRequest(c.db, c.request, "login");
-      return signIn(c.env, c.request, body.contact ?? body.phone ?? "", body.pin);
+      // After a few failed tries the robot check comes first (worker/security.ts).
+      return guardedSignIn(c.env, c.request, body.contact ?? body.phone ?? "", body.pin, body.captcha);
     },
   ],
   [
@@ -2393,6 +2397,9 @@ const ROUTES: [string, RegExp, Handler][] = [
     /^\/api\/stations\/([\w-]+)\/bookings\/([\w-]+)\/accept$/,
     async (c, [id, booking]) => acceptBooking(c, id, booking, (await readJson<{ measures: ParcelMeasures }>(c.request)).measures),
   ],
+  // Security: locked accounts, the security log, unlock (worker/security.ts)
+  ["GET", /^\/api\/admin\/security$/, async (c) => (await c.requireAdmin(), securityOverview(c.env))],
+  ["POST", /^\/api\/admin\/security\/unlock\/([\w-]+)$/, async (c, [id]) => unlockAccount(c.env, await c.requireAdmin(), id)],
   ["GET", /^\/api\/admin\/partners$/, (c) => adminPartners(c)],
   [
     "POST",
@@ -2813,20 +2820,23 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     const partnerApi = url.pathname.startsWith(`${PARTNER_API_BASE}/`) || url.pathname === PARTNER_API_BASE;
     // A switched-off parcel module answers as if it did not exist; the backoffice keeps its pages.
     if ((partnerApi || PARCEL_ROUTE.test(url.pathname)) && !(await parcelsEnabled(env))) return json({ error: "not_found" }, 404);
+    // Requests from people and partner apps count for their address (worker/security.ts);
+    // the callbacks above come from providers and devices with their own credentials.
+    await limitByIp(env, request);
     if (partnerApi) return await handlePartnerApi(request, env);
     for (const route of ROUTES) {
       const [method, pattern, handler] = route;
       const m = pattern.exec(url.pathname);
       if (!m) continue;
       if (request.method !== method) continue;
-      if (!OPEN.has(route)) await c.requireUser();
+      if (!OPEN.has(route)) await limitByUser(env, request, await c.requireUser());
       const result = await handler(c, m.slice(1));
       if (c.stationAction && request.method !== "GET") await logStationAction(c, request.method, url.pathname);
       return json(result ?? null);
     }
     return json({ error: "not_found" }, 404);
   } catch (err) {
-    if (err instanceof ApiError) return json({ error: err.code }, err.status);
+    if (err instanceof ApiError) return errorResponse(err);
     console.error(err);
     return json({ error: "unknown" }, 500);
   }

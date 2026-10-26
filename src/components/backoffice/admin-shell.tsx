@@ -54,6 +54,8 @@ export const ADMIN_NAV: { group: GroupKey; links: { href: string; key: NavKey }[
     links: [
       { href: "/admin/reservations", key: "reservations" },
       { href: "/admin/users", key: "users" },
+      // Locked accounts, failed logins and refused requests (worker/security.ts).
+      { href: "/admin/security", key: "security" },
       { href: "/admin/greenpoint", key: "greenpoint" },
       { href: "/admin/promotions", key: "promotions" },
     ],
@@ -99,6 +101,7 @@ const NAV_ICON: Record<NavKey, ComponentType<SVGProps<SVGSVGElement> & { size?: 
   activity: HistoryIcon,
   reservations: TicketIcon,
   users: UsersIcon,
+  security: ShieldIcon,
   greenpoint: LeafIcon,
   promotions: StarIcon,
   parcels: BoxIcon,

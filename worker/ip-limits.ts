@@ -3,7 +3,9 @@
 // it runs, in one statement with the count, so parallel requests cannot pass the limit.
 import type { Env } from "./env";
 import { ApiError, nowIso } from "./http";
+import { logSecurityEvent } from "./security-log";
 
+/** "login": PIN logins and registrations (a code and a new PIN). */
 export type IpLimitKind = "send" | "login";
 
 /** Requests one IP address may make per window: generous, as many phones share a carrier's address. */
@@ -31,7 +33,15 @@ export async function countIpRequest(db: D1Database, request: Request, kind: IpL
     )
     .bind(ip, kind, nowIso(), since, max)
     .first<{ rowid: number }>();
-  if (!counted) throw new ApiError("rate_limited", 429);
+  if (counted) return;
+  // How long until the oldest request of the window ages out.
+  const oldest = await db
+    .prepare("select min(at) as at from auth_ip_requests where ip = ? and kind = ? and at > ?")
+    .bind(ip, kind, since)
+    .first<{ at: string | null }>();
+  const wait = oldest?.at ? (Date.parse(oldest.at) + minutes * 60_000 - Date.now()) / 1000 : minutes * 60;
+  await logSecurityEvent(db, { kind: "ip_limited", ip, detail: kind, dedupe: `ip_limited:${kind}:${ip}:${new Date().toISOString().slice(0, 16)}` });
+  throw new ApiError("rate_limited", 429, Math.max(wait, 1));
 }
 
 /** Drops counts older than a day (minute cron). */
@@ -58,5 +68,8 @@ export async function checkCaptcha(env: Env, request: Request, token: unknown): 
   if (ip) form.append("remoteip", ip);
   const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body: form });
   const outcome = res.ok ? await res.json<{ success?: boolean }>().catch(() => null) : null;
-  if (!outcome?.success) throw new ApiError("captcha_failed", 400);
+  if (!outcome?.success) {
+    await logSecurityEvent(env.DB, { kind: "captcha_failed", ip });
+    throw new ApiError("captcha_failed", 400);
+  }
 }

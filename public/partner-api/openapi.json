@@ -3,7 +3,7 @@
   "info": {
     "title": "poinderecharge Partner API",
     "version": "1.0.0",
-    "description": "Book parcel transports between poinderecharge stations in Lomé and follow every status change, as the poinderecharge app does.\n\nAuthenticate with your API key: `Authorization: Bearer pdr_live_…`. Keys are issued by poinderecharge.\n\nStatus changes are sent to your webhook (signed with HMAC-SHA256, header `Poinderecharge-Signature: t=<unix>,v1=<hex>` over `<t>.<raw body>`) and can also be read with `GET /events`.\n\nAmounts are in FCFA (XOF). Phone numbers must be Togolese (+228). New event types and statuses may be added; ignore the ones you do not know.",
+    "description": "Book parcel transports between poinderecharge stations in Lomé and follow every status change, as the poinderecharge app does.\n\nAuthenticate with your API key: `Authorization: Bearer pdr_live_…`. Keys are issued by poinderecharge.\n\nAt most 60 requests a minute per partner (all keys together); more get 429 `rate_limited` with a `Retry-After` header in seconds.\n\nStatus changes are sent to your webhook (signed with HMAC-SHA256, header `Poinderecharge-Signature: t=<unix>,v1=<hex>` over `<t>.<raw body>`) and can also be read with `GET /events`.\n\nAmounts are in FCFA (XOF). Phone numbers must be Togolese (+228). New event types and statuses may be added; ignore the ones you do not know.",
     "contact": {
       "name": "poinderecharge",
       "email": "contact@poinderecharge.com"
