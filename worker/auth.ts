@@ -8,7 +8,9 @@ import type { Env } from "./env";
 import { ApiError, nowIso, randomDigits, sha256, uuid } from "./http";
 import type { MerchantShopInput } from "../shared/merchants";
 import { cleanShop } from "./merchant-rules";
+import { notifyUser } from "./notify";
 import { roleFromDb, roleToDb } from "./roles";
+import { logSecurityEvent } from "./security-log";
 
 const CODE_MINUTES = 10;
 const MAX_ATTEMPTS = 5;
@@ -480,17 +482,36 @@ async function checkPin(env: Env, userId: string, pin: string, state: PinState) 
   )
     .bind(userId, PIN_MAX_FAILURES, now)
     .first<{ pin_failures: number; pin_lock_count: number }>();
-  if (!slot) throw new ApiError("pin_locked", 429);
+  if (!slot) {
+    // The lock read with the account; a lock set by a parallel request since then lasts at least PIN_LOCK_MINUTES.
+    const left = state.pin_locked_until ? (Date.parse(state.pin_locked_until) - Date.now()) / 1000 : 0;
+    throw new ApiError("pin_locked", 429, left > 0 ? left : PIN_LOCK_MINUTES * 60);
+  }
   if (!(await pinMatches(pin, state.pin_hash))) {
     if (slot.pin_failures < PIN_MAX_FAILURES) throw new ApiError("invalid_pin");
     // Each lock since the last right PIN lasts twice as long (15 min, 30 min, 1 h, … at most a day).
     const minutes = Math.min(PIN_LOCK_MINUTES * 2 ** slot.pin_lock_count, PIN_LOCK_MAX_MINUTES);
+    const until = new Date(Date.now() + minutes * 60_000).toISOString();
     await env.DB.prepare("update users set pin_failures = 0, pin_lock_count = pin_lock_count + 1, pin_locked_until = ? where id = ?")
-      .bind(new Date(Date.now() + minutes * 60_000).toISOString(), userId)
+      .bind(until, userId)
       .run();
-    throw new ApiError("pin_locked", 429);
+    await warnPinLocked(env, userId, until, slot.pin_lock_count + 1);
+    throw new ApiError("pin_locked", 429, minutes * 60);
   }
   await env.DB.prepare("update users set pin_failures = 0, pin_lock_count = 0, pin_locked_until = null where id = ?").bind(userId).run();
+}
+
+/**
+ * An account was just locked by wrong PINs: written to the security log, and its owner is told
+ * by push notice and e-mail (no SMS, for the cost), with what to do when it was not them.
+ */
+async function warnPinLocked(env: Env, userId: string, until: string, lockCount: number) {
+  await logSecurityEvent(env.DB, { kind: "pin_locked", userId, detail: `${lockCount}` });
+  const time = new Date(until).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Lome" });
+  await notifyUser(env, userId, {
+    subject: "Compte bloqué : trop de codes PIN faux",
+    text: `poinderecharge : plusieurs codes PIN faux ont été saisis pour votre compte. Il est bloqué jusqu'à ${time} (heure de Lomé).\n\nSi ce n'était pas vous, choisissez un nouveau code PIN avec « Code PIN oublié ? » sur la page de connexion : https://app.poinderecharge.com/login`,
+  });
 }
 
 /** Confirms a payment with the signed-in user's PIN; wrong PINs count towards the same lock as the login. */

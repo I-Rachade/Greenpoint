@@ -107,6 +107,7 @@ import type { BatteryEventInput, BatteryEventView, StationCounter, SwapEntry, Sw
 import type { ReviewInput, StationReview } from "@shared/station-extras";
 import type { LatLng } from "@shared/geo";
 import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "@shared/station-cash";
+import type { SecurityOverview } from "@shared/security";
 import type { BackendErrorCode, CodeChannel } from "@shared/api";
 import type { AdminWallet, CounterCredit, CreditCode, CreditTopupInput, CreditTopupResult, WalletAdjustInput, WalletTransaction, WalletView } from "@shared/wallet";
 
@@ -125,7 +126,12 @@ export interface StartChargeInput {
 export type { BackendErrorCode, CodeChannel };
 
 export class BackendError extends Error {
-  constructor(public code: BackendErrorCode, message?: string) {
+  constructor(
+    public code: BackendErrorCode,
+    message?: string,
+    /** Seconds until a refused try may be made again (locks and request limits), when the server says. */
+    public retryAfter?: number,
+  ) {
     super(message ?? code);
   }
 }
@@ -161,8 +167,11 @@ export interface Backend {
    * `demoRole` is only honoured by the demo backend, so testers can try every view.
    */
   register(contact: string, code: string, pin: string, demoRole?: UserRole): Promise<Profile>;
-  /** Everyday login with phone number or e-mail address, and PIN. */
-  signIn(contact: string, pin: string, demoRole?: UserRole): Promise<Profile>;
+  /**
+   * Everyday login with phone number or e-mail address, and PIN. After a few failed tries the
+   * server answers captcha_required; the form then sends again with a Turnstile token.
+   */
+  signIn(contact: string, pin: string, demoRole?: UserRole, captcha?: string): Promise<Profile>;
   signOut(): Promise<void>;
   /** Sends a code to a phone number or e-mail address the signed-in user wants to add. */
   sendContactCode(contact: string): Promise<void>;
@@ -299,6 +308,10 @@ export interface Backend {
   /** One page of the reservations table (last ADMIN_HISTORY_DAYS days) and how many match. */
   adminReservations(query: AdminReservationQuery): Promise<AdminReservationPage>;
   auditLog(filter: AuditFilter): Promise<AuditEntry[]>;
+  /** The security page: locked accounts, figures of the last 24 hours, the security log (shared/security.ts). */
+  adminSecurity(): Promise<SecurityOverview>;
+  /** Lifts an account's PIN lock. */
+  unlockAccount(userId: string): Promise<void>;
   setUserRole(userId: string, role: UserRole): Promise<void>;
   assignStaff(stationId: string, userId: string): Promise<void>;
   unassignStaff(stationId: string, userId: string): Promise<void>;

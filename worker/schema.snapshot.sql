@@ -328,6 +328,18 @@ CREATE INDEX reservations_target_active_idx on reservations (station_id, kind, t
 -- index reservations_user_idx
 CREATE INDEX reservations_user_idx on reservations (user_id, created_at);
 
+-- index security_events_at
+CREATE INDEX security_events_at on security_events (at);
+
+-- index security_events_ip
+CREATE INDEX security_events_ip on security_events (ip, kind, at) where ip is not null;
+
+-- index security_events_kind_at
+CREATE INDEX security_events_kind_at on security_events (kind, at);
+
+-- index security_events_subject
+CREATE INDEX security_events_subject on security_events (subject, kind, at) where subject is not null;
+
 -- index sessions_user_idx
 CREATE INDEX sessions_user_idx on sessions (user_id);
 
@@ -603,6 +615,9 @@ CREATE TABLE reservation_code_failures (id integer primary key autoincrement, re
 
 -- table reservations
 CREATE TABLE reservations (id text primary key, user_id text not null references users (id) on delete cascade, station_id text not null references stations (id) on delete cascade, type text not null check (type in ('battery', 'slot')), status text not null default 'active' check (status in ('active', 'completed', 'cancelled', 'expired')), created_at text not null, expires_at text not null, cancel_reason text, pickup_code text not null check (length(pickup_code) = 4), charging_point_id text references charging_points (id) on delete set null , kind text not null default 'swap' check (kind in ('swap', 'charging_point')), target text);
+
+-- table security_events
+CREATE TABLE security_events (id integer primary key autoincrement, at text not null, kind text not null, user_id text, ip text, subject text, detail text, dedupe text unique);
 
 -- table sessions
 CREATE TABLE sessions (token_hash text primary key, user_id text not null references users (id) on delete cascade, created_at text not null, expires_at text not null);

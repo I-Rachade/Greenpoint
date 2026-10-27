@@ -37,6 +37,15 @@
     { "tag": "v1", "new_sqlite_classes": ["OcppConnection"] },
     { "tag": "v2", "new_sqlite_classes": ["TutrackBridge"] }
   ],
+  // Request limits per minute (worker/security.ts). Counted per Cloudflare location, so a
+  // little more can pass; enough against robots. namespace_id: any number unique in the account.
+  "ratelimits": [
+    { "name": "API_IP_LIMIT", "namespace_id": "62001", "simple": { "limit": 300, "period": 60 } },
+    { "name": "API_USER_LIMIT", "namespace_id": "62002", "simple": { "limit": 120, "period": 60 } },
+    { "name": "API_WRITE_LIMIT", "namespace_id": "62003", "simple": { "limit": 30, "period": 60 } },
+    { "name": "API_STAFF_LIMIT", "namespace_id": "62004", "simple": { "limit": 600, "period": 60 } },
+    { "name": "PARTNER_LIMIT", "namespace_id": "62005", "simple": { "limit": 60, "period": 60 } }
+  ],
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "poinderecharge-media" }],
   // Login codes by e-mail through Cloudflare Email Service. The domain must be
   // onboarded under Email Service > Email Sending (see docs/DEPLOYMENT.md).

@@ -1,4 +1,5 @@
 import { DEMO_CODE, HOSTED_DEMO } from "./demo-flags";
+import type { SecurityOverview } from "@shared/security";
 import type { AdminShare, ShareMe, ShareOverview, ShareRide, ShareTrackPoint, StationShare } from "@shared/share";
 import { countHolding, isHolding, offersCharging, offersSwap, withinOpeningHours } from "@shared/availability";
 import {
@@ -2530,6 +2531,16 @@ export class DemoBackend implements Backend {
       rows: matches.slice(offset, offset + limit).map((r) => ({ ...r, customer: this.customerLabel(r.userId) })),
       total: matches.length,
     };
+  }
+
+  /** The demo has no PIN locks and no security log: an empty page. */
+  async adminSecurity(): Promise<SecurityOverview> {
+    this.requireAdmin(this.load());
+    return { captchaOn: false, alarm: false, locked: [], last24h: {}, topIps: [], events: [] };
+  }
+
+  async unlockAccount(): Promise<void> {
+    this.requireAdmin(this.load());
   }
 
   async auditLog(filter: AuditFilter): Promise<AuditEntry[]> {

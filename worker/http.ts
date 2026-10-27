@@ -5,9 +5,19 @@ export class ApiError extends Error {
   constructor(
     public code: BackendErrorCode | "rate_limited" | "not_found" | "bad_request",
     public status = 400,
+    /** Seconds until the caller may try again (429 answers): sent as Retry-After and in the body. */
+    public retryAfter?: number,
   ) {
     super(code);
   }
+}
+
+/** The JSON answer for an ApiError, with Retry-After when the error says how long to wait. */
+export function errorResponse(err: ApiError): Response {
+  const wait = err.retryAfter && err.retryAfter > 0 ? Math.ceil(err.retryAfter) : undefined;
+  const response = json(wait ? { error: err.code, retryAfter: wait } : { error: err.code }, err.status);
+  if (wait) response.headers.set("Retry-After", String(wait));
+  return response;
 }
 
 /** Origins allowed to call the API: the web app and the Android/iOS app (Capacitor). */

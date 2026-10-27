@@ -41,7 +41,7 @@ export async function withCodeTry<T>(db: D1Database, log: TryLog, check: () => P
     )
     .bind(nowIso(), since, log.maxTries, ...columns.map(([, v]) => v), ...(log.ceiling ? [log.ceiling.key[1], log.ceiling.maxTries] : []))
     .first<{ try_id: number }>();
-  if (!tried) throw new ApiError("code_locked", 429);
+  if (!tried) throw new ApiError("code_locked", 429, log.lockMinutes * 60);
   const takeBack = () =>
     db.batch([
       db.prepare(`delete from ${log.table} where rowid = ?`).bind(tried.try_id),

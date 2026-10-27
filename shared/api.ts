@@ -47,6 +47,7 @@ export type BackendErrorCode =
   | "phone_required"
   | "hold_limit"
   | "captcha_failed"
+  | "captcha_required"
   | "driver_busy"
   | "driver_not_found"
   | "too_far"

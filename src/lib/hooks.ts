@@ -58,7 +58,15 @@ export function useNow(intervalMs = 30_000): Date {
 
 export function useErrorMessage() {
   const { t } = useI18n();
-  return (err: unknown) => (err instanceof BackendError ? t.errors[err.code] : t.errors.unknown);
+  return (err: unknown) => {
+    if (!(err instanceof BackendError)) return t.errors.unknown;
+    // A lock or a request limit that says how long it lasts: say so instead of a fixed time.
+    if (err.retryAfter && (err.code === "pin_locked" || err.code === "code_locked" || err.code === "rate_limited")) {
+      const n = Math.max(1, Math.ceil(err.retryAfter / 60));
+      return format(err.code === "pin_locked" ? t.retry.pinMinutes : t.retry.minutes, { n });
+    }
+    return t.errors[err.code];
+  };
 }
 
 export function useRelativeTime() {

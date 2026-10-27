@@ -61,6 +61,7 @@ const ERRORS: [string, string, string][] = [
   ["404", "booking_not_found", "Réservation inconnue"],
   ["409", "booking_not_cancellable", "Déjà déposée, annulée ou expirée"],
   ["422", "invalid_request, phone_not_allowed, station_not_found, same_station, parcel_too_large", "Champ invalide, nommé dans field"],
+  ["429", "rate_limited", "Plus de 60 requêtes par minute pour votre compte partenaire : attendez les secondes indiquées dans l'en-tête Retry-After"],
   ["500", "unknown", "Erreur chez nous, réessayez"],
 ];
 
