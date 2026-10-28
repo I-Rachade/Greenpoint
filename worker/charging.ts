@@ -1074,7 +1074,7 @@ export async function startOutletCharge(env: Env, user: Profile, token: string, 
 /** POST /api/admin/devices/:id/qr: a new QR code for the box; the old stickers stop working. */
 export async function renewOutletQr(env: Env, admin: Profile, externalId: string): Promise<{ qrToken: string; qrCode: string }> {
   const db = env.DB;
-  const d = await db.prepare("select station_id from devices where external_id = ?").bind(externalId).first<{ station_id: string }>();
+  const d = await db.prepare("select station_id from devices where external_id = ?").bind(externalId).first<{ station_id: string | null }>();
   if (!d) throw new ApiError("not_found", 404);
   const qrToken = newBoxToken();
   const qrCode = newBoxCode();

@@ -24,7 +24,7 @@ function outletChoices(devices: Device[], text: (device: Device, outlet: number)
     d.points
       .filter((p) => p.outlet && p.deviceId)
       .sort((a, b) => a.outlet! - b.outlet!)
-      .map((p) => ({ id: p.id, stationId: d.stationId, label: text(d, p.outlet!) })),
+      .map((p) => ({ id: p.id, stationId: p.stationId, label: text(d, p.outlet!) })),
   );
 }
 

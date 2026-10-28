@@ -118,8 +118,10 @@ export function ingest(db: D1Database): Ingest {
     const device = await db
       .prepare("select external_id, station_id, protocol from devices where external_id = ?")
       .bind(externalId)
-      .first<{ external_id: string; station_id: string; protocol: string | null }>();
+      .first<{ external_id: string; station_id: string | null; protocol: string | null }>();
     if (!device) return { error: "unknown_device" };
+    // Null: a box not yet at a station, it has no outlets to update and is only alive.
+    const stationId = device.station_id;
 
     const statements: D1PreparedStatement[] = [
       db.prepare("update devices set last_seen_at = ? where external_id = ?").bind(now, externalId),
@@ -156,18 +158,18 @@ export function ingest(db: D1Database): Ingest {
     // A customer plugged in: their outlet reservation is used up, otherwise it would keep
     // holding a second outlet until it expires. A reservation for that outlet first, then
     // the oldest ones, since the socket cannot tell who plugged in. Car chargers never.
-    if (plugIns) {
+    if (plugIns && stationId) {
       const { results } = await db
         .prepare(
           `select r.id, r.user_id from reservations r where r.station_id = ?1 and r.kind = 'charging_point' and r.status = 'active' and r.expires_at > ?2
              and not ${evTargetSql("r")}
            order by case when r.target in (select value from json_each(?4)) then 0 else 1 end, r.created_at limit ?3`,
         )
-        .bind(device.station_id, now, plugIns, JSON.stringify(plugged))
+        .bind(stationId, now, plugIns, JSON.stringify(plugged))
         .all<{ id: string; user_id: string }>();
       for (const r of results) {
         // The rider's CO2 and greenpoints for this charge (worker/greenpoint.ts).
-        const earned = await earnStatement(db, { userId: r.user_id, type: "slot", stationId: device.station_id, reservationId: r.id, createdBy: null });
+        const earned = await earnStatement(db, { userId: r.user_id, type: "slot", stationId, reservationId: r.id, createdBy: null });
         if (earned) statements.push(earned.statement);
         statements.push(
           db.prepare("update reservations set status = 'completed' where id = ? and status = 'active'").bind(r.id),
@@ -175,7 +177,7 @@ export function ingest(db: D1Database): Ingest {
             .prepare(
               "insert into audit_log (at, actor, table_name, action, row_id, station_id, user_id, changes) values (?, null, 'reservations', 'update', ?, ?, ?, ?)",
             )
-            .bind(now, r.id, device.station_id, r.user_id, JSON.stringify({ status: ["active", "completed"], device: externalId })),
+            .bind(now, r.id, stationId, r.user_id, JSON.stringify({ status: ["active", "completed"], device: externalId })),
         );
       }
     }
@@ -199,11 +201,13 @@ export function ingest(db: D1Database): Ingest {
     // A message without outlet data is a heartbeat: the device is alive.
     statements.push(db.prepare("update charging_points set last_seen_at = ? where device_id = ?").bind(now, externalId));
     // Recount the station's free slots from its live outlets, so the counter matches the map.
-    statements.push(
-      db
-        .prepare(`update station_status set free_slots = ${liveFreePointsSql("?1", "?2")}, updated_at = ?3 where station_id = ?1`)
-        .bind(device.station_id, onlineSince(), now),
-    );
+    if (stationId) {
+      statements.push(
+        db
+          .prepare(`update station_status set free_slots = ${liveFreePointsSql("?1", "?2")}, updated_at = ?3 where station_id = ?1`)
+          .bind(stationId, onlineSince(), now),
+      );
+    }
     await db.batch(statements);
     return { updated };
   };
@@ -220,7 +224,7 @@ export function handleDeviceEvents(request: Request, env: Env): Promise<Response
   });
 }
 
-function auditDevice(db: D1Database, actor: string, action: "insert" | "delete", device: string, stationId: string, changes: object) {
+function auditDevice(db: D1Database, actor: string, action: "insert" | "update" | "delete", device: string, stationId: string | null, changes: object) {
   return db
     .prepare(
       "insert into audit_log (at, actor, table_name, action, row_id, station_id, user_id, changes) values (?, ?, 'charging_points', ?, ?, ?, null, ?)",
@@ -268,37 +272,18 @@ export function syncChargingSlots(db: D1Database, stationId: string): D1Prepared
   ];
 }
 
-/** Registers a socket and creates one charging point per outlet, labelled "<last 4 of id>-<outlet>". */
-export async function createDevice(db: D1Database, input: DeviceInput, actor: string) {
-  if (!validDeviceInput(input)) throw new ApiError("invalid_device");
-  const externalId = normalizeDeviceId(input.externalId);
-  const outlets = input.outlets ?? 2;
-  const link = input.link ?? "lorawan";
-  const stationId = String(input.stationId);
+/** The id of an existing station, null for none; throws when the station does not exist. */
+async function stationOrNull(db: D1Database, raw: unknown): Promise<string | null> {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const stationId = String(raw);
   const station = await db.prepare("select id from stations where id = ?").bind(stationId).first();
   if (!station) throw new ApiError("station_not_found", 404);
+  return stationId;
+}
 
-  const now = nowIso();
-  const vendor = String(input.vendor ?? "").trim().slice(0, 80);
-  const model = String(input.model ?? "").trim().slice(0, 80);
-  // The vendor's API wants the id exactly as typed.
-  const vendorRef = String(input.externalId).trim();
-  const protocol = input.protocol ?? null;
-  if (commandRoute({ externalId, vendor, link, protocol }) === "xingke_cloud" && !XINGKE_ID.test(vendorRef)) throw new ApiError("invalid_device");
-  // An OCPP charge point logs in with this key; only its hash is kept, so it is shown once.
-  // Without a key (firmware that cannot send a password) anyone with the id can connect, so
-  // never at a Green Credit station, where its readings and card swipes spend customers' credit
-  // (handleOcppUpgrade in worker/ocpp.ts refuses it there too).
-  if (protocol === "ocpp1.6" && input.ocppNoPassword && (await isCreditStation(db, stationId))) throw new ApiError("ocpp_key_required", 409);
-  const key = protocol === "ocpp1.6" && !input.ocppNoPassword ? ocppKey() : null;
-  const statements = [
-    db
-      .prepare(
-        `insert into devices (external_id, station_id, vendor, model, link, outlets, vendor_ref, protocol, ocpp_key_hash, qr_token, qr_code, created_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(externalId, stationId, vendor, model, link, outlets, vendorRef, protocol, key && (await sha256(key)), newBoxToken(), newBoxCode(), now),
-  ];
+/** Statements that put a box's outlets at a station: one charging point each, the counters, the station kind. */
+function placeAtStation(db: D1Database, externalId: string, outlets: number, stationId: string, now: string): D1PreparedStatement[] {
+  const statements: D1PreparedStatement[] = [];
   for (let n = 1; n <= outlets; n++) {
     statements.push(
       db
@@ -317,6 +302,42 @@ export async function createDevice(db: D1Database, input: DeviceInput, actor: st
       )
       .bind(stationId),
   );
+  return statements;
+}
+
+/**
+ * Registers a socket and creates one charging point per outlet, labelled "<last 4 of id>-<outlet>".
+ * Without a station the box is only registered; its charging points come with assignDeviceStation.
+ */
+export async function createDevice(db: D1Database, input: DeviceInput, actor: string) {
+  if (!validDeviceInput(input)) throw new ApiError("invalid_device");
+  const externalId = normalizeDeviceId(input.externalId);
+  const outlets = input.outlets ?? 2;
+  const link = input.link ?? "lorawan";
+  const stationId = await stationOrNull(db, input.stationId);
+
+  const now = nowIso();
+  const vendor = String(input.vendor ?? "").trim().slice(0, 80);
+  const model = String(input.model ?? "").trim().slice(0, 80);
+  // The vendor's API wants the id exactly as typed.
+  const vendorRef = String(input.externalId).trim();
+  const protocol = input.protocol ?? null;
+  if (commandRoute({ externalId, vendor, link, protocol }) === "xingke_cloud" && !XINGKE_ID.test(vendorRef)) throw new ApiError("invalid_device");
+  // An OCPP charge point logs in with this key; only its hash is kept, so it is shown once.
+  // Without a key (firmware that cannot send a password) anyone with the id can connect, so
+  // never at a Green Credit station, where its readings and card swipes spend customers' credit
+  // (handleOcppUpgrade in worker/ocpp.ts refuses it there too).
+  if (protocol === "ocpp1.6" && input.ocppNoPassword && stationId && (await isCreditStation(db, stationId))) throw new ApiError("ocpp_key_required", 409);
+  const key = protocol === "ocpp1.6" && !input.ocppNoPassword ? ocppKey() : null;
+  const statements = [
+    db
+      .prepare(
+        `insert into devices (external_id, station_id, vendor, model, link, outlets, vendor_ref, protocol, ocpp_key_hash, qr_token, qr_code, created_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(externalId, stationId, vendor, model, link, outlets, vendorRef, protocol, key && (await sha256(key)), newBoxToken(), newBoxCode(), now),
+  ];
+  if (stationId) statements.push(...placeAtStation(db, externalId, outlets, stationId, now));
   const noPassword = protocol === "ocpp1.6" && !key;
   statements.push(auditDevice(db, actor, "insert", externalId, stationId, { device: externalId, outlets, vendor, model, link, protocol, ...(noPassword ? { ocppNoPassword: true } : {}) }));
   try {
@@ -328,9 +349,41 @@ export async function createDevice(db: D1Database, input: DeviceInput, actor: st
   return key ? { externalId, outlets, ocppKey: key } : { externalId, outlets };
 }
 
+/**
+ * Puts a box registered without a station at one: creates its charging points. A box already at
+ * a station keeps it (moving one would strand its reservations and running charges).
+ */
+export async function assignDeviceStation(db: D1Database, rawId: string, rawStation: unknown, actor: string) {
+  const externalId = normalizeDeviceId(rawId);
+  const device = await db
+    .prepare("select station_id, outlets, protocol, ocpp_key_hash from devices where external_id = ?")
+    .bind(externalId)
+    .first<{ station_id: string | null; outlets: number; protocol: string | null; ocpp_key_hash: string | null }>();
+  if (!device) throw new ApiError("not_found", 404);
+  const stationId = await stationOrNull(db, rawStation);
+  if (!stationId) throw new ApiError("invalid_device");
+  if (device.station_id === stationId) return { ok: true };
+  if (device.station_id) throw new ApiError("device_has_station", 409);
+  // As in createDevice: a charge point without a password never at a Green Credit station.
+  if (device.protocol === "ocpp1.6" && !device.ocpp_key_hash && (await isCreditStation(db, stationId))) throw new ApiError("ocpp_key_required", 409);
+  const now = nowIso();
+  try {
+    await db.batch([
+      db.prepare("update devices set station_id = ? where external_id = ? and station_id is null").bind(stationId, externalId),
+      ...placeAtStation(db, externalId, device.outlets, stationId, now),
+      auditDevice(db, actor, "update", externalId, stationId, { device: externalId, station_id: [null, stationId] }),
+    ]);
+  } catch (err) {
+    // Another admin assigned it meanwhile: its outlets exist already (charging_points_device_outlet).
+    if (/UNIQUE/i.test(String(err))) throw new ApiError("device_has_station", 409);
+    throw err;
+  }
+  return { ok: true };
+}
+
 interface DeviceRow {
   external_id: string;
-  station_id: string;
+  station_id: string | null;
   vendor: string;
   model: string;
   link: DeviceLink;
@@ -375,7 +428,7 @@ export async function deleteDevice(db: D1Database, rawId: string, actor: string)
   const device = await db
     .prepare("select station_id, outlets from devices where external_id = ?")
     .bind(externalId)
-    .first<{ station_id: string; outlets: number }>();
+    .first<{ station_id: string | null; outlets: number }>();
   if (!device) throw new ApiError("not_found", 404);
   // A running charge would lose its outlet and could never be stopped from the app.
   const charging = await db
@@ -387,8 +440,7 @@ export async function deleteDevice(db: D1Database, rawId: string, actor: string)
     db.prepare("delete from device_commands where external_id = ?").bind(externalId),
     db.prepare("delete from charging_points where device_id = ?").bind(externalId),
     db.prepare("delete from devices where external_id = ?").bind(externalId),
-    ...syncChargingSlots(db, device.station_id),
-    recountFreeSlots(db, device.station_id),
+    ...(device.station_id ? [...syncChargingSlots(db, device.station_id), recountFreeSlots(db, device.station_id)] : []),
     auditDevice(db, actor, "delete", externalId, device.station_id, { device: externalId, outlets: device.outlets }),
   ]);
   return { ok: true };

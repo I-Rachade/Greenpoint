@@ -171,6 +171,42 @@ describe("station points", () => {
     expect(colis.parcelPoint).toEqual({ counter: true, lockers: 0 });
   });
 
+  it("registers a socket without a station and gives it its outlets once assigned", async () => {
+    const { db, env } = await setup();
+    await save(env, station("Echange", { kind: "swap", batteryCapacity: 8 }));
+    const created = await call(env, "POST", "/api/admin/devices", { externalId: "101106", stationId: null, outlets: 10, link: "own_server", vendor: "Xingke" });
+    expect(created).toEqual({ status: 200, body: { externalId: "101106", outlets: 10 } });
+    // Only registered: no charging place anywhere yet.
+    expect(db.prepare("select count(*) as n from charging_points where device_id = '101106'").get()).toEqual({ n: 0 });
+    const listed = (await call(env, "GET", "/api/admin/devices")).body as { externalId: string; stationId: string | null; points: unknown[] }[];
+    expect(listed.find((d) => d.externalId === "101106")).toMatchObject({ stationId: null, points: [] });
+
+    const s = await byName(env, "Echange");
+    expect(await call(env, "POST", "/api/admin/devices/101106/station", { stationId: s.id })).toEqual({ status: 200, body: { ok: true } });
+    const after = await byName(env, "Echange");
+    expect(after.chargingSlots).toBe(10);
+    expect(after.kind).toBe("both");
+    // Assigned once: another station is refused, the same one is a no-op.
+    await save(env, station("Autre", { kind: "charging" }));
+    const other = await byName(env, "Autre");
+    expect(await call(env, "POST", "/api/admin/devices/101106/station", { stationId: other.id })).toEqual({ status: 409, body: { error: "device_has_station" } });
+    expect(await call(env, "POST", "/api/admin/devices/101106/station", { stationId: s.id })).toEqual({ status: 200, body: { ok: true } });
+    expect(await call(env, "POST", "/api/admin/devices/101106/station", { stationId: "nope" })).toEqual({ status: 404, body: { error: "station_not_found" } });
+    expect(db.prepare("select count(*) as n from charging_points where device_id = '101106'").get()).toEqual({ n: 10 });
+  });
+
+  it("keeps the sockets of a deleted station, without a station", async () => {
+    const { db, d1, env } = await setup();
+    await save(env, station("Recharge", { kind: "charging" }));
+    const s = await byName(env, "Recharge");
+    await createDevice(d1, { externalId: "SOCKET03", stationId: s.id, outlets: 2 }, "admin");
+    db.prepare("delete from stations where id = ?").run(s.id);
+    expect(db.prepare("select station_id from devices where external_id = 'SOCKET03'").get()).toEqual({ station_id: null });
+    expect(db.prepare("select count(*) as n from charging_points where device_id = 'SOCKET03'").get()).toEqual({ n: 0 });
+    await deleteDevice(d1, "SOCKET03", "admin");
+    expect(db.prepare("select count(*) as n from devices").get()).toEqual({ n: 0 });
+  });
+
   it("offers no reservation at a parcel point", async () => {
     const { env, db } = await setup();
     await save(env, station("Colis", { kind: "parcel", parcelDepot: { isActive: true, counter: true, lockers: 0, note: "" } }));

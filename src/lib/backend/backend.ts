@@ -326,9 +326,10 @@ export interface Backend {
 
   // Connected sockets (admins only; see shared/iot/devices.ts)
   listDevices(): Promise<Device[]>;
-  /** Registers a socket and creates one charging point per outlet. */
-  /** Registers a socket; an OCPP charge point gets its password (only now). */
+  /** Registers a socket, with or without a station; an OCPP charge point gets its password (only now). */
   createDevice(input: DeviceInput): Promise<{ ocppKey?: string }>;
+  /** Puts a socket registered without a station at one and creates its charging points. */
+  assignDeviceStation(externalId: string, stationId: string): Promise<void>;
   /** Removes a socket and its charging points. */
   deleteDevice(externalId: string): Promise<void>;
   /** Switches an outlet on (until full) or off; only where `canSwitch`. */

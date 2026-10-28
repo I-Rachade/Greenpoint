@@ -65,8 +65,9 @@ export async function swipeCard(
   if (!card || card.blocked) return { status: "Blocked", tag, userId };
   const running = await db.prepare("select 1 from charging_sessions where charge_card = ? and status = 'charging'").bind(tag).first();
   if (running) return { status: "ConcurrentTx", tag, userId };
-  const device = await db.prepare("select station_id from devices where external_id = ?").bind(externalId).first<{ station_id: string }>();
-  if (!device || !(await socketIsOurs(db, externalId))) return { status: "Blocked", tag, userId };
+  const device = await db.prepare("select station_id from devices where external_id = ?").bind(externalId).first<{ station_id: string | null }>();
+  // A box not yet at a station charges nobody.
+  if (!device?.station_id || !(await socketIsOurs(db, externalId))) return { status: "Blocked", tag, userId };
   if (!userId) return { status: "Blocked", tag, userId };
   const credit = await linkedCardCredit(db, userId, device.station_id);
   if (credit === null) return { status: "Blocked", tag, userId };

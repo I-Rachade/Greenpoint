@@ -13,7 +13,8 @@ export type DeviceProtocol = "ocpp1.6";
 export interface DeviceInput {
   /** DevEUI (LoRaWAN) or the vendor's device number. */
   externalId: string;
-  stationId: string;
+  /** Empty or null: registered without a station, assigned later (assignDeviceStation). */
+  stationId?: string | null;
   vendor?: string;
   model?: string;
   link?: DeviceLink;
@@ -26,7 +27,8 @@ export interface DeviceInput {
 
 export interface Device {
   externalId: string;
-  stationId: string;
+  /** Null until the box is assigned to a station; it has no charging points until then. */
+  stationId: string | null;
   vendor: string;
   model: string;
   link: DeviceLink;
@@ -60,7 +62,7 @@ export function validDeviceInput(input: DeviceInput): boolean {
     outlets <= MAX_OUTLETS &&
     DEVICE_LINKS.includes(input.link ?? "lorawan") &&
     (!input.protocol || (input.protocol === "ocpp1.6" && input.link === "own_server")) &&
-    !!input.stationId
+    (input.stationId === undefined || input.stationId === null || typeof input.stationId === "string")
   );
 }
 

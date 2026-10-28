@@ -138,6 +138,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "image_too_large",
   "invalid_device",
   "device_exists",
+  "device_has_station",
   "device_offline",
   "device_not_charging",
   "device_command_failed",
@@ -728,6 +729,11 @@ export class CloudflareBackend implements Backend {
     const { ocppKey } = await this.call<{ ocppKey?: string }>("POST", "/api/admin/devices", input);
     this.changed();
     return { ocppKey };
+  }
+
+  async assignDeviceStation(externalId: string, stationId: string) {
+    await this.call("POST", `/api/admin/devices/${encodeURIComponent(externalId)}/station`, { stationId });
+    this.changed();
   }
 
   async deleteDevice(externalId: string) {

@@ -85,6 +85,7 @@ import {
   signOut,
 } from "./auth";
 import {
+  assignDeviceStation,
   chargingPointsByStation,
   createDevice,
   deleteDevice,
@@ -2674,6 +2675,14 @@ const ROUTES: [string, RegExp, Handler][] = [
       if (action === "stop") return stopOutlet(c.env, device, Number(outlet), admin.id);
       const { minutes } = await readJson<{ minutes?: number }>(c.request).catch(() => ({ minutes: undefined }));
       return startOutlet(c.env, device, Number(outlet), admin.id, minutes);
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/admin\/devices\/([\w:%-]+)\/station$/,
+    async (c, [device]) => {
+      const admin = await c.requireAdmin();
+      return assignDeviceStation(c.db, decodeURIComponent(device), (await readJson<{ stationId?: string }>(c.request)).stationId, admin.id);
     },
   ],
   [

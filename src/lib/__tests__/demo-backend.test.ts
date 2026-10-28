@@ -149,6 +149,20 @@ describe("DemoBackend account deletion", () => {
 });
 
 describe("DemoBackend connected sockets", () => {
+  it("registers a socket without a station and places it later", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890123456", DEMO_CODE, "2580", "admin");
+    const outletsBefore = (await backend.listStations()).find((s) => s.id === STATION)!.chargingSlots;
+    await backend.createDevice({ externalId: "101106", stationId: null, outlets: 10 });
+    expect((await backend.listDevices()).find((d) => d.externalId === "101106")).toMatchObject({ stationId: null, points: [] });
+    expect((await backend.listStations()).find((s) => s.id === STATION)!.chargingSlots).toBe(outletsBefore);
+
+    await backend.assignDeviceStation("101106", STATION);
+    expect((await backend.listDevices()).find((d) => d.externalId === "101106")!.points).toHaveLength(10);
+    expect((await backend.listStations()).find((s) => s.id === STATION)!.chargingSlots).toBe(outletsBefore + 10);
+    await expect(backend.assignDeviceStation("101106", "other")).rejects.toMatchObject({ code: "station_not_found" });
+  });
+
   it("lets an admin add, switch and remove a socket", async () => {
     const backend = new DemoBackend();
     await backend.register("+22890123456", DEMO_CODE, "2580", "admin");

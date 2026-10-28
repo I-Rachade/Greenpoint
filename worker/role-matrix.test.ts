@@ -286,6 +286,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/admin/devices/:id/outlets/:id/:id": ADMIN,
   "POST /api/admin/devices/:id/partner": ADMIN,
   "POST /api/admin/devices/:id/qr": ADMIN,
+  "POST /api/admin/devices/:id/station": ADMIN,
   "POST /api/admin/cash/handovers/:id/decide": ADMIN,
   "POST /api/admin/cash/stations/:id": ADMIN,
   "GET /api/admin/point-partners": ADMIN,
