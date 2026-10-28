@@ -142,15 +142,26 @@ describe("admin accounts and ADMIN_ACCESS_REQUIRED", () => {
 
   it("with the switch on, an admin only signs in and acts with a valid Access token", async () => {
     const { env } = await setup(REQUIRED);
-    expect(await code(signIn(env, await request(false), ADMIN_PHONE, "4826"))).toBe("admin_access_required");
-    expect(await code(signIn(env, await request(await token({ aud: ["other-app"] })), ADMIN_PHONE, "4826"))).toBe("admin_access_required");
-    // The PIN is checked first: a wrong PIN still says so, and never reveals the back office.
+    expect(await code(signIn(env, await request(false), ADMIN_PHONE, "4826"))).toBe("invalid_pin");
+    expect(await code(signIn(env, await request(await token({ aud: ["other-app"] })), ADMIN_PHONE, "4826"))).toBe("invalid_pin");
     expect(await code(signIn(env, await request(false), ADMIN_PHONE, "1111"))).toBe("invalid_pin");
 
     const { token: session } = await signIn(env, await request(true), ADMIN_PHONE, "4826");
     expect(await currentUser(env, await request(true, session))).toMatchObject({ id: "boss" });
     // The same session token from the public app address, without Access, is worth nothing.
     expect(await currentUser(env, await request(false, session))).toBeNull();
+  });
+
+  it("answers a blocked admin exactly like an unknown address, so the app never reveals an admin account", async () => {
+    const { env } = await setup(REQUIRED);
+    const answer = (p: Promise<unknown>) =>
+      p.then(
+        () => "ok",
+        (err: unknown) => (err instanceof ApiError ? `${err.code} ${err.status}` : String(err)),
+      );
+    const unknown = await answer(signIn(env, await request(false), "+22890000077", "4826"));
+    expect(unknown).toBe("invalid_pin 400");
+    expect(await answer(signIn(env, await request(false), ADMIN_PHONE, "4826"))).toBe(unknown);
   });
 
   it("leaves customers alone", async () => {
@@ -161,7 +172,7 @@ describe("admin accounts and ADMIN_ACCESS_REQUIRED", () => {
 
   it("stays shut when the switch is on but the Access settings are missing", async () => {
     const { db, env } = await setup({ ADMIN_ACCESS_REQUIRED: "1" });
-    expect(await code(signIn(env, await request(true), ADMIN_PHONE, "4826"))).toBe("admin_access_required");
+    expect(await code(signIn(env, await request(true), ADMIN_PHONE, "4826"))).toBe("invalid_pin");
     db.prepare("insert into sessions (token_hash, user_id, created_at, expires_at) values (?, 'boss', ?, ?)").run(
       await sha256("token-of-boss-0123456789"),
       new Date(NOW).toISOString(),
