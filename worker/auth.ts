@@ -341,6 +341,9 @@ export async function register(env: Env, request: Request, rawContact: string, r
       return openSession(env, request, user);
     }
   }
+  // An admin outside the back office gets no new PIN either (see openSession), with the same
+  // answer as a wrong code.
+  if (user.role === "admin" && !(await adminAllowed(env, request))) throw new ApiError("invalid_code");
   await env.DB.batch([
     env.DB.prepare("update users set pin_hash = ?, pin_failures = 0, pin_lock_count = 0, pin_locked_until = null where id = ?").bind(
       pinHash,
@@ -528,10 +531,11 @@ export async function verifyPin(env: Env, userId: string, rawPin: unknown) {
 /**
  * Opens a session. With ADMIN_ACCESS_REQUIRED an admin account only gets one through the
  * back office (Cloudflare Access, worker/access.ts): a known PIN or a fresh login code alone
- * is not enough. Checked after the PIN, so this answer says nothing to someone without it.
+ * is not enough. The answer is the same as for an unknown contact or a wrong PIN, so the app
+ * never reveals that an address or number belongs to an admin.
  */
 async function openSession(env: Env, request: Request, user: UserRow): Promise<{ token: string; profile: Profile }> {
-  if (user.role === "admin" && !(await adminAllowed(env, request))) throw new ApiError("admin_access_required", 403);
+  if (user.role === "admin" && !(await adminAllowed(env, request))) throw new ApiError("invalid_pin");
   const now = nowIso();
   const token = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
     .replace(/\+/g, "-")
