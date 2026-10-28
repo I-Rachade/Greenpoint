@@ -55,7 +55,7 @@ export async function adminPointPartners(c: PartnerCtx): Promise<AdminPointPartn
       .all<{ partner_id: string; id: string; phone: string | null; email: string | null; full_name: string | null }>(),
     c.db
       .prepare("select external_id, station_id, outlets, partner_id from devices where partner_id is not null order by created_at")
-      .all<{ external_id: string; station_id: string; outlets: number; partner_id: string }>(),
+      .all<{ external_id: string; station_id: string | null; outlets: number; partner_id: string }>(),
   ]);
   return partners.results.map((p) => ({
     id: p.id,
@@ -160,7 +160,7 @@ export async function setDevicePartner(c: PartnerCtx, rawId: string, partnerId: 
   const admin = await c.requireAdmin();
   const externalId = normalizeDeviceId(rawId);
   const target = partnerId === null || partnerId === undefined || partnerId === "" ? null : String(partnerId);
-  const device = await c.db.prepare("select station_id, partner_id from devices where external_id = ?").bind(externalId).first<{ station_id: string; partner_id: string | null }>();
+  const device = await c.db.prepare("select station_id, partner_id from devices where external_id = ?").bind(externalId).first<{ station_id: string | null; partner_id: string | null }>();
   if (!device) throw new ApiError("not_found", 404);
   if (target && !(await c.db.prepare("select 1 from point_partners where id = ?").bind(target).first())) throw new ApiError("not_found", 404);
   if (device.partner_id === target) return;

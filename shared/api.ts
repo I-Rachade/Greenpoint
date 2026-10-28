@@ -29,6 +29,7 @@ export type BackendErrorCode =
   | "image_too_large"
   | "invalid_device"
   | "device_exists"
+  | "device_has_station"
   | "device_offline"
   | "device_not_charging"
   | "device_command_failed"

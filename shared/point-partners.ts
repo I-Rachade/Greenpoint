@@ -33,7 +33,7 @@ export interface AdminPointPartner extends PointPartnerRef {
   contactPhone: string | null;
   createdAt: string;
   accounts: OperatorPerson[];
-  devices: { externalId: string; stationId: string; outlets: number }[];
+  devices: { externalId: string; stationId: string | null; outlets: number }[];
 }
 
 /** One of the partner's charging points with what it did in the period. */

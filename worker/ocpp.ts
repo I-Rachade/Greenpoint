@@ -257,8 +257,8 @@ export async function applyOcppResult(db: D1Database, commandId: number, frame: 
 
 /** The charge point hung up: its outlets are no longer offered until it is back. */
 export async function markOcppOffline(db: D1Database, externalId: string) {
-  const device = await db.prepare("select station_id from devices where external_id = ?").bind(externalId).first<{ station_id: string }>();
-  if (!device) return;
+  const device = await db.prepare("select station_id from devices where external_id = ?").bind(externalId).first<{ station_id: string | null }>();
+  if (!device?.station_id) return;
   await db.batch([
     db.prepare("update charging_points set last_seen_at = null where device_id = ?").bind(externalId),
     recountFreeSlots(db, device.station_id),
@@ -289,10 +289,11 @@ export async function handleOcppUpgrade(request: Request, env: Env, rawId: strin
   if (!OCPP_ID.test(id)) return new Response("Unknown charge point", { status: 404 });
   const externalId = normalizeDeviceId(id);
   const device = await env.DB.prepare(
-    "select d.ocpp_key_hash, s.green_credit from devices d join stations s on s.id = d.station_id where d.external_id = ? and d.protocol = 'ocpp1.6'",
+    // left join: a box not yet at a station may connect (it has no outlets to offer yet).
+    "select d.ocpp_key_hash, s.green_credit from devices d left join stations s on s.id = d.station_id where d.external_id = ? and d.protocol = 'ocpp1.6'",
   )
     .bind(externalId)
-    .first<{ ocpp_key_hash: string | null; green_credit: number }>();
+    .first<{ ocpp_key_hash: string | null; green_credit: number | null }>();
   if (!device) return new Response("Unknown charge point", { status: 404 });
   const unauthorized = () => new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="OCPP"' } });
   // No stored key: the socket was added "without password" and connects with its id alone, but

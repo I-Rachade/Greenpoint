@@ -151,7 +151,7 @@ function PartnerCard({
               <li key={d.externalId} className="flex flex-wrap items-center gap-x-2 py-1.5">
                 <span className="font-mono">{d.externalId}</span>
                 <span className="text-zinc-500">
-                  {stationName(d.stationId)} · {format(p.outlets, { n: d.outlets })}
+                  {d.stationId ? stationName(d.stationId) : t.backoffice.devices.noStation} · {format(p.outlets, { n: d.outlets })}
                 </span>
               </li>
             ))}

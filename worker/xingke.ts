@@ -147,8 +147,8 @@ async function applyCallback(db: D1Database, cb: XingkeCallback, body: unknown) 
       .run();
     if (!effect) return;
     // Offline: its outlets are no longer offered, until the device reports again.
-    const device = await db.prepare("select station_id from devices where external_id = ?").bind(deviceId).first<{ station_id: string }>();
-    if (!device) return;
+    const device = await db.prepare("select station_id from devices where external_id = ?").bind(deviceId).first<{ station_id: string | null }>();
+    if (!device?.station_id) return;
     await db.batch([
       db.prepare("update charging_points set last_seen_at = null where device_id = ?").bind(deviceId),
       recountFreeSlots(db, device.station_id),

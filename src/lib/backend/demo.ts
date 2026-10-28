@@ -783,6 +783,29 @@ function boxCode(d: Device): string {
   return d.qrCode ?? demoBoxCode(d.externalId);
 }
 
+/** A demo box placed at a station: one charging point per outlet, as the Worker creates them. */
+function placeDemoDevice(device: Device, stationId: string): Device {
+  return {
+    ...device,
+    stationId,
+    points: Array.from({ length: device.outlets }, (_, i) => ({
+      id: `cp-${device.externalId}-${i + 1}`,
+      stationId,
+      label: outletLabel(device.externalId, i + 1),
+      status: "free",
+      deviceId: device.externalId,
+      outlet: i + 1,
+      powerWatts: 0,
+      lastSeenAt: null,
+    })),
+  };
+}
+
+/** A connected socket makes the station a charging point. */
+function chargingKind(stations: DemoState["stations"], stationId: string): DemoState["stations"] {
+  return stations.map((s) => (s.id === stationId && !offersCharging(s.kind) ? { ...s, kind: kindFor(offersSwap(s.kind), true) } : s));
+}
+
 /** The connected socket of the "Déckon" station, as a device. */
 function seedDevices(): Device[] {
   const [first] = DEMO_CHARGING_POINTS;
@@ -3549,14 +3572,15 @@ export class DemoBackend implements Backend {
     const state = this.load();
     this.requireAdmin(state);
     if (!validDeviceInput(input)) throw new BackendError("invalid_device");
-    if (!state.stations.some((s) => s.id === input.stationId)) throw new BackendError("station_not_found");
+    const stationId = input.stationId || null;
+    if (stationId && !state.stations.some((s) => s.id === stationId)) throw new BackendError("station_not_found");
     const externalId = normalizeDeviceId(input.externalId);
     const devices = state.devices ?? seedDevices();
     if (devices.some((d) => d.externalId === externalId)) throw new BackendError("device_exists");
     const outlets = input.outlets ?? 2;
     const device: Device = {
       externalId,
-      stationId: input.stationId,
+      stationId: null,
       vendor: input.vendor?.trim() ?? "",
       model: input.model?.trim() ?? "",
       link: input.link ?? "lorawan",
@@ -3568,28 +3592,33 @@ export class DemoBackend implements Backend {
       partnerId: null,
       qrToken: randomBoxToken(),
       qrCode: newBoxCode(),
-      points: Array.from({ length: outlets }, (_, i) => ({
-        id: `cp-${externalId}-${i + 1}`,
-        stationId: input.stationId,
-        label: outletLabel(externalId, i + 1),
-        status: "free",
-        deviceId: externalId,
-        outlet: i + 1,
-        powerWatts: 0,
-        lastSeenAt: null,
-      })),
+      points: [],
     };
-    // A connected socket makes the station a charging point.
-    const stations = state.stations.map((s) =>
-      s.id === input.stationId && !offersCharging(s.kind) ? { ...s, kind: kindFor(offersSwap(s.kind), true) } : s,
-    );
+    const placed = stationId ? placeDemoDevice(device, stationId) : device;
     this.save(
       withAudit(
-        { ...state, stations, devices: [device, ...devices] },
-        { table: "charging_points", action: "insert", rowId: externalId, stationId: input.stationId, changes: { device: externalId, outlets } },
+        { ...state, stations: stationId ? chargingKind(state.stations, stationId) : state.stations, devices: [placed, ...devices] },
+        { table: "charging_points", action: "insert", rowId: externalId, stationId, changes: { device: externalId, outlets } },
       ),
     );
     return device.protocol === "ocpp1.6" && !device.ocppOpen ? { ocppKey: ocppKey() } : {};
+  }
+
+  async assignDeviceStation(externalId: string, stationId: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const all = state.devices ?? seedDevices();
+    const device = all.find((d) => d.externalId === externalId);
+    if (!device) throw new BackendError("unknown", "not_found");
+    if (!state.stations.some((s) => s.id === stationId)) throw new BackendError("station_not_found");
+    if (device.stationId === stationId) return;
+    if (device.stationId) throw new BackendError("device_has_station");
+    this.save(
+      withAudit(
+        { ...state, stations: chargingKind(state.stations, stationId), devices: all.map((d) => (d === device ? placeDemoDevice(d, stationId) : d)) },
+        { table: "charging_points", action: "update", rowId: externalId, stationId, changes: { device: externalId, station_id: [null, stationId] } },
+      ),
+    );
   }
 
   async deleteDevice(externalId: string) {
