@@ -1,0 +1,1838 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:xingke:unified-api:1.0:16-channel",
+  "title": "Xingke Unified API Protocol for Two-Wheeler Charging Devices",
+  "$defs": {
+    "RemoteStartTransactionData": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "integer",
+          "description": "Logical charging channel number, starting at 1. Current 16-channel devices use 1-16. Required for multichannel devices; optional for a single channel.",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "transactionId": {
+          "type": "string",
+          "description": "Partner-generated charging correlation ID. This device profile requires a 20-digit string, preserving leading zeros.",
+          "pattern": "^[0-9]{20}$"
+        },
+        "startSource": {
+          "type": "string",
+          "description": "Remote means remote start; Card means card-initiated start.",
+          "enum": [
+            "Remote",
+            "Card"
+          ]
+        },
+        "chargingMode": {
+          "type": "string",
+          "description": "AutoStop stops when fully charged; Timed uses a specified duration.",
+          "enum": [
+            "AutoStop",
+            "Timed"
+          ]
+        },
+        "duration": {
+          "type": "integer",
+          "description": "Required for Timed, in seconds: 60-59880, a multiple of 60. Forbidden for AutoStop.",
+          "minimum": 60,
+          "maximum": 59880,
+          "multipleOf": 60
+        }
+      },
+      "required": [
+        "transactionId",
+        "startSource",
+        "chargingMode"
+      ],
+      "additionalProperties": false,
+      "description": "",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "chargingMode": {
+                "const": "Timed"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "duration"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "duration"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "RemoteStartTransactionRequest": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "RemoteStartTransaction",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RemoteStartTransactionData"
+        }
+      },
+      "required": [
+        "messageId",
+        "action",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "RemoteStopTransactionData": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "integer",
+          "description": "Logical charging channel number, starting at 1. Current 16-channel devices use 1-16. Required for multichannel devices; optional for a single channel.",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "transactionId": {
+          "type": "string",
+          "description": "Partner-generated charging correlation ID. This device profile requires a 20-digit string, preserving leading zeros.",
+          "pattern": "^[0-9]{20}$"
+        },
+        "stopSource": {
+          "type": "string",
+          "description": "Remote means a partner-platform stop; User means a user-initiated stop.",
+          "enum": [
+            "Remote",
+            "User"
+          ]
+        }
+      },
+      "required": [
+        "transactionId",
+        "stopSource"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "RemoteStopTransactionRequest": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "RemoteStopTransaction",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RemoteStopTransactionData"
+        }
+      },
+      "required": [
+        "messageId",
+        "action",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "AuthorizeResponseData": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "integer",
+          "description": "Logical charging channel number, starting at 1. Current 16-channel devices use 1-16. Required for multichannel devices; optional for a single channel.",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "idTag": {
+          "type": "string",
+          "description": "10-digit decimal card-number string, preserving leading zeros.",
+          "pattern": "^[0-9]{10}$"
+        },
+        "status": {
+          "type": "string",
+          "description": "Accepted means a valid card; Invalid means an invalid card.",
+          "enum": [
+            "Accepted",
+            "Invalid"
+          ]
+        },
+        "cardType": {
+          "type": "string",
+          "description": "Balance means a balance-based card; Period means an expiry-date card. Required only when Accepted.",
+          "enum": [
+            "Balance",
+            "Period"
+          ]
+        },
+        "balance": {
+          "type": "integer",
+          "description": "Balance in CNY cents (fen), API range 0-2147483647. Required only for Accepted with Balance. Any lower firmware limit is checked against confirmed capabilities.",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "expiryDate": {
+          "type": "string",
+          "description": "Card expiry date, YYYY-MM-DD, interpreted in Asia/Shanghai. Required only for Accepted with Period.",
+          "format": "date",
+          "pattern": "^20\\d{2}-\\d{2}-\\d{2}$"
+        }
+      },
+      "required": [
+        "idTag",
+        "status"
+      ],
+      "additionalProperties": false,
+      "description": "",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "Invalid"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "cardType"
+                  ]
+                },
+                {
+                  "required": [
+                    "balance"
+                  ]
+                },
+                {
+                  "required": [
+                    "expiryDate"
+                  ]
+                }
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "cardType"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "cardType"
+            ],
+            "properties": {
+              "cardType": {
+                "const": "Balance"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "balance"
+            ],
+            "not": {
+              "required": [
+                "expiryDate"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "cardType"
+            ],
+            "properties": {
+              "cardType": {
+                "const": "Period"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "expiryDate"
+            ],
+            "not": {
+              "required": [
+                "balance"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "AuthorizeResponseRequest": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "AuthorizeResponse",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/AuthorizeResponseData"
+        }
+      },
+      "required": [
+        "messageId",
+        "action",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "ChangeConfigurationData": {
+      "type": "object",
+      "properties": {
+        "volume": {
+          "type": "integer",
+          "description": "Device volume level: 1-10.",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "floatChargingDuration": {
+          "type": "integer",
+          "description": "Float-charge duration, seconds: 1800-10800, in whole minutes.",
+          "minimum": 1800,
+          "maximum": 10800,
+          "multipleOf": 60
+        },
+        "maxChargingDuration": {
+          "type": "integer",
+          "description": "Maximum charging duration, seconds: 60-48000, in whole minutes. The 60-second minimum is an API constraint.",
+          "minimum": 60,
+          "maximum": 48000,
+          "multipleOf": 60
+        },
+        "statusNotificationInterval": {
+          "type": "integer",
+          "description": "Device status reporting interval, seconds: 300-5400.",
+          "minimum": 300,
+          "maximum": 5400
+        },
+        "chargingStatusInterval": {
+          "type": "integer",
+          "description": "Charging status and metering reporting interval, seconds: 300-3600.",
+          "minimum": 300,
+          "maximum": 3600
+        },
+        "temperatureLimit": {
+          "type": "integer",
+          "description": "Temperature alarm threshold, degrees Celsius: 35-80.",
+          "minimum": 35,
+          "maximum": 80
+        },
+        "powerLimit": {
+          "type": "integer",
+          "description": "Overload power threshold, watts. Reference write range: 500-1000; confirmed firmware capabilities are also required.",
+          "minimum": 500,
+          "maximum": 1000
+        },
+        "offlineStopDuration": {
+          "type": "integer",
+          "description": "Delay before power-off when offline, seconds: 300-5400, in whole minutes. Confirmed firmware capabilities are also required.",
+          "minimum": 300,
+          "maximum": 5400,
+          "multipleOf": 60
+        }
+      },
+      "required": [
+        "volume",
+        "floatChargingDuration",
+        "maxChargingDuration",
+        "statusNotificationInterval",
+        "chargingStatusInterval",
+        "temperatureLimit",
+        "powerLimit",
+        "offlineStopDuration"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "ChangeConfigurationRequest": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "ChangeConfiguration",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ChangeConfigurationData"
+        }
+      },
+      "required": [
+        "messageId",
+        "action",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "GetConfigurationData": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "GetConfigurationRequest": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "GetConfiguration",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/GetConfigurationData"
+        }
+      },
+      "required": [
+        "messageId",
+        "action",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "ResetData": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Only Soft is supported, meaning a software restart.",
+          "enum": [
+            "Soft"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "ResetRequest": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "Reset",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ResetData"
+        }
+      },
+      "required": [
+        "messageId",
+        "action",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "UpdateFirmwareData": {
+      "type": "object",
+      "properties": {
+        "location": {
+          "type": "string",
+          "description": "Device-accessible firmware download URL. HTTP or HTTPS support depends on firmware capabilities. Semicolons, carriage returns and line feeds are forbidden.",
+          "format": "uri",
+          "pattern": "^https?://[^;\\r\\n]+$",
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "location"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "UpdateFirmwareRequest": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "UpdateFirmware",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/UpdateFirmwareData"
+        }
+      },
+      "required": [
+        "messageId",
+        "action",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "Command": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RemoteStartTransactionRequest"
+        },
+        {
+          "$ref": "#/$defs/RemoteStopTransactionRequest"
+        },
+        {
+          "$ref": "#/$defs/AuthorizeResponseRequest"
+        },
+        {
+          "$ref": "#/$defs/ChangeConfigurationRequest"
+        },
+        {
+          "$ref": "#/$defs/GetConfigurationRequest"
+        },
+        {
+          "$ref": "#/$defs/ResetRequest"
+        },
+        {
+          "$ref": "#/$defs/UpdateFirmwareRequest"
+        }
+      ]
+    },
+    "CommandResultData": {
+      "type": "object",
+      "properties": {
+        "requestAction": {
+          "type": "string",
+          "description": "Original request action.",
+          "enum": [
+            "RemoteStartTransaction",
+            "RemoteStopTransaction",
+            "AuthorizeResponse",
+            "ChangeConfiguration",
+            "GetConfiguration",
+            "Reset",
+            "UpdateFirmware"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "description": "Succeeded: confirmed device success. Failed: explicit failure. Unknown: unconfirmed. Sent: successful send only, with no device acknowledgement.",
+          "enum": [
+            "Succeeded",
+            "Failed",
+            "Unknown",
+            "Sent"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "description": "Machine-readable result code.",
+          "minLength": 1,
+          "maxLength": 64,
+          "enum": [
+            "OK",
+            "SENT",
+            "DEVICE_REJECTED",
+            "NO_LOAD",
+            "VOLTAGE_PROTECTION",
+            "DEVICE_FAULT",
+            "NOT_CONFIGURED",
+            "ALREADY_CHARGING",
+            "DELIVERY_FAILED",
+            "TIMEOUT",
+            "DELIVERY_UNCERTAIN",
+            "INCONSISTENT_DEVICE_RESPONSE",
+            "INVALID_DEVICE_PAYLOAD"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable explanation; not used for program logic.",
+          "maxLength": 512
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "connectorId": {
+              "type": "integer",
+              "description": "Logical charging channel number, starting at 1. Current 16-channel devices use 1-16. Required for multichannel devices; optional for a single channel.",
+              "minimum": 1,
+              "maximum": 16
+            },
+            "transactionId": {
+              "type": "string",
+              "description": "Partner-generated charging correlation ID. This device profile requires a 20-digit string, preserving leading zeros.",
+              "pattern": "^[0-9]{20}$"
+            },
+            "vendorResult": {
+              "type": "string",
+              "description": "Device result code: 0 means success, 1 means failure.",
+              "enum": [
+                "0",
+                "1"
+              ]
+            },
+            "vendorCode": {
+              "type": "string",
+              "description": "Device status code, included only when provided by the device.",
+              "minLength": 1,
+              "maxLength": 16
+            },
+            "configuration": {
+              "type": "object",
+              "properties": {
+                "floatChargingDuration": {
+                  "type": "integer",
+                  "description": "Float-charge duration, seconds. Actual device read value; do not clamp to the write range.",
+                  "minimum": 0
+                },
+                "maxChargingDuration": {
+                  "type": "integer",
+                  "description": "Maximum charging duration, seconds. Actual device read value; do not clamp to the write range.",
+                  "minimum": 0
+                },
+                "statusNotificationInterval": {
+                  "type": "integer",
+                  "description": "Device status reporting interval, seconds. Actual device read value; do not clamp to the write range.",
+                  "minimum": 0
+                },
+                "chargingStatusInterval": {
+                  "type": "integer",
+                  "description": "Charging status and metering reporting interval, seconds. Actual device read value; do not clamp to the write range.",
+                  "minimum": 0
+                },
+                "temperatureLimit": {
+                  "type": "integer",
+                  "description": "Temperature alarm threshold, degrees Celsius. Actual device read value; do not clamp to the write range.",
+                  "minimum": 0
+                },
+                "powerLimit": {
+                  "type": "integer",
+                  "description": "Overload power threshold, watts. Actual device read value; do not clamp to the write range.",
+                  "minimum": 0
+                },
+                "offlineStopDuration": {
+                  "type": "integer",
+                  "description": "Delay before power-off when offline, seconds. Actual device read value; do not clamp to the write range.",
+                  "minimum": 0
+                },
+                "currentLimit": {
+                  "type": "number",
+                  "description": "Charging current limit read from the device, amperes. Read-only in this version.",
+                  "minimum": 0
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "description": "Configuration actually read in this request. Returned only on successful GetConfiguration."
+            }
+          },
+          "required": [],
+          "additionalProperties": false,
+          "description": "Action result object; fields vary by requestAction. Use {} when no business fields are returned."
+        }
+      },
+      "required": [
+        "requestAction",
+        "status",
+        "code",
+        "message",
+        "result"
+      ],
+      "additionalProperties": false,
+      "description": "",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "Succeeded"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "OK"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "Sent"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "SENT"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "Failed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "DEVICE_REJECTED",
+                  "NO_LOAD",
+                  "VOLTAGE_PROTECTION",
+                  "DEVICE_FAULT",
+                  "NOT_CONFIGURED",
+                  "ALREADY_CHARGING",
+                  "DELIVERY_FAILED"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "Unknown"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "TIMEOUT",
+                  "DELIVERY_UNCERTAIN",
+                  "INCONSISTENT_DEVICE_RESPONSE",
+                  "INVALID_DEVICE_PAYLOAD"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "requestAction": {
+                "const": "RemoteStartTransaction"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "connectorId": {
+                    "type": "integer",
+                    "description": "Logical charging channel number, starting at 1. Current 16-channel devices use 1-16. Required for multichannel devices; optional for a single channel.",
+                    "minimum": 1,
+                    "maximum": 16
+                  },
+                  "transactionId": {
+                    "type": "string",
+                    "description": "Partner-generated charging correlation ID. This device profile requires a 20-digit string, preserving leading zeros.",
+                    "pattern": "^[0-9]{20}$"
+                  },
+                  "vendorResult": {
+                    "type": "string",
+                    "description": "Device result code: 0 means success, 1 means failure.",
+                    "enum": [
+                      "0",
+                      "1"
+                    ]
+                  },
+                  "vendorCode": {
+                    "type": "string",
+                    "description": "Device status code, included only when provided by the device.",
+                    "minLength": 1,
+                    "maxLength": 16
+                  }
+                },
+                "required": [
+                  "connectorId",
+                  "transactionId"
+                ],
+                "additionalProperties": false,
+                "description": ""
+              },
+              "status": {
+                "enum": [
+                  "Succeeded",
+                  "Failed",
+                  "Unknown"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "requestAction": {
+                "const": "RemoteStopTransaction"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "connectorId": {
+                    "type": "integer",
+                    "description": "Logical charging channel number, starting at 1. Current 16-channel devices use 1-16. Required for multichannel devices; optional for a single channel.",
+                    "minimum": 1,
+                    "maximum": 16
+                  },
+                  "transactionId": {
+                    "type": "string",
+                    "description": "Partner-generated charging correlation ID. This device profile requires a 20-digit string, preserving leading zeros.",
+                    "pattern": "^[0-9]{20}$"
+                  },
+                  "vendorResult": {
+                    "type": "string",
+                    "description": "Device result code: 0 means success, 1 means failure.",
+                    "enum": [
+                      "0",
+                      "1"
+                    ]
+                  }
+                },
+                "required": [
+                  "connectorId",
+                  "transactionId"
+                ],
+                "additionalProperties": false,
+                "description": ""
+              },
+              "status": {
+                "enum": [
+                  "Succeeded",
+                  "Failed",
+                  "Unknown"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "requestAction": {
+                "const": "AuthorizeResponse"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "connectorId": {
+                    "type": "integer",
+                    "description": "Logical charging channel number, starting at 1. Current 16-channel devices use 1-16. Required for multichannel devices; optional for a single channel.",
+                    "minimum": 1,
+                    "maximum": 16
+                  }
+                },
+                "required": [
+                  "connectorId"
+                ],
+                "additionalProperties": false,
+                "description": ""
+              },
+              "status": {
+                "enum": [
+                  "Sent",
+                  "Failed",
+                  "Unknown"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "requestAction": {
+                "const": "ChangeConfiguration"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "vendorResult": {
+                    "type": "string",
+                    "description": "Device result code: 0 means success, 1 means failure.",
+                    "enum": [
+                      "0",
+                      "1"
+                    ]
+                  }
+                },
+                "required": [],
+                "additionalProperties": false,
+                "description": ""
+              },
+              "status": {
+                "enum": [
+                  "Succeeded",
+                  "Failed",
+                  "Unknown"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "requestAction": {
+                "const": "GetConfiguration"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "configuration": {
+                    "type": "object",
+                    "properties": {
+                      "floatChargingDuration": {
+                        "type": "integer",
+                        "description": "Float-charge duration, seconds. Actual device read value; do not clamp to the write range.",
+                        "minimum": 0
+                      },
+                      "maxChargingDuration": {
+                        "type": "integer",
+                        "description": "Maximum charging duration, seconds. Actual device read value; do not clamp to the write range.",
+                        "minimum": 0
+                      },
+                      "statusNotificationInterval": {
+                        "type": "integer",
+                        "description": "Device status reporting interval, seconds. Actual device read value; do not clamp to the write range.",
+                        "minimum": 0
+                      },
+                      "chargingStatusInterval": {
+                        "type": "integer",
+                        "description": "Charging status and metering reporting interval, seconds. Actual device read value; do not clamp to the write range.",
+                        "minimum": 0
+                      },
+                      "temperatureLimit": {
+                        "type": "integer",
+                        "description": "Temperature alarm threshold, degrees Celsius. Actual device read value; do not clamp to the write range.",
+                        "minimum": 0
+                      },
+                      "powerLimit": {
+                        "type": "integer",
+                        "description": "Overload power threshold, watts. Actual device read value; do not clamp to the write range.",
+                        "minimum": 0
+                      },
+                      "offlineStopDuration": {
+                        "type": "integer",
+                        "description": "Delay before power-off when offline, seconds. Actual device read value; do not clamp to the write range.",
+                        "minimum": 0
+                      },
+                      "currentLimit": {
+                        "type": "number",
+                        "description": "Charging current limit read from the device, amperes. Read-only in this version.",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false,
+                    "description": "Configuration actually read in this request. Returned only on successful GetConfiguration."
+                  }
+                },
+                "required": [],
+                "additionalProperties": false,
+                "description": ""
+              },
+              "status": {
+                "enum": [
+                  "Succeeded",
+                  "Failed",
+                  "Unknown"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "requestAction": {
+                "const": "Reset"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "vendorResult": {
+                    "type": "string",
+                    "description": "Device result code: 0 means success, 1 means failure.",
+                    "enum": [
+                      "0",
+                      "1"
+                    ]
+                  }
+                },
+                "required": [],
+                "additionalProperties": false,
+                "description": ""
+              },
+              "status": {
+                "enum": [
+                  "Succeeded",
+                  "Failed",
+                  "Unknown"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "requestAction": {
+                "const": "UpdateFirmware"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "object",
+                "properties": {
+                  "vendorResult": {
+                    "type": "string",
+                    "description": "Device result code: 0 means success, 1 means failure.",
+                    "enum": [
+                      "0",
+                      "1"
+                    ]
+                  }
+                },
+                "required": [],
+                "additionalProperties": false,
+                "description": ""
+              },
+              "status": {
+                "enum": [
+                  "Succeeded",
+                  "Failed",
+                  "Unknown"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "requestAction": {
+                "const": "GetConfiguration"
+              },
+              "status": {
+                "const": "Succeeded"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "required": [
+                  "configuration"
+                ],
+                "properties": {
+                  "configuration": {
+                    "minProperties": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "CommandResultEvent": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "deviceId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "CommandResult",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "UTC RFC3339 timestamp. Milliseconds are optional; the value must end in Z.",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandResultData"
+        }
+      },
+      "required": [
+        "messageId",
+        "deviceId",
+        "action",
+        "timestamp",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "ChargingStatusNotificationData": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "integer",
+          "description": "Logical charging channel number, starting at 1. Current 16-channel devices use 1-16. Required for multichannel devices; optional for a single channel.",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "transactionId": {
+          "type": "string",
+          "description": "Partner-generated charging correlation ID. This device profile requires a 20-digit string, preserving leading zeros.",
+          "pattern": "^[0-9]{20}$"
+        },
+        "status": {
+          "type": "string",
+          "description": "Current charging state reported by the device.",
+          "enum": [
+            "Charging",
+            "Stopped",
+            "Unknown"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason for this report; see the value table.",
+          "enum": [
+            "None",
+            "NoLoad",
+            "VoltageProtection",
+            "Completed",
+            "PowerLossOrUnplugged",
+            "TheftProtection",
+            "Overload",
+            "BalanceDepleted",
+            "OverTemperature",
+            "PowerOrTimeLimit",
+            "Unknown"
+          ]
+        },
+        "vendorCode": {
+          "type": "string",
+          "description": "Raw status value as a string. Preserve unknown values as well.",
+          "minLength": 1,
+          "maxLength": 16
+        },
+        "voltage": {
+          "type": "number",
+          "description": "Voltage, V, up to 2 decimal places.",
+          "minimum": 0
+        },
+        "current": {
+          "type": "number",
+          "description": "Current, A, up to 3 decimal places.",
+          "minimum": 0
+        },
+        "power": {
+          "type": "number",
+          "description": "Power, W, up to 3 decimal places.",
+          "minimum": 0
+        },
+        "energy": {
+          "type": "number",
+          "description": "Reported energy, kWh, up to 3 decimal places. Accumulation basis is not yet confirmed.",
+          "minimum": 0
+        },
+        "duration": {
+          "type": "integer",
+          "description": "Charging duration, seconds.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "connectorId",
+        "transactionId",
+        "status",
+        "reason",
+        "vendorCode"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "ChargingStatusNotificationEvent": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "deviceId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "ChargingStatusNotification",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "UTC RFC3339 timestamp. Milliseconds are optional; the value must end in Z.",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "data": {
+          "$ref": "#/$defs/ChargingStatusNotificationData"
+        }
+      },
+      "required": [
+        "messageId",
+        "deviceId",
+        "action",
+        "timestamp",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "StatusNotificationData": {
+      "type": "object",
+      "properties": {
+        "temperature": {
+          "type": "number",
+          "description": "Device temperature, degrees Celsius, up to 2 decimal places."
+        },
+        "voltage": {
+          "type": "number",
+          "description": "Device voltage, V, up to 2 decimal places.",
+          "minimum": 0
+        },
+        "firmwareVersion": {
+          "type": "string",
+          "description": "Device firmware version, e.g. 2.1.22.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "connectors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "connectorId": {
+                "type": "integer",
+                "description": "Logical charging channel number, starting at 1. Current 16-channel devices use 1-16. Required for multichannel devices; optional for a single channel.",
+                "minimum": 1,
+                "maximum": 16
+              },
+              "status": {
+                "type": "string",
+                "description": "Available: idle. Charging: charging. Faulted: fault present. Unknown: unknown state.",
+                "enum": [
+                  "Available",
+                  "Charging",
+                  "Faulted",
+                  "Unknown"
+                ]
+              },
+              "errorCode": {
+                "type": "string",
+                "description": "NoError, RelayStuck, MeterFailure, Unknown.",
+                "enum": [
+                  "NoError",
+                  "RelayStuck",
+                  "MeterFailure",
+                  "Unknown"
+                ]
+              },
+              "vendorCode": {
+                "type": "string",
+                "description": "Raw device channel status value.",
+                "minLength": 1,
+                "maxLength": 16
+              }
+            },
+            "required": [
+              "connectorId",
+              "status",
+              "errorCode",
+              "vendorCode"
+            ],
+            "additionalProperties": false,
+            "description": ""
+          },
+          "description": "Channels actually included in this report. Unreported channels are omitted.",
+          "minItems": 1,
+          "maxItems": 16
+        }
+      },
+      "required": [
+        "connectors"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "StatusNotificationEvent": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "deviceId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "StatusNotification",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "UTC RFC3339 timestamp. Milliseconds are optional; the value must end in Z.",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "data": {
+          "$ref": "#/$defs/StatusNotificationData"
+        }
+      },
+      "required": [
+        "messageId",
+        "deviceId",
+        "action",
+        "timestamp",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "CardPresentedData": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "integer",
+          "description": "Logical charging channel number, starting at 1. Current 16-channel devices use 1-16. Required for multichannel devices; optional for a single channel.",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "idTag": {
+          "type": "string",
+          "description": "10-digit decimal card-number string, preserving leading zeros.",
+          "pattern": "^[0-9]{10}$"
+        },
+        "intent": {
+          "type": "string",
+          "description": "BalanceInquiry: balance inquiry. StartCharging: card-initiated charging request.",
+          "enum": [
+            "BalanceInquiry",
+            "StartCharging"
+          ]
+        },
+        "expiresAt": {
+          "type": "string",
+          "description": "UTC deadline for the card response: this event's timestamp plus 30 seconds.",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      },
+      "required": [
+        "connectorId",
+        "idTag",
+        "intent",
+        "expiresAt"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "CardPresentedEvent": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "deviceId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "CardPresented",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "UTC RFC3339 timestamp. Milliseconds are optional; the value must end in Z.",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "data": {
+          "$ref": "#/$defs/CardPresentedData"
+        }
+      },
+      "required": [
+        "messageId",
+        "deviceId",
+        "action",
+        "timestamp",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "FaultNotificationData": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "description": "Device means a device-wide fault; Connector means a channel fault.",
+          "enum": [
+            "Device",
+            "Connector"
+          ]
+        },
+        "connectorId": {
+          "type": "integer",
+          "description": "Logical charging channel number, starting at 1. Current 16-channel devices use 1-16. Required for multichannel devices; optional for a single channel.",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "errorCode": {
+          "type": "string",
+          "description": "Fault category.",
+          "enum": [
+            "HighTemperature",
+            "MemoryFailure",
+            "OverVoltage",
+            "UnderVoltage",
+            "Unknown"
+          ]
+        },
+        "vendorCode": {
+          "type": "string",
+          "description": "Raw fault value. Preserve unknown values as well.",
+          "minLength": 1,
+          "maxLength": 16
+        }
+      },
+      "required": [
+        "scope",
+        "errorCode",
+        "vendorCode"
+      ],
+      "additionalProperties": false,
+      "description": "",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "const": "Connector"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "connectorId"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "connectorId"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "FaultNotificationEvent": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "deviceId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "FaultNotification",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "UTC RFC3339 timestamp. Milliseconds are optional; the value must end in Z.",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "data": {
+          "$ref": "#/$defs/FaultNotificationData"
+        }
+      },
+      "required": [
+        "messageId",
+        "deviceId",
+        "action",
+        "timestamp",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "DeviceOnlineData": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "description": "Connected means valid device communication is established.",
+          "enum": [
+            "Connected"
+          ]
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "DeviceOnlineEvent": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "deviceId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "DeviceOnline",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "UTC RFC3339 timestamp. Milliseconds are optional; the value must end in Z.",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "data": {
+          "$ref": "#/$defs/DeviceOnlineData"
+        }
+      },
+      "required": [
+        "messageId",
+        "deviceId",
+        "action",
+        "timestamp",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "DeviceOfflineData": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "description": "Disconnected: connection closed. HeartbeatTimeout: heartbeat timeout. Unknown: other or unknown reason.",
+          "enum": [
+            "Disconnected",
+            "HeartbeatTimeout",
+            "Unknown"
+          ]
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "DeviceOfflineEvent": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "deviceId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "const": "DeviceOffline",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "UTC RFC3339 timestamp. Milliseconds are optional; the value must end in Z.",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "data": {
+          "$ref": "#/$defs/DeviceOfflineData"
+        }
+      },
+      "required": [
+        "messageId",
+        "deviceId",
+        "action",
+        "timestamp",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "Event": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CommandResultEvent"
+        },
+        {
+          "$ref": "#/$defs/ChargingStatusNotificationEvent"
+        },
+        {
+          "$ref": "#/$defs/StatusNotificationEvent"
+        },
+        {
+          "$ref": "#/$defs/CardPresentedEvent"
+        },
+        {
+          "$ref": "#/$defs/FaultNotificationEvent"
+        },
+        {
+          "$ref": "#/$defs/DeviceOnlineEvent"
+        },
+        {
+          "$ref": "#/$defs/DeviceOfflineEvent"
+        }
+      ]
+    },
+    "ApiResponse": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "",
+          "enum": [
+            "ACCEPTED",
+            "OK"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "description": ""
+        },
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "",
+              "enum": [
+                "RemoteStartTransaction",
+                "RemoteStopTransaction",
+                "AuthorizeResponse",
+                "ChangeConfiguration",
+                "GetConfiguration",
+                "Reset",
+                "UpdateFirmware"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "description": "",
+              "enum": [
+                "Accepted",
+                "Succeeded",
+                "Failed",
+                "Unknown",
+                "Sent"
+              ]
+            },
+            "acceptedAt": {
+              "type": "string",
+              "description": "UTC RFC3339 timestamp. Milliseconds are optional; the value must end in Z.",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            "updatedAt": {
+              "type": "string",
+              "description": "UTC RFC3339 timestamp. Milliseconds are optional; the value must end in Z.",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            "result": {
+              "$ref": "#/$defs/CommandResultData"
+            }
+          },
+          "required": [
+            "action",
+            "status",
+            "acceptedAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false,
+          "description": ""
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "messageId",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "message": {
+          "type": "string",
+          "description": "",
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "description": "1-64 letters, digits, hyphens or underscores.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "CommandQueryRequest": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false,
+      "description": "The POST query request body must be an empty JSON object."
+    },
+    "CallbackAck": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "const": "OK"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "additionalProperties": false,
+      "description": ""
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/Command"
+    },
+    {
+      "$ref": "#/$defs/Event"
+    }
+  ]
+}

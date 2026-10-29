@@ -1,0 +1,11 @@
+{
+  "messageId": "card-msg-0002",
+  "action": "AuthorizeResponse",
+  "data": {
+    "connectorId": 1,
+    "idTag": "0012345678",
+    "status": "Accepted",
+    "cardType": "Period",
+    "expiryDate": "2026-12-31"
+  }
+}
