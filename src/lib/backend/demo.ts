@@ -121,7 +121,7 @@ import {
   type StationCashSettings,
   type SwapOwner,
 } from "@shared/station-cash";
-import { validBatteryType, type BatteryType, type BatteryTypeInput } from "@shared/battery-types";
+import { cleanTypeCapacity, counterLimits, validBatteryType, type BatteryType, type BatteryTypeInput } from "@shared/battery-types";
 import { DEMO_OWNERS, DEMO_STAFF, demoHistory, demoReassignments, demoUsers } from "../admin/demo-seed";
 import { cleanOpeningHours } from "@shared/opening-hours";
 import { emptyDays, periodStart, reportPeriod, type Handover, type OwnerLive, type OwnerReport, type ReportPeriod, type StaffStats } from "@shared/owner-backoffice";
@@ -428,6 +428,8 @@ interface DemoState {
   stationBatteryTypes?: Record<string, string[]>;
   /** Full batteries per battery type, by station id then type id (default: the station's total spread over its types). */
   typeBatteries?: Record<string, Record<string, number>>;
+  /** Places per battery type, by station id then type id (default: the station's places spread over its types), as migration 0064. */
+  typeCapacities?: Record<string, Record<string, number>>;
   parcelSizes?: ParcelSizeTier[];
   /** stationId: the key (station, "parcel:<id>" or "job:<id>"); atStation: the counter it was typed at (0058). */
   parcelCodeFailures?: { stationId: string; at: string; atStation?: string }[];
@@ -1209,10 +1211,11 @@ export class DemoBackend implements Backend {
       const types = state.batteryTypes ?? DEMO_BATTERY_TYPES;
       const swapped = (state.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES)[s.id] ?? [];
       const counts = typeCounts(state, s.id, status.fullBatteries);
+      const places = typeCapacities(state, s.id, s.batteryCapacity);
       const batteryTypes = types
         .filter((t) => swapped.includes(t.id))
         .sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name))
-        .map((t) => ({ ...t, fullBatteries: counts[t.id] ?? 0, reserved: holds.get(`swap:${t.id}`) ?? 0 }));
+        .map((t) => ({ ...t, fullBatteries: counts[t.id] ?? 0, capacity: places[t.id] ?? 0, reserved: holds.get(`swap:${t.id}`) ?? 0 }));
       const evChargers = (state.evChargers ?? DEMO_EV_CHARGERS)
         .filter((c) => c.stationId === s.id && c.isActive)
         .sort((a, b) => a.name.localeCompare(b.name))
@@ -1739,8 +1742,8 @@ export class DemoBackend implements Backend {
     const empty = state.batteryEmpty?.[stationId] ?? {};
     const view = this.views(state, state.stations.filter((s) => s.id === stationId))[0];
     const types = view?.batteryTypes ?? [];
-    if (!types.length) return [{ batteryTypeId: "", label: null, full: status?.fullBatteries ?? 0, empty: empty[""] ?? 0 }];
-    return types.map((t) => ({ batteryTypeId: t.id, label: `${t.brand} ${t.name}`, full: t.fullBatteries, empty: empty[t.id] ?? 0 }));
+    if (!types.length) return [{ batteryTypeId: "", label: null, full: status?.fullBatteries ?? 0, empty: empty[""] ?? 0, capacity: view?.batteryCapacity ?? 0 }];
+    return types.map((t) => ({ batteryTypeId: t.id, label: `${t.brand} ${t.name}`, full: t.fullBatteries, empty: empty[t.id] ?? 0, capacity: t.capacity }));
   }
 
   private counterKey(state: DemoState, stationId: string, raw: CounterKey | null | undefined): CounterKey {
@@ -1767,7 +1770,7 @@ export class DemoBackend implements Backend {
     const row = rows.find((r) => r.batteryTypeId === e.key)!;
     const station = state.stations.find((s) => s.id === e.stationId)!;
     const total = rows.reduce((n, r) => n + r.full, 0);
-    const after = applyBatteryEvent(row, e.type, e.delta, { total, capacity: station.batteryCapacity });
+    const after = applyBatteryEvent(row, e.type, e.delta, counterLimits(rows, e.key, station.batteryCapacity));
     if (!after) return null;
     const now = new Date().toISOString();
     const event = {
@@ -2079,7 +2082,7 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const operator = state.operators.find((o) => o.id === input.operatorId);
     if (!operator) throw new BackendError("unknown", "operator not found");
-    const { parcelDepot, batteryTypeIds, ...fields } = input;
+    const { parcelDepot, batteryTypeIds, batteryTypeCapacities, ...fields } = input;
     const allTypes = state.batteryTypes ?? DEMO_BATTERY_TYPES;
     if (batteryTypeIds?.some((t) => !allTypes.some((x) => x.id === t))) throw new BackendError("unknown", "unknown battery type");
     const existing = id ? (state.parcelDepots ?? seedDepots()).find((d) => d.stationId === id) : undefined;
@@ -2092,6 +2095,14 @@ export class DemoBackend implements Backend {
     // Days and times, never empty (shared/opening-hours.ts), as in worker/api.ts.
     const openingHours = cleanOpeningHours(fields.openingHours);
     if (!openingHours) throw new BackendError("opening_hours_invalid");
+    // Places per type (migration 0064): the station's places are their sum.
+    const wantedTypes = batteryTypeIds && offersSwap(input.kind) ? [...new Set(batteryTypeIds)] : [];
+    const placesBefore = id ? typeCapacities(state, id, before?.batteryCapacity ?? 0) : {};
+    const places =
+      batteryTypeCapacities && wantedTypes.length
+        ? Object.fromEntries(wantedTypes.map((t) => [t, t in batteryTypeCapacities ? cleanTypeCapacity(batteryTypeCapacities[t]) : (placesBefore[t] ?? 0)]))
+        : null;
+    if (places) fields.batteryCapacity = Object.values(places).reduce((a, n) => a + n, 0);
     const station: Station = {
       ...fields,
       openingHours,
@@ -2110,8 +2121,15 @@ export class DemoBackend implements Backend {
         { ...state, stations: state.stations.map((s) => (s.id === id ? station : s)) },
         { table: "stations", action: "update", rowId: id, stationId: id, changes: before ? diff(before, station) : {} },
       );
-      // A lower capacity brings the full batteries down to it, as counter corrections (capacityTrimStatements).
-      if (before && station.batteryCapacity < before.batteryCapacity) next = this.trimToCapacity(next, id, station.batteryCapacity);
+      if (places) {
+        // Per type, as typeCapacityTrimStatements() in the Worker (after the new types are stored).
+        next = { ...next, stationBatteryTypes: { ...(next.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES), [id]: wantedTypes } };
+        next = { ...next, typeCapacities: { ...next.typeCapacities, [id]: places } };
+        next = this.trimTypes(next, id, places);
+      } else if (before && station.batteryCapacity < before.batteryCapacity) {
+        // A lower capacity brings the full batteries down to it, as counter corrections (capacityTrimStatements).
+        next = this.trimToCapacity(next, id, station.batteryCapacity);
+      }
       this.save(next);
     } else {
       // A new station starts closed and empty: staff open it and mark batteries full as they come.
@@ -2135,11 +2153,37 @@ export class DemoBackend implements Backend {
         ...after,
         stationBatteryTypes: {
           ...(after.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES),
-          [station.id]: offersSwap(input.kind) ? [...new Set(batteryTypeIds)] : [],
+          [station.id]: wantedTypes,
+        },
+        typeCapacities: {
+          ...after.typeCapacities,
+          [station.id]: places ?? Object.fromEntries(wantedTypes.map((t) => [t, placesBefore[t] ?? 0])),
         },
       });
     }
     if (parcelDepot) await this.writeDepot(station.id, parcelDepot);
+  }
+
+  /** As typeCapacityTrimStatements() in worker/station-work.ts: each type down to its places (0 = not set). */
+  private trimTypes(state: DemoState, stationId: string, places: Record<string, number>): DemoState {
+    const profile = this.requireProfile(state);
+    let next = state;
+    for (const r of this.counterRows(state, stationId)) {
+      const cap = places[r.batteryTypeId] ?? 0;
+      if (!r.batteryTypeId || cap <= 0 || r.full <= cap) continue;
+      const done = this.counterEvent(next, {
+        stationId,
+        key: r.batteryTypeId,
+        type: "correction",
+        delta: cap - r.full,
+        reason: CAPACITY_REASON,
+        requestId: `capacity-${crypto.randomUUID()}`,
+        swapId: null,
+        actor: { profile, role: "admin" },
+      });
+      if (done) next = done.state;
+    }
+    return next;
   }
 
   /** As capacityTrimStatements() in worker/station-work.ts: one correction per counter, largest first. */
@@ -8832,6 +8876,15 @@ const DEMO_SWAP_PRICE = 500;
 function swapPrice(state: DemoState, station: Station): number | null {
   const set = state.swapPrices?.[station.id];
   return set !== undefined ? set : station.isOwn ? DEMO_SWAP_PRICE : null;
+}
+
+/** Places per type at a station; until the backoffice sets them, the station's places spread evenly over its types (as migration 0064). */
+function typeCapacities(state: DemoState, stationId: string, capacity: number): Record<string, number> {
+  const stored = state.typeCapacities?.[stationId];
+  if (stored) return stored;
+  const swapped = (state.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES)[stationId] ?? [];
+  const share = Math.floor(capacity / Math.max(1, swapped.length));
+  return Object.fromEntries(swapped.map((id, i) => [id, share + (i < capacity - share * swapped.length ? 1 : 0)]));
 }
 
 /** Full batteries per type at a station; until staff count them, the total spread evenly over its types. */

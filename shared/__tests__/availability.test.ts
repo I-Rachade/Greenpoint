@@ -180,10 +180,10 @@ describe("parcel points", () => {
 
 describe("battery brand filter", () => {
   const now = new Date().toISOString();
-  const spiro = { id: "t1", brand: "Spiro", name: "72 V", isActive: true, fullBatteries: 5 };
-  const ovt = { id: "t2", brand: "Omnivoltaic", name: "60 V", isActive: true, fullBatteries: 0 };
+  const spiro = { id: "t1", brand: "Spiro", name: "72 V", isActive: true, fullBatteries: 5, capacity: 0 };
+  const ovt = { id: "t2", brand: "Omnivoltaic", name: "60 V", isActive: true, fullBatteries: 0, capacity: 0 };
   const a = station({ id: "a", status: { stationId: "a", isOpen: true, freeSlots: 2, fullBatteries: 5, updatedAt: now }, batteryTypes: [spiro] });
-  const b = station({ id: "b", status: { stationId: "b", isOpen: true, freeSlots: 2, fullBatteries: 0, updatedAt: now }, batteryTypes: [ovt, { ...spiro, fullBatteries: 0 }] });
+  const b = station({ id: "b", status: { stationId: "b", isOpen: true, freeSlots: 2, fullBatteries: 0, updatedAt: now }, batteryTypes: [ovt, { ...spiro, fullBatteries: 0, capacity: 0 }] });
   // Full batteries, but none of Omnivoltaic.
   const d = station({ id: "d", status: { stationId: "d", isOpen: true, freeSlots: 2, fullBatteries: 5, updatedAt: now }, batteryTypes: [ovt, spiro] });
   const c = station({ id: "c", status: { stationId: "c", isOpen: true, freeSlots: 2, fullBatteries: 5, updatedAt: now } });

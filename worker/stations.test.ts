@@ -303,6 +303,51 @@ describe("battery types", () => {
   });
 });
 
+describe("places per battery type (0064)", () => {
+  async function addType(env: Env, brand: string, name: string) {
+    const res = await call(env, "POST", "/api/admin/battery-types", { id: null, input: { brand, name, isActive: true } });
+    return (res.body as { id: string }).id;
+  }
+
+  it("saves each type's places, the station's being their sum, and trims a type lowered below its full batteries", async () => {
+    const { env, db } = await setup();
+    const ov60 = await addType(env, "Omnivoltaic", "60 V");
+    const ov72 = await addType(env, "Omnivoltaic", "72 V");
+    const sp72 = await addType(env, "Spiro", "72 V");
+    await save(env, station("Echange", { kind: "swap", batteryCapacity: 99, batteryTypeIds: [ov60, ov72], batteryTypeCapacities: { [ov60]: 6, [ov72]: 4, [sp72]: 9 } }));
+    let s = await byName(env, "Echange");
+    expect(s.batteryCapacity).toBe(10);
+    expect(s.batteryTypes!.map((t) => [t.name, t.capacity])).toEqual([["60 V", 6], ["72 V", 4]]);
+
+    let n = 0;
+    const event = (type: string, batteryTypeId: string) =>
+      call(env, "POST", `/api/stations/${s.id}/battery-events`, { type, batteryTypeId, requestId: `req-${String(++n).padStart(6, "0")}` }, s.id);
+    for (let i = 0; i < 4; i++) expect((await event("full", ov72)).status).toBe(200);
+    expect((await event("full", ov72)).status).toBe(409);
+    for (let i = 0; i < 5; i++) expect((await event("full", ov60)).status).toBe(200);
+
+    // 72 V down to 2 places: its 4 full come down to 2, logged; 60 V keeps its 5 of 6.
+    await save(env, station("Echange", { kind: "swap", batteryCapacity: 10, batteryTypeIds: [ov60, ov72, sp72], batteryTypeCapacities: { [ov60]: 6, [ov72]: 2, [sp72]: 3 } }), s.id);
+    s = await byName(env, "Echange");
+    expect(s.batteryCapacity).toBe(11);
+    expect(s.batteryTypes!.map((t) => [t.brand, t.name, t.fullBatteries, t.capacity])).toEqual([
+      ["Omnivoltaic", "60 V", 5, 6],
+      ["Omnivoltaic", "72 V", 2, 2],
+      ["Spiro", "72 V", 0, 3],
+    ]);
+    expect(s.status.fullBatteries).toBe(7);
+    expect(db.prepare("select battery_type_id, type, delta, full_after, reason from battery_events where type = 'correction'").all()).toEqual([
+      { battery_type_id: ov72, type: "correction", delta: -2, full_after: 2, reason: "Capacité réduite" },
+    ]);
+    const audit = db.prepare("select changes from audit_log where table_name = 'stations' and action = 'update'").get() as { changes: string };
+    expect(JSON.parse(audit.changes).battery_type_places).toEqual({ "Omnivoltaic 60 V": 6, "Omnivoltaic 72 V": 2, "Spiro 72 V": 3 });
+
+    // A save without places (an older app) keeps each type's places and the station's number as sent.
+    await save(env, station("Echange", { kind: "swap", batteryCapacity: 11, batteryTypeIds: [ov60, ov72, sp72] }), s.id);
+    expect((await byName(env, "Echange")).batteryTypes!.map((t) => t.capacity)).toEqual([6, 2, 3]);
+  });
+});
+
 describe("electric car chargers", () => {
   const charger = (stationId: string | null, patch: Record<string, unknown> = {}) => ({
     name: "Borne VE 1",

@@ -1,4 +1,4 @@
-import { batteryTypeLabel, validBatteryType, type BatteryType, type BatteryTypeInput, type StationBatteryType } from "../shared/battery-types";
+import { batteryTypeLabel, cleanTypeCapacity, validBatteryType, type BatteryType, type BatteryTypeInput, type StationBatteryType } from "../shared/battery-types";
 import type { AuditEntry, AuditTable } from "../shared/admin/types";
 import { ApiError, nowIso, uuid } from "./http";
 
@@ -30,18 +30,18 @@ export async function listBatteryTypes(db: D1Database): Promise<BatteryType[]> {
   return results.map(toType);
 }
 
-/** Battery types each station swaps with their full batteries, brands and models sorted. */
+/** Battery types each station swaps with their full batteries and places, brands and models sorted. */
 export async function batteryTypesByStation(db: D1Database): Promise<Map<string, StationBatteryType[]>> {
   const { results } = await db
     .prepare(
-      `select sbt.station_id, sbt.full_batteries, t.id, t.brand, t.name, t.is_active
+      `select sbt.station_id, sbt.full_batteries, sbt.capacity, t.id, t.brand, t.name, t.is_active
        from station_battery_types sbt join battery_types t on t.id = sbt.battery_type_id
        order by t.brand, t.name`,
     )
-    .all<TypeRow & { station_id: string; full_batteries: number }>();
+    .all<TypeRow & { station_id: string; full_batteries: number; capacity: number }>();
   const out = new Map<string, StationBatteryType[]>();
   for (const r of results) {
-    out.set(r.station_id, [...(out.get(r.station_id) ?? []), { ...toType(r), fullBatteries: r.full_batteries }]);
+    out.set(r.station_id, [...(out.get(r.station_id) ?? []), { ...toType(r), fullBatteries: r.full_batteries, capacity: r.capacity }]);
   }
   return out;
 }
@@ -78,12 +78,28 @@ export async function saveBatteryType(c: Ctx, actor: string, id: string | null, 
 
 /**
  * Statements that replace the battery types a station swaps (none when it has no
- * swap point), and their labels for the audit log. Unknown ids are refused.
+ * swap point) with their places, their labels for the audit log and the station's
+ * places (their sum). Unknown ids are refused. Without `capacities`, kept types keep
+ * their places and new ones have none.
  */
-export async function stationBatteryTypeStatements(db: D1Database, stationId: string, ids: string[], swaps: boolean) {
+export async function stationBatteryTypeStatements(
+  db: D1Database,
+  stationId: string,
+  ids: string[],
+  swaps: boolean,
+  capacities?: Record<string, number>,
+) {
   const wanted = swaps ? [...new Set((ids ?? []).map(String))] : [];
   const known = new Map((await listBatteryTypes(db)).map((t) => [t.id, t]));
   if (wanted.some((id) => !known.has(id))) throw new ApiError("bad_request");
+  const { results } = await db
+    .prepare("select battery_type_id, capacity from station_battery_types where station_id = ?")
+    .bind(stationId)
+    .all<{ battery_type_id: string; capacity: number }>();
+  const before = new Map(results.map((r) => [r.battery_type_id, r.capacity]));
+  const places = new Map(
+    wanted.map((id) => [id, capacities && id in capacities ? cleanTypeCapacity(capacities[id]) : (before.get(id) ?? 0)]),
+  );
   // Types kept keep their counts of full batteries.
   return {
     statements: [
@@ -94,9 +110,18 @@ export async function stationBatteryTypeStatements(db: D1Database, stationId: st
         )
         .bind(stationId, JSON.stringify(wanted)),
       ...wanted.map((id) =>
-        db.prepare("insert or ignore into station_battery_types (station_id, battery_type_id) values (?, ?)").bind(stationId, id),
+        db
+          .prepare(
+            `insert into station_battery_types (station_id, battery_type_id, capacity) values (?, ?, ?)
+             on conflict (station_id, battery_type_id) do update set capacity = excluded.capacity`,
+          )
+          .bind(stationId, id, places.get(id)!),
       ),
     ],
     labels: wanted.map((id) => batteryTypeLabel(known.get(id)!)),
+    /** Places by type id, as saved. */
+    places,
+    /** Type ids whose places went down. */
+    lowered: wanted.filter((id) => before.has(id) && places.get(id)! < before.get(id)!),
   };
 }

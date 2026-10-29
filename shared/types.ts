@@ -28,6 +28,7 @@ export interface Station {
   kind: StationKind;
   vehicleTypes: VehicleType[];
   chargingSlots: number;
+  /** Places for swap batteries; with battery types, the sum of their places (StationBatteryType.capacity). */
   batteryCapacity: number;
   openingHours: string;
   phone: string | null;
@@ -148,6 +149,7 @@ export interface StationInput {
   vehicleTypes: VehicleType[];
   /** Ignored by the server: a station's charging places are its connected outlets. */
   chargingSlots: number;
+  /** Ignored when the station gets battery types: then it is the sum of batteryTypeCapacities. */
   batteryCapacity: number;
   openingHours: string;
   phone: string | null;
@@ -157,6 +159,11 @@ export interface StationInput {
   parcelDepot?: ParcelDepotInput;
   /** Ids of the battery types the swap point swaps, saved with the station. Left out: unchanged. */
   batteryTypeIds?: string[];
+  /**
+   * Places per battery type, by type id (with batteryTypeIds). With types, the station's
+   * batteryCapacity is their sum. Left out: each kept type keeps its places, a new one has none.
+   */
+  batteryTypeCapacities?: Record<string, number>;
   /** Photo URLs (first = cover). Left out: unchanged. */
   photos?: string[];
   /** Left out: unchanged. */

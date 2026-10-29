@@ -29,9 +29,16 @@ interface FormState {
   note: string;
   /** Battery types the swap point swaps. */
   batteryTypeIds: string[];
+  /** Batteries (places) of each battery type, by type id. */
+  typeCapacities: Record<string, number>;
 }
 
-function toForm(input: StationInput, depot: ParcelDepot | undefined, batteryTypeIds: string[] = []): FormState {
+function toForm(
+  input: StationInput,
+  depot: ParcelDepot | undefined,
+  batteryTypeIds: string[] = [],
+  typeCapacities: Record<string, number> = {},
+): FormState {
   const active = !!depot?.isActive;
   return {
     input,
@@ -42,6 +49,7 @@ function toForm(input: StationInput, depot: ParcelDepot | undefined, batteryType
     lockers: depot?.lockers || 0,
     note: depot?.note ?? "",
     batteryTypeIds,
+    typeCapacities,
   };
 }
 
@@ -149,6 +157,10 @@ function StationForm({
     setForm({ ...form, [key]: on, ...(key === "parcelLockers" && on && form.lockers < 1 ? { lockers: 1 } : {}) });
   const outlets = sockets.reduce((n, d) => n + d.outlets, 0);
   const shownTypes = batteryTypes.filter((bt) => bt.isActive || initial.batteryTypeIds.includes(bt.id));
+  // With battery types ticked, each has its own number and the point's number is their sum.
+  const ticked = form.batteryTypeIds.filter((id) => shownTypes.some((bt) => bt.id === id));
+  const typeCapacity = (id: string) => form.typeCapacities[id] ?? 0;
+  const typesTotal = ticked.reduce((n, id) => n + typeCapacity(id), 0);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -169,8 +181,9 @@ function StationForm({
         ...form.input,
         openingHours: openingHoursLine(hours),
         kind: kindFor(form.swap, form.charging),
-        batteryCapacity: form.swap ? form.input.batteryCapacity : 0,
+        batteryCapacity: !form.swap ? 0 : ticked.length ? typesTotal : form.input.batteryCapacity,
         batteryTypeIds: form.swap ? form.batteryTypeIds : [],
+        batteryTypeCapacities: form.swap ? Object.fromEntries(form.batteryTypeIds.map((id) => [id, typeCapacity(id)])) : {},
         // Only touch the depot when the station has or gets one.
         ...(parcels || hadDepot
           ? {
@@ -275,17 +288,19 @@ function StationForm({
         </div>
 
         <PointSection icon={<BatteryIcon size={18} />} title={p.swap} hint={p.swapHint} on={form.swap} onToggle={(on) => toggle("swap", on)}>
-          <label className={label}>
-            <span>{t.admin.batteryCapacity}</span>
-            <input
-              className={`${input} sm:w-40`}
-              type="number"
-              min={0}
-              value={form.input.batteryCapacity}
-              onChange={(e) => set("batteryCapacity", Number(e.target.value))}
-            />
-            <span className="text-xs text-zinc-500">{stationId ? t.admin.capacityHint : t.admin.newStationHint}</span>
-          </label>
+          {ticked.length === 0 && (
+            <label className={label}>
+              <span>{t.admin.batteryCapacity}</span>
+              <input
+                className={`${input} sm:w-40`}
+                type="number"
+                min={0}
+                value={form.input.batteryCapacity}
+                onChange={(e) => set("batteryCapacity", Number(e.target.value))}
+              />
+              <span className="text-xs text-zinc-500">{stationId ? t.admin.capacityHint : t.admin.newStationHint}</span>
+            </label>
+          )}
           <fieldset className="space-y-1 text-sm">
             <legend>{p.batteryTypes}</legend>
             <p className="text-xs text-zinc-500">{p.batteryTypesHint}</p>
@@ -295,26 +310,48 @@ function StationForm({
               groupByBrand(shownTypes).map(([brand, types]) => (
                 <div key={brand} className="flex flex-wrap items-center gap-3">
                   <span className="w-28 shrink-0 font-medium">{brand}</span>
-                  {types.map((bt) => (
-                    <label key={bt.id} className={`flex items-center gap-1 ${bt.isActive ? "" : "opacity-60"}`}>
-                      <input
-                        type="checkbox"
-                        className="accent-gp-green-dark"
-                        checked={form.batteryTypeIds.includes(bt.id)}
-                        onChange={(e) =>
-                          setForm({
-                            ...form,
-                            batteryTypeIds: e.target.checked
-                              ? [...form.batteryTypeIds, bt.id]
-                              : form.batteryTypeIds.filter((x) => x !== bt.id),
-                          })
-                        }
-                      />
-                      {bt.name}
-                    </label>
-                  ))}
+                  {types.map((bt) => {
+                    const on = form.batteryTypeIds.includes(bt.id);
+                    return (
+                      <span key={bt.id} className={`flex items-center gap-2 ${bt.isActive ? "" : "opacity-60"}`}>
+                        <label className="flex items-center gap-1 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            className="accent-gp-green-dark"
+                            checked={on}
+                            onChange={(e) =>
+                              setForm({
+                                ...form,
+                                batteryTypeIds: e.target.checked
+                                  ? [...form.batteryTypeIds, bt.id]
+                                  : form.batteryTypeIds.filter((x) => x !== bt.id),
+                              })
+                            }
+                          />
+                          {bt.name}
+                        </label>
+                        {on && (
+                          <input
+                            className="w-20 rounded-lg border border-black/15 bg-white px-2 py-1 dark:border-white/20 dark:bg-zinc-900"
+                            type="number"
+                            min={0}
+                            aria-label={format(p.typeCapacity, { type: batteryTypeLabel(bt) })}
+                            title={format(p.typeCapacity, { type: batteryTypeLabel(bt) })}
+                            value={typeCapacity(bt.id)}
+                            onChange={(e) => setForm({ ...form, typeCapacities: { ...form.typeCapacities, [bt.id]: Number(e.target.value) } })}
+                          />
+                        )}
+                      </span>
+                    );
+                  })}
                 </div>
               ))
+            )}
+            {ticked.length > 0 && (
+              <div className="space-y-0.5 pt-1">
+                <div className="font-medium">{format(p.typeCapacityTotal, { n: typesTotal })}</div>
+                <p className="text-xs text-zinc-500">{stationId ? p.typeCapacityHint : t.admin.newStationHint}</p>
+              </div>
             )}
           </fieldset>
         </PointSection>
@@ -460,7 +497,7 @@ function PointBadges({ station, sockets }: { station: StationView; sockets: Devi
         <span className={pill}>
           <BatteryIcon size={12} /> {p.swap} · {station.batteryCapacity}
           {(station.batteryTypes ?? []).length > 0 &&
-            ` · ${(station.batteryTypes ?? []).map((bt) => `${batteryTypeLabel(bt)} (${bt.fullBatteries})`).join(", ")}`}
+            ` · ${(station.batteryTypes ?? []).map((bt) => `${batteryTypeLabel(bt)} (${bt.fullBatteries}/${bt.capacity})`).join(", ")}`}
         </span>
       )}
       {offersCharging(station.kind) && (
@@ -674,6 +711,7 @@ export function AdminStations() {
                   toInput(s),
                   depotOf(s.id),
                   (s.batteryTypes ?? []).map((bt) => bt.id),
+                  Object.fromEntries((s.batteryTypes ?? []).map((bt) => [bt.id, bt.capacity ?? 0])),
                 )}
                 operators={operators}
                 sockets={socketsOf(s.id)}

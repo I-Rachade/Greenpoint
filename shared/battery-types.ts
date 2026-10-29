@@ -17,6 +17,8 @@ export interface BatteryType {
 /** A type a station swaps, with how many of its batteries are full there. */
 export interface StationBatteryType extends BatteryType {
   fullBatteries: number;
+  /** Places for this type's batteries at the station (backoffice, migration 0064); 0 = not set. */
+  capacity: number;
   /** Station list only: full batteries of this type held by active reservations (shared/reservations.ts). */
   reserved?: number;
 }
@@ -25,6 +27,34 @@ export interface BatteryTypeInput {
   brand: string;
   name: string;
   isActive: boolean;
+}
+
+/** Most places one battery type can have at a station. */
+export const TYPE_CAPACITY_MAX = 10_000;
+
+/** A battery type's places as typed in the backoffice: a whole number 0…TYPE_CAPACITY_MAX, else 0. */
+export function cleanTypeCapacity(raw: unknown): number {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n > 0 ? Math.min(n, TYPE_CAPACITY_MAX) : 0;
+}
+
+/** The station's places: the sum of its types' places when it lists types, else its one number. */
+export function totalCapacity(types: { capacity: number }[], stationCapacity: number): number {
+  return types.length ? types.reduce((n, t) => n + t.capacity, 0) : stationCapacity;
+}
+
+/**
+ * The limit a "full" tap on one counter must stay within (applyBatteryEvent in station-work.ts):
+ * the type's own places when set, else the station's places for all its batteries together.
+ */
+export function counterLimits(
+  rows: { batteryTypeId: string; full: number; capacity: number }[],
+  key: string,
+  stationCapacity: number,
+): { total: number; capacity: number } {
+  const row = rows.find((r) => r.batteryTypeId === key);
+  if (key !== "" && row && row.capacity > 0) return { total: row.full, capacity: row.capacity };
+  return { total: rows.reduce((n, r) => n + r.full, 0), capacity: stationCapacity };
 }
 
 export function batteryTypeLabel(t: Pick<BatteryType, "brand" | "name">): string {

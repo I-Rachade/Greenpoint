@@ -173,7 +173,8 @@ export function findAnomalies(snap: AdminSnapshot, now: Date): Finding[] {
     if (!s.status.isOpen && holding > 0) add({ kind: "closed_with_reservations", stationId: s.id, count: holding });
     const age = statusAgeHours(s, now);
     if (s.kind !== "parcel" && s.status.isOpen && age >= STALE_STATUS_HOURS) add({ kind: "stale_status", stationId: s.id, count: Math.floor(age) });
-    if (s.status.freeSlots > s.chargingSlots || s.status.fullBatteries > s.batteryCapacity) {
+    const typeOver = (s.batteryTypes ?? []).some((bt) => (bt.capacity ?? 0) > 0 && bt.fullBatteries > bt.capacity);
+    if (s.status.freeSlots > s.chargingSlots || s.status.fullBatteries > s.batteryCapacity || typeOver) {
       add({ kind: "over_capacity", stationId: s.id });
     }
     if (s.isOwn && !snap.staff.some((a) => a.stationId === s.id)) add({ kind: "station_without_staff", stationId: s.id });

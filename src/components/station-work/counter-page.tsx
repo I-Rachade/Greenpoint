@@ -61,9 +61,14 @@ function CounterCard({
     toast(message, { tone: "error" });
   }
 
+  // A type with its own places stays within them; otherwise the station's places count all its batteries.
+  const ownPlaces = row.batteryTypeId !== "" && row.capacity > 0;
+  const shownPlaces = ownPlaces ? row.capacity : row.batteryTypeId === "" ? capacity : 0;
+
   function tap(type: "full" | "issue") {
     if (type === "issue" && full <= 0) return refuse(c.atZero);
-    if (type === "full" && capacity > 0 && stationTotal >= capacity) return refuse(format(c.atCapacity, { n: capacity }));
+    if (type === "full" && ownPlaces && full >= row.capacity) return refuse(format(c.atTypeCapacity, { n: row.capacity }));
+    if (type === "full" && !ownPlaces && capacity > 0 && stationTotal >= capacity) return refuse(format(c.atCapacity, { n: capacity }));
     const delta = type === "full" ? 1 : -1;
     setLocal({ full: full + delta, total: stationTotal + delta });
     inFlight.current += 1;
@@ -97,7 +102,10 @@ function CounterCard({
         <span key={full} className="animate-gp-bump font-heading text-6xl font-bold tabular-nums">
           {full}
         </span>
-        <span className="text-lg text-gp-muted">{c.full}</span>
+        <span className="text-lg text-gp-muted">
+          {shownPlaces > 0 && <span className="tabular-nums">/ {shownPlaces} </span>}
+          {c.full}
+        </span>
       </div>
       <p className="text-center text-sm text-gp-muted">{format(c.charging, { n: row.empty })}</p>
       <div className="grid grid-cols-2 gap-3">
