@@ -42,6 +42,8 @@ export interface CounterRow extends CounterState {
   batteryTypeId: CounterKey;
   /** Brand and model; null at a station without battery types. */
   label: string | null;
+  /** Places for this type's batteries (the station's places without types); 0 = not set. */
+  capacity: number;
 }
 
 export interface BatteryEventView {
@@ -61,7 +63,7 @@ export interface BatteryEventView {
 /** GET /api/stations/:id/counter */
 export interface StationCounter {
   stationId: string;
-  /** Places for batteries, full and charging together. */
+  /** Places for batteries, full and charging together: the sum over the rows when the station lists types. */
   capacity: number;
   rows: CounterRow[];
   /** Today's changes, newest first (staff: only their own). */
@@ -115,8 +117,8 @@ export function fullDelta(type: BatteryEventType, delta: number): number {
 
 /**
  * The counter after one event, or null when the event is refused: an issue at 0 or a
- * correction below 0 (R4), a "full" beyond the station's capacity (`total` = full
- * batteries of all its types, `capacity` ≤ 0 = no limit).
+ * correction below 0 (R4), a "full" beyond the capacity (`total` = full batteries the
+ * limit counts, `capacity` ≤ 0 = no limit; see counterLimits() in battery-types.ts).
  */
 export function applyBatteryEvent(
   state: CounterState,

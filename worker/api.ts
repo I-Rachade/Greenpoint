@@ -12,7 +12,7 @@ import { deleteRepairCenter, listRepairCenters, saveRepairCenter } from "./repai
 import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements } from "./battery-types";
 import { batteryDetail, listBatteries, lookupBattery, registerBatteries, setBatteryStatus } from "./batteries";
 import type { BatteryStatusInput, RegisterBatteriesInput } from "../shared/batteries";
-import { capacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
+import { capacityTrimStatements, typeCapacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
 import type { StationRole } from "../shared/station-work";
 import {
   checkPickupCode,
@@ -988,8 +988,14 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
   const now = nowIso();
   const stationId = id ?? uuid();
   const types = input.batteryTypeIds
-    ? await stationBatteryTypeStatements(c.db, stationId, input.batteryTypeIds, offersSwap(input.kind))
+    ? await stationBatteryTypeStatements(c.db, stationId, input.batteryTypeIds, offersSwap(input.kind), input.batteryTypeCapacities)
     : null;
+  // Places per type: the station's places are their sum (migration 0064).
+  const typePlaces = types && input.batteryTypeCapacities && types.places.size ? types.places : null;
+  if (typePlaces) row.battery_capacity = [...typePlaces.values()].reduce((a, n) => a + n, 0);
+  const typesAudit = types
+    ? { battery_types: types.labels, ...(typePlaces ? { battery_type_places: Object.fromEntries(types.labels.map((l, i) => [l, [...typePlaces.values()][i]])) } : {}) }
+    : {};
   // Photos, amenities, main activity and the solar mark: left out of the input means unchanged (a new station is not solar).
   const extras = {
     // Data URLs are for the demo only; real photos live in R2.
@@ -1009,10 +1015,13 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
       .bind(id)
       .first<Record<string, unknown>>();
     if (!before) throw new ApiError("station_not_found", 404);
-    // A lower capacity brings the full batteries down to it, as counter corrections (principle 4).
-    const trims =
-      row.battery_capacity < Number(before.battery_capacity)
-        ? await capacityTrimStatements(c.db, id, row.battery_capacity, { user: admin, role: "admin" })
+    // A lower capacity brings the full batteries down to it, as counter corrections (principle 4):
+    // per type when the types have places, else for the station as a whole.
+    const actor = { user: admin, role: "admin" as const };
+    const trims = typePlaces
+      ? await typeCapacityTrimStatements(c.db, id, typePlaces, actor)
+      : row.battery_capacity < Number(before.battery_capacity)
+        ? await capacityTrimStatements(c.db, id, row.battery_capacity, actor)
         : [];
     await c.db.batch([
       c.db
@@ -1021,7 +1030,7 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
            battery_capacity = ?, opening_hours = ?, phone = ?, charging_slots = ${CONNECTED_OUTLETS_SQL("stations.id")} where id = ?`,
         )
         .bind(...Object.values(row), id),
-      c.audit(admin.id, "stations", "update", id, { ...diff(before, { ...row, ...extras }), ...(types ? { battery_types: types.labels } : {}) }, { stationId: id }),
+      c.audit(admin.id, "stations", "update", id, { ...diff(before, { ...row, ...extras }), ...typesAudit }, { stationId: id }),
       ...(depotInput ? await depotStatements(c, admin.id, id, depotInput) : []),
       ...(types?.statements ?? []),
       ...extraStatements,
@@ -1039,7 +1048,7 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
       .bind(newId, ...Object.values(row), now),
     // A new station starts closed and empty: staff open it and mark batteries full as they come.
     c.db.prepare("insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values (?, 0, 0, 0, ?)").bind(newId, now),
-    c.audit(admin.id, "stations", "insert", newId, { ...row, ...extras, ...(types ? { battery_types: types.labels } : {}) }, { stationId: newId }),
+    c.audit(admin.id, "stations", "insert", newId, { ...row, ...extras, ...typesAudit }, { stationId: newId }),
     ...(depotInput ? await depotStatements(c, admin.id, newId, depotInput) : []),
     ...(types?.statements ?? []),
     ...extraStatements,

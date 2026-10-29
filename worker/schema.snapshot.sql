@@ -653,7 +653,7 @@ CREATE TABLE staff_reassignments (id text primary key, user_id text not null ref
 CREATE TABLE station_actions (id integer primary key autoincrement, station_id text not null, person_id text not null, -- user id, no foreign key (as audit_log.actor) role text not null check (role in ('staff', 'owner', 'admin')), action text not null check (length(action) between 1 and 200), created_at text not null);
 
 -- table station_battery_types
-CREATE TABLE station_battery_types (station_id text not null references stations (id) on delete cascade, battery_type_id text not null references battery_types (id) on delete cascade, full_batteries integer not null default 0 check (full_batteries >= 0), primary key (station_id, battery_type_id));
+CREATE TABLE station_battery_types (station_id text not null references stations (id) on delete cascade, battery_type_id text not null references battery_types (id) on delete cascade, full_batteries integer not null default 0 check (full_batteries >= 0), capacity integer not null default 0 check (capacity >= 0), primary key (station_id, battery_type_id));
 
 -- table station_reviews
 CREATE TABLE station_reviews (id text primary key, station_id text not null references stations (id) on delete cascade, user_id text not null references users (id) on delete cascade, rating integer not null check (rating between 1 and 5), comment text not null default '' check (length(comment) <= 500), created_at text not null, updated_at text not null, unique (station_id, user_id));

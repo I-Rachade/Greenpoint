@@ -131,16 +131,16 @@ async function stationInfo(db: D1Database, stationId: string): Promise<StationIn
   return s;
 }
 
-/** The battery types the station swaps (id and label); empty = one counter for the station. */
+/** The battery types the station swaps (id, label, places); empty = one counter for the station. */
 async function stationTypes(db: D1Database, stationId: string) {
   const { results } = await db
     .prepare(
-      `select sbt.battery_type_id as id, sbt.full_batteries, t.brand, t.name from station_battery_types sbt
+      `select sbt.battery_type_id as id, sbt.full_batteries, sbt.capacity, t.brand, t.name from station_battery_types sbt
        join battery_types t on t.id = sbt.battery_type_id where sbt.station_id = ? order by t.brand, t.name`,
     )
     .bind(stationId)
-    .all<{ id: string; full_batteries: number; brand: string; name: string }>();
-  return results.map((r) => ({ id: r.id, full: r.full_batteries, label: `${r.brand} ${r.name}` }));
+    .all<{ id: string; full_batteries: number; capacity: number; brand: string; name: string }>();
+  return results.map((r) => ({ id: r.id, full: r.full_batteries, capacity: r.capacity, label: `${r.brand} ${r.name}` }));
 }
 
 /** The counter a request means: a type the station swaps, or "" at a station without types (one type: that one). */
@@ -164,6 +164,9 @@ const STATION_TOTAL_SQL = (station: string) => `case when exists (select 1 from 
     then (select coalesce(sum(full_batteries), 0) from station_battery_types where station_id = ${station})
     else coalesce((select full from battery_counter where station_id = ${station} and battery_type_id = ''),
                   (select full_batteries from station_status where station_id = ${station}), 0) end`;
+
+/** Places of the counter's battery type (?3 station, ?4 type); null at a station without types. */
+const TYPE_PLACES_SQL = "select capacity from station_battery_types where station_id = ?3 and battery_type_id = ?4";
 
 interface EventSpec {
   stationId: string;
@@ -197,7 +200,9 @@ function eventStatements(db: D1Database, e: EventSpec): D1PreparedStatement[] {
       : e.type === "correction"
         ? "bc.full + ?6 >= 0"
         : e.type === "full"
-          ? `(s.battery_capacity <= 0 or (${STATION_TOTAL_SQL("?3")}) < s.battery_capacity)`
+          ? // Within the type's own places when set (0064), else the station's places for all its batteries.
+            `case when coalesce((${TYPE_PLACES_SQL}), 0) > 0 then bc.full < (${TYPE_PLACES_SQL})
+                  else (s.battery_capacity <= 0 or (${STATION_TOTAL_SQL("?3")}) < s.battery_capacity) end`
           : "1";
   const happened = "exists (select 1 from battery_events where request_id = ?1)";
   return [
@@ -295,8 +300,22 @@ export async function stationCounter(c: WorkCtx, stationId: string): Promise<Sta
   ]);
   const byKey = new Map(counters.results.map((r) => [r.battery_type_id, r]));
   const rows: CounterRow[] = types.length
-    ? types.map((t) => ({ batteryTypeId: t.id, label: t.label, full: byKey.get(t.id)?.full ?? t.full, empty: byKey.get(t.id)?.empty ?? 0 }))
-    : [{ batteryTypeId: "", label: null, full: byKey.get("")?.full ?? status?.full_batteries ?? 0, empty: byKey.get("")?.empty ?? 0 }];
+    ? types.map((t) => ({
+        batteryTypeId: t.id,
+        label: t.label,
+        full: byKey.get(t.id)?.full ?? t.full,
+        empty: byKey.get(t.id)?.empty ?? 0,
+        capacity: t.capacity,
+      }))
+    : [
+        {
+          batteryTypeId: "",
+          label: null,
+          full: byKey.get("")?.full ?? status?.full_batteries ?? 0,
+          empty: byKey.get("")?.empty ?? 0,
+          capacity: station.battery_capacity,
+        },
+      ];
   const mine = actor.role === "staff";
   const { results } = await c.db
     .prepare(
@@ -406,6 +425,40 @@ export async function capacityTrimStatements(db: D1Database, stationId: string, 
   );
 }
 
+/**
+ * The places of a station's battery types were saved (backoffice, migration 0064): each type
+ * with more full batteries than its places comes down to them through one correction event,
+ * logged as the admin's with the reason. A type without places (0) is left alone.
+ */
+export async function typeCapacityTrimStatements(
+  db: D1Database,
+  stationId: string,
+  places: Map<string, number>,
+  actor: StationActor,
+): Promise<D1PreparedStatement[]> {
+  const [types, counters] = await Promise.all([
+    stationTypes(db, stationId),
+    db.prepare("select battery_type_id, full from battery_counter where station_id = ?").bind(stationId).all<{ battery_type_id: string; full: number }>(),
+  ]);
+  const byKey = new Map(counters.results.map((r) => [r.battery_type_id, r.full]));
+  const now = nowIso();
+  return types.flatMap((t) => {
+    const cap = places.get(t.id) ?? 0;
+    const full = byKey.get(t.id) ?? t.full;
+    if (cap <= 0 || full <= cap) return [];
+    return eventStatements(db, {
+      stationId,
+      key: t.id,
+      type: "correction",
+      delta: cap - full,
+      reason: CAPACITY_REASON,
+      requestId: `capacity-${uuid()}`,
+      swapId: null,
+      actor,
+      now,
+    });
+  });
+}
 
 // Swaps --------------------------------------------------------------------------------
 

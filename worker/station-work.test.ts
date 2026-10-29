@@ -207,7 +207,7 @@ describe("battery counter (W9, R3, R4, R5)", () => {
       expect(full(db, "lome")).toBe(state.full);
       const sum = db.prepare("select coalesce(sum(delta), 0) as n from battery_events where station_id = 'lome' and type <> 'empty_in'").get() as { n: number };
       expect(start + sum.n).toBe(state.full);
-      expect((await counter(env, "lome")).rows).toEqual([{ batteryTypeId: "", label: null, full: state.full, empty: 0 }]);
+      expect((await counter(env, "lome")).rows).toEqual([{ batteryTypeId: "", label: null, full: state.full, empty: 0, capacity: 10 }]);
     }
   });
 
@@ -248,8 +248,8 @@ describe("battery counter (W9, R3, R4, R5)", () => {
     // A station with battery types registers every battery it swaps (0041).
     expect((await swap(env, "afi", "be", { customerType: "cash", batteryTypeId: "ov72" })).body).toEqual({ error: "battery_number_required" });
     expect((await counter(env, "be")).rows).toEqual([
-      { batteryTypeId: "ov72", label: "Omnivoltaic 72 V", full: 1, empty: 1 },
-      { batteryTypeId: "sp72", label: "Spiro 72 V", full: 0, empty: 0 },
+      { batteryTypeId: "ov72", label: "Omnivoltaic 72 V", full: 1, empty: 1, capacity: 0 },
+      { batteryTypeId: "sp72", label: "Spiro 72 V", full: 0, empty: 0, capacity: 0 },
     ]);
     expect(full(db, "be")).toBe(1);
     const be = (await call<StationView[]>(env, "ama", "GET", "/api/stations")).body.find((s) => s.id === "be")!;
@@ -258,6 +258,31 @@ describe("battery counter (W9, R3, R4, R5)", () => {
       ["ov72", 1],
       ["sp72", 0],
     ]);
+  });
+});
+
+describe("places per battery type (0064)", () => {
+  async function typedStation(db: DatabaseSync) {
+    const now = new Date().toISOString();
+    db.exec(`
+      insert into battery_types (id, brand, name, created_at) values ('ov60', 'Omnivoltaic', '60 V', '${now}'), ('ov72', 'Omnivoltaic', '72 V', '${now}');
+      insert into station_battery_types (station_id, battery_type_id, full_batteries, capacity) values ('be', 'ov60', 2, 3), ('be', 'ov72', 1, 0);
+    `);
+  }
+
+  it("keeps a type within its own places, a type without places within the station's", async () => {
+    const { env, db } = await setup();
+    await typedStation(db);
+    expect((await counter(env, "be")).rows.map((r) => [r.batteryTypeId, r.full, r.capacity])).toEqual([
+      ["ov60", 2, 3],
+      ["ov72", 1, 0],
+    ]);
+    expect((await event(env, "afi", "be", { type: "full", batteryTypeId: "ov60" })).status).toBe(200);
+    expect((await event(env, "afi", "be", { type: "full", batteryTypeId: "ov60" })).body).toEqual({ error: "counter_full" });
+    // The other type has no places of its own: the station's 10 count all its batteries (3 + 1 now).
+    for (let i = 0; i < 6; i++) expect((await event(env, "afi", "be", { type: "full", batteryTypeId: "ov72" })).status).toBe(200);
+    expect((await event(env, "afi", "be", { type: "full", batteryTypeId: "ov72" })).body).toEqual({ error: "counter_full" });
+    expect(full(db, "be")).toBe(10);
   });
 });
 

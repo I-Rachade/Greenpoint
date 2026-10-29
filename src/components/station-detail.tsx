@@ -363,7 +363,9 @@ export function StationDetail({ station, distance, onChanged }: Props) {
                           freeOfType(bt) > 0 ? "bg-gp-green/10 text-gp-green-dark" : "bg-zinc-500/10 text-gp-muted"
                         }`}
                       >
-                        {format(t.station.typeFull, { n: freeOfType(bt) })}
+                        {(bt.capacity ?? 0) > 0
+                          ? format(L.fullOf, { n: freeOfType(bt), total: bt.capacity })
+                          : format(t.station.typeFull, { n: freeOfType(bt) })}
                       </span>
                     </li>
                   ))}

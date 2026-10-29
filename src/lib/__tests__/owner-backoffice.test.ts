@@ -172,6 +172,32 @@ describe("DemoBackend owner backoffice (phase 8, as the Worker)", () => {
     expect(trims.reduce((a, e) => a + e.delta, 0)).toBe(4 - before);
   });
 
+  it("keeps places per battery type, the station's being their sum, as the Worker (0064)", async () => {
+    await as("admin", "+22890000001");
+    const station = (await backend.listStations()).find((s) => s.id === "st-agoe")!;
+    expect(station.batteryTypes!.map((t) => [t.id, t.fullBatteries, t.capacity])).toEqual([
+      ["bt-ovt-60", 6, 8],
+      ["bt-ovt-72", 5, 8],
+    ]);
+    await backend.saveStation("st-agoe", {
+      ...station,
+      kind: "both",
+      batteryTypeIds: ["bt-ovt-60", "bt-ovt-72"],
+      batteryTypeCapacities: { "bt-ovt-60": 3, "bt-ovt-72": 9 },
+    });
+    const after = (await backend.listStations()).find((s) => s.id === "st-agoe")!;
+    expect(after.batteryCapacity).toBe(12);
+    expect(after.batteryTypes!.map((t) => [t.id, t.fullBatteries, t.capacity])).toEqual([
+      ["bt-ovt-60", 3, 3],
+      ["bt-ovt-72", 5, 9],
+    ]);
+    setActiveStation("st-agoe");
+    const counter = await backend.stationCounter("st-agoe");
+    expect(counter.rows.map((r) => r.capacity)).toEqual([3, 9]);
+    await expect(backend.batteryEvent("st-agoe", { type: "full", batteryTypeId: "bt-ovt-60", requestId: "req-full-0001" })).rejects.toMatchObject({ code: "counter_full" });
+    expect((await backend.batteryEvent("st-agoe", { type: "full", batteryTypeId: "bt-ovt-72", requestId: "req-full-0002" })).fullAfter).toBe(6);
+  });
+
   it("pages the reservations table with a total", async () => {
     await as("admin", "+22890000001");
     const all = await backend.adminReservations({ limit: 5 });
