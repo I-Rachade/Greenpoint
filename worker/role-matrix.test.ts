@@ -90,6 +90,7 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/batteries/:id": OWNER,
   "POST /api/admin/batteries": ADMIN,
   "PATCH /api/admin/batteries/:id": ADMIN,
+  "DELETE /api/admin/batteries/:id": ADMIN,
   "GET /api/admin/ev-chargers": ADMIN,
   "POST /api/admin/ev-chargers": ADMIN,
   "DELETE /api/admin/ev-chargers/:id": ADMIN,

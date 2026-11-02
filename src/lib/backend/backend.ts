@@ -297,6 +297,8 @@ export interface Backend {
   registerBatteries(input: RegisterBatteriesInput): Promise<RegisterBatteriesResult>;
   /** In service, repair, lost or retired, with an optional reason (admins). */
   setBatteryStatus(id: string, input: BatteryStatusInput): Promise<void>;
+  /** Removes a battery and its own history from the register (admins); swaps keep their numbers. */
+  deleteBattery(id: string): Promise<void>;
   /** The swap form: is this number known at this battery type, new, or of another brand? */
   lookupBattery(stationId: string, serial: string, batteryTypeId: string | null): Promise<BatteryLookup>;
   /** Electric car chargers, assigned or not, including switched-off ones (admins only). */

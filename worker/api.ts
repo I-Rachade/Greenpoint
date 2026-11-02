@@ -10,7 +10,7 @@ import { deleteEvCharger, evChargersByStation, listEvChargers, saveEvCharger } f
 import type { RepairCenterInput } from "../shared/repair-centers";
 import { deleteRepairCenter, listRepairCenters, saveRepairCenter } from "./repair-centers";
 import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements } from "./battery-types";
-import { batteryDetail, listBatteries, lookupBattery, registerBatteries, setBatteryStatus } from "./batteries";
+import { batteryDetail, deleteBattery, listBatteries, lookupBattery, registerBatteries, setBatteryStatus } from "./batteries";
 import type { BatteryStatusInput, RegisterBatteriesInput } from "../shared/batteries";
 import { reportIncident, resolveIncident, stationIncidents } from "./incidents";
 import type { IncidentInput } from "../shared/incidents";
@@ -2158,6 +2158,7 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/batteries\/([\w-]+)$/, (c, [id]) => batteryDetail(c, id)],
   ["POST", /^\/api\/admin\/batteries$/, async (c) => registerBatteries(c, await readJson<RegisterBatteriesInput>(c.request))],
   ["PATCH", /^\/api\/admin\/batteries\/([\w-]+)$/, async (c, [id]) => setBatteryStatus(c, id, await readJson<BatteryStatusInput>(c.request))],
+  ["DELETE", /^\/api\/admin\/batteries\/([\w-]+)$/, async (c, [id]) => (await deleteBattery(c, id), { ok: true })],
   ["GET", /^\/api\/admin\/ev-chargers$/, async (c) => (await c.requireAdmin(), listEvChargers(c.db))],
   ["GET", /^\/api\/admin\/repair-centers$/, async (c) => (await c.requireAdmin(), listRepairCenters(c.db, false))],
   [

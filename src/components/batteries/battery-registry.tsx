@@ -2,9 +2,10 @@
 
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
+import { ConfirmSheet } from "@/components/confirm-sheet";
 import { useI18n } from "@/components/i18n-provider";
 import { Loaded, ResponsiveRows, Section, useWhen, useXof } from "@/components/owner/shared";
-import { Badge, EmptyState, type BadgeTone } from "@/components/ui";
+import { Badge, EmptyState, useToast, type BadgeTone } from "@/components/ui";
 import {
   BATTERY_LIST_MAX,
   BATTERY_STATUSES,
@@ -44,6 +45,8 @@ export function BatteryRegistry({ stationId = null }: { stationId?: string | nul
     () => backend.listBatteries({ brand, q: q.trim() || null, status, stationId }),
     `${brand ?? "*"}:${q.trim()}:${status ?? ""}:${stationId ?? ""}`,
   );
+
+  const remove = useDeleteBattery(reload);
 
   if (open) return <BatteryHistory id={open} onBack={() => setOpen(null)} />;
 
@@ -98,15 +101,60 @@ export function BatteryRegistry({ stationId = null }: { stationId?: string | nul
               <EmptyState text={total === 0 ? b.emptyAll : b.empty} />
             ) : (
               <Section title={brand === null ? b.title : brandName(brand)} aside={<span className="text-sm text-gp-muted">{format(b.swapsCount, { n: list.batteries.reduce((n, x) => n + x.swaps, 0) })}</span>}>
-                <BatteryRows batteries={list.batteries} onOpen={setOpen} />
+                <BatteryRows batteries={list.batteries} onOpen={setOpen} onDelete={list.canEdit ? remove.ask : undefined} />
                 {list.batteries.length >= BATTERY_LIST_MAX && <p className="text-xs text-gp-muted">{format(b.more, { n: BATTERY_LIST_MAX })}</p>}
               </Section>
             )}
           </>
         )}
       </Loaded>
+      {remove.sheet}
     </div>
   );
+}
+
+/**
+ * Deleting a battery (admins): asked first, since its own history goes with it. The swaps keep
+ * their battery numbers, and a number scanned again at a swap comes back into the register.
+ */
+function useDeleteBattery(onDone: () => void) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const d = t.batteries.delete;
+  const [target, setTarget] = useState<Pick<BatteryView, "id" | "serial" | "swaps"> | null>(null);
+  const [busy, setBusy] = useState(false);
+  async function confirm() {
+    if (!target) return;
+    setBusy(true);
+    try {
+      await backend.deleteBattery(target.id);
+      toast(format(d.done, { serial: target.serial }), { tone: "success" });
+      setTarget(null);
+      onDone();
+    } catch (err) {
+      toast(errorMessage(err), { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return {
+    ask: (x: Pick<BatteryView, "id" | "serial" | "swaps">) => setTarget(x),
+    sheet: (
+      <ConfirmSheet
+        open={target !== null}
+        title={format(d.title, { serial: target?.serial ?? "" })}
+        confirmLabel={d.confirm}
+        danger
+        busy={busy}
+        onConfirm={() => void confirm()}
+        onCancel={() => setTarget(null)}
+      >
+        <p>{target && target.swaps > 0 ? format(d.bodySwaps, { n: target.swaps }) : d.body}</p>
+      </ConfirmSheet>
+    ),
+  };
 }
 
 function useWhere() {
@@ -122,7 +170,7 @@ function useWhere() {
         : w.unknown;
 }
 
-function BatteryRows({ batteries, onOpen }: { batteries: BatteryView[]; onOpen: (id: string) => void }) {
+function BatteryRows({ batteries, onOpen, onDelete }: { batteries: BatteryView[]; onOpen: (id: string) => void; onDelete?: (x: BatteryView) => void }) {
   const { t } = useI18n();
   const b = t.batteries;
   const when = useWhen();
@@ -138,6 +186,17 @@ function BatteryRows({ batteries, onOpen }: { batteries: BatteryView[]; onOpen: 
       {x.source === "swap" && <Badge tone="blue">{b.addedAtSwap}</Badge>}
     </span>
   );
+  const del = (x: BatteryView) =>
+    onDelete ? (
+      <button
+        type="button"
+        onClick={() => onDelete(x)}
+        aria-label={format(b.delete.label, { serial: x.serial })}
+        className="min-h-9 rounded-full px-3 text-sm font-semibold text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40"
+      >
+        {b.delete.button}
+      </button>
+    ) : null;
   return (
     <ResponsiveRows<BatteryView>
       rows={batteries}
@@ -149,7 +208,10 @@ function BatteryRows({ batteries, onOpen }: { batteries: BatteryView[]; onOpen: 
             <span className="text-xs tabular-nums text-gp-muted">{x.lastSwapAt ? when(x.lastSwapAt) : b.never}</span>
           </div>
           <div className="text-gp-muted">{[x.typeLabel ?? (x.brand || b.unknownBrand), where(x), format(b.swapsCount, { n: x.swaps })].join(" · ")}</div>
-          {flags(x)}
+          <div className="flex items-center justify-between gap-2">
+            {flags(x)}
+            {del(x)}
+          </div>
         </div>
       )}
       columns={[
@@ -159,6 +221,7 @@ function BatteryRows({ batteries, onOpen }: { batteries: BatteryView[]; onOpen: 
         { label: b.columns.where, cell: where },
         { label: b.columns.swaps, cell: (x) => x.swaps, className: "text-right tabular-nums" },
         { label: b.columns.last, cell: (x) => (x.lastSwapAt ? when(x.lastSwapAt) : <span className="text-gp-muted">{b.never}</span>), className: "tabular-nums whitespace-nowrap" },
+        ...(onDelete ? [{ label: "", cell: del, className: "text-right" }] : []),
       ]}
     />
   );
@@ -255,7 +318,9 @@ function BatteryHistory({ id, onBack }: { id: string; onBack: () => void }) {
   const { backend } = useApp();
   const b = t.batteries;
   const where = useWhere();
+  const { profile } = useApp();
   const { data, error, reload } = useLiveQuery(() => backend.batteryDetail(id), id);
+  const remove = useDeleteBattery(onBack);
   const dateFmt = new Intl.DateTimeFormat(locale === "fr" ? "fr-TG" : "en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
   return (
     <div className="space-y-4">
@@ -289,6 +354,16 @@ function BatteryHistory({ id, onBack }: { id: string; onBack: () => void }) {
               <Section title={b.detail.history} aside={<span className="text-sm text-gp-muted">{format(b.swapsCount, { n: x.swaps })}</span>}>
                 {x.history.length === 0 ? <p className="text-sm text-gp-muted">{b.detail.noHistory}</p> : <Timeline entries={x.history} />}
               </Section>
+              {profile?.role === "admin" && (
+                <button
+                  type="button"
+                  onClick={() => remove.ask(x)}
+                  className="min-h-11 rounded-full border border-red-300 px-5 text-sm font-semibold text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950/40"
+                >
+                  {b.delete.detailButton}
+                </button>
+              )}
+              {remove.sheet}
             </>
           )}
         </Loaded>
