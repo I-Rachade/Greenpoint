@@ -221,6 +221,26 @@ export interface SwapFilter {
   customerType?: SwapCustomerType | null;
   /** Days back from today (owner backoffice: 1, 7, 30 or 365); staff always see today. */
   days?: number | null;
+  /** Owners and admins: a range of days (YYYY-MM-DD, Lomé time = UTC, both included) instead of `days`, for the swap sheet export. */
+  from?: string | null;
+  to?: string | null;
+}
+
+/** Longest range the swap sheet exports, and the most swaps one export reads. */
+export const SWAP_EXPORT_MAX_DAYS = 366;
+export const SWAP_EXPORT_LIMIT = 5000;
+
+/** A range of days as typed (from ≤ to, at most SWAP_EXPORT_MAX_DAYS): its start and the next midnight after `to`; else null. */
+export function swapDayRange(from: unknown, to: unknown): { since: string; until: string } | null {
+  const day = (v: unknown) => {
+    if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+    const ms = Date.parse(`${v}T00:00:00Z`);
+    return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === v ? ms : null;
+  };
+  const a = day(from);
+  const b = day(to);
+  if (a === null || b === null || b < a || (b - a) / 86_400_000 + 1 > SWAP_EXPORT_MAX_DAYS) return null;
+  return { since: new Date(a).toISOString(), until: new Date(b + 86_400_000).toISOString() };
 }
 
 export function isSwapCustomerType(value: unknown): value is SwapCustomerType {

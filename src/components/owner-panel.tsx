@@ -201,7 +201,7 @@ export function OwnerPanel() {
                 {tab === "live" && <LiveView stationId={selected?.id ?? null} stationName={stationName} />}
                 {tab === "report" && <ReportView stationId={selected?.id ?? null} days={days} />}
                 {tab === "cash" && <CashView stationId={selected?.id ?? null} />}
-                {tab === "history" && <HistoryView stationId={selected?.id ?? null} days={days} />}
+                {tab === "history" && <HistoryView stationId={selected?.id ?? null} stationName={selected?.name ?? ""} days={days} />}
                 {tab === "batteries" && <BatteryRegistry stationId={selected?.id ?? null} />}
                 {tab === "staff" && <StaffView view={data} stations={shown} onChanged={changed} />}
                 {tab === "stations" && <StationsView stations={shown} prices={data.prices} services={services ?? []} onChanged={changed} />}

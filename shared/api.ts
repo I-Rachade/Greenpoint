@@ -23,6 +23,7 @@ export type BackendErrorCode =
   | "contact_taken"
   | "invalid_code"
   | "invalid_pin"
+  | "invalid_date_range"
   | "pin_locked"
   | "bad_pin"
   | "weak_pin"

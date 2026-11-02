@@ -542,6 +542,24 @@ describe("swaps (W7, R6, R9, R10)", () => {
     expect((await call<SwapEntry[]>(env, "yao", "GET", "/api/stations/be/swaps?customerType=fleet")).body.map((s) => s.customerType)).toEqual(["fleet"]);
     expect((await call<SwapEntry[]>(env, "afi", "GET", "/api/stations/be/swaps")).body.map((s) => s.person)).toEqual(["Afi"]);
   });
+
+  it("reads a range of days for the swap sheet: owners and admins only, valid dates only", async () => {
+    const { env, db } = await setup();
+    const old = await swap(env, "afi", "be", { customerType: "cash" });
+    await swap(env, "afi", "be", { customerType: "cash" });
+    const day = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+    db.prepare("update swap_log set created_at = ? where id = ?").run(`${day(3)}T09:15:00.000Z`, (old.body as SwapEntry).id);
+    const list = async (as: string, q: string) => (await call<SwapEntry[] & { error?: string }>(env, as, "GET", `/api/stations/be/swaps?${q}`)).body;
+    expect((await list("yao", `from=${day(3)}&to=${day(3)}`)).map((s) => s.id)).toEqual([(old.body as SwapEntry).id]);
+    expect(await list("yao", `from=${day(3)}&to=${day(0)}`)).toHaveLength(2);
+    expect(await list("yao", `from=${day(2)}&to=${day(0)}`)).toHaveLength(1);
+    // Backwards, impossible or too long ranges are refused.
+    expect(await list("yao", `from=${day(0)}&to=${day(3)}`)).toEqual({ error: "invalid_date_range" });
+    expect(await list("yao", "from=2026-02-30&to=2026-03-01")).toEqual({ error: "invalid_date_range" });
+    expect(await list("yao", `from=${day(400)}&to=${day(0)}`)).toEqual({ error: "invalid_date_range" });
+    // Staff keep today's own swaps whatever they ask.
+    expect(await list("afi", `from=${day(3)}&to=${day(3)}`)).toHaveLength(1);
+  });
 });
 
 describe("Green Credit held by a charge (0052)", () => {

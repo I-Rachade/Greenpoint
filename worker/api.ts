@@ -2227,6 +2227,8 @@ const ROUTES: [string, RegExp, Handler][] = [
       stationSwaps(c, id, {
         customerType: (c.url.searchParams.get("customerType") as SwapFilter["customerType"]) ?? null,
         days: Number(c.url.searchParams.get("days")) || null,
+        from: c.url.searchParams.get("from"),
+        to: c.url.searchParams.get("to"),
       }),
   ],
   [

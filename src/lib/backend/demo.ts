@@ -54,6 +54,8 @@ import {
   cleanBatteryLabel,
   cleanReason,
   dayStartLome,
+  SWAP_EXPORT_LIMIT,
+  swapDayRange,
   isSwapCustomerType,
   takesBatteryIn,
   validAmount,
@@ -2122,16 +2124,20 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const { profile, role } = this.stationReader(state, stationId);
     // Staff see today's own swaps; owners and admins may look back (backoffice, plan phase 8).
-    const since = role === "staff" ? dayStartLome() : periodStart(reportPeriod(filter.days ?? 1));
+    const ranged = role !== "staff" && (filter.from != null || filter.to != null);
+    const range = ranged ? swapDayRange(filter.from, filter.to) : null;
+    if (ranged && !range) throw new BackendError("invalid_date_range");
+    const since = role === "staff" ? dayStartLome() : (range?.since ?? periodStart(reportPeriod(filter.days ?? 1)));
     return (state.swaps ?? [])
       .filter(
         (x) =>
           x.stationId === stationId &&
           x.createdAt >= since &&
+          (!range || x.createdAt < range.until) &&
           (!filter.customerType || x.customerType === filter.customerType) &&
           (role !== "staff" || x.staffId === profile.id),
       )
-      .slice(0, 500)
+      .slice(0, range ? SWAP_EXPORT_LIMIT : 500)
       .map(swapView);
   }
 
