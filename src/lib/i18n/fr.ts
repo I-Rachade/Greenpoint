@@ -323,7 +323,9 @@ export const fr = {
       noType: "batterie",
       full: "{n} pleines",
       held: "{n} réservée(s)",
+      steps: { label: "Étapes de l'échange", customer: "Client", in: "Rendue", out: "Donnée", pay: "Paiement", next: "Suivant", back: "Retour" },
       energy: {
+        conditionRequired: "Choisissez l'état de la batterie rendue.",
         priceFull: "Tarif {type} : {price} pour 100 %. Le client paie seulement l'énergie ajoutée.",
         walkIn: "Sans compte",
         plate: "Plaque du véhicule",

@@ -323,7 +323,9 @@ export const en: Dictionary = {
       noType: "battery",
       full: "{n} full",
       held: "{n} reserved",
+      steps: { label: "Swap steps", customer: "Customer", in: "Returned", out: "Given", pay: "Payment", next: "Next", back: "Back" },
       energy: {
+        conditionRequired: "Choose the state of the battery returned.",
         priceFull: "{type} price: {price} for 100 %. The customer only pays the charge added.",
         walkIn: "No account",
         plate: "Vehicle plate",
