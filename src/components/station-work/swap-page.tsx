@@ -66,8 +66,10 @@ export function ScanField({
   barcodes?: boolean;
 }) {
   const [scanning, setScanning] = useState(false);
+  // The camera sits outside the <label>: a tap on it must not focus the field and open the keyboard.
   return (
-    <label className="block space-y-1">
+    <div className="space-y-1">
+      <label className="block space-y-1">
       <span className="text-sm font-medium">{label}</span>
       <div className="flex gap-2">
         <Input value={value} required={required} inputMode={inputMode} onChange={(e) => onChange(e.target.value)} />
@@ -78,6 +80,7 @@ export function ScanField({
         )}
       </div>
       {hint && <span className="block text-xs text-gp-muted">{hint}</span>}
+      </label>
       {note}
       {scanning && (
         <QrScanner
@@ -89,7 +92,7 @@ export function ScanField({
           onClose={() => setScanning(false)}
         />
       )}
-    </label>
+    </div>
   );
 }
 

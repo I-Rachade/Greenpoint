@@ -1288,6 +1288,7 @@ export const en: Dictionary = {
       pickupButton: "Hand out",
       scan: "Scan",
       scanned: "QR code read",
+      scanBarcodeHint: "Put the barcode inside the frame, flat, 15–20 cm away, and hold the phone still for a second.",
       stopScan: "Stop",
       scanUnsupported: "The camera could not be opened: allow it in the phone settings.",
       handedOver: "Parcel {no} handed out. The sender has been told.",
