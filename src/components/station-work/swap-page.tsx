@@ -43,7 +43,7 @@ function Chips<T extends string>({ value, options, label, onChange }: { value: T
   );
 }
 
-/** A text field with a "scan" button when the phone can read QR codes. */
+/** A text field with a "scan" button when the phone can read QR codes (and barcodes, for battery numbers). */
 function ScanField({
   label,
   hint,
@@ -52,6 +52,7 @@ function ScanField({
   required,
   inputMode,
   note,
+  barcodes,
 }: {
   label: string;
   hint?: string;
@@ -61,6 +62,8 @@ function ScanField({
   inputMode?: "tel" | "text";
   /** Shown under the hint, e.g. whether the battery is known. */
   note?: ReactNode;
+  /** A battery number: it can be a barcode as well as a QR code. */
+  barcodes?: boolean;
 }) {
   const [scanning, setScanning] = useState(false);
   return (
@@ -78,6 +81,7 @@ function ScanField({
       {note}
       {scanning && (
         <QrScanner
+          barcodes={barcodes}
           onResult={(text) => {
             onChange(text);
             setScanning(false);
@@ -395,6 +399,7 @@ function SwapForm({
           value={batteryIn}
           onChange={setBatteryIn}
           required={numbersRequired}
+          barcodes
           note={<BatteryNote stationId={station.id} serial={batteryIn} typeId={typeId} />}
         />
       )}
@@ -414,7 +419,8 @@ function SwapForm({
         value={batteryOut}
         onChange={setBatteryOut}
         required={numbersRequired}
-        note={<BatteryNote stationId={station.id} serial={batteryOut} typeId={typeId} />}
+        barcodes
+          note={<BatteryNote stationId={station.id} serial={batteryOut} typeId={typeId} />}
       />
       {energy && (
         <>
