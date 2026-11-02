@@ -12,6 +12,7 @@ import {
   type StaffStats,
 } from "../shared/owner-backoffice";
 import type { SwapOwner } from "../shared/station-cash";
+import type { SwapPayment } from "../shared/station-work";
 import type { Profile } from "../shared/types";
 import { personLabel } from "../shared/wallet";
 import { ApiError, nowIso } from "./http";
@@ -162,7 +163,7 @@ export async function ownerReport(c: OwnerCtx, stationId: string | null, days: R
          where l.station_id in ${IN(1)} and l.created_at >= ?2`,
       )
       .bind(list, from)
-      .all<{ at: string; payment: "cash" | "wallet" | "fleet" | "none"; amount_xof: number; is_own: number; owner: SwapOwner }>(),
+      .all<{ at: string; payment: SwapPayment; amount_xof: number; is_own: number; owner: SwapOwner }>(),
     c.db
       .prepare(
         `select cs.paid_at as at, cs.payment_method, cs.amount_xof, coalesce(o.is_own, 0) as is_own from charging_sessions cs

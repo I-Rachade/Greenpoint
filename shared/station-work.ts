@@ -1,4 +1,5 @@
 import type { StationService } from "./station-services";
+import type { BatteryCondition, EnergyPricing, MmNetwork } from "./energy-swap";
 
 /**
  * Station work (plan phase 3): the battery counter, the swap log and the active station.
@@ -44,6 +45,8 @@ export interface CounterRow extends CounterState {
   label: string | null;
   /** Places for this type's batteries (the station's places without types); 0 = not set. */
   capacity: number;
+  /** Priced by the energy given (0065): the swap costs (% OUT − % IN) × this price; null = the station's price. */
+  energy?: EnergyPricing | null;
 }
 
 export interface BatteryEventView {
@@ -146,7 +149,7 @@ export const SWAP_CUSTOMER_TYPES = ["app", "cash", "fleet", "first_purchase"] as
 export type SwapCustomerType = (typeof SWAP_CUSTOMER_TYPES)[number];
 
 /** How a swap was paid; none = paid outside the app (a reservation completed with its code). */
-export type SwapPayment = "cash" | "wallet" | "fleet" | "none";
+export type SwapPayment = "cash" | "wallet" | "fleet" | "none" | "mobile_money";
 
 export interface SwapInput {
   requestId: string;
@@ -171,6 +174,21 @@ export interface SwapInput {
   /** A battery reservation completed by this swap. */
   reservationId?: string | null;
   pickupCode?: string | null;
+  // A type priced by energy (shared/energy-swap.ts, 0065): only "app" and "cash" customers,
+  // paid only by T-Money or Flooz; `payment`, `creditCode` and `amountXof` are ignored.
+  /** Charge of the battery brought back and of the one handed out, 0…100; OUT above IN. */
+  inPct?: number | null;
+  outPct?: number | null;
+  /** The vehicle's plate (required) and the walk-in customer's name (optional). */
+  plate?: string | null;
+  customerName?: string | null;
+  /** State of the battery brought back; anything but "ok" puts it in repair. */
+  batteryInCondition?: BatteryCondition | null;
+  /** The staff checked the battery handed out: no damage, leak, heat or smell. */
+  batteryOutChecked?: boolean;
+  /** Network and transaction id of the customer's payment. */
+  mmNetwork?: MmNetwork | null;
+  mmRef?: string | null;
 }
 
 export interface SwapEntry {
@@ -186,6 +204,14 @@ export interface SwapEntry {
   payment: SwapPayment;
   amountXof: number;
   reservationId: string | null;
+  /** Swaps priced by energy (0065); null before or for other types. */
+  inPct?: number | null;
+  outPct?: number | null;
+  plate?: string | null;
+  customerName?: string | null;
+  batteryInCondition?: BatteryCondition | null;
+  mmNetwork?: MmNetwork | null;
+  mmRef?: string | null;
   person: string;
   role: StationRole;
   createdAt: string;
