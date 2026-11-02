@@ -18,7 +18,7 @@ import { useI18n } from "../i18n-provider";
 import { LoadFailed } from "../load-state";
 import { canScanQr, QrScanner } from "../parcels/qr-scanner";
 import { useReservationWhat } from "../reservation-list";
-import { Button, Card, EmptyState, Input, SkeletonCard, SuccessCheck, useToast } from "../ui";
+import { Button, Card, EmptyState, Input, SkeletonCard, SuccessCheck, useReducedMotion, useToast } from "../ui";
 import { WorkShell } from "./work-shell";
 
 function Chips<T extends string>({ value, options, label, onChange }: { value: T; options: { id: T; label: string; disabled?: boolean }[]; label: string; onChange: (v: T) => void }) {
@@ -160,6 +160,8 @@ function BatteryNote({ stationId, serial, typeId }: { stationId: string; serial:
   );
 }
 
+type SwapStep = "customer" | "in" | "out" | "pay";
+
 /**
  * The swap form. From a reservation (/operator/echange?reservation=…) it comes filled in:
  * the reservation's customer and battery type, the customer's code first; the swap then
@@ -213,6 +215,10 @@ function SwapForm({
   // One id per swap being entered: confirming twice records it once.
   const [requestId, setRequestId] = useState(newRequestId);
   const [confirming, setConfirming] = useState(false);
+  // The form in steps: customer, battery brought back, battery given, payment.
+  const [step, setStep] = useState(0);
+  const [direction, setDirection] = useState(1);
+  const reduced = useReducedMotion();
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -238,9 +244,34 @@ function SwapForm({
   // The swap price is set in the backoffice (station details); without it only a first purchase or a fleet swap goes through.
   const priceMissing = !energy && !counter.priceXof && customerType !== "first_purchase" && customerType !== "fleet";
 
+  // A first purchase brings no battery back: no step for it.
+  const steps: SwapStep[] = takesBatteryIn(customerType) ? ["customer", "in", "out", "pay"] : ["customer", "out", "pay"];
+  const at = Math.min(step, steps.length - 1);
+  const current = steps[at];
+  const last = at === steps.length - 1;
+  const stepNames: Record<SwapStep, string> = { customer: s.steps.customer, in: s.steps.in, out: s.steps.out, pay: s.steps.pay };
+
+  function go(to: number) {
+    setError(null);
+    setDirection(to > at ? 1 : -1);
+    setStep(to);
+    window.scrollTo?.({ top: 0 });
+  }
+
+  /** What stops the current step before going on (the browser checks the required fields). */
+  function stepProblem(): string | null {
+    if (current === "customer" && !row) return t.errors.battery_type_required;
+    if (current === "in" && energy && !condition) return s.energy.conditionRequired;
+    if (current === "out" && energy && !priced) return s.energy.checkPct;
+    return null;
+  }
+
   function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    const problem = stepProblem();
+    if (problem) return setError(problem);
+    if (!last) return go(at + 1);
     if (!row) return setError(t.errors.battery_type_required);
     setConfirming(true);
   }
@@ -280,6 +311,7 @@ function SwapForm({
       toast(t.work.saved);
       if (reservation) return onReservationDone?.();
       setDone(true);
+      setStep(0);
       setRequestId(newRequestId());
       setContact("");
       setDriverCode("");
@@ -316,8 +348,33 @@ function SwapForm({
     );
   }
 
+  // The new step slides in from the side it comes from; with reduced motion it simply appears.
+  const slide = reduced
+    ? ""
+    : `transition-[translate,opacity] duration-240 ease-gp-out starting:opacity-0 ${direction > 0 ? "starting:translate-x-6" : "starting:-translate-x-6"}`;
+
   return (
     <form onSubmit={submit} className="space-y-5">
+      <ol className="flex gap-2" aria-label={s.steps.label}>
+        {steps.map((name, i) => (
+          <li key={name} aria-current={i === at ? "step" : undefined} className="flex min-w-0 flex-1 flex-col gap-1">
+            <span className={`h-1 rounded-full transition-colors duration-240 ${i <= at ? "bg-gp-green" : "bg-gp-border"}`} aria-hidden />
+            <span className={`truncate text-xs ${i === at ? "font-semibold" : "text-gp-muted"}`}>
+              {i + 1}. {stepNames[name]}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {at > 0 && row && (
+        <p className="text-sm text-gp-muted">
+          {[typeLabel, energy && customerType === "cash" ? s.energy.walkIn : s.customerTypes[customerType], energy ? plate.trim().toUpperCase() : ""]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      )}
+      <div key={current} className={`space-y-5 ${slide}`}>
+      {current === "customer" && (
+      <>
       {reservation && (
         <Card className="space-y-3 p-4">
           <div>
@@ -391,8 +448,11 @@ function SwapForm({
       {customerType === "app" && !reservation && !wallet && <ScanField label={s.contact} hint={s.contactHint} value={contact} onChange={setContact} required inputMode="tel" />}
       {customerType === "first_purchase" && <ScanField label={s.contactOptional} value={contact} onChange={setContact} inputMode="tel" />}
       {customerType === "fleet" && <ScanField label={s.driverCode} hint={s.fleetHint} value={driverCode} onChange={setDriverCode} required />}
+      </>
+      )}
 
-      {takesBatteryIn(customerType) && (
+      {current === "in" && (
+      <>
         <ScanField
           label={s.batteryIn}
           hint={numbersRequired ? s.batteryHintRequired : s.batteryHint}
@@ -402,7 +462,6 @@ function SwapForm({
           barcodes
           note={<BatteryNote stationId={station.id} serial={batteryIn} typeId={typeId} />}
         />
-      )}
       {energy && (
         <>
           <PctField label={s.energy.inPct} hint={s.energy.pctHint} value={inPct} onChange={setInPct} />
@@ -413,6 +472,10 @@ function SwapForm({
           </fieldset>
         </>
       )}
+      </>
+      )}
+      {current === "out" && (
+      <>
       <ScanField
         label={s.batteryOut}
         hint={numbersRequired ? s.batteryHintRequired : s.batteryHint}
@@ -425,10 +488,27 @@ function SwapForm({
       {energy && (
         <>
           <PctField label={s.energy.outPct} hint={s.energy.pctHint} value={outPct} onChange={setOutPct} />
+          {priced ? (
+            <p className="font-semibold tabular-nums">
+              {format(s.energy.supplied, { pct: priced.suppliedPct, price: formatXof(energy.priceFullXof, locale), amount: formatXof(priced.amountXof, locale) })}
+            </p>
+          ) : (
+            pctTyped && (
+              <p role="alert" className="text-sm font-medium text-red-600">
+                {s.energy.checkPct}
+              </p>
+            )
+          )}
           <label className="flex items-start gap-3 text-sm">
             <input type="checkbox" className="mt-1 size-5 accent-gp-green-dark" required checked={outChecked} onChange={(e) => setOutChecked(e.target.checked)} />
             <span>{s.energy.outChecked}</span>
           </label>
+        </>
+      )}
+      </>
+      )}
+      {current === "pay" && energy && (
+        <>
           <fieldset className="space-y-3 rounded-2xl border border-gp-border bg-gp-surface p-4">
             <legend className="px-1 text-sm font-medium">{s.energy.pay}</legend>
             <p className="text-sm text-gp-muted">{format(s.energy.priceFull, { type: typeLabel, price: formatXof(energy.priceFullXof, locale) })}</p>
@@ -466,7 +546,8 @@ function SwapForm({
         </>
       )}
 
-      {customerType !== "fleet" && !energy && (
+      {current === "pay" && customerType === "fleet" && <p className="text-sm text-gp-muted">{s.payments.fleet}</p>}
+      {current === "pay" && customerType !== "fleet" && !energy && (
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium">{s.payment}</legend>
           {customerType === "app" && creditHere && (
@@ -491,15 +572,28 @@ function SwapForm({
           )}
         </fieldset>
       )}
+      </div>
 
       {error && (
         <p role="alert" className="animate-gp-shake text-sm text-red-600">
           {error}
         </p>
       )}
-      <Button type="submit" size="lg" className="w-full" disabled={!row || row.full <= 0 || priceMissing || (!!energy && (!priced || !chosenNetwork || !condition))}>
-        {s.confirm}
-      </Button>
+      <div className="flex gap-3">
+        {at > 0 && (
+          <Button variant="secondary" size="lg" onClick={() => go(at - 1)}>
+            {s.steps.back}
+          </Button>
+        )}
+        <Button
+          type="submit"
+          size="lg"
+          className="flex-1"
+          disabled={!row || row.full <= 0 || priceMissing || (last && !!energy && (!priced || !chosenNetwork || !condition))}
+        >
+          {last ? s.confirm : s.steps.next}
+        </Button>
+      </div>
 
       <ConfirmSheet open={confirming} title={s.confirmTitle} confirmLabel={s.confirm} busy={busy} onConfirm={() => void record()} onCancel={() => setConfirming(false)}>
         <p>{format(takesBatteryIn(customerType) ? s.confirmText : s.confirmFirst, { type: typeLabel })}</p>
