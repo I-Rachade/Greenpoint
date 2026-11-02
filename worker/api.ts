@@ -12,6 +12,8 @@ import { deleteRepairCenter, listRepairCenters, saveRepairCenter } from "./repai
 import { batteryTypesByStation, listBatteryTypes, saveBatteryType, stationBatteryTypeStatements } from "./battery-types";
 import { batteryDetail, listBatteries, lookupBattery, registerBatteries, setBatteryStatus } from "./batteries";
 import type { BatteryStatusInput, RegisterBatteriesInput } from "../shared/batteries";
+import { reportIncident, resolveIncident, stationIncidents } from "./incidents";
+import type { IncidentInput } from "../shared/incidents";
 import { capacityTrimStatements, typeCapacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
 import type { StationRole } from "../shared/station-work";
 import {
@@ -2220,6 +2222,13 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/stations\/([\w-]+)\/counter$/, (c, [id]) => stationCounter(c, id)],
   ["POST", /^\/api\/stations\/([\w-]+)\/battery-events$/, async (c, [id]) => postBatteryEvent(c, id, await readJson<BatteryEventInput>(c.request))],
   ["POST", /^\/api\/stations\/([\w-]+)\/swaps$/, async (c, [id]) => recordSwap(c, id, await readJson<SwapInput>(c.request))],
+  ["POST", /^\/api\/stations\/([\w-]+)\/incidents$/, async (c, [id]) => reportIncident(c, id, await readJson<IncidentInput>(c.request))],
+  ["GET", /^\/api\/stations\/([\w-]+)\/incidents$/, (c, [id]) => stationIncidents(c, id)],
+  [
+    "POST",
+    /^\/api\/stations\/([\w-]+)\/incidents\/([\w-]+)\/resolve$/,
+    async (c, [id, incident]) => resolveIncident(c, id, incident, await readJson<{ resolution?: string | null }>(c.request)),
+  ],
   [
     "GET",
     /^\/api\/stations\/([\w-]+)\/swaps$/,

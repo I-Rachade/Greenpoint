@@ -21,7 +21,7 @@ import { useReservationWhat } from "../reservation-list";
 import { Button, Card, EmptyState, Input, SkeletonCard, SuccessCheck, useReducedMotion, useToast } from "../ui";
 import { WorkShell } from "./work-shell";
 
-function Chips<T extends string>({ value, options, label, onChange }: { value: T; options: { id: T; label: string; disabled?: boolean }[]; label: string; onChange: (v: T) => void }) {
+export function Chips<T extends string>({ value, options, label, onChange }: { value: T; options: { id: T; label: string; disabled?: boolean }[]; label: string; onChange: (v: T) => void }) {
   return (
     <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-2">
       {options.map((o) => (
@@ -44,7 +44,7 @@ function Chips<T extends string>({ value, options, label, onChange }: { value: T
 }
 
 /** A text field with a "scan" button when the phone can read QR codes (and barcodes, for battery numbers). */
-function ScanField({
+export function ScanField({
   label,
   hint,
   value,

@@ -1,9 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
-import { EmptyState } from "@/components/ui";
-import { useLiveQuery } from "@/lib/hooks";
+import { Button, EmptyState, Input, useToast } from "@/components/ui";
+import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
+import type { Incident } from "@shared/incidents";
+import { IncidentItem } from "@/components/station-work/incident-page";
 import type { ReportPeriod } from "@shared/owner-backoffice";
 import type { BatteryEventView, SwapEntry } from "@shared/station-work";
 import { SwapSheetExport } from "@/components/station-work/swap-sheet";
@@ -15,9 +18,65 @@ export function HistoryView({ stationId, stationName, days }: { stationId: strin
   if (!stationId) return <EmptyState text={t.owner.history.pickStation} />;
   return (
     <div className="space-y-4">
+      <Incidents stationId={stationId} />
       <SwapSheetExport key={stationId} stationId={stationId} stationName={stationName} pickDates />
       <Swaps stationId={stationId} days={days} />
       <CounterHistory stationId={stationId} days={days} />
+    </div>
+  );
+}
+
+/** Problems the staff reported: open ones first, each with "Mark handled" and an optional note. */
+function Incidents({ stationId }: { stationId: string }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const x = t.work.incident;
+  const { data, error, reload } = useLiveQuery(() => backend.stationIncidents(stationId), stationId);
+  return (
+    <Section title={x.ownerList}>
+      <Loaded data={data} error={error} reload={reload}>
+        {(incidents) =>
+          incidents.length === 0 ? (
+            <p className="text-sm text-gp-muted">{x.none}</p>
+          ) : (
+            <ul className="-mx-4 divide-y divide-gp-border">
+              {incidents.map((i) => (
+                <IncidentItem key={i.id} incident={i} action={i.status === "open" ? <ResolveIncident incident={i} onDone={reload} /> : undefined} />
+              ))}
+            </ul>
+          )
+        }
+      </Loaded>
+    </Section>
+  );
+}
+
+function ResolveIncident({ incident, onDone }: { incident: Incident; onDone: () => void }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const x = t.work.incident;
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function resolve() {
+    setBusy(true);
+    try {
+      await backend.resolveIncident(incident.stationId, incident.id, note.trim() || null);
+      toast(x.resolved, { tone: "success" });
+      onDone();
+    } catch (err) {
+      toast(errorMessage(err), { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-1">
+      <Input className="min-w-0 flex-1" value={note} maxLength={500} placeholder={x.resolution} aria-label={x.resolution} onChange={(e) => setNote(e.target.value)} />
+      <Button variant="secondary" disabled={busy} onClick={() => void resolve()}>
+        {x.resolve}
+      </Button>
     </div>
   );
 }

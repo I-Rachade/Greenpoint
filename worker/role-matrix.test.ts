@@ -105,6 +105,9 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/stations/:id/battery-events": STATION, // corrections: owner and admin (station-work.test)
   "POST /api/stations/:id/swaps": STATION,
   "GET /api/stations/:id/swaps": STATION,
+  "POST /api/stations/:id/incidents": STATION,
+  "GET /api/stations/:id/incidents": STATION,
+  "POST /api/stations/:id/incidents/:id/resolve": OWNER, // owners and admins mark a report handled
   "GET /api/stations/:id/battery-events": OWNER, // counter history: backoffice
   "GET /api/stations/:id/batteries/lookup": STATION, // the swap form: is this battery known?
   "GET /api/admin/reservations": ADMIN,
