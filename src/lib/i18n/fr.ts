@@ -3415,6 +3415,16 @@ export const fr = {
     },
   },
   batteries: {
+    delete: {
+      button: "Supprimer",
+      label: "Supprimer la batterie {serial}",
+      detailButton: "Supprimer cette batterie",
+      title: "Supprimer la batterie {serial} ?",
+      body: "Elle sort de la liste avec son historique. Si son numéro est scanné à un échange, elle revient.",
+      bodySwaps: "Elle sort de la liste avec son historique. Ses {n} échange(s) restent dans le journal et la fiche de swap, avec son numéro. Si son numéro est scanné à un échange, elle revient.",
+      confirm: "Supprimer",
+      done: "Batterie {serial} supprimée.",
+    },
     title: "Batteries",
     intro: "Toutes les batteries échangées, par marque. Une batterie arrive dans la liste quand un admin l'enregistre ou au premier échange qui scanne son numéro.",
     introOwner: "Les batteries passées par vos stations, par marque, avec leur historique.",

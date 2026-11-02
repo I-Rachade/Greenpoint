@@ -2516,6 +2516,14 @@ export class DemoBackend implements Backend {
     });
   }
 
+  async deleteBattery(id: string): Promise<void> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const { batteries, history } = this.batteryRegister(state);
+    if (!batteries.some((b) => b.id === id)) throw new BackendError("unknown", "not_found");
+    this.save({ ...state, batteries: batteries.filter((b) => b.id !== id), batteryHistory: history.filter((h) => h.batteryId !== id) });
+  }
+
   async lookupBattery(stationId: string, serial: string, batteryTypeId: string | null): Promise<BatteryLookup> {
     const state = this.load();
     this.stationReader(state, stationId);

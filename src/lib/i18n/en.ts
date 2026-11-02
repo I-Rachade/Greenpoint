@@ -3415,6 +3415,16 @@ export const en: Dictionary = {
     },
   },
   batteries: {
+    delete: {
+      button: "Delete",
+      label: "Delete battery {serial}",
+      detailButton: "Delete this battery",
+      title: "Delete battery {serial}?",
+      body: "It leaves the list with its history. If its number is scanned at a swap, it comes back.",
+      bodySwaps: "It leaves the list with its history. Its {n} swap(s) stay in the swap log and swap sheet, with its number. If its number is scanned at a swap, it comes back.",
+      confirm: "Delete",
+      done: "Battery {serial} deleted.",
+    },
     title: "Batteries",
     intro: "Every swapped battery, per brand. A battery gets into the list when an admin registers it or at the first swap that scans its number.",
     introOwner: "The batteries that went through your stations, per brand, with their history.",

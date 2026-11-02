@@ -642,6 +642,11 @@ export class CloudflareBackend implements Backend {
     this.changed();
   }
 
+  async deleteBattery(id: string) {
+    await this.call("DELETE", `/api/admin/batteries/${encodeURIComponent(id)}`);
+    this.changed();
+  }
+
   lookupBattery(stationId: string, serial: string, batteryTypeId: string | null) {
     const q = new URLSearchParams({ serial });
     if (batteryTypeId) q.set("batteryTypeId", batteryTypeId);

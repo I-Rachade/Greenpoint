@@ -359,6 +359,20 @@ async function requireAdmin(c: Ctx): Promise<Profile> {
   return user;
 }
 
+/**
+ * DELETE /api/admin/batteries/:id: removes a battery from the register with its own history (admins),
+ * e.g. a number typed wrong. The swaps keep their battery numbers (swap_log has the labels, not a
+ * link), so no swap, total or swap sheet changes. Scanned again at a swap, the number comes back.
+ */
+export async function deleteBattery(c: Ctx, id: string): Promise<void> {
+  await requireAdmin(c);
+  const res = await c.db.batch([
+    c.db.prepare("delete from battery_history where battery_id = ?").bind(id),
+    c.db.prepare("delete from batteries where id = ?").bind(id),
+  ]);
+  if (!res[1].meta.changes) throw new ApiError("not_found", 404);
+}
+
 /** POST /api/admin/batteries: registers numbers for a battery type (admins); known ones stay as they are. */
 export async function registerBatteries(c: Ctx, input: RegisterBatteriesInput): Promise<RegisterBatteriesResult> {
   const admin = await requireAdmin(c);
