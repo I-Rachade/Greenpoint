@@ -49,7 +49,7 @@ function SwapList({ station, mine }: { station: StationView; mine: boolean }) {
             <li key={x.id} className="space-y-1 px-4 py-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="tabular-nums text-gp-muted">{time(x.createdAt)}</span>
-                <Badge tone={x.customerType === "fleet" ? "blue" : x.customerType === "app" ? "green" : "neutral"}>{s.customerTypes[x.customerType]}</Badge>
+                <Badge tone={x.customerType === "fleet" ? "blue" : x.customerType === "app" ? "green" : "neutral"}>{x.payment === "mobile_money" && x.customerType === "cash" ? s.energy.walkIn : s.customerTypes[x.customerType]}</Badge>
                 {x.batteryTypeLabel && <span className="font-medium">{x.batteryTypeLabel}</span>}
                 <span className="ml-auto font-semibold tabular-nums">
                   {x.payment === "fleet" || x.payment === "none" ? s.payments[x.payment] : `${formatXof(x.amountXof, locale)} · ${s.payments[x.payment]}`}
@@ -57,8 +57,14 @@ function SwapList({ station, mine }: { station: StationView; mine: boolean }) {
               </div>
               <div className="text-gp-muted">
                 {l.in} {x.batteryIn ?? "–"} · {l.out} {x.batteryOut ?? "–"}
-                {(x.customer ?? x.driver) && ` · ${x.customer ?? x.driver}`}
+                {(x.customer ?? x.driver ?? x.customerName) && ` · ${x.customer ?? x.driver ?? x.customerName}`}
               </div>
+              {x.inPct != null && x.outPct != null && (
+                <div className="text-gp-muted">
+                  {format(l.energy, { in: x.inPct, out: x.outPct, plate: x.plate ?? "–" })}
+                  {x.mmRef && ` · ${format(l.mm, { network: x.mmNetwork === "flooz" ? "Flooz" : "T-Money", ref: x.mmRef })}`}
+                </div>
+              )}
               <div className="text-xs text-gp-muted">
                 {format(l.by, { person: x.person })} <RoleBadge role={x.role} />
               </div>

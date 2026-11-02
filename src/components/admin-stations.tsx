@@ -8,6 +8,7 @@ import { format } from "@/lib/i18n/format";
 import type { Device } from "@shared/iot/devices";
 import type { Parcel, ParcelDepot } from "@shared/parcels";
 import { batteryTypeLabel, groupByBrand, type BatteryType } from "@shared/battery-types";
+import { DEFAULT_USSD, type BatteryPricing } from "@shared/energy-swap";
 import { placeholderPhoto } from "@shared/station-extras";
 import { hasAnyPoint, kindFor } from "@shared/station-points";
 import { VEHICLE_TYPES, type StationInput, type StationView } from "@shared/types";
@@ -536,6 +537,7 @@ function BatteryTypesManager({
   const [brand, setBrand] = useState("");
   const [name, setName] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
 
   async function run(action: () => Promise<void>) {
     try {
@@ -546,6 +548,8 @@ function BatteryTypesManager({
       setProblem(errorMessage(err));
     }
   }
+
+  const editingType = types.find((bt) => bt.id === editing);
 
   async function add(e: FormEvent) {
     e.preventDefault();
@@ -577,6 +581,12 @@ function BatteryTypesManager({
                 >
                   {bt.name}
                   <span className="text-xs text-zinc-500">{format(b.stations, { n: usage(bt.id) })}</span>
+                  {bt.pricing === "energy" && bt.priceFullXof ? (
+                    <span className="text-xs font-medium text-gp-green-dark">{format(b.energyPrice, { price: `${bt.priceFullXof} F` })}</span>
+                  ) : null}
+                  <button type="button" className="text-xs text-gp-green-dark hover:underline" onClick={() => setEditing(editing === bt.id ? null : bt.id)}>
+                    {b.edit}
+                  </button>
                   <button
                     type="button"
                     className="text-xs text-gp-green-dark hover:underline"
@@ -589,6 +599,18 @@ function BatteryTypesManager({
             </li>
           ))}
         </ul>
+      )}
+      {editingType && (
+        <TypePricingForm
+          key={editingType.id}
+          type={editingType}
+          onSave={(input) =>
+            run(async () => {
+              await backend.saveBatteryType(editingType.id, { brand: editingType.brand, name: editingType.name, isActive: editingType.isActive, ...input });
+              setEditing(null);
+            })
+          }
+        />
       )}
       <form onSubmit={add} className="flex flex-wrap items-end gap-2">
         <label className={label}>
@@ -614,6 +636,69 @@ function BatteryTypesManager({
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * A battery type's price (0065): the station's swap price, or by the energy given with its price
+ * for 100 % and the USSD codes the customer dials (shared/energy-swap.ts). Admins only.
+ */
+function TypePricingForm({
+  type,
+  onSave,
+}: {
+  type: BatteryType;
+  onSave: (input: { pricing: BatteryPricing; priceFullXof: number | null; ussdTmoney: string | null; ussdFlooz: string | null }) => void;
+}) {
+  const { t } = useI18n();
+  const b = t.admin.batteryTypes;
+  const [pricing, setPricing] = useState<BatteryPricing>(type.pricing ?? "station");
+  const [price, setPrice] = useState(type.priceFullXof ? String(type.priceFullXof) : "");
+  const [tmoney, setTmoney] = useState(type.ussdTmoney ?? DEFAULT_USSD.tmoney);
+  const [flooz, setFlooz] = useState(type.ussdFlooz ?? DEFAULT_USSD.flooz);
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    onSave(
+      pricing === "energy"
+        ? { pricing, priceFullXof: Number(price), ussdTmoney: tmoney.trim() || null, ussdFlooz: flooz.trim() || null }
+        : { pricing, priceFullXof: null, ussdTmoney: null, ussdFlooz: null },
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-3 rounded-lg border border-black/10 p-3 dark:border-white/10">
+      <p className="text-sm font-medium">{batteryTypeLabel(type)}</p>
+      <fieldset className="flex flex-wrap gap-4 text-sm">
+        <legend className="sr-only">{b.pricing}</legend>
+        {(["station", "energy"] as const).map((p) => (
+          <label key={p} className="inline-flex items-center gap-2">
+            <input type="radio" name={`pricing-${type.id}`} checked={pricing === p} onChange={() => setPricing(p)} />
+            {b.pricings[p]}
+          </label>
+        ))}
+      </fieldset>
+      {pricing === "energy" && (
+        <div className="flex flex-wrap items-end gap-2">
+          <label className={label}>
+            <span>{b.priceFull}</span>
+            <input className={`${input} w-32`} inputMode="numeric" required value={price} onChange={(e) => setPrice(e.target.value.replace(/\D/g, ""))} />
+          </label>
+          <label className={label}>
+            <span>{b.ussdTmoney}</span>
+            <input className={`${input} w-64 font-mono`} value={tmoney} maxLength={80} onChange={(e) => setTmoney(e.target.value)} />
+          </label>
+          <label className={label}>
+            <span>{b.ussdFlooz}</span>
+            <input className={`${input} w-80 font-mono`} value={flooz} maxLength={80} onChange={(e) => setFlooz(e.target.value)} />
+          </label>
+          <p className="w-full text-xs text-zinc-500">{b.ussdHint}</p>
+        </div>
+      )}
+      <button type="submit" className="rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white">
+        {b.save}
+      </button>
+    </form>
   );
 }
 

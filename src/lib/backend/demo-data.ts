@@ -1,4 +1,5 @@
 import type { BatteryType } from "@shared/battery-types";
+import { DEFAULT_USSD } from "@shared/energy-swap";
 import type { EvCharger } from "@shared/ev-chargers";
 import type { ChargingPoint, Operator, Station, StationStatus } from "@shared/types";
 import type { Amenity } from "@shared/station-extras";
@@ -215,13 +216,17 @@ export const DEMO_BATTERY_TYPES: BatteryType[] = [
   { id: "bt-spiro-72", brand: "Spiro", name: "72 V", isActive: true },
   { id: "bt-ovt-60", brand: "Omnivoltaic", name: "60 V", isActive: true },
   { id: "bt-ovt-72", brand: "Omnivoltaic", name: "72 V", isActive: true },
+  // Priced by the energy given, as the Omnivoltaic swap procedure asks (shared/energy-swap.ts, 0065).
+  { id: "bt-ovt-30", brand: "Omnivoltaic", name: "30 Ah", isActive: true, pricing: "energy", priceFullXof: 900, ussdTmoney: DEFAULT_USSD.tmoney, ussdFlooz: DEFAULT_USSD.flooz },
+  { id: "bt-ovt-45", brand: "Omnivoltaic", name: "45 Ah", isActive: true, pricing: "energy", priceFullXof: 1200, ussdTmoney: DEFAULT_USSD.tmoney, ussdFlooz: DEFAULT_USSD.flooz },
+  { id: "bt-ovt-100", brand: "Omnivoltaic", name: "100 Ah", isActive: true, pricing: "energy", priceFullXof: 2600, ussdTmoney: DEFAULT_USSD.tmoney, ussdFlooz: DEFAULT_USSD.flooz },
 ];
 
 /** Battery types each demo swap station swaps. */
 export const DEMO_STATION_BATTERY_TYPES: Record<string, string[]> = {
   "st-grand-marche": ["bt-spiro-72", "bt-ovt-60", "bt-ovt-72"],
   "st-tokoin": ["bt-spiro-72"],
-  "st-be": ["bt-ovt-60"],
+  "st-be": ["bt-ovt-30", "bt-ovt-45", "bt-ovt-100"],
   "st-agoe": ["bt-ovt-60", "bt-ovt-72"],
 };
 

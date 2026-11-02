@@ -122,6 +122,7 @@ import {
   type SwapOwner,
 } from "@shared/station-cash";
 import { cleanTypeCapacity, counterLimits, validBatteryType, type BatteryType, type BatteryTypeInput } from "@shared/battery-types";
+import { checkEnergySwap, cleanUssdTemplate, CONDITION_REASON, energyPricingOf, validEnergyPrice, type EnergyPricing, type EnergySwap } from "@shared/energy-swap";
 import { DEMO_OWNERS, DEMO_STAFF, demoHistory, demoReassignments, demoUsers } from "../admin/demo-seed";
 import { cleanOpeningHours } from "@shared/opening-hours";
 import { emptyDays, periodStart, reportPeriod, type Handover, type OwnerLive, type OwnerReport, type ReportPeriod, type StaffStats } from "@shared/owner-backoffice";
@@ -1743,7 +1744,24 @@ export class DemoBackend implements Backend {
     const view = this.views(state, state.stations.filter((s) => s.id === stationId))[0];
     const types = view?.batteryTypes ?? [];
     if (!types.length) return [{ batteryTypeId: "", label: null, full: status?.fullBatteries ?? 0, empty: empty[""] ?? 0, capacity: view?.batteryCapacity ?? 0 }];
-    return types.map((t) => ({ batteryTypeId: t.id, label: `${t.brand} ${t.name}`, full: t.fullBatteries, empty: empty[t.id] ?? 0, capacity: t.capacity }));
+    return types.map((t) => ({
+      batteryTypeId: t.id,
+      label: `${t.brand} ${t.name}`,
+      full: t.fullBatteries,
+      empty: empty[t.id] ?? 0,
+      capacity: t.capacity,
+      energy: energyPricingOf({ pricing: t.pricing, price_full_xof: t.priceFullXof, ussd_tmoney: t.ussdTmoney, ussd_flooz: t.ussdFlooz }),
+    }));
+  }
+
+  /** As energyOfKey() in worker/station-work.ts: the counter's energy pricing, null for the station's price. */
+  private energyOf(state: DemoState, stationId: string, key: CounterKey): EnergyPricing | null {
+    if (!key) return null;
+    const t = (state.batteryTypes ?? DEMO_BATTERY_TYPES).find((x) => x.id === key);
+    if (!t || t.pricing !== "energy") return null;
+    const energy = energyPricingOf({ pricing: t.pricing, price_full_xof: t.priceFullXof, ussd_tmoney: t.ussdTmoney, ussd_flooz: t.ussdFlooz });
+    if (!energy) throw new BackendError("swap_price_missing");
+    return energy;
   }
 
   private counterKey(state: DemoState, stationId: string, raw: CounterKey | null | undefined): CounterKey {
@@ -1880,6 +1898,8 @@ export class DemoBackend implements Backend {
       return user;
     };
 
+    // A type priced by energy is paid by Mobile Money only, never from Green Credit (0065).
+    const energyWalkIn = input.reservationId ? null : this.energyOf(state, stationId, this.counterKey(state, stationId, input.batteryTypeId));
     let customer: AdminUser | null = null;
     let reservation: Reservation | null = null;
     let driver: { driverId: string; managerId: string; label: string } | null = null;
@@ -1897,7 +1917,7 @@ export class DemoBackend implements Backend {
       }
       const userId = reservation.userId;
       customer = users.find((u) => u.id === userId) ?? null;
-    } else if (type === "app" && input.payment !== "cash") {
+    } else if (type === "app" && input.payment !== "cash" && !energyWalkIn) {
       // Paid from Green Credit: the customer's counter code, shown after the PIN on their phone (0047).
       const user = this.creditCodeOwner(state, String(input.creditCode ?? input.contact ?? ""));
       if (user.id === actor.profile.id) throw new BackendError("own_reservation");
@@ -1929,11 +1949,24 @@ export class DemoBackend implements Backend {
       out: batteryOut ? resolveDemoBattery(register.batteries, batteryOut, batteryType) : null,
       in: batteryIn ? resolveDemoBattery(register.batteries, batteryIn, batteryType) : null,
     };
+    const energy = this.energyOf(state, stationId, key);
+    let energySwap: EnergySwap | null = null;
+    if (energy) {
+      const checked = checkEnergySwap(input, energy);
+      if (!checked.ok) throw new BackendError(checked.error === "bad_request" ? "unknown" : checked.error, checked.error);
+      energySwap = checked.swap;
+      if (batteriesOf.out?.status && batteriesOf.out.status !== "in_service") throw new BackendError("battery_out_not_in_service");
+      const ref = energySwap;
+      if ((state.swaps ?? []).some((x) => x.mmNetwork === ref.mmNetwork && x.mmRef === ref.mmRef)) throw new BackendError("mm_ref_used");
+    }
     const swapOwner = swapOwnerOf(station.isOwn, state.stationCash?.[station.id]?.swapOwner);
     let payment: SwapPayment;
     let amount: number;
     const price = swapPrice(state, station);
-    if (type === "fleet") {
+    if (energySwap) {
+      payment = "mobile_money";
+      amount = energySwap.amountXof;
+    } else if (type === "fleet") {
       payment = "fleet";
       amount = price ?? 0;
     } else if (type === "app" && input.payment !== "cash") {
@@ -2010,6 +2043,17 @@ export class DemoBackend implements Backend {
       payment,
       amountXof: amount,
       reservationId: reservation?.id ?? null,
+      ...(energySwap
+        ? {
+            inPct: energySwap.inPct,
+            outPct: energySwap.outPct,
+            plate: energySwap.plate,
+            customerName: energySwap.customerName,
+            batteryInCondition: energySwap.condition,
+            mmNetwork: energySwap.mmNetwork,
+            mmRef: energySwap.mmRef,
+          }
+        : {}),
       person: personLabel(actor.profile),
       role: actor.role,
       createdAt: new Date().toISOString(),
@@ -2031,6 +2075,35 @@ export class DemoBackend implements Backend {
         amountXof: amount,
         now: entry.createdAt,
       });
+    }
+    if (energySwap && energySwap.condition !== "ok" && batteriesOf.in) {
+      // A battery brought back damaged, leaking, hot or smelling goes to repair.
+      const back = batteriesOf.in;
+      const b = reg.batteries.find((x) => x.serial === back.serial && x.brand === back.brand);
+      if (b) {
+        reg = {
+          ...reg,
+          batteries: reg.batteries.map((x) => (x.id === b.id ? { ...x, status: "repair" as const } : x)),
+          history: [
+            ...reg.history,
+            {
+              id: crypto.randomUUID(),
+              batteryId: b.id,
+              type: "status",
+              stationId,
+              swapId,
+              holderId: null,
+              status: "repair",
+              reason: CONDITION_REASON[energySwap.condition],
+              personId: actor.profile.id,
+              role: actor.role,
+              createdAt: entry.createdAt,
+              payment: null,
+              amountXof: null,
+            },
+          ],
+        };
+      }
     }
     next = { ...next, batteries: reg.batteries, batteryHistory: reg.history };
     next = { ...next, swaps: [{ ...entry, requestId: input.requestId, staffId: actor.profile.id, customerId: customer?.id ?? null, driverId: driver?.driverId ?? null, fleetManagerId: driver?.managerId ?? null, owner: swapOwner }, ...(next.swaps ?? [])].slice(0, 1000) };
@@ -2404,7 +2477,14 @@ export class DemoBackend implements Backend {
     this.requireAdmin(state);
     if (!validBatteryType(input)) throw new BackendError("unknown", "invalid battery type");
     const types = state.batteryTypes ?? DEMO_BATTERY_TYPES;
-    const type: BatteryType = { id: id ?? crypto.randomUUID(), brand: input.brand.trim(), name: input.name.trim(), isActive: input.isActive };
+    const before0 = types.find((t) => t.id === id);
+    const type: BatteryType = {
+      id: id ?? crypto.randomUUID(),
+      brand: input.brand.trim(),
+      name: input.name.trim(),
+      isActive: input.isActive,
+      ...demoPricing(input, before0),
+    };
     if (types.some((t) => t.id !== type.id && t.brand === type.brand && t.name === type.name)) throw new BackendError("battery_type_exists");
     const before = types.find((t) => t.id === id);
     this.save(
@@ -8850,6 +8930,21 @@ function eventView(e: NonNullable<DemoState["batteryEvents"]>[number]): BatteryE
 }
 
 /** What the app sees of a stored swap (without request id, staff and customer id). */
+/** As pricingRow() in worker/battery-types.ts: the pricing fields of a saved battery type. */
+function demoPricing(input: BatteryTypeInput, before: BatteryType | undefined): Pick<BatteryType, "pricing" | "priceFullXof" | "ussdTmoney" | "ussdFlooz"> {
+  if (input.pricing === undefined) {
+    return before ? { pricing: before.pricing, priceFullXof: before.priceFullXof, ussdTmoney: before.ussdTmoney, ussdFlooz: before.ussdFlooz } : {};
+  }
+  if (input.pricing === "station") return { pricing: "station", priceFullXof: null, ussdTmoney: null, ussdFlooz: null };
+  if (input.pricing !== "energy") throw new BackendError("unknown", "bad_request");
+  if (!validEnergyPrice(input.priceFullXof)) throw new BackendError("energy_price_required");
+  const tmoney = cleanUssdTemplate(input.ussdTmoney);
+  const flooz = cleanUssdTemplate(input.ussdFlooz);
+  if (tmoney === undefined || flooz === undefined) throw new BackendError("invalid_ussd");
+  if (!tmoney && !flooz) throw new BackendError("ussd_required");
+  return { pricing: "energy", priceFullXof: input.priceFullXof, ussdTmoney: tmoney, ussdFlooz: flooz };
+}
+
 function swapView(x: NonNullable<DemoState["swaps"]>[number]): SwapEntry {
   return {
     id: x.id,
@@ -8864,6 +8959,13 @@ function swapView(x: NonNullable<DemoState["swaps"]>[number]): SwapEntry {
     payment: x.payment,
     amountXof: x.amountXof,
     reservationId: x.reservationId,
+    inPct: x.inPct ?? null,
+    outPct: x.outPct ?? null,
+    plate: x.plate ?? null,
+    customerName: x.customerName ?? null,
+    batteryInCondition: x.batteryInCondition ?? null,
+    mmNetwork: x.mmNetwork ?? null,
+    mmRef: x.mmRef ?? null,
     person: x.person,
     role: x.role,
     createdAt: x.createdAt,

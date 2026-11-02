@@ -48,6 +48,7 @@ import { creditCodeOwner, isCreditStation, OPEN_CREDIT_CHARGE_SQL, refuseWhileCr
 import { checkPickupCode, heldBatteriesSql, stillActive, type ReservationRow } from "./reservations";
 import { resolveSwapBattery, swapBatteryStatements, swapType } from "./batteries";
 import { batteryNumbersRequired } from "../shared/batteries";
+import { checkEnergySwap, CONDITION_REASON, energyPricingOf, type BatteryCondition, type EnergyPricing, type MmNetwork } from "../shared/energy-swap";
 
 export interface WorkCtx {
   env: Env;
@@ -135,12 +136,33 @@ async function stationInfo(db: D1Database, stationId: string): Promise<StationIn
 async function stationTypes(db: D1Database, stationId: string) {
   const { results } = await db
     .prepare(
-      `select sbt.battery_type_id as id, sbt.full_batteries, sbt.capacity, t.brand, t.name from station_battery_types sbt
+      `select sbt.battery_type_id as id, sbt.full_batteries, sbt.capacity, t.brand, t.name,
+              t.pricing, t.price_full_xof, t.ussd_tmoney, t.ussd_flooz from station_battery_types sbt
        join battery_types t on t.id = sbt.battery_type_id where sbt.station_id = ? order by t.brand, t.name`,
     )
     .bind(stationId)
-    .all<{ id: string; full_batteries: number; capacity: number; brand: string; name: string }>();
-  return results.map((r) => ({ id: r.id, full: r.full_batteries, capacity: r.capacity, label: `${r.brand} ${r.name}` }));
+    .all<{ id: string; full_batteries: number; capacity: number; brand: string; name: string } & EnergyColumns>();
+  return results.map((r) => ({ id: r.id, full: r.full_batteries, capacity: r.capacity, label: `${r.brand} ${r.name}`, energy: energyPricingOf(r) }));
+}
+
+interface EnergyColumns {
+  pricing: string;
+  price_full_xof: number | null;
+  ussd_tmoney: string | null;
+  ussd_flooz: string | null;
+}
+
+/**
+ * Energy pricing of a counter's battery type (0065), null when the station's price applies.
+ * A type set to energy pricing without a usable price is refused rather than sold at the station's price.
+ */
+async function energyOfKey(db: D1Database, key: CounterKey): Promise<EnergyPricing | null> {
+  if (!key) return null;
+  const row = await db.prepare("select pricing, price_full_xof, ussd_tmoney, ussd_flooz from battery_types where id = ?").bind(key).first<EnergyColumns>();
+  if (!row || row.pricing !== "energy") return null;
+  const energy = energyPricingOf(row);
+  if (!energy) throw new ApiError("swap_price_missing", 409);
+  return energy;
 }
 
 /** The counter a request means: a type the station swaps, or "" at a station without types (one type: that one). */
@@ -306,6 +328,7 @@ export async function stationCounter(c: WorkCtx, stationId: string): Promise<Sta
         full: byKey.get(t.id)?.full ?? t.full,
         empty: byKey.get(t.id)?.empty ?? 0,
         capacity: t.capacity,
+        energy: t.energy,
       }))
     : [
         {
@@ -475,6 +498,13 @@ interface SwapRow {
   reservation_id: string | null;
   payment: SwapPayment;
   amount_xof: number;
+  in_pct: number | null;
+  out_pct: number | null;
+  plate: string | null;
+  customer_name: string | null;
+  battery_in_condition: BatteryCondition | null;
+  mm_network: MmNetwork | null;
+  mm_ref: string | null;
   staff_id: string;
   role: StationRole;
   created_at: string;
@@ -515,6 +545,13 @@ function toSwap(r: SwapRow): SwapEntry {
     payment: r.payment,
     amountXof: r.amount_xof,
     reservationId: r.reservation_id,
+    inPct: r.in_pct,
+    outPct: r.out_pct,
+    plate: r.plate,
+    customerName: r.customer_name,
+    batteryInCondition: r.battery_in_condition,
+    mmNetwork: r.mm_network,
+    mmRef: r.mm_ref,
     person: label(r.s_name, r.s_phone, r.s_email) ?? "",
     role: r.role,
     createdAt: r.created_at,
@@ -620,6 +657,9 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
   if (batteryIn === undefined || batteryOut === undefined) throw new ApiError("bad_request");
   if (batteryIn && batteryOut && batteryIn === batteryOut) throw new ApiError("same_battery");
 
+  // A type priced by energy is paid by Mobile Money only, never from Green Credit (0065).
+  const energyWalkIn = input.reservationId ? null : await energyOfKey(db, await counterKey(db, stationId, input.batteryTypeId));
+
   // Who the customer is.
   let customer: Customer | null = null;
   let reservation: ReservationRow | null = null;
@@ -639,7 +679,7 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
     }
     customer = await db.prepare("select id, role, phone, email, full_name from users where id = ?").bind(reservation.user_id).first<Customer>();
     if (!customer) throw new ApiError("recipient_not_found", 404);
-  } else if (type === "app" && input.payment !== "cash") {
+  } else if (type === "app" && input.payment !== "cash" && !energyWalkIn) {
     // Paid from Green Credit: the customer's one-time code, shown after the PIN on their phone (0047).
     customer = await creditCustomer(db, input.creditCode ?? input.contact, actor.user.id);
   } else if (type === "app") {
@@ -661,11 +701,23 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
     out: batteryOut ? await resolveSwapBattery(db, batteryOut, batteryType) : null,
     in: batteryIn ? await resolveSwapBattery(db, batteryIn, batteryType) : null,
   };
+  const energy = await energyOfKey(db, key);
+  const energySwap = energy ? energySwapOf(input, energy) : null;
+  if (energySwap) {
+    // The procedure: never hand out a battery that is not in service.
+    if (batteriesOf.out?.status && batteriesOf.out.status !== "in_service") throw new ApiError("battery_out_not_in_service", 409);
+    const used = await db.prepare("select 1 from swap_log where mm_network = ? and mm_ref = ?").bind(energySwap.mmNetwork, energySwap.mmRef).first();
+    if (used) throw new ApiError("mm_ref_used", 409);
+  }
   // Who the swap belongs to (0045), kept on the log row; how it is paid (Green Credit in Lite too).
   const owner = swapOwnerOf(!!station.is_own, station.swap_owner);
   let payment: SwapPayment;
   let amount: number;
-  if (type === "fleet") {
+  if (energySwap) {
+    // (% OUT − % IN) × the type's price for 100 %, paid by T-Money or Flooz straight to the brand.
+    payment = "mobile_money";
+    amount = energySwap.amountXof;
+  } else if (type === "fleet") {
     payment = "fleet";
     amount = station.price_battery_xof ?? 0;
   } else if (type === "app" && input.payment !== "cash") {
@@ -725,8 +777,9 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
     db
       .prepare(
         `insert into swap_log (id, request_id, station_id, battery_type_id, has_battery_in, battery_in_label, battery_out_label, customer_type,
-           customer_user_id, driver_id, fleet_manager_id, reservation_id, payment, amount_xof, wallet_trx_id, staff_id, role, created_at, owner)
-         select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?20
+           customer_user_id, driver_id, fleet_manager_id, reservation_id, payment, amount_xof, wallet_trx_id, staff_id, role, created_at, owner,
+           in_pct, out_pct, plate, customer_name, battery_in_condition, mm_network, mm_ref)
+         select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27
          where exists (select 1 from battery_events where request_id = ?19)`,
       )
       .bind(
@@ -750,6 +803,13 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
         now,
         outRequest,
         owner,
+        energySwap?.inPct ?? null,
+        energySwap?.outPct ?? null,
+        energySwap?.plate ?? null,
+        energySwap?.customerName ?? null,
+        energySwap?.condition ?? null,
+        energySwap?.mmNetwork ?? null,
+        energySwap?.mmRef ?? null,
       ),
   ];
   const swapExists = { sql: "exists (select 1 from swap_log where request_id = ?12)", value: input.requestId };
@@ -771,6 +831,20 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
         actor,
         now,
       }),
+    );
+  }
+  if (energySwap && energySwap.condition !== "ok" && batteriesOf.in) {
+    // A battery brought back damaged, leaking, hot or smelling goes to repair (never handed out again).
+    const b = batteriesOf.in;
+    const where = "brand = ? and serial = ? and exists (select 1 from swap_log where request_id = ?)";
+    statements.push(
+      db.prepare(`update batteries set status = 'repair' where ${where}`).bind(b.brand, b.serial, input.requestId),
+      db
+        .prepare(
+          `insert into battery_history (id, battery_id, type, station_id, swap_id, status, reason, person_id, role, created_at)
+           select ?, id, 'status', ?, ?, 'repair', ?, ?, ?, ? from batteries where ${where}`,
+        )
+        .bind(uuid(), stationId, swapId, CONDITION_REASON[energySwap.condition], actor.user.id, actor.role, now, b.brand, b.serial, input.requestId),
     );
   }
   if (reservation) {
@@ -831,6 +905,10 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
   }
   const row = await swapByRequest(db, input.requestId);
   if (!row) {
+    // The same transaction id, recorded by another swap meanwhile (unique index, 0065).
+    if (energySwap && (await db.prepare("select 1 from swap_log where mm_network = ? and mm_ref = ?").bind(energySwap.mmNetwork, energySwap.mmRef).first())) {
+      throw new ApiError("mm_ref_used", 409);
+    }
     if (reservation) {
       const current = await db.prepare("select status from reservations where id = ?").bind(reservation.id).first<{ status: string }>();
       if (current?.status !== "active") throw new ApiError("reservation_not_active");
@@ -844,6 +922,13 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
   }
   if (row.station_id !== stationId) throw new ApiError("request_conflict", 409);
   return toSwap(row);
+}
+
+/** A swap priced by energy, checked (shared/energy-swap.ts). */
+function energySwapOf(input: SwapInput, energy: EnergyPricing) {
+  const checked = checkEnergySwap(input, energy);
+  if (!checked.ok) throw new ApiError(checked.error);
+  return checked.swap;
 }
 
 /** GET /api/stations/:id/swaps?customerType=: today's swaps at the station, newest first (staff: their own). */

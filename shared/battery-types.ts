@@ -1,3 +1,4 @@
+import type { BatteryPricing } from "./energy-swap";
 import type { StationView } from "./types";
 
 // Battery types: each motorbike brand (battery operator) has its own swap
@@ -12,6 +13,13 @@ export interface BatteryType {
   /** Model, e.g. "72V 40Ah". */
   name: string;
   isActive: boolean;
+  /** "energy": priced by the charge added (shared/energy-swap.ts, 0065); absent or "station": the station's swap price. */
+  pricing?: BatteryPricing;
+  /** Energy pricing: the price for 100 % in FCFA. */
+  priceFullXof?: number | null;
+  /** Energy pricing: the USSD codes the customer dials, "{montant}" for the amount; null = network not offered. */
+  ussdTmoney?: string | null;
+  ussdFlooz?: string | null;
 }
 
 /** A type a station swaps, with how many of its batteries are full there. */
@@ -27,6 +35,11 @@ export interface BatteryTypeInput {
   brand: string;
   name: string;
   isActive: boolean;
+  /** Absent: kept as it is (a new type: the station's price). */
+  pricing?: BatteryPricing;
+  priceFullXof?: number | null;
+  ussdTmoney?: string | null;
+  ussdFlooz?: string | null;
 }
 
 /** Most places one battery type can have at a station. */

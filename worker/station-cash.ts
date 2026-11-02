@@ -187,7 +187,7 @@ export async function cashOfStations(db: D1Database, ids: string[] | null, now =
       .prepare(
         `select l.station_id, l.created_at as at, l.amount_xof as amount from swap_log l
          join stations s on s.id = l.station_id left join operators o on o.id = s.operator_id
-         where l.station_id in ${IN(1)} and l.payment not in ('none', 'wallet') and l.created_at >= ?2 and ${SWAP_OWNER_SQL} = 'poinderecharge'`,
+         where l.station_id in ${IN(1)} and l.payment not in ('none', 'wallet', 'mobile_money') and l.created_at >= ?2 and ${SWAP_OWNER_SQL} = 'poinderecharge'`,
       )
       .bind(list, from)
       .all<{ station_id: string; at: string; amount: number }>(),
