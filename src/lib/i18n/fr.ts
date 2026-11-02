@@ -1288,6 +1288,7 @@ export const fr = {
       pickupButton: "Remettre",
       scan: "Scanner",
       scanned: "QR code lu",
+      scanBarcodeHint: "Mettez le code-barres dans le cadre, bien à plat, à 15–20 cm, et tenez le téléphone immobile une seconde.",
       stopScan: "Arrêter",
       scanUnsupported: "Impossible d'ouvrir la caméra : autorisez-la dans les réglages du téléphone.",
       handedOver: "Colis {no} remis. L'expéditeur est prévenu.",
