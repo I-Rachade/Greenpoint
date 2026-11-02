@@ -388,6 +388,12 @@ CREATE INDEX station_actions_station_idx on station_actions (station_id, created
 -- index station_battery_types_type_idx
 CREATE INDEX station_battery_types_type_idx on station_battery_types (battery_type_id);
 
+-- index station_incidents_open_idx
+CREATE INDEX station_incidents_open_idx on station_incidents (created_at) where status = 'open';
+
+-- index station_incidents_station_idx
+CREATE INDEX station_incidents_station_idx on station_incidents (station_id, created_at);
+
 -- index station_reviews_station
 CREATE INDEX station_reviews_station on station_reviews (station_id, created_at);
 
@@ -657,6 +663,9 @@ CREATE TABLE station_actions (id integer primary key autoincrement, station_id t
 
 -- table station_battery_types
 CREATE TABLE station_battery_types (station_id text not null references stations (id) on delete cascade, battery_type_id text not null references battery_types (id) on delete cascade, full_batteries integer not null default 0 check (full_batteries >= 0), capacity integer not null default 0 check (capacity >= 0), primary key (station_id, battery_type_id));
+
+-- table station_incidents
+CREATE TABLE station_incidents (id text primary key, request_id text not null unique, station_id text not null references stations (id) on delete cascade, kind text not null check (kind in ('charger', 'power', 'battery', 'payment', 'other')), comment text check (comment is null or length(comment) between 1 and 500), battery_label text check (battery_label is null or length(battery_label) between 1 and 60), reported_by text not null, -- user id, no foreign key (as audit_log.actor) role text not null check (role in ('staff', 'owner', 'admin')), created_at text not null, status text not null default 'open' check (status in ('open', 'resolved')), resolved_by text, resolved_at text, resolution text check (resolution is null or length(resolution) between 1 and 500), check (kind <> 'other' or comment is not null), check ((status = 'resolved') = (resolved_at is not null and resolved_by is not null)));
 
 -- table station_reviews
 CREATE TABLE station_reviews (id text primary key, station_id text not null references stations (id) on delete cascade, user_id text not null references users (id) on delete cascade, rating integer not null check (rating between 1 and 5), comment text not null default '' check (length(comment) <= 500), created_at text not null, updated_at text not null, unique (station_id, user_id));

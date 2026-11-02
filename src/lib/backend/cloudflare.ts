@@ -12,6 +12,7 @@ import type {
   ShareVehicleStatus,
   StationShare,
 } from "@shared/share";
+import type { Incident, IncidentInput } from "@shared/incidents";
 import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "@shared/batteries";
 import type { BatteryType, BatteryTypeInput } from "@shared/battery-types";
 import type { AdminCharging, ChargeOutletInfo, ChargeSession, ChargeTariffInput, StationCharging } from "@shared/charging";
@@ -488,6 +489,26 @@ export class CloudflareBackend implements Backend {
     const swap = await this.call<SwapEntry>("POST", `/api/stations/${encodeURIComponent(stationId)}/swaps`, input);
     this.changed();
     return swap;
+  }
+
+  async reportIncident(stationId: string, input: IncidentInput) {
+    const incident = await this.call<Incident>("POST", `/api/stations/${encodeURIComponent(stationId)}/incidents`, input);
+    this.changed();
+    return incident;
+  }
+
+  stationIncidents(stationId: string) {
+    return this.call<Incident[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/incidents`);
+  }
+
+  async resolveIncident(stationId: string, incidentId: string, resolution: string | null) {
+    const incident = await this.call<Incident>(
+      "POST",
+      `/api/stations/${encodeURIComponent(stationId)}/incidents/${encodeURIComponent(incidentId)}/resolve`,
+      { resolution },
+    );
+    this.changed();
+    return incident;
   }
 
   stationSwaps(stationId: string, filter: SwapFilter = {}) {

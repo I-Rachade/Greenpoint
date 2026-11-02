@@ -157,6 +157,12 @@ function StationHome({ station }: { station: StationView }) {
           ))}
         </div>
       )}
+      <Link
+        href="/operator/probleme"
+        className="flex min-h-12 items-center justify-center rounded-2xl border border-gp-border bg-gp-surface px-4 text-base font-semibold text-amber-800 active:scale-[0.99] dark:text-amber-300"
+      >
+        {t.work.incident.link}
+      </Link>
     </>
   );
 }

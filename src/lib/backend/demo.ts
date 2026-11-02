@@ -1,4 +1,5 @@
 import { DEMO_CODE, HOSTED_DEMO } from "./demo-flags";
+import { checkIncident, cleanIncidentText, type Incident, type IncidentInput } from "@shared/incidents";
 import type { SecurityOverview } from "@shared/security";
 import type { AdminShare, ShareMe, ShareOverview, ShareRide, ShareTrackPoint, StationShare } from "@shared/share";
 import { countHolding, isHolding, offersCharging, offersSwap, withinOpeningHours } from "@shared/availability";
@@ -500,6 +501,7 @@ interface DemoState {
   /** Swap price per station in FCFA (stations.price_battery_xof); missing = DEMO_SWAP_PRICE at own stations. */
   swapPrices?: Record<string, number | null>;
   /** Swap log, newest first (as table swap_log); `owner` as swap_log.owner (0045, missing = the station's rule). */
+  incidents?: (Incident & { requestId: string })[];
   swaps?: (SwapEntry & { requestId: string; staffId: string; customerId: string | null; driverId?: string | null; fleetManagerId?: string | null; owner?: SwapOwner })[];
   /** Station type and the host's commission of partner stations (stations.swap_owner, commission_*; 0045). */
   stationCash?: Record<string, { swapOwner: SwapOwner | null; commissionPct: number; commissionMode: CommissionMode }>;
@@ -2139,6 +2141,58 @@ export class DemoBackend implements Backend {
       )
       .slice(0, range ? SWAP_EXPORT_LIMIT : 500)
       .map(swapView);
+  }
+
+  /** As reportIncident() in worker/incidents.ts (the alert to owners and admins is the Worker's). */
+  async reportIncident(stationId: string, input: IncidentInput): Promise<Incident> {
+    const state = this.load();
+    const { profile, role } = this.stationActor(state, stationId);
+    if (!input || !validRequestId(input.requestId)) throw new BackendError("unknown");
+    const done = (state.incidents ?? []).find((i) => i.requestId === input.requestId);
+    if (done) return done;
+    const checked = checkIncident(input);
+    if (!checked.ok) throw new BackendError(checked.error);
+    const incident: Incident & { requestId: string } = {
+      id: crypto.randomUUID(),
+      requestId: input.requestId,
+      stationId,
+      kind: checked.kind,
+      comment: checked.comment,
+      batteryLabel: checked.batteryLabel,
+      person: personLabel(profile),
+      role,
+      createdAt: new Date().toISOString(),
+      status: "open",
+      resolvedBy: null,
+      resolvedAt: null,
+      resolution: null,
+    };
+    this.save({ ...state, incidents: [incident, ...(state.incidents ?? [])] });
+    return incident;
+  }
+
+  async stationIncidents(stationId: string): Promise<Incident[]> {
+    const state = this.load();
+    this.stationReader(state, stationId);
+    const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    return (state.incidents ?? [])
+      .filter((i) => i.stationId === stationId && (i.status === "open" || i.createdAt >= since))
+      .sort((a, b) => (a.status === b.status ? b.createdAt.localeCompare(a.createdAt) : a.status === "open" ? -1 : 1));
+  }
+
+  async resolveIncident(stationId: string, incidentId: string, resolution: string | null): Promise<Incident> {
+    const state = this.load();
+    // From the owner back office: no active station needed (resolveIncident in the Worker).
+    const { profile, role } = this.stationReader(state, stationId);
+    if (role === "staff") throw new BackendError("forbidden");
+    const note = cleanIncidentText(resolution);
+    if (note === undefined) throw new BackendError("unknown");
+    const found = (state.incidents ?? []).find((i) => i.id === incidentId && i.stationId === stationId);
+    if (!found) throw new BackendError("unknown");
+    if (found.status === "resolved") return found;
+    const done = { ...found, status: "resolved" as const, resolvedBy: personLabel(profile), resolvedAt: new Date().toISOString(), resolution: note };
+    this.save({ ...state, incidents: (state.incidents ?? []).map((i) => (i.id === incidentId ? done : i)) });
+    return done;
   }
 
   /** Counter history of a report period: owners and admins only (stationBatteryEvents in the Worker). */

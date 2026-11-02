@@ -14,6 +14,7 @@ import type {
 } from "@shared/share";
 import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "@shared/batteries";
 import type { BatteryType, BatteryTypeInput } from "@shared/battery-types";
+import type { Incident, IncidentInput } from "@shared/incidents";
 import type { AdminCharging, ChargeOutletInfo, ChargeSession, ChargeTariffInput, StationCharging } from "@shared/charging";
 import type { ChargeCard, ChargeCardInput, CounterCard } from "@shared/charge-cards";
 import type {
@@ -226,6 +227,12 @@ export interface Backend {
   stationSwaps(stationId: string, filter?: SwapFilter): Promise<SwapEntry[]>;
   /** Counter history of a report period, newest first: owners and admins only (backoffice). */
   stationBatteryEvents(stationId: string, days: ReportPeriod): Promise<BatteryEventView[]>;
+  /** Reports a problem at the station (charger, power, battery, payment, other); its owners and the admins are told. */
+  reportIncident(stationId: string, input: IncidentInput): Promise<Incident>;
+  /** The station's open problems, then the last 30 days' handled ones. */
+  stationIncidents(stationId: string): Promise<Incident[]>;
+  /** Owners and admins: marks a problem handled, with an optional note. */
+  resolveIncident(stationId: string, incidentId: string, resolution: string | null): Promise<Incident>;
 
   // Operator accounts (see shared/operators.ts)
   /** The operators the signed-in person runs, their stations and staff. */
