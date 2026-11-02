@@ -494,6 +494,8 @@ export class CloudflareBackend implements Backend {
     const q = new URLSearchParams();
     if (filter.customerType) q.set("customerType", filter.customerType);
     if (filter.days) q.set("days", String(filter.days));
+    if (filter.from) q.set("from", filter.from);
+    if (filter.to) q.set("to", filter.to);
     const qs = q.toString();
     return this.call<SwapEntry[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/swaps${qs ? `?${qs}` : ""}`);
   }

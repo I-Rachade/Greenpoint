@@ -18,6 +18,8 @@ import {
   isSwapCustomerType,
   takesBatteryIn,
   CAPACITY_REASON,
+  SWAP_EXPORT_LIMIT,
+  swapDayRange,
   validAmount,
   validCorrection,
   validRequestId,
@@ -935,14 +937,19 @@ function energySwapOf(input: SwapInput, energy: EnergyPricing) {
 export async function stationSwaps(c: WorkCtx, stationId: string, filter: SwapFilter): Promise<SwapEntry[]> {
   const actor = await stationReader(c, stationId);
   const type = filter.customerType && isSwapCustomerType(filter.customerType) ? filter.customerType : null;
-  // Staff see today's own swaps; owners and admins may look back (backoffice, plan phase 8).
-  const since = actor.role === "staff" ? dayStartLome() : periodStart(reportPeriod(filter.days ?? 1));
+  // Staff see today's own swaps; owners and admins may look back (backoffice, plan phase 8),
+  // or read a range of days for the swap sheet export.
+  const staff = actor.role === "staff";
+  const ranged = !staff && (filter.from != null || filter.to != null);
+  const range = ranged ? swapDayRange(filter.from, filter.to) : null;
+  if (ranged && !range) throw new ApiError("invalid_date_range");
+  const since = staff ? dayStartLome() : (range?.since ?? periodStart(reportPeriod(filter.days ?? 1)));
   const { results } = await c.db
     .prepare(
       `${SWAP_SELECT} where l.station_id = ?1 and l.created_at >= ?2 and (?3 is null or l.customer_type = ?3)
-         and (?4 is null or l.staff_id = ?4) order by l.created_at desc limit 500`,
+         and (?4 is null or l.staff_id = ?4) and (?5 is null or l.created_at < ?5) order by l.created_at desc limit ?6`,
     )
-    .bind(stationId, since, type, actor.role === "staff" ? actor.user.id : null)
+    .bind(stationId, since, type, staff ? actor.user.id : null, range?.until ?? null, range ? SWAP_EXPORT_LIMIT : 500)
     .all<SwapRow>();
   return results.map(toSwap);
 }

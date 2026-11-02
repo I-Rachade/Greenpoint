@@ -9,6 +9,7 @@ import { useApp } from "../app-provider";
 import { useI18n } from "../i18n-provider";
 import { LoadFailed } from "../load-state";
 import { Badge, EmptyState, SkeletonCard } from "../ui";
+import { SwapSheetExport } from "./swap-sheet";
 import { RoleBadge, WorkShell } from "./work-shell";
 
 function SwapList({ station, mine }: { station: StationView; mine: boolean }) {
@@ -25,6 +26,7 @@ function SwapList({ station, mine }: { station: StationView; mine: boolean }) {
   return (
     <>
       <p className="text-sm text-gp-muted">{mine ? l.introMine : l.intro}</p>
+      <SwapSheetExport stationId={station.id} stationName={station.name} pickDates={!mine} />
       <div className="flex flex-wrap gap-2" role="group" aria-label={s.customer}>
         <button type="button" aria-pressed={filter === null} className={chip(filter === null)} onClick={() => setFilter(null)}>
           {l.all}
