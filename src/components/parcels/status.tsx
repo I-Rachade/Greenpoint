@@ -1,7 +1,7 @@
 "use client";
 
 import { Pill } from "@/components/backoffice/shared";
-import type { ParcelStatus } from "@/lib/parcels";
+import type { ParcelStatus } from "@shared/parcels";
 import { useI18n } from "../i18n-provider";
 
 const TONE: Record<ParcelStatus, "green" | "amber" | "red" | "gray" | "blue"> = {

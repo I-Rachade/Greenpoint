@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
-import { cleanAmenities, cleanPhotos, cleanReview, hasRestArea, ratingOf, shortName, starCounts, stationPhotos } from "../station-extras";
+import { cleanAmenities, cleanPhotos, cleanReview, hasRestArea, ratingOf, shortName, starCounts, stationPhotos } from "@shared/station-extras";
 
 describe("station extras", () => {
   it("keeps known amenities in a fixed order and safe photo URLs", () => {

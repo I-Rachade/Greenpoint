@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { loginHref } from "@/lib/next-path";
-import { worksAtStations } from "@/lib/operators";
-import type { UserRole } from "@/lib/types";
+import { worksAtStations } from "@shared/operators";
+import type { UserRole } from "@shared/types";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
 

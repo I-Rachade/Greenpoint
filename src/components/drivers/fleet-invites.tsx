@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
-import { FLEET_VEHICLE_TYPES, type DriverApplication, type FleetVehicleType } from "@/lib/drivers";
-import type { MyFleetInvite } from "@/lib/fleet";
+import { FLEET_VEHICLE_TYPES, type DriverApplication, type FleetVehicleType } from "@shared/drivers";
+import type { MyFleetInvite } from "@shared/fleet";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { useApp } from "../app-provider";

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { Parcel } from "@/lib/parcels";
-import type { StationView } from "@/lib/types";
+import type { Parcel } from "@shared/parcels";
+import type { StationView } from "@shared/types";
 import type { Dictionary } from "@/lib/i18n/fr";
 import { useApp } from "../app-provider";
 import { useErrorMessage } from "@/lib/hooks";

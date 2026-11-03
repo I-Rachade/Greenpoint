@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useEffect, type ReactNode } from "react";
 import { useLiveQuery } from "@/lib/hooks";
-import type { StationService } from "@/lib/station-services";
-import type { StationRole } from "@/lib/station-work";
-import type { StationView } from "@/lib/types";
+import type { StationService } from "@shared/station-services";
+import type { StationRole } from "@shared/station-work";
+import type { StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { BackIcon, ChevronIcon, StoreIcon } from "../icons";
 import { useI18n } from "../i18n-provider";

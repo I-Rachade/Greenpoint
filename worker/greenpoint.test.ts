@@ -1,8 +1,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { GreenpointReceipt, GreenpointRedemption, GreenpointView } from "../src/lib/greenpoint";
-import type { Reservation } from "../src/lib/types";
+import type { GreenpointReceipt, GreenpointRedemption, GreenpointView } from "../shared/greenpoint";
+import type { Reservation } from "../shared/types";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { tripStatement } from "./greenpoint";
@@ -77,6 +77,7 @@ async function setup() {
     insert into stations (id, operator_id, name, lat, lng, kind, battery_capacity, is_solar, price_battery_xof, created_at) values ('st', '${OPERATOR}', 'Bè', 6.13, 1.22, 'both', 10, 1, 500, '${now}');
     insert into station_status (station_id, free_slots, full_batteries, updated_at) values ('st', 0, 10, '${now}');
     insert into station_staff (station_id, user_id) values ('st', 'staff');
+    update stations set phone = '+22822000001' where id = 'st';
   `);
   return { db, env: { DB: d1 } as unknown as Env };
 }

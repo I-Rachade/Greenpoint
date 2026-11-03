@@ -3,10 +3,10 @@
 import { useState, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
 import { BackendError } from "@/lib/backend";
-import { distanceMeters, formatDistance } from "@/lib/geo";
+import { distanceMeters, formatDistance } from "@shared/geo";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { CHECKIN_RADIUS_M, type DriverShops, type MerchantAssignmentRequest, type MerchantCheckin, type MerchantPayMode } from "@/lib/merchants";
+import { CHECKIN_RADIUS_M, type DriverShops, type MerchantAssignmentRequest, type MerchantCheckin, type MerchantPayMode } from "@shared/merchants";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";

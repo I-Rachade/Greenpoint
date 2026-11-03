@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState, type ComponentType, type SVGProps } from "react";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { ReportPeriod } from "@/lib/owner-backoffice";
+import type { ReportPeriod } from "@shared/owner-backoffice";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
 import { BatteryIcon, CheckCircleIcon, ClipboardIcon, HistoryIcon, PulseIcon, StoreIcon, UsersIcon, WalletIcon } from "./icons";
@@ -201,7 +201,7 @@ export function OwnerPanel() {
                 {tab === "live" && <LiveView stationId={selected?.id ?? null} stationName={stationName} />}
                 {tab === "report" && <ReportView stationId={selected?.id ?? null} days={days} />}
                 {tab === "cash" && <CashView stationId={selected?.id ?? null} />}
-                {tab === "history" && <HistoryView stationId={selected?.id ?? null} days={days} />}
+                {tab === "history" && <HistoryView stationId={selected?.id ?? null} stationName={selected?.name ?? ""} days={days} />}
                 {tab === "batteries" && <BatteryRegistry stationId={selected?.id ?? null} />}
                 {tab === "staff" && <StaffView view={data} stations={shown} onChanged={changed} />}
                 {tab === "stations" && <StationsView stations={shown} prices={data.prices} services={services ?? []} onChanged={changed} />}

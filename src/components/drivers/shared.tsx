@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Pill } from "@/components/backoffice/shared";
-import { MAX_DRIVER_IMAGE_BYTES, type DeliveryJob, type JobKind, type JobStatus } from "@/lib/drivers";
+import { MAX_DRIVER_IMAGE_BYTES, type DeliveryJob, type JobKind, type JobStatus } from "@shared/drivers";
 import { format } from "@/lib/i18n/format";
 import { useI18n } from "../i18n-provider";
 

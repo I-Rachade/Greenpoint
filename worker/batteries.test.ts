@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { BatteryDetail, BatteryList, BatteryLookup, RegisterBatteriesResult } from "../src/lib/batteries";
-import type { SwapEntry } from "../src/lib/station-work";
+import type { BatteryDetail, BatteryList, BatteryLookup, RegisterBatteriesResult } from "../shared/batteries";
+import type { SwapEntry } from "../shared/station-work";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { sha256 } from "./http";
@@ -208,6 +208,20 @@ describe("battery register", () => {
     expect(b.status).toBe("repair");
     expect(b.history[0]).toMatchObject({ type: "status", status: "repair", reason: "Cellule gonflée", person: "Admin" });
     expect((await list(env, "admin", "?status=repair")).body.batteries.map((x) => x.serial)).toEqual(["SP-1"]);
+  });
+
+  it("lets an admin delete a battery, keeping the swaps and their numbers", async () => {
+    const { env, db } = await setup();
+    await swap(env, "afi", "lome", { batteryTypeId: "sp72", batteryIn: "SP-1", batteryOut: "SP-2" });
+    const id = idOf(db, "Spiro", "SP-1")!;
+    const swapsBefore = db.prepare("select battery_in_label, battery_out_label from swap_log").all();
+    expect((await call(env, "yao", "DELETE", `/api/admin/batteries/${id}`)).status).toBe(403);
+    expect((await call(env, "admin", "DELETE", `/api/admin/batteries/${id}`)).status).toBe(200);
+    expect(idOf(db, "Spiro", "SP-1")).toBeFalsy();
+    expect((db.prepare("select count(*) as n from battery_history where battery_id = ?").get(id) as { n: number }).n).toBe(0);
+    expect(db.prepare("select battery_in_label, battery_out_label from swap_log").all()).toEqual(swapsBefore);
+    expect((await list(env)).body.batteries.map((b) => b.serial)).toEqual(["SP-2"]);
+    expect((await call(env, "admin", "DELETE", `/api/admin/batteries/${id}`)).status).toBe(404);
   });
 
   it("shows an owner the batteries of their stations only, without the people of other operators", async () => {

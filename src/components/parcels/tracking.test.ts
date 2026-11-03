@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { DeliveryJob } from "@/lib/drivers";
-import type { Parcel } from "@/lib/parcels";
+import type { DeliveryJob } from "@shared/drivers";
+import type { Parcel } from "@shared/parcels";
 import { parcelTracking, splitJobs } from "./tracking";
 
 const parcel = (over: Partial<Parcel> = {}): Parcel =>

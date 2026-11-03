@@ -1,22 +1,33 @@
-import type { CodeChannel } from "../src/lib/backend/backend";
-import { type Contact, parseContact } from "../src/lib/contact";
-import { cleanFleetName } from "../src/lib/fleet";
-import { validPinFormat, weakPin } from "../src/lib/pin";
-import type { Profile, UserRole } from "../src/lib/types";
+import type { CodeChannel } from "../shared/api";
+import { type Contact, parseContact } from "../shared/contact";
+import { cleanFleetName } from "../shared/fleet";
+import { validPinFormat, weakPin } from "../shared/pin";
+import type { Profile, UserRole } from "../shared/types";
+import { adminAllowed } from "./access";
 import type { Env } from "./env";
 import { ApiError, nowIso, randomDigits, sha256, uuid } from "./http";
-import type { MerchantShopInput } from "../src/lib/merchants";
+import type { MerchantShopInput } from "../shared/merchants";
 import { cleanShop } from "./merchant-rules";
+import { notifyUser } from "./notify";
 import { roleFromDb, roleToDb } from "./roles";
+import { logSecurityEvent } from "./security-log";
 
 const CODE_MINUTES = 10;
 const MAX_ATTEMPTS = 5;
 /** Codes one number or address may request per hour. */
 const PER_TARGET_HOURLY = 5;
 const SESSION_DAYS = 60;
+/**
+ * Admins and station staff or owners (role 'operator') hold money and other people's data:
+ * their sessions end after a week, also one opened before the account got the role.
+ */
+const STAFF_SESSION_DAYS = 7;
+const STAFF_ROLES_SQL = "('admin', 'operator')";
 /** Wrong PINs in a row before the account is locked for PIN_LOCK_MINUTES. */
 const PIN_MAX_FAILURES = 5;
 const PIN_LOCK_MINUTES = 15;
+/** Longest lock after many locks in a row. */
+const PIN_LOCK_MAX_MINUTES = 24 * 60;
 /** Highest PBKDF2 iteration count Cloudflare Workers allow. */
 const PIN_ITERATIONS = 100_000;
 /** Sender of the code e-mails; its domain must be onboarded in Cloudflare Email Service (also in wrangler.jsonc). */
@@ -240,6 +251,11 @@ export async function checkCode(env: Env, target: string, code: string) {
     .bind(target, nowIso())
     .first<{ id: number; code_hash: string; attempts: number }>();
   if (!row || row.attempts >= MAX_ATTEMPTS) throw new ApiError("invalid_code");
+  // The try is counted before the code is compared, so parallel guesses cannot pass the limit.
+  const tried = await env.DB.prepare("update otp_codes set attempts = attempts + 1 where id = ? and attempts < ? and used = 0")
+    .bind(row.id, MAX_ATTEMPTS)
+    .run();
+  if (!tried.meta.changes) throw new ApiError("invalid_code");
 
   if (row.code_hash === DIDIT_MARK) {
     const { data } = await didit<{ status: string }>(env, "check", {
@@ -249,12 +265,8 @@ export async function checkCode(env: Env, target: string, code: string) {
       disposable_number_action: "DECLINE",
       voip_number_action: "DECLINE",
     });
-    if (data.status !== "Approved") {
-      await env.DB.prepare("update otp_codes set attempts = attempts + 1 where id = ?").bind(row.id).run();
-      throw new ApiError("invalid_code");
-    }
+    if (data.status !== "Approved") throw new ApiError("invalid_code");
   } else if (row.code_hash !== (await sha256(`${target}:${code}`))) {
-    await env.DB.prepare("update otp_codes set attempts = attempts + 1 where id = ?").bind(row.id).run();
     throw new ApiError("invalid_code");
   }
   // Only one request can use the code.
@@ -291,17 +303,11 @@ const USER_COLUMNS = `id, phone, email, full_name, role, ${ownerOf("users")}, ${
 /** Column of users that holds this kind of contact. Fixed names only, never user input. */
 export const contactColumn = (contact: Contact) => (contact.kind === "phone" ? "phone" : "email");
 
-/** Numbers in ADMIN_PHONES and addresses in ADMIN_EMAILS become admin when they register. */
-function isAdminContact(env: Env, contact: Contact): boolean {
-  const list = listSetting(contact.kind === "phone" ? env.ADMIN_PHONES : env.ADMIN_EMAILS);
-  return list.some((entry) => parseContact(entry)?.value === contact.value);
-}
-
 /**
  * Registration and "PIN forgotten": checks the code (SMS or e-mail), sets the PIN,
  * creates the user if new, and opens a session. A new PIN ends every other session of the user.
  */
-export async function register(env: Env, rawContact: string, rawCode: string, rawPin: string) {
+export async function register(env: Env, request: Request, rawContact: string, rawCode: string, rawPin: string) {
   const contact = contactOrThrow(rawContact);
   const column = contactColumn(contact);
   const pin = String(rawPin ?? "").trim();
@@ -315,7 +321,9 @@ export async function register(env: Env, rawContact: string, rawCode: string, ra
     env.DB.prepare(`select ${USER_COLUMNS} from users where ${column} = ?`).bind(contact.value).first<UserRow>();
   let user = await findUser();
   if (!user) {
-    const role: UserRole = isAdminContact(env, contact) ? "admin" : "customer";
+    // Everyone starts as a customer. Admin is never given by a setting, only in the database
+    // (docs/DEPLOYMENT.md, "Rollen vergeben"), so no number or address can sign up as admin.
+    const role: UserRole = "customer";
     const id = uuid();
     await env.DB.prepare(
       `insert into users (id, ${column}, role, created_at, pin_hash) values (?, ?, ?, ?, ?) on conflict do nothing`,
@@ -330,17 +338,17 @@ export async function register(env: Env, rawContact: string, rawCode: string, ra
       )
         .bind(now, id, id, JSON.stringify({ [column]: contact.value, role }))
         .run();
-      return openSession(env, user);
+      return openSession(env, request, user);
     }
   }
   await env.DB.batch([
-    env.DB.prepare("update users set pin_hash = ?, pin_failures = 0, pin_locked_until = null where id = ?").bind(
+    env.DB.prepare("update users set pin_hash = ?, pin_failures = 0, pin_lock_count = 0, pin_locked_until = null where id = ?").bind(
       pinHash,
       user.id,
     ),
     env.DB.prepare("delete from sessions where user_id = ?").bind(user.id),
   ]);
-  return openSession(env, user);
+  return openSession(env, request, user);
 }
 
 /**
@@ -351,7 +359,7 @@ export async function register(env: Env, rawContact: string, rawCode: string, ra
  * A number or address that already has an account is refused (one role per account):
  * whoever is also a customer registers the fleet with another number or address.
  */
-export async function registerFleetManager(env: Env, rawContact: string, rawCode: string, rawPin: string, rawName: unknown) {
+export async function registerFleetManager(env: Env, request: Request, rawContact: string, rawCode: string, rawPin: string, rawName: unknown) {
   const contact = contactOrThrow(rawContact);
   const column = contactColumn(contact);
   const pin = String(rawPin ?? "").trim();
@@ -388,7 +396,7 @@ export async function registerFleetManager(env: Env, rawContact: string, rawCode
   }
   const user = await findUser();
   if (!user) throw new ApiError("unknown", 500);
-  return openSession(env, user);
+  return openSession(env, request, user);
 }
 
 /**
@@ -397,7 +405,7 @@ export async function registerFleetManager(env: Env, rawContact: string, rawCode
  * the membership as the shop's merchant are made together, and a session opens. Until an
  * admin approves the shop, its members only see the map and the stations (merchant_not_approved).
  */
-export async function registerMerchant(env: Env, rawContact: string, rawCode: string, rawPin: string, rawShop: unknown) {
+export async function registerMerchant(env: Env, request: Request, rawContact: string, rawCode: string, rawPin: string, rawShop: unknown) {
   const contact = contactOrThrow(rawContact);
   const column = contactColumn(contact);
   const pin = String(rawPin ?? "").trim();
@@ -435,11 +443,11 @@ export async function registerMerchant(env: Env, rawContact: string, rawCode: st
   }
   const user = await findUser();
   if (!user) throw new ApiError("unknown", 500);
-  return openSession(env, user);
+  return openSession(env, request, user);
 }
 
 /** Everyday login with phone number or e-mail address, and PIN. A few wrong PINs lock the account for a while. */
-export async function signIn(env: Env, rawContact: string, rawPin: string) {
+export async function signIn(env: Env, request: Request, rawContact: string, rawPin: string) {
   const contact = contactOrThrow(rawContact);
   const pin = String(rawPin ?? "").trim();
   if (!validPinFormat(pin)) throw new ApiError("invalid_pin");
@@ -452,7 +460,7 @@ export async function signIn(env: Env, rawContact: string, rawPin: string) {
   // Same answer for unknown contacts and wrong PINs, so the login does not reveal who has an account.
   if (!user?.pin_hash) throw new ApiError("invalid_pin");
   await checkPin(env, user.id, pin, user);
-  return openSession(env, user);
+  return openSession(env, request, user);
 }
 
 interface PinState {
@@ -464,18 +472,46 @@ interface PinState {
 /** Compares a PIN with the stored hash. A few wrong PINs in a row lock the account for a while. */
 async function checkPin(env: Env, userId: string, pin: string, state: PinState) {
   if (!state.pin_hash) throw new ApiError("invalid_pin");
-  if (state.pin_locked_until && state.pin_locked_until > nowIso()) throw new ApiError("pin_locked", 429);
+  const now = nowIso();
+  // The try is counted before the PIN is compared, in one statement: parallel guesses each
+  // take a try, and none is left once the account is locked.
+  const slot = await env.DB.prepare(
+    `update users set pin_failures = pin_failures + 1
+      where id = ? and pin_failures < ? and (pin_locked_until is null or pin_locked_until <= ?)
+      returning pin_failures, pin_lock_count`,
+  )
+    .bind(userId, PIN_MAX_FAILURES, now)
+    .first<{ pin_failures: number; pin_lock_count: number }>();
+  if (!slot) {
+    // The lock read with the account; a lock set by a parallel request since then lasts at least PIN_LOCK_MINUTES.
+    const left = state.pin_locked_until ? (Date.parse(state.pin_locked_until) - Date.now()) / 1000 : 0;
+    throw new ApiError("pin_locked", 429, left > 0 ? left : PIN_LOCK_MINUTES * 60);
+  }
   if (!(await pinMatches(pin, state.pin_hash))) {
-    const failures = state.pin_failures + 1;
-    const locked = failures >= PIN_MAX_FAILURES;
-    await env.DB.prepare("update users set pin_failures = ?, pin_locked_until = ? where id = ?")
-      .bind(locked ? 0 : failures, locked ? new Date(Date.now() + PIN_LOCK_MINUTES * 60_000).toISOString() : null, userId)
+    if (slot.pin_failures < PIN_MAX_FAILURES) throw new ApiError("invalid_pin");
+    // Each lock since the last right PIN lasts twice as long (15 min, 30 min, 1 h, … at most a day).
+    const minutes = Math.min(PIN_LOCK_MINUTES * 2 ** slot.pin_lock_count, PIN_LOCK_MAX_MINUTES);
+    const until = new Date(Date.now() + minutes * 60_000).toISOString();
+    await env.DB.prepare("update users set pin_failures = 0, pin_lock_count = pin_lock_count + 1, pin_locked_until = ? where id = ?")
+      .bind(until, userId)
       .run();
-    throw new ApiError(locked ? "pin_locked" : "invalid_pin", locked ? 429 : 400);
+    await warnPinLocked(env, userId, until, slot.pin_lock_count + 1);
+    throw new ApiError("pin_locked", 429, minutes * 60);
   }
-  if (state.pin_failures || state.pin_locked_until) {
-    await env.DB.prepare("update users set pin_failures = 0, pin_locked_until = null where id = ?").bind(userId).run();
-  }
+  await env.DB.prepare("update users set pin_failures = 0, pin_lock_count = 0, pin_locked_until = null where id = ?").bind(userId).run();
+}
+
+/**
+ * An account was just locked by wrong PINs: written to the security log, and its owner is told
+ * by push notice and e-mail (no SMS, for the cost), with what to do when it was not them.
+ */
+async function warnPinLocked(env: Env, userId: string, until: string, lockCount: number) {
+  await logSecurityEvent(env.DB, { kind: "pin_locked", userId, detail: `${lockCount}` });
+  const time = new Date(until).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Lome" });
+  await notifyUser(env, userId, {
+    subject: "Compte bloqué : trop de codes PIN faux",
+    text: `poinderecharge : plusieurs codes PIN faux ont été saisis pour votre compte. Il est bloqué jusqu'à ${time} (heure de Lomé).\n\nSi ce n'était pas vous, choisissez un nouveau code PIN avec « Code PIN oublié ? » sur la page de connexion : https://app.poinderecharge.com/login`,
+  });
 }
 
 /** Confirms a payment with the signed-in user's PIN; wrong PINs count towards the same lock as the login. */
@@ -489,7 +525,13 @@ export async function verifyPin(env: Env, userId: string, rawPin: unknown) {
   await checkPin(env, userId, pin, state);
 }
 
-async function openSession(env: Env, user: UserRow): Promise<{ token: string; profile: Profile }> {
+/**
+ * Opens a session. With ADMIN_ACCESS_REQUIRED an admin account only gets one through the
+ * back office (Cloudflare Access, worker/access.ts): a known PIN or a fresh login code alone
+ * is not enough. Checked after the PIN, so this answer says nothing to someone without it.
+ */
+async function openSession(env: Env, request: Request, user: UserRow): Promise<{ token: string; profile: Profile }> {
+  if (user.role === "admin" && !(await adminAllowed(env, request))) throw new ApiError("admin_access_required", 403);
   const now = nowIso();
   const token = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
     .replace(/\+/g, "-")
@@ -500,7 +542,7 @@ async function openSession(env: Env, user: UserRow): Promise<{ token: string; pr
       await sha256(token),
       user.id,
       now,
-      new Date(Date.now() + SESSION_DAYS * 86_400_000).toISOString(),
+      new Date(Date.now() + (user.role === "admin" || user.role === "operator" ? STAFF_SESSION_DAYS : SESSION_DAYS) * 86_400_000).toISOString(),
     ),
     env.DB.prepare("update users set last_sign_in_at = ? where id = ?").bind(now, user.id),
     // Housekeeping: old codes and sessions.
@@ -523,11 +565,14 @@ export async function currentUser(env: Env, request: Request): Promise<Profile |
   const row = await env.DB.prepare(
     `select u.id, u.phone, u.email, u.full_name, u.role, ${ownerOf("u")}, ${merchantOf("u")}, ${pointPartnerOf("u")}, d.status as driver_status from sessions s
      join users u on u.id = s.user_id left join drivers d on d.user_id = u.id
-     where s.token_hash = ? and s.expires_at > ?`,
+     where s.token_hash = ? and s.expires_at > ? and (u.role not in ${STAFF_ROLES_SQL} or s.created_at > ?)`,
   )
-    .bind(await sha256(token), nowIso())
+    .bind(await sha256(token), nowIso(), new Date(Date.now() - STAFF_SESSION_DAYS * 86_400_000).toISOString())
     .first<UserRow>();
-  return row ? toProfile(row) : null;
+  if (!row) return null;
+  // An admin session only counts with Access as well (see openSession), on every request.
+  if (row.role === "admin" && !(await adminAllowed(env, request))) return null;
+  return toProfile(row);
 }
 
 async function requireUser(env: Env, request: Request): Promise<Profile> {
@@ -603,13 +648,8 @@ export async function deleteAccount(
     const target = deleteTarget(profile, input.channel === "email" ? "email" : "sms");
     await checkCode(env, target.value, String(input.code).trim());
   } else {
-    const row = await env.DB.prepare("select pin_hash from users where id = ?")
-      .bind(profile.id)
-      .first<{ pin_hash: string | null }>();
-    const pin = String(input.pin ?? "").trim();
-    if (!row?.pin_hash || !validPinFormat(pin) || !(await pinMatches(pin, row.pin_hash))) {
-      throw new ApiError("invalid_pin");
-    }
+    // Wrong PINs count towards the same lock as the login.
+    await verifyPin(env, profile.id, input.pin);
   }
   // Money left in the wallet belongs to the person: it has to be spent or paid out first.
   const wallet = await env.DB.prepare("select balance_xof from wallets where user_id = ?")

@@ -1,11 +1,11 @@
-import type { BatteryType } from "../battery-types";
+import type { BatteryType } from "@shared/battery-types";
 import type {
   BatteryHistoryType,
   BatteryLocation,
   BatterySource,
   BatteryStatus,
-} from "../batteries";
-import type { StationRole } from "../station-work";
+} from "@shared/batteries";
+import type { StationRole } from "@shared/station-work";
 import { BackendError } from "./backend";
 
 // Battery register of the demo backend (src/lib/backend/demo.ts), with the rules of

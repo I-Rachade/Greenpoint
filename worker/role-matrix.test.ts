@@ -48,9 +48,10 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/repair-centers": ALL,
   "GET /api/operators": ALL,
   "GET /api/stations/:id/reviews": ALL,
-  "POST /api/stations/:id/reviews": SIGNED,
+  "POST /api/stations/:id/reviews": CUSTOMER,
   "DELETE /api/reviews/:id": SIGNED, // one's own review
   "GET /api/me": ALL,
+  "GET /api/auth/captcha": ALL,
   "POST /api/auth/send": ALL,
   "POST /api/auth/register": ALL,
   "POST /api/auth/register-fleet": ALL,
@@ -71,11 +72,13 @@ const POLICY: Record<string, Role[]> = {
   "DELETE /api/owner/staff": OWNER,
   "POST /api/owner/stations/:id": OWNER,
   "POST /api/owner/staff/move": OWNER,
+  "POST /api/owner/staff-invites/:id/revoke": OWNER,
   "POST /api/owner/reassignments/:id/resolve": OWNER,
   "GET /api/owner/live": OWNER,
   "GET /api/owner/report": OWNER,
   "GET /api/owner/cash": OWNER,
-  "POST /api/owner/cash/handovers": OWNER,
+  "POST /api/owner/cash/handovers": STATION, // staff close their own Green Credit at our stations (0051)
+  "GET /api/stations/:id/cash": STATION,
   "GET /api/station-services": OWNER,
   "POST /api/station-services/request": ["owner"], // the owner asks, the admin decides
   "POST /api/admin/station-services/decide": ADMIN,
@@ -87,6 +90,7 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/batteries/:id": OWNER,
   "POST /api/admin/batteries": ADMIN,
   "PATCH /api/admin/batteries/:id": ADMIN,
+  "DELETE /api/admin/batteries/:id": ADMIN,
   "GET /api/admin/ev-chargers": ADMIN,
   "POST /api/admin/ev-chargers": ADMIN,
   "DELETE /api/admin/ev-chargers/:id": ADMIN,
@@ -102,6 +106,9 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/stations/:id/battery-events": STATION, // corrections: owner and admin (station-work.test)
   "POST /api/stations/:id/swaps": STATION,
   "GET /api/stations/:id/swaps": STATION,
+  "POST /api/stations/:id/incidents": STATION,
+  "GET /api/stations/:id/incidents": STATION,
+  "POST /api/stations/:id/incidents/:id/resolve": OWNER, // owners and admins mark a report handled
   "GET /api/stations/:id/battery-events": OWNER, // counter history: backoffice
   "GET /api/stations/:id/batteries/lookup": STATION, // the swap form: is this battery known?
   "GET /api/admin/reservations": ADMIN,
@@ -117,6 +124,7 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/admin/wallet": ADMIN,
   "POST /api/admin/wallet/enabled": ADMIN,
   "POST /api/admin/wallet/max": ADMIN,
+  "POST /api/admin/wallet/charge-hold": ADMIN,
   "POST /api/admin/stations/:id/green-credit": ADMIN,
   "POST /api/admin/wallet/adjust": ADMIN,
   "POST /api/admin/wallet/freeze": ADMIN,
@@ -163,6 +171,8 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/stations/:id/parcels/pickup": STATION,
   "GET /api/stations/:id/bookings": STATION,
   "POST /api/stations/:id/bookings/:id/accept": STATION,
+  "GET /api/admin/security": ADMIN,
+  "POST /api/admin/security/unlock/:id": ADMIN,
   "GET /api/admin/partners": ADMIN,
   "POST /api/admin/partners": ADMIN,
   "POST /api/admin/partners/:id/keys": ADMIN,
@@ -210,6 +220,7 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/admin/driver-payouts": ADMIN,
   "POST /api/admin/driver-payouts/:id": ADMIN,
   "POST /api/push/token/remove": SIGNED,
+  "GET /api/push/web-key": SIGNED,
   "POST /api/driver/jobs/:id/finish": DRIVER,
   "GET /api/jobs/mine": ALL, // empty when signed out
   "POST /api/jobs/pickup": BOOKING,
@@ -217,6 +228,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/jobs/courier": BOOKING,
   "POST /api/parcels/:id/delivery": CUSTOMER,
   "POST /api/jobs/:id/cancel": BOOKING, // a shop's member cancels the shop's trips
+  "POST /api/jobs/:id/confirm-receipt": BOOKING, // the sender or a member of the shop that booked the courier
   "GET /api/merchant": MERCHANT,
   "POST /api/merchant/bookings": MERCHANT,
   "GET /api/merchant/activity": MERCHANT,
@@ -235,6 +247,9 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/merchant-invites": ALL, // empty when signed out
   "POST /api/merchant-invites/:id/accept": SIGNED, // an invite to the caller's own number
   "POST /api/merchant-invites/:id/decline": SIGNED,
+  "GET /api/staff-invites": ALL, // empty when signed out
+  "POST /api/staff-invites/:id/accept": SIGNED, // an invite to the caller's own phone number or e-mail address
+  "POST /api/staff-invites/:id/decline": SIGNED,
   "GET /api/merchant-assignments": APPROVER,
   "POST /api/merchant-assignments/:id/:id": APPROVER,
   "GET /api/driver/shops": DRIVER,
@@ -255,6 +270,8 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/admin/fleet": ADMIN,
   "POST /api/admin/driver-settings": ADMIN,
   "POST /api/admin/jobs/:id/assign": ADMIN,
+  "POST /api/admin/jobs/:id/approve-proof": ADMIN,
+  "POST /api/admin/jobs/:id/reject-proof": ADMIN,
   "POST /api/admin/stations": ADMIN,
   "POST /api/admin/stations/:id/active": ADMIN,
   "GET /api/admin/snapshot": ADMIN,
@@ -272,6 +289,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/admin/devices/:id/outlets/:id/:id": ADMIN,
   "POST /api/admin/devices/:id/partner": ADMIN,
   "POST /api/admin/devices/:id/qr": ADMIN,
+  "POST /api/admin/devices/:id/station": ADMIN,
   "POST /api/admin/cash/handovers/:id/decide": ADMIN,
   "POST /api/admin/cash/stations/:id": ADMIN,
   "GET /api/admin/point-partners": ADMIN,
@@ -279,6 +297,37 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/admin/point-partners/:id/status": ADMIN,
   "POST /api/admin/point-partners/:id/accounts": ADMIN,
   "DELETE /api/admin/point-partners/:id/accounts/:id": ADMIN,
+  // Share (worker/share.ts): renting is for customers, the station tile for its staff.
+  "GET /api/share": ALL, // empty while the module is off
+  "GET /api/share/me": CUSTOMER,
+  "GET /api/share/rides/mine": CUSTOMER,
+  "POST /api/share/documents/:id": CUSTOMER,
+  "POST /api/share/rides": CUSTOMER,
+  "POST /api/share/rides/:id/start": CUSTOMER,
+  "POST /api/share/rides/:id/cancel": CUSTOMER,
+  "POST /api/share/rides/:id/pause": CUSTOMER,
+  "POST /api/share/rides/:id/resume": CUSTOMER,
+  "POST /api/share/rides/:id/end": CUSTOMER,
+  "POST /api/share/rides/:id/position": CUSTOMER,
+  "POST /api/share/rides/:id/problem": CUSTOMER,
+  "POST /api/share/rides/:id/pay/mobile": CUSTOMER,
+  "POST /api/share/rides/:id/pay/wallet": CUSTOMER,
+  "GET /api/stations/:id/share": STATION,
+  "POST /api/stations/:id/share/vehicles/:id/status": STATION,
+  "POST /api/stations/:id/share/rides/:id/cash": STATION,
+  "POST /api/admin/features/share": ADMIN,
+  "GET /api/admin/share": ADMIN,
+  "POST /api/admin/share/vehicles": ADMIN,
+  "DELETE /api/admin/share/vehicles/:id": ADMIN,
+  "POST /api/admin/share/vehicles/:id/state": ADMIN,
+  "POST /api/admin/share/vehicles/:id/command": ADMIN,
+  "POST /api/admin/share/stations/:id": ADMIN,
+  "POST /api/admin/share/tariffs/:id": ADMIN,
+  "POST /api/admin/share/verifications/:id": ADMIN,
+  "POST /api/admin/share/rides/:id/end": ADMIN,
+  "POST /api/admin/share/rides/:id/waive": ADMIN,
+  "GET /api/admin/share/rides/:id/track": ADMIN,
+  "POST /api/admin/share/incidents/:id/resolve": ADMIN,
   // Only accounts an admin linked to a point partner; none of the roles here is one.
   "GET /api/point-partner": [],
 };
@@ -392,5 +441,6 @@ describe("R2: route × role matrix", () => {
       if (status !== 401) wrong.push(`${name}: ${status}`);
     }
     expect(wrong).toEqual([]);
-  });
+    // One fresh database copy per route: slow on a busy machine, like the test above.
+  }, 60_000);
 });

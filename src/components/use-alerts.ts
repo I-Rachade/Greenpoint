@@ -2,13 +2,13 @@
 
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { buildAlerts, type Alert } from "@/lib/alerts";
-import { isHolding } from "@/lib/availability";
+import { isHolding } from "@shared/availability";
 import type { Backend } from "@/lib/backend";
 import { useNow } from "@/lib/hooks";
 import { useReadAlerts } from "@/lib/prefs";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
-import type { Reservation } from "@/lib/types";
+import type { Reservation } from "@shared/types";
 
 type AlertData = {
   reservations: Awaited<ReturnType<Backend["myReservations"]>>;

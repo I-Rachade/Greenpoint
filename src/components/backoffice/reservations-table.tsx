@@ -6,11 +6,11 @@ import { useI18n } from "@/components/i18n-provider";
 import { ConfirmSheet } from "@/components/confirm-sheet";
 import { Button } from "@/components/ui";
 import { effectiveReservationStatus } from "@/lib/admin/insights";
-import { ADMIN_HISTORY_DAYS, ADMIN_PAGE_SIZE } from "@/lib/admin/types";
-import { isHolding } from "@/lib/availability";
+import { ADMIN_HISTORY_DAYS, ADMIN_PAGE_SIZE } from "@shared/admin/types";
+import { isHolding } from "@shared/availability";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { Reservation, ReservationStatus } from "@/lib/types";
+import type { Reservation, ReservationStatus } from "@shared/types";
 import { field, indexSnapshot, Loading, Pill, StaleNotice, Table, td, th, useAdminSnapshot, useDateTime } from "./shared";
 
 const STATUSES: ReservationStatus[] = ["active", "completed", "cancelled", "expired"];

@@ -31,7 +31,7 @@ export const LEGAL_PATHS: Record<LegalDocId, string> = {
 /** Matches a placeholder that still has to be filled in. */
 export const LEGAL_PLACEHOLDER = /(\[(?:À COMPLÉTER|TO BE COMPLETED)[^\]]*\])/;
 
-const UPDATED = "12/10/2026";
+const UPDATED = "14/10/2026";
 
 const fr: Record<LegalDocId, LegalDoc> = {
   notice: {
@@ -164,23 +164,32 @@ const fr: Record<LegalDocId, LegalDoc> = {
         ],
       },
       {
-        heading: "10. Données personnelles",
+        heading: "10. Programme greenpoint",
+        body: [
+          "Le programme greenpoint est un programme de fidélité gratuit. Il estime le CO₂ économisé par l'utilisateur lors de ses recharges et échanges de batterie dans les stations solaires signalées dans l'application, et attribue des greenpoints (1 greenpoint pour 100 g de CO₂). Les quantités de CO₂ affichées sont des estimations.",
+          "Les greenpoints n'ont aucune valeur monétaire. Ils ne sont ni de la monnaie, ni de la monnaie électronique, ni un moyen de paiement. Ils ne peuvent pas être achetés, vendus, transférés à une autre personne, échangés contre de l'argent ou un crédit, ni remboursés.",
+          "Ils servent uniquement à obtenir les récompenses proposées dans l'application, auprès de poinderecharge ou de ses partenaires, dans la limite des stocks. Les récompenses, leur prix en greenpoints et les règles d'attribution peuvent évoluer ; les greenpoints déjà acquis restent valables.",
+          "L'éditeur peut corriger ou annuler des greenpoints attribués par erreur ou obtenus de manière abusive. À la suppression du compte, les greenpoints sont perdus.",
+        ],
+      },
+      {
+        heading: "11. Données personnelles",
         body: ["Les données personnelles sont traitées conformément à la politique de confidentialité."],
       },
       {
-        heading: "11. Fermeture du compte",
+        heading: "12. Fermeture du compte",
         body: [
           "L'utilisateur peut supprimer son compte à tout moment dans « Mon compte » (app.poinderecharge.com/compte), après confirmation avec son code PIN ; la suppression est immédiate. Il peut aussi la demander en écrivant à {email} avec son numéro de téléphone ; elle est alors effectuée dans un délai de 30 jours. Les données que la loi oblige à conserver sont gardées pour la durée requise (voir la politique de confidentialité).",
         ],
       },
       {
-        heading: "12. Modification des CGU",
+        heading: "13. Modification des CGU",
         body: [
           "L'éditeur peut modifier les présentes CGU. Les utilisateurs sont informés des modifications importantes dans l'application avant leur entrée en vigueur. La version applicable est celle en ligne à la date d'utilisation.",
         ],
       },
       {
-        heading: "13. Droit applicable et litiges",
+        heading: "14. Droit applicable et litiges",
         body: [
           "Les présentes CGU sont régies par le droit togolais. En cas de réclamation, l'utilisateur écrit d'abord à {email} afin de rechercher une solution amiable. À défaut, les tribunaux compétents de Lomé sont seuls compétents.",
           "En cas de différence entre la version française et une traduction, la version française fait foi.",
@@ -208,6 +217,7 @@ const fr: Record<LegalDocId, LegalDoc> = {
             "Code PIN : enregistré uniquement sous forme chiffrée irréversible ; personne ne peut le lire.",
             "Nom, si vous le communiquez.",
             "Réservations : station, type (batterie ou place), dates, statut, code de retrait.",
+            "Programme greenpoint : type de véhicule, recharges et échanges comptés, CO₂ estimé, greenpoints, niveau et récompenses utilisées.",
             "Données techniques : date de création du compte, dernière connexion, sessions de connexion, journal des actions (création du compte, réservations, modifications par le personnel), journaux techniques du serveur (adresse IP, erreurs).",
           ],
           "Votre position n'est ni envoyée à nos serveurs ni enregistrée. Si vous l'autorisez, elle est utilisée uniquement sur votre téléphone, pendant que l'application est ouverte, pour afficher les stations les plus proches. Vous pouvez refuser : les distances sont alors calculées depuis le centre de Lomé.",
@@ -220,6 +230,7 @@ const fr: Record<LegalDocId, LegalDoc> = {
             "Créer et sécuriser votre compte (code SMS, code PIN, protection contre les abus).",
             "Afficher les stations et leur disponibilité.",
             "Gérer vos réservations et permettre au personnel de la station de les valider avec le code de retrait.",
+            "Gérer le programme greenpoint : calculer le CO₂ économisé, attribuer les greenpoints et valider les récompenses.",
             "Répondre à vos demandes et assurer le support.",
             "Respecter nos obligations légales.",
           ],
@@ -420,23 +431,32 @@ const en: Record<LegalDocId, LegalDoc> = {
         ],
       },
       {
-        heading: "10. Personal data",
+        heading: "10. greenpoint programme",
+        body: [
+          "greenpoint is a free loyalty programme. It estimates the CO₂ you save when you charge or swap batteries at the solar stations marked in the app, and awards greenpoints (1 greenpoint per 100 g of CO₂). The CO₂ amounts shown are estimates.",
+          "greenpoints have no monetary value. They are not money, electronic money or a means of payment. They cannot be bought, sold, transferred to another person, exchanged for cash or credit, or refunded.",
+          "They can only be used for the rewards offered in the app, from poinderecharge or its partners, while stocks last. Rewards, their price in greenpoints and the earning rules may change; greenpoints already earned remain valid.",
+          "The publisher may correct or cancel greenpoints awarded by mistake or obtained by abuse. greenpoints are lost when the account is deleted.",
+        ],
+      },
+      {
+        heading: "11. Personal data",
         body: ["Personal data is processed as described in the privacy policy."],
       },
       {
-        heading: "11. Closing your account",
+        heading: "12. Closing your account",
         body: [
           "You can delete your account at any time in “My account” (app.poinderecharge.com/compte) after confirming with your PIN; deletion is immediate. You can also ask for it by writing to {email} with your phone number; it is then done within 30 days. Data the law requires us to keep is kept for the required period (see the privacy policy).",
         ],
       },
       {
-        heading: "12. Changes",
+        heading: "13. Changes",
         body: [
           "The publisher may change these terms. Users are informed of important changes in the app before they take effect. The applicable version is the one online on the date of use.",
         ],
       },
       {
-        heading: "13. Governing law and disputes",
+        heading: "14. Governing law and disputes",
         body: [
           "These terms are governed by Togolese law. For any complaint, first write to {email} to seek an amicable solution. Failing that, the competent courts of Lomé have sole jurisdiction.",
           "If the French version and a translation differ, the French version prevails.",
@@ -464,6 +484,7 @@ const en: Record<LegalDocId, LegalDoc> = {
             "PIN: stored only in irreversibly encrypted form; nobody can read it.",
             "Name, if you provide it.",
             "Reservations: station, type (battery or spot), dates, status, pickup code.",
+            "greenpoint programme: vehicle type, counted charges and swaps, estimated CO₂, greenpoints, level and rewards used.",
             "Technical data: account creation date, last login, login sessions, activity log (account creation, reservations, changes by staff), server logs (IP address, errors).",
           ],
           "Your location is never sent to our servers or stored. If you allow it, it is used only on your phone, while the app is open, to show the nearest stations. You can refuse: distances are then measured from the centre of Lomé.",
@@ -476,6 +497,7 @@ const en: Record<LegalDocId, LegalDoc> = {
             "Create and secure your account (SMS code, PIN, abuse protection).",
             "Show stations and their availability.",
             "Manage your reservations and let station staff confirm them with the pickup code.",
+            "Run the greenpoint programme: estimate the CO₂ you save, award greenpoints and confirm rewards.",
             "Answer your requests and provide support.",
             "Comply with our legal obligations.",
           ],

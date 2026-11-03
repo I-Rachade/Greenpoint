@@ -22,11 +22,11 @@ Steckdose --LoRa--> Gateway --4G--> Netzwerkserver (TTN / ChirpStack)
 
 - `worker/migrations/0003_devices.sql`: Tabellen `devices` und `device_messages`, Spalten `outlet` und `energy_wh` an `charging_points`.
 - `worker/devices.ts`: nimmt Meldungen an, legt Geräte an, zählt freie Plätze.
-- `src/lib/iot/device-events.ts`: liest die Formate (wird auch in den Tests geprüft).
-- `src/lib/iot/charging-points.ts`: "offline", wenn ein Gerät 15 Minuten nichts meldet.
+- `shared/iot/device-events.ts`: liest die Formate (wird auch in den Tests geprüft).
+- `shared/iot/charging-points.ts`: "offline", wenn ein Gerät 15 Minuten nichts meldet.
 - `worker/migrations/0004_device_commands.sql`: Warteschlange für Schaltbefehle (`device_commands`).
-- `src/lib/iot/xingke-commands.ts`: baut die Xingke-Befehle des Textprotokolls (Ausgang ein/aus).
-- `src/lib/iot/xingke-cloud.ts` und `worker/xingke.ts`: Befehle und Callbacks der Xingke-Cloud-API.
+- `shared/iot/xingke-commands.ts`: baut die Xingke-Befehle des Textprotokolls (Ausgang ein/aus).
+- `shared/iot/xingke-cloud.ts` und `worker/xingke.ts`: Befehle und Callbacks der Xingke-Cloud-API.
 
 ## Einrichten
 
@@ -48,7 +48,10 @@ Steckdose --LoRa--> Gateway --4G--> Netzwerkserver (TTN / ChirpStack)
 Der Kunde kann eine Ladung selbst starten, ohne Personal: Er scannt den QR-Code auf dem Ausgang, die App zeigt Station, Ausgang, Preis pro kWh und ob der Ausgang frei ist, und „Démarrer la recharge“ schaltet ihn ein. Er sieht Leistung, Energie und Preis live unter **Mes recharges**, beendet die Ladung mit „Arrêter“ (oder die Steckdose beendet sie, wenn der Akku voll ist) und bezahlt in der App (Portefeuille, Flooz, T-Money). An Partnerstationen bietet die App keine Zahlung an; dort zahlt er bar beim Personal. Das Personal sieht die Ladung wie jede andere auf seinem Bildschirm.
 
 - **Einschalten:** im Backoffice unter **Prises connectées** pro Ausgang „Recharge par QR-Code“ anhaken (Standard: aus). Geht nur bei Steckdosen, die sich fernschalten lassen (Xingke, OCPP). Danach zeigt „QR-Code“ den Code zum Ausdrucken und Aufkleben.
-- **Der QR-Code** ist ein Link `https://app.poinderecharge.com/recharge?p=<charging_points.id>`. Er öffnet sich mit der Handy-Kamera im Browser; in der App gibt es „Scanner le QR-Code d'une prise“ auf der Stationsseite und auf `/recharge`.
+- **Der QR-Code** ist ein kurzer Link, einer pro Steckdose: `https://app.poinderecharge.com/q/<devices.qr_code>`, z. B. `https://app.poinderecharge.com/q/k7q2xp9a`. Der Code hat 8 Zeichen aus `0-9a-z` (zufällig, nicht aus der Geräte-ID abgeleitet). Der Aufkleber neben einem Ausgang hat ein Zeichen mehr, die Ausgangsnummer: `1`–`9`, dann `a`–`g` für 10–16 (z. B. `…/q/k7q2xp9a3` für Ausgang 3). Der Link hat 41–42 Zeichen und ergibt einen QR-Code der Version 3 (29×29 Punkte) statt Version 5 (37×37) beim alten langen Link; günstige Handys lesen ihn leichter.
+- **Weiterleitung:** Der Worker beantwortet `/q/<code>` mit einer temporären Weiterleitung (302) auf `/recharge?o=<code>&s=<ausgang>`. Wohin der Link führt, lässt sich so später ändern, ohne neue Aufkleber zu drucken. Die App erkennt den kurzen Link auch direkt beim Scannen (`boxFromCode` in `shared/charging.ts`).
+- **Ältere Aufkleber** mit `https://app.poinderecharge.com/recharge?o=<devices.qr_token>` (32 Hex-Zeichen, `&s=<ausgang>` für einen Ausgang) funktionieren weiter. „Renouveler“ im Backoffice erneuert beide, danach gelten nur die neuen Aufkleber. Die ganz alten Codes pro Ausgang (`/recharge?p=…`) funktionieren nicht mehr.
+- Er öffnet sich mit der Handy-Kamera im Browser; in der App gibt es „Scanner le QR-Code d'une prise“ auf der Stationsseite und auf `/recharge`.
 - **Der Server prüft** (`startSelfCharge` in `worker/charging.ts`): Option an, Dienst „charging“ der Station frei, Ausgang meldet sich in den letzten 15 Minuten, ist frei, nicht von jemand anderem reserviert (auch nicht als letzter freier Platz für eine Reservierung ohne Ausgang), und der Kunde hat keine andere Ladung, die läuft oder noch bezahlt werden muss. Hat der Kunde selbst eine Reservierung an der Station, wird sie eingelöst.
 - **Stoppen** darf der Kunde nur Ladungen, die er selbst per QR-Code gestartet hat.
 - Migration `0038_charge_qr.sql` (Spalte `charging_points.qr_start`), API: `GET /api/charging/points/:id` (ohne Anmeldung lesbar), `POST /api/charging/points/:id/start`, `POST /api/charging/:id/stop`, `POST /api/admin/charging-points/:id/qr {"enabled":true}`.
@@ -125,7 +128,7 @@ Seit Oktober 2026 bietet Xingke eine Cloud-API an ("Xingke Unified API V1.0", `p
 | `CommandResult` | schließt den Befehl (`Succeeded`/`Sent` = `done`, `Failed` = `failed`, Code in `result`); ein später `Unknown` überschreibt kein bestätigtes Ergebnis. Start bestätigt = lädt, Stopp bestätigt = frei |
 | `DeviceOnline` | Lebenszeichen, Ausgänge wieder angeboten |
 | `DeviceOffline` | Ausgänge sofort offline, freie Plätze der Station neu gezählt |
-| `CardPresented` | nur gespeichert: die App führt keine Ladekarten, das Gerät bekommt keine Antwort |
+| `CardPresented` | Ladekarte (wie bei OCPP: mit einem Konto verknüpft, zahlt mit dessen Green Credit): Antwort `AuthorizeResponse` mit dem Guthaben (FCFA × 100); eine Guthabenabfrage für das ganze Gerät kommt ohne `connectorId` und wird ohne beantwortet (API 1.2); bei `StartCharging` öffnet sich die Ladung, und nach `CommandResult` „Sent“ oder „Unknown“ (`DELIVERY_UNCERTAIN`, der Normalfall) folgt `RemoteStartTransaction` mit `startSource: "Card"`; lehnt die Plattform die Antwort mit `PROFILE_UNCONFIRMED` ab (Kartenfreigabe für das Gerät nicht bestätigt), wird die Steckdose sofort direkt gestartet. Abgelaufene Ereignisse werden nur gespeichert |
 
 Noch offen bei Xingke: Produktionsadresse und Zugangsdaten, ob die Geräte-IDs Kleinbuchstaben enthalten, und ob `energy` pro Ladevorgang oder als Zählerstand gemeldet wird (die App zeigt den gemeldeten Wert). Die JSON-Beispiele, das JSON-Schema und die OpenAPI-Datei des Herstellers liegen unter `src/lib/__tests__/fixtures/xingke/`; die Tests prüfen unsere Befehle und Callbacks dagegen.
 

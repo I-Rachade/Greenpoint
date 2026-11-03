@@ -1,5 +1,5 @@
 // Collection runs and parcel scans (plan phase 7, migration 0034). Shared types in
-// src/lib/parcels.ts (ParcelRun, ParcelScanKind, parseParcelScan).
+// shared/parcels.ts (ParcelRun, ParcelScanKind, parseParcelScan).
 //
 // A collection run takes the parcels handed in at a station to their stations:
 //   1. staff choose the parcels and record the driver (driver QR or typed code): "loading";
@@ -11,9 +11,9 @@
 // Staff act at their active station (worker/station-work.ts, R7). Every scan is one row of
 // parcel_scans with station, person and role; the same scan twice is one row.
 
-import { parseParcelScan, type ParcelRun, type ParcelRunStatus, type ParcelScanKind } from "../src/lib/parcels";
-import type { StationRole } from "../src/lib/station-work";
-import type { Parcel } from "../src/lib/parcels";
+import { parseParcelScan, type ParcelRun, type ParcelRunStatus, type ParcelScanKind } from "../shared/parcels";
+import type { StationRole } from "../shared/station-work";
+import type { Parcel } from "../shared/parcels";
 import { driverByBadge } from "./drivers";
 import { ApiError, nowIso, uuid } from "./http";
 import {

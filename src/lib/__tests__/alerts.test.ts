@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildAlerts } from "../alerts";
 import { en } from "../i18n/en";
-import type { Reservation } from "../types";
+import type { Reservation } from "@shared/types";
 
 const now = new Date("2026-10-13T12:00:00Z");
 const names = new Map([["s1", "Bè"]]);

@@ -8,12 +8,15 @@ import {
   safeEqual,
 } from "./payment-providers";
 import { myPayments, paymentCallback, refreshPayment, startChargePayment } from "./payments";
-import type { Profile } from "../src/lib/types";
+import type { Profile } from "../shared/types";
 import { fakeD1 } from "./test-d1";
 
 const OWN_OPERATOR = "00000000-0000-4000-8000-000000000001";
 const CUSTOMER: Profile = { id: "customer-1", phone: "+22896123456", fullName: null, role: "customer" };
 const OTHER: Profile = { id: "customer-2", phone: "+22890123456", fullName: null, role: "customer" };
+// Only admins pay against the simulated provider (mobilePaymentOffered): the simulation's tests run as them.
+const TESTER: Profile = { ...CUSTOMER, role: "admin" };
+const OTHER_TESTER: Profile = { ...OTHER, role: "admin" };
 
 function setup(settings: Partial<Env> = {}) {
   const { db, d1 } = fakeD1();
@@ -46,7 +49,7 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 /** A finished charge of 500 FCFA at the own station, paid with Flooz/T-Money (the caller in charging.ts checked it). */
-const start = (env: Env, body: { network?: unknown; phone?: unknown }, user = CUSTOMER) =>
+const start = (env: Env, body: { network?: unknown; phone?: unknown }, user = TESTER) =>
   startChargePayment(env, user, { sessionId: "charge-1", stationId: "own", amountXof: 500 }, body);
 
 afterEach(() => vi.unstubAllGlobals());
@@ -187,6 +190,31 @@ describe("refreshPayment and myPayments", () => {
     expect(refreshed.paidAt).not.toBeNull();
     expect(await myPayments(env, CUSTOMER)).toHaveLength(1);
     expect(await myPayments(env, OTHER)).toHaveLength(0);
+  });
+});
+
+describe("provider switched since the payment", () => {
+  it("never settles a payment with the status of another provider than the one that took it", async () => {
+    const { db, env } = setup();
+    const payment = await start(env, { network: "flooz", phone: "96123456" });
+    // Taken by PayGate, the Worker now simulating: the simulation would say paid.
+    db.exec("update payments set provider = 'paygate'");
+    expect((await refreshPayment(env, CUSTOMER, payment.id)).status).toBe("pending");
+    const { identifier } = db.prepare("select identifier from payments").get() as { identifier: string };
+    const res = await paymentCallback(env, post("/api/payments/callback?key=callback-secret", { identifier }));
+    expect(res.status).toBe(200);
+    expect(db.prepare("select status from payments").get()).toEqual({ status: "pending" });
+  });
+
+  it("leaves a real top-up pending while the Worker simulates", async () => {
+    const { db, env } = setup();
+    const now = new Date().toISOString();
+    db.exec(`insert into wallet_topups (id, identifier, user_id, amount_xof, network, phone, provider, created_at, updated_at)
+             values ('t1', 'pdw_1', 'customer-1', 5000, 'flooz', '+22896123456', 'paygate', '${now}', '${now}')`);
+    const res = await paymentCallback(env, post("/api/payments/callback?key=callback-secret", { identifier: "pdw_1" }));
+    expect(res.status).toBe(200);
+    expect(db.prepare("select status from wallet_topups").get()).toEqual({ status: "pending" });
+    expect(db.prepare("select count(*) as n from wallets where balance_xof > 0").get()).toEqual({ n: 0 });
   });
 });
 

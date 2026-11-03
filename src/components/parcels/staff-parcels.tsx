@@ -5,12 +5,12 @@ import { useState, type ComponentType, type FormEvent, type ReactNode } from "re
 import { useDateTime } from "@/components/backoffice/shared";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { measuresOf, PARCEL_SIZES, parseHandoverInput, type Parcel, type ParcelInfo, type ParcelInput, type ParcelSize } from "@/lib/parcels";
-import type { StationBooking } from "@/lib/partners";
+import { measuresOf, PARCEL_SIZES, parseHandoverInput, type Parcel, type ParcelInfo, type ParcelInput, type ParcelSize } from "@shared/parcels";
+import type { StationBooking } from "@shared/partners";
 import { isDriverPart, type ParcelSection } from "@/lib/parcel-sections";
-import type { StationView } from "@/lib/types";
-import { fareFor } from "@/lib/drivers";
-import { distanceMeters } from "@/lib/geo";
+import type { StationView } from "@shared/types";
+import { fareFor } from "@shared/drivers";
+import { distanceMeters } from "@shared/geo";
 import { useApp } from "../app-provider";
 import {
   BackIcon,
@@ -87,15 +87,19 @@ function PickupBox({
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
   const [code, setCode] = useState("");
+  // The recipient's code once staff found the parcel by its number (the number alone hands nothing over).
+  const [pickupCode, setPickupCode] = useState("");
   const [scanning, setScanning] = useState(false);
   const typed = parseHandoverInput(code);
-  const match = typed && !typed.code ? waiting.find((p) => p.trackingNo === typed.trackingNo) : undefined;
+  const byNumber = typed && !typed.code ? typed.trackingNo : null;
+  const match = byNumber ? waiting.find((p) => p.trackingNo === byNumber) : undefined;
 
-  async function handOver(value: string) {
+  async function handOver(value: string, trackingNo?: string) {
     onError("");
     try {
-      const parcel = await backend.pickUpParcel(stationId, value);
+      const parcel = await backend.pickUpParcel(stationId, value, trackingNo);
       setCode("");
+      setPickupCode("");
       onDone(format(t.parcels.staff.handedOver, { no: parcel.trackingNo }));
     } catch (err) {
       onError(errorMessage(err));
@@ -108,7 +112,7 @@ function PickupBox({
         className="flex flex-wrap items-center gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          void handOver(code);
+          void (byNumber ? handOver(pickupCode, byNumber) : handOver(code));
         }}
       >
         <input
@@ -122,6 +126,20 @@ function PickupBox({
           aria-label={t.parcels.staff.pickupInput}
           className="min-h-11 w-48 rounded-lg border border-black/20 bg-white px-3 py-2 text-center font-mono text-lg tracking-widest dark:border-white/20 dark:bg-zinc-950"
         />
+        {byNumber && (
+          <input
+            inputMode="numeric"
+            autoComplete="off"
+            required
+            pattern="\d{6}"
+            maxLength={6}
+            value={pickupCode}
+            onChange={(e) => setPickupCode(e.target.value.replace(/\D/g, ""))}
+            placeholder="000000"
+            aria-label={t.parcels.staff.pickupCodeInput}
+            className="min-h-11 w-36 rounded-lg border border-black/20 bg-white px-3 py-2 text-center font-mono text-lg tracking-widest dark:border-white/20 dark:bg-zinc-950"
+          />
+        )}
         <button type="submit" className={primary}>
           {t.parcels.staff.pickupButton}
         </button>
@@ -136,6 +154,7 @@ function PickupBox({
           {format(t.parcels.staff.pickupFor, { no: match.trackingNo, who: [match.recipient.name, match.recipient.phone].filter(Boolean).join(" · ") })}
         </p>
       )}
+      {byNumber && <p className="text-xs text-zinc-500">{t.parcels.staff.pickupNeedsCode}</p>}
       {scanning && (
         <QrScanner
           onClose={() => setScanning(false)}

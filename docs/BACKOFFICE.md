@@ -2,6 +2,32 @@
 
 Erreichbar unter `/admin`, nur für Nutzer mit Rolle `admin`. Alle Seiten aktualisieren sich live (bei jeder Status- oder Reservierungsänderung und alle 30 Sekunden).
 
+## Eigene Adresse: admin.poinderecharge.com (Cloudflare Access)
+
+Das Backoffice bekommt eine eigene Adresse, vor der **Cloudflare Access** steht: Erst nach der Anmeldung bei Access (E-Mail-Code und Fingerabdruck oder Face ID) lädt überhaupt eine Seite. Dahinter folgt wie bisher der Login mit Nummer und PIN.
+
+So hängt es zusammen:
+
+- **Worker `pointderecharge-admin`** (`wrangler.admin.jsonc`, Code `worker/admin-gateway.ts`): prüft bei jeder Anfrage den Ausweis von Access (Header `Cf-Access-Jwt-Assertion`, RS256-signiert, `worker/access.ts`), liefert die Seiten aus `out/` und gibt `/api/*` per Service Binding an `pointderecharge-app` weiter. Ohne `ACCESS_TEAM_DOMAIN` und `ACCESS_AUD` antwortet er nur mit 503.
+- **API** (`pointderecharge-app`): Ist dort `ADMIN_ACCESS_REQUIRED=1` gesetzt, bekommt ein Admin-Konto nur noch mit gültigem Access-Ausweis eine Sitzung, und eine bestehende Admin-Sitzung gilt nur bei Anfragen mit Ausweis. Eine gestohlene PIN oder ein abgefangener SMS-Code reichen dann nicht mehr; über `app.poinderecharge.com` und die Handy-Apps kommt kein Admin mehr hinein (Meldung `admin_access_required`). Kunden, Personal und alle anderen Rollen merken nichts davon.
+- **Die Seiten** unter `/admin` gibt es nur im Build des Admin-Workers (`npm run build:admin`, Dateien `page.admin.tsx`/`layout.admin.tsx`, siehe `next.config.ts`). `app.poinderecharge.com` und die Handy-Apps enthalten sie nicht mehr; ihr Admin-Link führt auf `admin.poinderecharge.com`.
+- Solange `ADMIN_ACCESS_REQUIRED` nicht gesetzt ist, ändert sich am bisherigen `/admin` nichts. So lässt sich die neue Adresse erst ausprobieren und dann scharf schalten.
+
+### Einrichten (einmalig, im Cloudflare-Dashboard)
+
+1. **Zero Trust aktivieren:** Dashboard > **Zero Trust**. Beim ersten Öffnen einen Team-Namen wählen (z. B. `poinderecharge`) und den **Free**-Plan (bis 50 Nutzer). Die Team-Domain ist dann `https://<team>.cloudflareaccess.com`.
+2. **Admin-Worker anlegen:** **Workers & Pages > Create > Continue with GitHub**, dasselbe Repository und dasselbe API-Token wie bei `pointderecharge-app`, Name `pointderecharge-admin`, Build command leer, Deploy command `npx wrangler deploy -c wrangler.admin.jsonc`, Variable `NODE_VERSION` = `22`. Der Assistent baut zuerst den Standard-Branch des Repos, in dem die App fehlt; dieser erste Build scheitert (`Could not read file: wrangler.admin.jsonc`). Danach unter **Settings > Build > Branch control** den Production branch wie bei `pointderecharge-app` setzen; der nächste Push auf diesen Branch baut den Worker. Der erste Deploy legt `admin.poinderecharge.com` an; die Seite antwortet bis Schritt 4 mit 503.
+3. **Access vor den Worker stellen:** **Workers & Pages > pointderecharge-admin > Domains** (bzw. **Settings > Domains & Routes**) > **Cloudflare Access** einschalten, für Produktion und Previews. Bei „Wer darf sich anmelden“ nur die eigene E-Mail-Adresse eintragen. Danach unter **Zero Trust > Access controls > Applications** die neue Anwendung öffnen und den **Application Audience (AUD) Tag** kopieren.
+4. **Werte eintragen**, jeweils unter **Settings > Variables and secrets** (Laufzeit, nicht Build):
+   - bei `pointderecharge-admin`: `ACCESS_TEAM_DOMAIN` = `https://<team>.cloudflareaccess.com`, `ACCESS_AUD` = der AUD-Tag
+   - bei `pointderecharge-app`: dieselben zwei Werte (noch **ohne** `ADMIN_ACCESS_REQUIRED`)
+5. **Fingerabdruck dazu (empfohlen):** **Zero Trust > Access controls > Access settings > Allow multi-factor authentication**, „Biometrics“ (und gern „Security key“) erlauben; in der Anwendung aus Schritt 3 MFA verlangen. Gerät anmelden unter `https://<team>.cloudflareaccess.com/AddMfaDevice`.
+6. **Turnstile:** Im Turnstile-Widget den Hostnamen `admin.poinderecharge.com` ergänzen, sonst schlägt der Login-Code dort fehl.
+7. **Testen:** `https://admin.poinderecharge.com` öffnen, bei Access anmelden, dann wie gewohnt mit Nummer und PIN. In einem privaten Fenster ohne Access-Anmeldung muss „Access denied“ bzw. die Access-Anmeldeseite kommen.
+8. **Scharf schalten** (erst wenn Schritt 7 klappt): bei `pointderecharge-app` `ADMIN_ACCESS_REQUIRED` = `1` setzen. Ab dann geht das Backoffice nur noch über `admin.poinderecharge.com`. Zurück: den Wert löschen.
+
+## Seiten
+
 | Seite | Inhalt |
 |---|---|
 | **Tableau de bord** `/admin` | Kennzahlen (Stationen, unbestätigte Status, laufende Reservierungen, Reservierungen 7 Tage, Abschluss- und Nichterscheinen-Quote, Nutzer, vernetzte Steckdosen), Reservierungen pro Tag (14 Tage) und die Liste „À vérifier“ mit Auffälligkeiten |
@@ -22,7 +48,7 @@ Lite ist ein eigener Schalter (`app_settings.lite_mode`) und ändert die Modul-S
 
 ## Punkte einer Station
 
-Jede Station bietet einen oder mehrere dieser Punkte an, frei kombinierbar (`src/lib/station-points.ts`, Migration `0013_station_points.sql`):
+Jede Station bietet einen oder mehrere dieser Punkte an, frei kombinierbar (`shared/station-points.ts`, Migration `0013_station_points.sql`):
 
 | Punkt | Gespeichert in | Hinweis |
 |---|---|---|
@@ -39,17 +65,17 @@ Jede Motorrad-Marke (Akku-Betreiber, z. B. Spiro oder Omnivoltaic) hat eigene Ta
 
 ### Akku-Register (Batteries)
 
-Unter **Batteries** (`/admin/batteries`) steht jeder getauschte Akku mit seiner Nummer, pro Marke, mit eigener Historie (Tabellen `batteries`, `battery_history`, Migration `0041_batteries.sql`). Ein Akku kommt auf zwei Wegen in die Liste: der Admin trägt Nummern für einen Akku-Typ vorab ein (einzeln oder als eingefügte Liste), oder der erste Tausch, der eine unbekannte Nummer scannt, legt ihn mit dem Typ des Tauschs an („Ajoutée au swap“). Eine Nummer ist pro Marke eindeutig; eine Nummer, die unter einer anderen Marke eingetragen ist, lehnt der Tausch ab. An Stationen mit Akku-Typen sind die Nummern beim Tausch Pflicht (der ausgegebene Akku, und der zurückgebrachte außer beim Erstkauf); das Tauschformular zeigt unter jeder Nummer, ob der Akku bekannt, neu oder einer anderen Marke ist. Die Historie zeigt Eintrag, Ausgabe an den Kunden, Rückgabe an der Station und Statuswechsel (in Betrieb, in Reparatur, verloren, ausgemustert; nur Admin, mit Grund). Betreiber sehen im Tab „Batteries“ ihres Backoffice die Akkus, die durch ihre Stationen gingen, nur lesend und ohne die Personen fremder Stationen. Code: `src/lib/batteries.ts`, `worker/batteries.ts`.
+Unter **Batteries** (`/admin/batteries`) steht jeder getauschte Akku mit seiner Nummer, pro Marke, mit eigener Historie (Tabellen `batteries`, `battery_history`, Migration `0041_batteries.sql`). Ein Akku kommt auf zwei Wegen in die Liste: der Admin trägt Nummern für einen Akku-Typ vorab ein (einzeln oder als eingefügte Liste), oder der erste Tausch, der eine unbekannte Nummer scannt, legt ihn mit dem Typ des Tauschs an („Ajoutée au swap“). Eine Nummer ist pro Marke eindeutig; eine Nummer, die unter einer anderen Marke eingetragen ist, lehnt der Tausch ab. An Stationen mit Akku-Typen sind die Nummern beim Tausch Pflicht (der ausgegebene Akku, und der zurückgebrachte außer beim Erstkauf); das Tauschformular zeigt unter jeder Nummer, ob der Akku bekannt, neu oder einer anderen Marke ist. Die Historie zeigt Eintrag, Ausgabe an den Kunden, Rückgabe an der Station und Statuswechsel (in Betrieb, in Reparatur, verloren, ausgemustert; nur Admin, mit Grund). Betreiber sehen im Tab „Batteries“ ihres Backoffice die Akkus, die durch ihre Stationen gingen, nur lesend und ohne die Personen fremder Stationen. Code: `shared/batteries.ts`, `worker/batteries.ts`.
 
 ### Fotos, Rastplatz und Bewertungen
 
-Im Stations-Editor lädt der Admin bis zu 6 Fotos hoch (R2, Ordner `stations/`); das erste ist das Titelbild in der App, „Mettre en couverture“ macht ein anderes zum Titelbild. Ohne Foto zeigt die App eine Illustration (`public/station-photos/`). Darunter hakt er an, was die Station zum Ausruhen und an Diensten bietet (Bänke, Schatten, Toiletten, Trinkwasser, Essen, Getränke, WLAN, Handy laden, Laden, Parkplatz; `src/lib/station-extras.ts`). Hat eine Station Bänke, Schatten, Toiletten, Wasser, Essen oder Getränke, trägt sie in der App das Abzeichen „Point de repos“. Gespeichert in `stations.photos` und `stations.amenities` (JSON, Migration `0021_station_photos_reviews.sql`).
+Im Stations-Editor lädt der Admin bis zu 6 Fotos hoch (R2, Ordner `stations/`); das erste ist das Titelbild in der App, „Mettre en couverture“ macht ein anderes zum Titelbild. Ohne Foto zeigt die App eine Illustration (`public/station-photos/`). Darunter hakt er an, was die Station zum Ausruhen und an Diensten bietet (Bänke, Schatten, Toiletten, Trinkwasser, Essen, Getränke, WLAN, Handy laden, Laden, Parkplatz; `shared/station-extras.ts`). Hat eine Station Bänke, Schatten, Toiletten, Wasser, Essen oder Getränke, trägt sie in der App das Abzeichen „Point de repos“. Gespeichert in `stations.photos` und `stations.amenities` (JSON, Migration `0021_station_photos_reviews.sql`).
 
 Angemeldete Kunden bewerten eine Station mit 1 bis 5 Sternen und einem Kommentar (höchstens 500 Zeichen); pro Kunde und Station gibt es eine Bewertung, eine neue ersetzt die alte (Tabelle `station_reviews`). Die App zeigt Durchschnitt, Verteilung und die neuesten Bewertungen mit Vorname und Initiale. Im Stations-Editor sieht der Admin alle Bewertungen der Station und löscht beleidigende; das Löschen steht im Aktivitätsprotokoll.
 
 ## Ladesäulen für Elektroautos („Bornes VE“)
 
-Unter `/admin/ev-chargers` legt der Admin Ladesäulen für Elektroautos an (Name, Stecker Type 2 / CCS2 / CHAdeMO / GB/T, Leistung in kW) und weist jede einer Station zu, direkt in der Liste über das Auswahlfeld. Eine Station mit mindestens einer aktiven zugewiesenen Säule zeigt in der App das Abzeichen „Voiture électrique“, ihre Säulen in der Stationsansicht und erscheint im Filter „Voiture électrique“. Nicht zugewiesene Säulen werden oben gezählt. Migration `0020_ev_chargers.sql`, Code `src/lib/ev-chargers.ts`, `worker/ev-chargers.ts`.
+Unter `/admin/ev-chargers` legt der Admin Ladesäulen für Elektroautos an (Name, Stecker Type 2 / CCS2 / CHAdeMO / GB/T, Leistung in kW) und weist jede einer Station zu, direkt in der Liste über das Auswahlfeld. Eine Station mit mindestens einer aktiven zugewiesenen Säule zeigt in der App das Abzeichen „Voiture électrique“, ihre Säulen in der Stationsansicht und erscheint im Filter „Voiture électrique“. Nicht zugewiesene Säulen werden oben gezählt. Migration `0020_ev_chargers.sql`, Code `shared/ev-chargers.ts`, `worker/ev-chargers.ts`.
 
 ## Auffälligkeiten („À vérifier“)
 
@@ -85,17 +111,17 @@ Das Protokoll wächst mit jeder Reservierung und Statusmeldung. Ältere Einträg
 - Läuft keine Werbung (keine aktiv oder außerhalb des Zeitraums), erscheint nichts. Sind mehrere aktiv, zeigt die App die zuletzt geänderte.
 - Schließen per ×, Tippen neben das Fenster oder Zurück/Escape. Der Button öffnet den Link in einem neuen Tab; nur `https://`- und `http://`-Links werden angenommen.
 - Tabelle `promotions` in D1 (lesen darf jeder nur die laufende Werbung, ändern nur Admins). Bilder liegen im R2-Bucket `poinderecharge-media` und werden unter `/api/media/…` ausgeliefert (max. 2 MB, PNG/JPG/WebP/GIF, hochladen nur Admins). Änderungen stehen im Aktivitätsprotokoll.
-- Logik in `src/lib/promo.ts` (Tests in `src/lib/__tests__/promo.test.ts`), Fenster in `src/components/promo-popup.tsx`.
+- Logik in `shared/promo.ts` (Tests in `src/lib/__tests__/promo.test.ts`), Fenster in `src/components/promo-popup.tsx`.
 
 ## Fahrer („Chauffeurs“)
 
-- Plan und Abläufe: `planung/fahrer.md` (Projektordner). Code: `src/lib/drivers.ts` (Preise, Zuteilung, Kasse), `worker/drivers.ts`, Migration `0007_drivers.sql`.
+- Plan und Abläufe: `planung/fahrer.md` (Projektordner). Code: `shared/drivers.ts` (Preise, Zuteilung, Kasse), `worker/drivers.ts`, Migration `0007_drivers.sql`.
 - Ein Fahrer ist ein normales Konto mit einer Zeile in `drivers`; er bewirbt sich in der App unter `/chauffeur`. Freigeben geht erst, wenn alle drei Fotos da sind und ein freies Fahrzeug gewählt ist.
 - Die Fotos liegen privat im R2-Bucket unter `drivers/…` bzw. `proofs/…` und sind nur für Admins über `/api/admin/driver-files/…` abrufbar.
 - Preise und Regeln (Grundpreis, pro km, Express-Zuschlag, Fahreranteil, Kassengrenze, Wartezeit an der Tür, Zeit zum Annehmen, Abstand zur Station für die Warteschlange, was jedes Fahrzeug tragen darf) gelten sofort für neue Fahrten.
 - Kasse: Bargeld, das der Fahrer kassiert, minus sein Anteil, minus Abrechnungen. Ab der Kassengrenze bekommt er keine Fahrten mehr, bis eine Station abrechnet (QR-Code des Fahrers scannen, „Encaisser“ bzw. „Payer“).
 - Flottenmanager: In der Spalte **Gestionnaire de flotte** ordnet der Admin einen Fahrer per Telefon oder E-Mail einem Konto zu (höchstens ein Manager je Fahrer, Tabelle `fleet_manager_drivers`, Migration `0015_fleet_managers.sql`). Ein Kunde wird dabei zum Flottenmanager; verliert er seinen letzten Fahrer, wird er wieder Kunde. Personal einer Station kann kein Flottenmanager sein (eine Rolle pro Person). Setzt der Admin die Rolle von Hand weg von Flottenmanager, fallen alle Zuordnungen weg.
-- Der Flottenmanager sieht unter **Ma flotte** (`/flotte`) seine Fahrer mit Fahrzeug, Warteschlange, Kasse und laufender Fahrt. Offene Fahrten gibt er einem seiner Fahrer an der Warteschlange vorbei; der Fahrer bestätigt wie sonst. Die Kontaktdaten der Kunden sieht er nicht. Pro Zeitraum sieht er je Fahrer erledigte und gescheiterte Fahrten, Einnahmen, Fahreranteil, kassiertes und abgegebenes Bargeld, Batteriewechsel und Ladeplätze (abgeschlossene Reservierungen) und was davon in der App bezahlt wurde. Code: `src/lib/fleet.ts`, `worker/fleet.ts`. Jede Zuordnung und jede Zuteilung steht im Aktivitätsprotokoll.
+- Der Flottenmanager sieht unter **Ma flotte** (`/flotte`) seine Fahrer mit Fahrzeug, Warteschlange, Kasse und laufender Fahrt. Offene Fahrten gibt er einem seiner Fahrer an der Warteschlange vorbei; der Fahrer bestätigt wie sonst. Die Kontaktdaten der Kunden sieht er nicht. Pro Zeitraum sieht er je Fahrer erledigte und gescheiterte Fahrten, Einnahmen, Fahreranteil, kassiertes und abgegebenes Bargeld, Batteriewechsel und Ladeplätze (abgeschlossene Reservierungen) und was davon in der App bezahlt wurde. Code: `shared/fleet.ts`, `worker/fleet.ts`. Jede Zuordnung und jede Zuteilung steht im Aktivitätsprotokoll.
 
 ## Demo-Modus
 

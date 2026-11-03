@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { DEFAULT_FILTER, rankStations, type StationFilter } from "@/lib/availability";
-import { allBrands } from "@/lib/battery-types";
+import { DEFAULT_FILTER, rankStations, type StationFilter } from "@shared/availability";
+import { allBrands } from "@shared/battery-types";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { useBrandPref, useFavorites } from "@/lib/prefs";

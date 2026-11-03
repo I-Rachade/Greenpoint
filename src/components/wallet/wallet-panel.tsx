@@ -6,7 +6,7 @@ import { QrImage } from "@/components/parcels/qr-image";
 import { BackendError } from "@/lib/backend";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
-import { creditCodePayload, formatCreditCode, type CreditCode, type WalletTransaction, type WalletView } from "@/lib/wallet";
+import { creditCodePayload, formatCreditCode, type CreditCode, type WalletTransaction, type WalletView } from "@shared/wallet";
 import { useApp } from "../app-provider";
 import { useI18n } from "../i18n-provider";
 import { LoadFailed, OfflineNotice } from "../load-state";
@@ -55,7 +55,7 @@ export function WalletPanel() {
 }
 
 /** The PIN, then the one-time code for the counter, with its countdown. */
-function CounterCode({ onUsed }: { onUsed: () => void }) {
+export function CounterCode({ onUsed }: { onUsed: () => void }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
@@ -165,7 +165,8 @@ function History({ items }: { items: WalletTransaction[] }) {
             : x.type === "topup"
               ? format(t.wallet.topupAt, { name: x.counterparty ?? "" })
               : x.type === "charge"
-                ? format(t.wallet.chargeAt, { name: x.counterparty ?? "" })
+                ? // A Green Credit charge takes its limit when it starts and gives the rest back when it ends (0052).
+                  format(x.hold === "held" ? t.wallet.chargeHeldAt : x.hold === "refund" ? t.wallet.chargeHeldBack : t.wallet.chargeAt, { name: x.counterparty ?? "" })
               : x.type === "trip"
                 ? format(incoming ? t.wallet.tripRefund : t.wallet.tripPaid, { name: x.counterparty ?? "" })
               : format(incoming ? t.wallet.from : t.wallet.to, { name: x.counterparty ?? "?" });
@@ -175,7 +176,7 @@ function History({ items }: { items: WalletTransaction[] }) {
               <div className="font-medium">{who}</div>
               <div className="text-xs text-gp-muted">
                 {when(x.createdAt)} · {t.wallet.types[x.type]} · {x.trxId}
-                {x.status !== "success" && ` · ${t.wallet.status[x.status]}`}
+                {x.status !== "success" && ` · ${x.hold === "held" && x.status === "pending" ? t.wallet.holdPending : t.wallet.status[x.status]}`}
               </div>
               {x.remark && <div className="truncate text-xs text-gp-muted">« {x.remark} »</div>}
             </div>

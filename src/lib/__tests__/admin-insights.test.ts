@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeKpis, findAnomalies, reservationsPerDay } from "../admin/insights";
-import type { AdminSnapshot, AdminStation, AdminUser, ChargingPointInfo } from "../admin/types";
-import type { Reservation } from "../types";
+import type { AdminSnapshot, AdminStation, AdminUser, ChargingPointInfo } from "@shared/admin/types";
+import type { Reservation } from "@shared/types";
 
 const now = new Date("2026-10-12T12:00:00Z");
 const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();

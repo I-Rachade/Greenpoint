@@ -49,24 +49,25 @@ Für den echten Betrieb mit Datenbank und SMS-Login: siehe [docs/DEPLOYMENT.md](
 ## Projektstruktur
 
 ```
-src/
+src/                   App (Frontend): läuft im Browser und in den Apps
   app/                 Seiten (Next.js App Router), Layout, Icons
   components/          Oberfläche (Karte, Listen, Formulare, Provider)
   lib/
-    availability.ts    Verfügbarkeit, Filter, Sortierung nach Entfernung
-    geo.ts             Entfernungen, Navigation-Link
-    phone.ts           Telefonnummern (+228) prüfen
     i18n/              Texte Französisch (fr.ts) und Englisch (en.ts)
     backend/           Datenzugriff: Demo (Browser) und Cloudflare-API (Produktion)
-worker/
-  index.ts, api.ts     API unter /api/* (Cloudflare Worker)
+worker/                API (Backend): Cloudflare Worker
+  index.ts, api.ts     API unter /api/*
   auth.ts              Registrierung per SMS-Code, Login mit PIN, Sitzungen
   migrations/          Datenbank-Schema für D1 (SQL), in Reihenfolge
+shared/                Vertrag zwischen App und API: Typen, Fehlercodes, gemeinsame Regeln
+  availability.ts      Verfügbarkeit, Filter, Sortierung nach Entfernung
+  geo.ts               Entfernungen, Navigation-Link
+  phone.ts             Telefonnummern (+228) prüfen
 assets/logo/, design/  Logo, Farben und Schriften
 docs/                  Architektur und Deployment
 ```
 
-Mehr zum Aufbau: [docs/ARCHITEKTUR.md](docs/ARCHITEKTUR.md).
+App und API importieren nie voneinander, nur aus `shared/` (ESLint prüft das). Mehr zum Aufbau: [docs/ARCHITEKTUR.md](docs/ARCHITEKTUR.md).
 
 ## Mitarbeiten
 

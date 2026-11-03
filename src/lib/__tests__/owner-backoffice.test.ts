@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
-import { cleanOpeningHours, formatOpeningHours, openAt, parseOpeningHours, todayHours } from "../opening-hours";
-import { byMonth, emptyDays, periodStart, reportPeriod } from "../owner-backoffice";
+import { cleanOpeningHours, formatOpeningHours, openAt, parseOpeningHours, todayHours } from "@shared/opening-hours";
+import { byMonth, emptyDays, periodStart, reportPeriod } from "@shared/owner-backoffice";
 
 // Plan phase 8 in the demo backend: the same rules as the Worker (worker/owner.test.ts,
 // worker/migration-0033.test.ts, worker/role-matrix.test.ts).
@@ -73,7 +73,8 @@ describe("DemoBackend owner backoffice (phase 8, as the Worker)", () => {
     expect(view.reassignments.map((r) => r.stationId).sort()).toEqual(["st-agoe", "st-be", "st-tokoin", "st-universite"]);
     expect(view.reassignments[0]).toMatchObject({ userId: "demo-operator", currentStationId: "st-grand-marche" });
 
-    await expect(backend.ownerAddStaff("st-tokoin", "90000002")).rejects.toMatchObject({ code: "staff_other_station" });
+    // The admin's direct assignment follows the one-station rule (the owner's route only invites).
+    await expect(backend.assignStaff("st-tokoin", "demo-operator")).rejects.toMatchObject({ code: "staff_other_station" });
     await backend.ownerMoveStaff("demo-operator", "st-tokoin");
     const moved = await backend.ownerView();
     expect(moved.staff.filter((s) => s.userId === "demo-operator").map((s) => s.stationId)).toEqual(["st-tokoin"]);
@@ -86,6 +87,46 @@ describe("DemoBackend owner backoffice (phase 8, as the Worker)", () => {
     await expect(backend.setUserRole("demo-operator", "customer")).rejects.toMatchObject({ code: "role_change_blocked" });
     await backend.ownerRemoveStaff("st-tokoin", "demo-operator");
     expect((await backend.adminSnapshot()).users.find((u) => u.id === "demo-operator")?.role).toBe("customer");
+  });
+
+  it("makes staff by invitation only, whether or not the contact has an account (0050)", async () => {
+    await as("admin", "+22890000001");
+    // The same answer for a contact without an account and for one with an account.
+    await backend.ownerInviteStaff("st-tokoin", "90 00 00 77");
+    await backend.ownerInviteStaff("st-tokoin", "90000002");
+    expect((await backend.ownerView()).invites.map((i) => i.label)).toEqual(["+228 90 •• •• 77", "+228 90 •• •• 02"]);
+    // The account that signs up with the number sees the invite; someone else does not.
+    await as("customer", "+22890000078");
+    expect(await backend.myStaffInvites()).toEqual([]);
+    await as("customer", "+22890000077");
+    const [invite] = await backend.myStaffInvites();
+    expect(invite).toMatchObject({ stationName: expect.any(String) });
+    await backend.acceptStaffInvite(invite.id);
+    expect((await backend.getProfile())?.role).toBe("operator");
+    expect(await backend.myStaffInvites()).toEqual([]);
+    // The staff member at another station: the checks run on accepting.
+    await as("operator", "+22890000002");
+    const [forOperator] = await backend.myStaffInvites();
+    await expect(backend.acceptStaffInvite(forOperator.id)).rejects.toMatchObject({ code: "staff_other_station" });
+    await backend.declineStaffInvite(forOperator.id);
+    await as("admin", "+22890000001");
+    const view = await backend.ownerView();
+    expect(view.invites).toEqual([]);
+    expect(view.staff.some((s) => s.stationId === "st-tokoin" && s.label === "+228 90 •• •• 77")).toBe(true);
+  });
+
+  it("lets the owner cancel invites, and ends them after 7 days", async () => {
+    await as("admin", "+22890000001");
+    await backend.ownerInviteStaff("st-tokoin", "90000077");
+    await backend.ownerInviteStaff("st-be", "90000077");
+    const [first, second] = (await backend.ownerView()).invites;
+    await backend.ownerRevokeStaffInvite(first.id);
+    await expect(backend.ownerRevokeStaffInvite(first.id)).rejects.toMatchObject({ code: "invite_not_found" });
+    vi.setSystemTime(new Date("2026-10-22T12:00:01Z"));
+    expect((await backend.ownerView()).invites).toEqual([]);
+    await as("customer", "+22890000077");
+    expect(await backend.myStaffInvites()).toEqual([]);
+    await expect(backend.acceptStaffInvite(second.id)).rejects.toMatchObject({ code: "invite_not_found" });
   });
 
   it("gives staff no backoffice and customers no station work (R2)", async () => {
@@ -129,6 +170,32 @@ describe("DemoBackend owner backoffice (phase 8, as the Worker)", () => {
     const trims = counter.events.filter((e) => e.type === "correction");
     expect(trims.every((e) => e.reason === "Capacité réduite" && e.role === "admin")).toBe(true);
     expect(trims.reduce((a, e) => a + e.delta, 0)).toBe(4 - before);
+  });
+
+  it("keeps places per battery type, the station's being their sum, as the Worker (0064)", async () => {
+    await as("admin", "+22890000001");
+    const station = (await backend.listStations()).find((s) => s.id === "st-agoe")!;
+    expect(station.batteryTypes!.map((t) => [t.id, t.fullBatteries, t.capacity])).toEqual([
+      ["bt-ovt-60", 6, 8],
+      ["bt-ovt-72", 5, 8],
+    ]);
+    await backend.saveStation("st-agoe", {
+      ...station,
+      kind: "both",
+      batteryTypeIds: ["bt-ovt-60", "bt-ovt-72"],
+      batteryTypeCapacities: { "bt-ovt-60": 3, "bt-ovt-72": 9 },
+    });
+    const after = (await backend.listStations()).find((s) => s.id === "st-agoe")!;
+    expect(after.batteryCapacity).toBe(12);
+    expect(after.batteryTypes!.map((t) => [t.id, t.fullBatteries, t.capacity])).toEqual([
+      ["bt-ovt-60", 3, 3],
+      ["bt-ovt-72", 5, 9],
+    ]);
+    setActiveStation("st-agoe");
+    const counter = await backend.stationCounter("st-agoe");
+    expect(counter.rows.map((r) => r.capacity)).toEqual([3, 9]);
+    await expect(backend.batteryEvent("st-agoe", { type: "full", batteryTypeId: "bt-ovt-60", requestId: "req-full-0001" })).rejects.toMatchObject({ code: "counter_full" });
+    expect((await backend.batteryEvent("st-agoe", { type: "full", batteryTypeId: "bt-ovt-72", requestId: "req-full-0002" })).fullAfter).toBe(6);
   });
 
   it("pages the reservations table with a total", async () => {

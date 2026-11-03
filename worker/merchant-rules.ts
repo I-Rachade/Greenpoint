@@ -1,7 +1,7 @@
 // Merchant rules the driver code needs too (bookings, dispatch, pay), kept apart from
 // worker/merchants.ts so worker/drivers.ts can use them without an import cycle.
 // Plan in planung/marchand.md, tables in 0035_merchants.sql.
-import { inServiceArea, validPoint } from "../src/lib/drivers";
+import { inServiceArea, validPoint } from "../shared/drivers";
 import {
   cleanMerchantName,
   endOfDay,
@@ -12,9 +12,9 @@ import {
   type MerchantShopInput,
   type MerchantStatus,
   type MerchantTier,
-} from "../src/lib/merchants";
-import { normalizeTogoPhone } from "../src/lib/phone";
-import type { Profile } from "../src/lib/types";
+} from "../shared/merchants";
+import { normalizeTogoPhone } from "../shared/phone";
+import type { Profile } from "../shared/types";
 import { ApiError, nowIso } from "./http";
 import type { ParcelCtx } from "./parcels";
 import { refuseNonCustomer } from "./roles";

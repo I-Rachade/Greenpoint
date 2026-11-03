@@ -1,12 +1,12 @@
 // Point partners (partenaires propriétaires, migration 0039): who owns a charging socket.
 // Without a partner the socket is ours, at any station. An admin creates the partner, links
 // its accounts and gives it sockets; its accounts see a read-only dashboard of their sockets.
-// Types and rules: src/lib/point-partners.ts.
+// Types and rules: shared/point-partners.ts.
 
-import type { AuditTable } from "../src/lib/admin/types";
-import { parseContact } from "../src/lib/contact";
-import { periodStart, type ReportPeriod } from "../src/lib/owner-backoffice";
-import { normalizeTogoPhone } from "../src/lib/phone";
+import type { AuditTable } from "../shared/admin/types";
+import { parseContact } from "../shared/contact";
+import { periodStart, type ReportPeriod } from "../shared/owner-backoffice";
+import { normalizeTogoPhone } from "../shared/phone";
 import {
   POINT_PARTNER_NAME_MAX,
   type AdminPointPartner,
@@ -14,10 +14,10 @@ import {
   type PointPartnerDashboard,
   type PointPartnerInput,
   type PointPartnerStatus,
-} from "../src/lib/point-partners";
-import { normalizeDeviceId } from "../src/lib/iot/devices";
-import type { ChargingPointStatus, Profile } from "../src/lib/types";
-import { personLabel } from "../src/lib/wallet";
+} from "../shared/point-partners";
+import { normalizeDeviceId } from "../shared/iot/devices";
+import type { ChargingPointStatus, Profile } from "../shared/types";
+import { personLabel } from "../shared/wallet";
 import { ApiError, nowIso, uuid } from "./http";
 
 interface PartnerCtx {
@@ -55,7 +55,7 @@ export async function adminPointPartners(c: PartnerCtx): Promise<AdminPointPartn
       .all<{ partner_id: string; id: string; phone: string | null; email: string | null; full_name: string | null }>(),
     c.db
       .prepare("select external_id, station_id, outlets, partner_id from devices where partner_id is not null order by created_at")
-      .all<{ external_id: string; station_id: string; outlets: number; partner_id: string }>(),
+      .all<{ external_id: string; station_id: string | null; outlets: number; partner_id: string }>(),
   ]);
   return partners.results.map((p) => ({
     id: p.id,
@@ -160,7 +160,7 @@ export async function setDevicePartner(c: PartnerCtx, rawId: string, partnerId: 
   const admin = await c.requireAdmin();
   const externalId = normalizeDeviceId(rawId);
   const target = partnerId === null || partnerId === undefined || partnerId === "" ? null : String(partnerId);
-  const device = await c.db.prepare("select station_id, partner_id from devices where external_id = ?").bind(externalId).first<{ station_id: string; partner_id: string | null }>();
+  const device = await c.db.prepare("select station_id, partner_id from devices where external_id = ?").bind(externalId).first<{ station_id: string | null; partner_id: string | null }>();
   if (!device) throw new ApiError("not_found", 404);
   if (target && !(await c.db.prepare("select 1 from point_partners where id = ?").bind(target).first())) throw new ApiError("not_found", 404);
   if (device.partner_id === target) return;

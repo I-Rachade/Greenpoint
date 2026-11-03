@@ -14,12 +14,12 @@ import {
   type HomePoint,
   type BookableVehicleType,
   type TripPayment,
-} from "@/lib/drivers";
-import { distanceMeters, type LatLng } from "@/lib/geo";
+} from "@shared/drivers";
+import { distanceMeters, type LatLng } from "@shared/geo";
 import { useErrorMessage, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { PARCEL_SIZES, type Parcel, type ParcelInfo, type ParcelSize } from "@/lib/parcels";
-import type { StationView } from "@/lib/types";
+import { PARCEL_SIZES, type Parcel, type ParcelInfo, type ParcelSize } from "@shared/parcels";
+import type { StationView } from "@shared/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "../app-provider";
 import { SizePicker } from "../parcels/size-picker";
@@ -504,6 +504,27 @@ export function JobDetails({ job: j, stations, showRoute = true }: { job: Delive
           <p className="font-mono text-lg font-semibold tracking-widest">{format(t.runs.handoverCode, { code: j.handoverCode })}</p>
           <p className="text-xs text-gp-muted">{t.runs.handoverCodeHint}</p>
         </div>
+      )}
+      {j.proofReview === "pending" && (
+        // Handed over with a photo instead of the recipient's code: the sender confirms it arrived.
+        <div className="space-y-2 rounded-lg bg-amber-100 p-3 dark:bg-amber-900/30">
+          <p>{t.drivers.customer.proofPending}</p>
+          <button
+            type="button"
+            className={small}
+            onClick={() => {
+              setError("");
+              backend.confirmCourierReceipt(j.id).catch((err) => setError(errorMessage(err)));
+            }}
+          >
+            {t.drivers.customer.confirmReceipt}
+          </button>
+        </div>
+      )}
+      {j.proofReview === "rejected" && (
+        <p className="rounded-lg bg-red-100 p-3 text-red-900 dark:bg-red-900/30 dark:text-red-100">
+          {format(t.drivers.customer.proofRejected, { reason: j.proofRejectReason ?? "" })}
+        </p>
       )}
       <div className="flex flex-wrap items-center gap-2">
         {j.collectFcfa > 0 && <span className="font-semibold">{fcfa(j.collectFcfa)}</span>}

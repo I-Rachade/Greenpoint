@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { POSITION_REPORT_SECONDS } from "@/lib/drivers";
+import { POSITION_REPORT_SECONDS } from "@shared/drivers";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "../app-provider";
 

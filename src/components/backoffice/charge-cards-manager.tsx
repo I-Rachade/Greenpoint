@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
-import type { ChargeCard } from "@/lib/charge-cards";
+import type { ChargeCard } from "@shared/charge-cards";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
 import { card, field, Pill, StaleNotice, Table, td, th, useDateTime, userLabel } from "./shared";

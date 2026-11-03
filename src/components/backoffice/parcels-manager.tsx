@@ -5,8 +5,8 @@ import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { ParcelStatusPill } from "@/components/parcels/status";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
-import { OPEN_PARCEL_STATUSES, type ParcelDepot, type ParcelSizeTier, type ParcelStatus } from "@/lib/parcels";
-import type { StationView } from "@/lib/types";
+import { OPEN_PARCEL_STATUSES, type ParcelDepot, type ParcelSizeTier, type ParcelStatus } from "@shared/parcels";
+import type { StationView } from "@shared/types";
 import { card, field, Loading, Pill, StaleNotice, Table, td, th, useDateTime } from "./shared";
 
 const STATUSES: ParcelStatus[] = ["deposited", "in_transit", "arrived", "picked_up", "stored", "released", "auctioned", "cancelled"];

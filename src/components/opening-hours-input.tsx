@@ -1,7 +1,7 @@
 "use client";
 
 import { useId } from "react";
-import { ALL_DAY, formatOpeningSchedule, parseOpeningSchedule, WEEKDAYS, type OpeningHours, type Weekday } from "@/lib/opening-hours";
+import { ALL_DAY, formatOpeningSchedule, parseOpeningSchedule, WEEKDAYS, type OpeningHours, type Weekday } from "@shared/opening-hours";
 import { useI18n } from "./i18n-provider";
 
 const DEFAULT_HOURS: OpeningHours = { days: WEEKDAYS, open: "07:00", close: "21:00" };

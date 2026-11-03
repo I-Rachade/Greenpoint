@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, type ComponentType, type SVGProps } from "react";
-import type { DeliveryJob } from "@/lib/drivers";
+import type { DeliveryJob } from "@shared/drivers";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { isMerchantAccount, type MerchantStatus, type MerchantView } from "@/lib/merchants";
+import { isMerchantAccount, type MerchantStatus, type MerchantView } from "@shared/merchants";
 import { useApp } from "../app-provider";
 import { useI18n } from "../i18n-provider";
 import { BoxPlusIcon, ChartIcon, GridIcon, HistoryIcon, ListIcon, PulseIcon, ScooterIcon, StoreIcon, TicketIcon, UsersIcon } from "../icons";

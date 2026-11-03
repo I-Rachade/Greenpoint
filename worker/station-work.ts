@@ -1,14 +1,14 @@
 // Station work (plan phase 3): battery counter, swaps with their log, active station.
-// Shared rules and types in src/lib/station-work.ts; tables in migrations 0027 and 0028.
+// Shared rules and types in shared/station-work.ts; tables in migrations 0027 and 0028.
 //
 // Every write here is one D1 batch (one transaction). The statements after the first
 // event only take effect while that event was written ("where exists ... request_id"),
 // so a refused step (no full battery, capacity reached) leaves nothing behind, and a
 // repeated request id breaks the unique index and changes nothing (R5).
 
-import { parseContact } from "../src/lib/contact";
-import { contactFromCode } from "../src/lib/charging";
-import { checkDriverPass, fleetTag } from "../src/lib/drivers";
+import { parseContact } from "../shared/contact";
+import { contactFromCode } from "../shared/charging";
+import { checkDriverPass, fleetTag } from "../shared/drivers";
 import { passSecret } from "./drivers";
 import {
   ACTIVE_STATION_HEADER,
@@ -18,6 +18,8 @@ import {
   isSwapCustomerType,
   takesBatteryIn,
   CAPACITY_REASON,
+  SWAP_EXPORT_LIMIT,
+  swapDayRange,
   validAmount,
   validCorrection,
   validRequestId,
@@ -33,21 +35,22 @@ import {
   type SwapFilter,
   type SwapInput,
   type SwapPayment,
-} from "../src/lib/station-work";
-import type { Profile } from "../src/lib/types";
-import { periodStart, reportPeriod } from "../src/lib/owner-backoffice";
-import { swapOwnerOf, type SwapOwner } from "../src/lib/station-cash";
-import { newTrxId, personLabel } from "../src/lib/wallet";
+} from "../shared/station-work";
+import type { Profile } from "../shared/types";
+import { periodStart, reportPeriod } from "../shared/owner-backoffice";
+import { swapOwnerOf, type SwapOwner } from "../shared/station-cash";
+import { newTrxId, personLabel } from "../shared/wallet";
 import type { Env } from "./env";
 import { featuresOf } from "./features";
 import { earnStatement } from "./greenpoint";
 import { ApiError, nowIso, uuid } from "./http";
 import { DB_CUSTOMER, DB_DRIVER } from "./roles";
 import { requireService } from "./services";
-import { creditCodeOwner, isCreditStation, spendCreditCode, walletAccess } from "./wallet";
+import { creditCodeOwner, isCreditStation, OPEN_CREDIT_CHARGE_SQL, refuseWhileCreditCharging, spendCreditCode, walletAccess } from "./wallet";
 import { checkPickupCode, heldBatteriesSql, stillActive, type ReservationRow } from "./reservations";
 import { resolveSwapBattery, swapBatteryStatements, swapType } from "./batteries";
-import { batteryNumbersRequired } from "../src/lib/batteries";
+import { batteryNumbersRequired } from "../shared/batteries";
+import { checkEnergySwap, CONDITION_REASON, energyPricingOf, type BatteryCondition, type EnergyPricing, type MmNetwork } from "../shared/energy-swap";
 
 export interface WorkCtx {
   env: Env;
@@ -131,16 +134,37 @@ async function stationInfo(db: D1Database, stationId: string): Promise<StationIn
   return s;
 }
 
-/** The battery types the station swaps (id and label); empty = one counter for the station. */
+/** The battery types the station swaps (id, label, places); empty = one counter for the station. */
 async function stationTypes(db: D1Database, stationId: string) {
   const { results } = await db
     .prepare(
-      `select sbt.battery_type_id as id, sbt.full_batteries, t.brand, t.name from station_battery_types sbt
+      `select sbt.battery_type_id as id, sbt.full_batteries, sbt.capacity, t.brand, t.name,
+              t.pricing, t.price_full_xof, t.ussd_tmoney, t.ussd_flooz from station_battery_types sbt
        join battery_types t on t.id = sbt.battery_type_id where sbt.station_id = ? order by t.brand, t.name`,
     )
     .bind(stationId)
-    .all<{ id: string; full_batteries: number; brand: string; name: string }>();
-  return results.map((r) => ({ id: r.id, full: r.full_batteries, label: `${r.brand} ${r.name}` }));
+    .all<{ id: string; full_batteries: number; capacity: number; brand: string; name: string } & EnergyColumns>();
+  return results.map((r) => ({ id: r.id, full: r.full_batteries, capacity: r.capacity, label: `${r.brand} ${r.name}`, energy: energyPricingOf(r) }));
+}
+
+interface EnergyColumns {
+  pricing: string;
+  price_full_xof: number | null;
+  ussd_tmoney: string | null;
+  ussd_flooz: string | null;
+}
+
+/**
+ * Energy pricing of a counter's battery type (0065), null when the station's price applies.
+ * A type set to energy pricing without a usable price is refused rather than sold at the station's price.
+ */
+async function energyOfKey(db: D1Database, key: CounterKey): Promise<EnergyPricing | null> {
+  if (!key) return null;
+  const row = await db.prepare("select pricing, price_full_xof, ussd_tmoney, ussd_flooz from battery_types where id = ?").bind(key).first<EnergyColumns>();
+  if (!row || row.pricing !== "energy") return null;
+  const energy = energyPricingOf(row);
+  if (!energy) throw new ApiError("swap_price_missing", 409);
+  return energy;
 }
 
 /** The counter a request means: a type the station swaps, or "" at a station without types (one type: that one). */
@@ -164,6 +188,9 @@ const STATION_TOTAL_SQL = (station: string) => `case when exists (select 1 from 
     then (select coalesce(sum(full_batteries), 0) from station_battery_types where station_id = ${station})
     else coalesce((select full from battery_counter where station_id = ${station} and battery_type_id = ''),
                   (select full_batteries from station_status where station_id = ${station}), 0) end`;
+
+/** Places of the counter's battery type (?3 station, ?4 type); null at a station without types. */
+const TYPE_PLACES_SQL = "select capacity from station_battery_types where station_id = ?3 and battery_type_id = ?4";
 
 interface EventSpec {
   stationId: string;
@@ -197,7 +224,9 @@ function eventStatements(db: D1Database, e: EventSpec): D1PreparedStatement[] {
       : e.type === "correction"
         ? "bc.full + ?6 >= 0"
         : e.type === "full"
-          ? `(s.battery_capacity <= 0 or (${STATION_TOTAL_SQL("?3")}) < s.battery_capacity)`
+          ? // Within the type's own places when set (0064), else the station's places for all its batteries.
+            `case when coalesce((${TYPE_PLACES_SQL}), 0) > 0 then bc.full < (${TYPE_PLACES_SQL})
+                  else (s.battery_capacity <= 0 or (${STATION_TOTAL_SQL("?3")}) < s.battery_capacity) end`
           : "1";
   const happened = "exists (select 1 from battery_events where request_id = ?1)";
   return [
@@ -295,8 +324,23 @@ export async function stationCounter(c: WorkCtx, stationId: string): Promise<Sta
   ]);
   const byKey = new Map(counters.results.map((r) => [r.battery_type_id, r]));
   const rows: CounterRow[] = types.length
-    ? types.map((t) => ({ batteryTypeId: t.id, label: t.label, full: byKey.get(t.id)?.full ?? t.full, empty: byKey.get(t.id)?.empty ?? 0 }))
-    : [{ batteryTypeId: "", label: null, full: byKey.get("")?.full ?? status?.full_batteries ?? 0, empty: byKey.get("")?.empty ?? 0 }];
+    ? types.map((t) => ({
+        batteryTypeId: t.id,
+        label: t.label,
+        full: byKey.get(t.id)?.full ?? t.full,
+        empty: byKey.get(t.id)?.empty ?? 0,
+        capacity: t.capacity,
+        energy: t.energy,
+      }))
+    : [
+        {
+          batteryTypeId: "",
+          label: null,
+          full: byKey.get("")?.full ?? status?.full_batteries ?? 0,
+          empty: byKey.get("")?.empty ?? 0,
+          capacity: station.battery_capacity,
+        },
+      ];
   const mine = actor.role === "staff";
   const { results } = await c.db
     .prepare(
@@ -406,6 +450,40 @@ export async function capacityTrimStatements(db: D1Database, stationId: string, 
   );
 }
 
+/**
+ * The places of a station's battery types were saved (backoffice, migration 0064): each type
+ * with more full batteries than its places comes down to them through one correction event,
+ * logged as the admin's with the reason. A type without places (0) is left alone.
+ */
+export async function typeCapacityTrimStatements(
+  db: D1Database,
+  stationId: string,
+  places: Map<string, number>,
+  actor: StationActor,
+): Promise<D1PreparedStatement[]> {
+  const [types, counters] = await Promise.all([
+    stationTypes(db, stationId),
+    db.prepare("select battery_type_id, full from battery_counter where station_id = ?").bind(stationId).all<{ battery_type_id: string; full: number }>(),
+  ]);
+  const byKey = new Map(counters.results.map((r) => [r.battery_type_id, r.full]));
+  const now = nowIso();
+  return types.flatMap((t) => {
+    const cap = places.get(t.id) ?? 0;
+    const full = byKey.get(t.id) ?? t.full;
+    if (cap <= 0 || full <= cap) return [];
+    return eventStatements(db, {
+      stationId,
+      key: t.id,
+      type: "correction",
+      delta: cap - full,
+      reason: CAPACITY_REASON,
+      requestId: `capacity-${uuid()}`,
+      swapId: null,
+      actor,
+      now,
+    });
+  });
+}
 
 // Swaps --------------------------------------------------------------------------------
 
@@ -422,6 +500,13 @@ interface SwapRow {
   reservation_id: string | null;
   payment: SwapPayment;
   amount_xof: number;
+  in_pct: number | null;
+  out_pct: number | null;
+  plate: string | null;
+  customer_name: string | null;
+  battery_in_condition: BatteryCondition | null;
+  mm_network: MmNetwork | null;
+  mm_ref: string | null;
   staff_id: string;
   role: StationRole;
   created_at: string;
@@ -462,6 +547,13 @@ function toSwap(r: SwapRow): SwapEntry {
     payment: r.payment,
     amountXof: r.amount_xof,
     reservationId: r.reservation_id,
+    inPct: r.in_pct,
+    outPct: r.out_pct,
+    plate: r.plate,
+    customerName: r.customer_name,
+    batteryInCondition: r.battery_in_condition,
+    mmNetwork: r.mm_network,
+    mmRef: r.mm_ref,
     person: label(r.s_name, r.s_phone, r.s_email) ?? "",
     role: r.role,
     createdAt: r.created_at,
@@ -504,7 +596,7 @@ async function creditCustomer(db: D1Database, raw: unknown, staffId: string): Pr
 }
 
 /**
- * A fleet driver by the signed pass their app shows (W7, R10, src/lib/drivers.ts): the
+ * A fleet driver by the signed pass their app shows (W7, R10, shared/drivers.ts): the
  * signature must be ours and not expired, the account an active driver account, and the
  * pass made for the fleet the driver belongs to now. A typed driver code is not enough:
  * the swap is billed to the fleet.
@@ -545,6 +637,19 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     if (existing.station_id !== stationId) throw new ApiError("request_conflict", 409);
     return toSwap(existing);
   }
+  try {
+    return await bookSwap(c, stationId, input, actor);
+  } catch (err) {
+    // A copy of this request (a double tap, a retry) booked the swap meanwhile and used the code:
+    // answer with that swap, not with "code used", or staff would take the price again in cash.
+    const booked = await swapByRequest(c.db, input.requestId);
+    if (!booked) throw err;
+    if (booked.station_id !== stationId) throw new ApiError("request_conflict", 409);
+    return toSwap(booked);
+  }
+}
+
+async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: StationActor): Promise<SwapEntry> {
   const db = c.db;
   const type = input.customerType;
   const station = await stationInfo(db, stationId);
@@ -553,6 +658,9 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
   const batteryOut = cleanBatteryLabel(input.batteryOut);
   if (batteryIn === undefined || batteryOut === undefined) throw new ApiError("bad_request");
   if (batteryIn && batteryOut && batteryIn === batteryOut) throw new ApiError("same_battery");
+
+  // A type priced by energy is paid by Mobile Money only, never from Green Credit (0065).
+  const energyWalkIn = input.reservationId ? null : await energyOfKey(db, await counterKey(db, stationId, input.batteryTypeId));
 
   // Who the customer is.
   let customer: Customer | null = null;
@@ -573,7 +681,7 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     }
     customer = await db.prepare("select id, role, phone, email, full_name from users where id = ?").bind(reservation.user_id).first<Customer>();
     if (!customer) throw new ApiError("recipient_not_found", 404);
-  } else if (type === "app" && input.payment !== "cash") {
+  } else if (type === "app" && input.payment !== "cash" && !energyWalkIn) {
     // Paid from Green Credit: the customer's one-time code, shown after the PIN on their phone (0047).
     customer = await creditCustomer(db, input.creditCode ?? input.contact, actor.user.id);
   } else if (type === "app") {
@@ -595,11 +703,23 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     out: batteryOut ? await resolveSwapBattery(db, batteryOut, batteryType) : null,
     in: batteryIn ? await resolveSwapBattery(db, batteryIn, batteryType) : null,
   };
+  const energy = await energyOfKey(db, key);
+  const energySwap = energy ? energySwapOf(input, energy) : null;
+  if (energySwap) {
+    // The procedure: never hand out a battery that is not in service.
+    if (batteriesOf.out?.status && batteriesOf.out.status !== "in_service") throw new ApiError("battery_out_not_in_service", 409);
+    const used = await db.prepare("select 1 from swap_log where mm_network = ? and mm_ref = ?").bind(energySwap.mmNetwork, energySwap.mmRef).first();
+    if (used) throw new ApiError("mm_ref_used", 409);
+  }
   // Who the swap belongs to (0045), kept on the log row; how it is paid (Green Credit in Lite too).
   const owner = swapOwnerOf(!!station.is_own, station.swap_owner);
   let payment: SwapPayment;
   let amount: number;
-  if (type === "fleet") {
+  if (energySwap) {
+    // (% OUT − % IN) × the type's price for 100 %, paid by T-Money or Flooz straight to the brand.
+    payment = "mobile_money";
+    amount = energySwap.amountXof;
+  } else if (type === "fleet") {
     payment = "fleet";
     amount = station.price_battery_xof ?? 0;
   } else if (type === "app" && input.payment !== "cash") {
@@ -659,8 +779,9 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     db
       .prepare(
         `insert into swap_log (id, request_id, station_id, battery_type_id, has_battery_in, battery_in_label, battery_out_label, customer_type,
-           customer_user_id, driver_id, fleet_manager_id, reservation_id, payment, amount_xof, wallet_trx_id, staff_id, role, created_at, owner)
-         select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?20
+           customer_user_id, driver_id, fleet_manager_id, reservation_id, payment, amount_xof, wallet_trx_id, staff_id, role, created_at, owner,
+           in_pct, out_pct, plate, customer_name, battery_in_condition, mm_network, mm_ref)
+         select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27
          where exists (select 1 from battery_events where request_id = ?19)`,
       )
       .bind(
@@ -684,6 +805,13 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
         now,
         outRequest,
         owner,
+        energySwap?.inPct ?? null,
+        energySwap?.outPct ?? null,
+        energySwap?.plate ?? null,
+        energySwap?.customerName ?? null,
+        energySwap?.condition ?? null,
+        energySwap?.mmNetwork ?? null,
+        energySwap?.mmRef ?? null,
       ),
   ];
   const swapExists = { sql: "exists (select 1 from swap_log where request_id = ?12)", value: input.requestId };
@@ -707,6 +835,20 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
       }),
     );
   }
+  if (energySwap && energySwap.condition !== "ok" && batteriesOf.in) {
+    // A battery brought back damaged, leaking, hot or smelling goes to repair (never handed out again).
+    const b = batteriesOf.in;
+    const where = "brand = ? and serial = ? and exists (select 1 from swap_log where request_id = ?)";
+    statements.push(
+      db.prepare(`update batteries set status = 'repair' where ${where}`).bind(b.brand, b.serial, input.requestId),
+      db
+        .prepare(
+          `insert into battery_history (id, battery_id, type, station_id, swap_id, status, reason, person_id, role, created_at)
+           select ?, id, 'status', ?, ?, 'repair', ?, ?, ?, ? from batteries where ${where}`,
+        )
+        .bind(uuid(), stationId, swapId, CONDITION_REASON[energySwap.condition], actor.user.id, actor.role, now, b.brand, b.serial, input.requestId),
+    );
+  }
   if (reservation) {
     statements.push(
       db
@@ -724,9 +866,12 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
     if (code.user.id !== customer.id) throw new ApiError("credit_code_invalid");
     const used = spendCreditCode(db, code.hash, stationId, "swap", now);
     // The code first; a code another request used meanwhile breaks the balance check and with it the whole swap.
+    await refuseWhileCreditCharging(db, customer.id);
     statements.unshift(
       used.statement,
       db.prepare(`update wallets set balance_xof = -1 where user_id = ? and not ${used.usedSql}`).bind(customer.id),
+      // A Green Credit charge started meanwhile holds the credit: the swap fails as a whole.
+      db.prepare(`update wallets set balance_xof = -1 where user_id = ?1 and ${OPEN_CREDIT_CHARGE_SQL.replace("?", "?1")}`).bind(customer.id),
     );
     const wallet = await db.prepare("select balance_xof, status from wallets where user_id = ?").bind(customer.id).first<{ balance_xof: number; status: string }>();
     if (wallet?.status === "frozen") throw new ApiError("wallet_frozen", 403);
@@ -762,6 +907,10 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
   }
   const row = await swapByRequest(db, input.requestId);
   if (!row) {
+    // The same transaction id, recorded by another swap meanwhile (unique index, 0065).
+    if (energySwap && (await db.prepare("select 1 from swap_log where mm_network = ? and mm_ref = ?").bind(energySwap.mmNetwork, energySwap.mmRef).first())) {
+      throw new ApiError("mm_ref_used", 409);
+    }
     if (reservation) {
       const current = await db.prepare("select status from reservations where id = ?").bind(reservation.id).first<{ status: string }>();
       if (current?.status !== "active") throw new ApiError("reservation_not_active");
@@ -777,18 +926,30 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
   return toSwap(row);
 }
 
+/** A swap priced by energy, checked (shared/energy-swap.ts). */
+function energySwapOf(input: SwapInput, energy: EnergyPricing) {
+  const checked = checkEnergySwap(input, energy);
+  if (!checked.ok) throw new ApiError(checked.error);
+  return checked.swap;
+}
+
 /** GET /api/stations/:id/swaps?customerType=: today's swaps at the station, newest first (staff: their own). */
 export async function stationSwaps(c: WorkCtx, stationId: string, filter: SwapFilter): Promise<SwapEntry[]> {
   const actor = await stationReader(c, stationId);
   const type = filter.customerType && isSwapCustomerType(filter.customerType) ? filter.customerType : null;
-  // Staff see today's own swaps; owners and admins may look back (backoffice, plan phase 8).
-  const since = actor.role === "staff" ? dayStartLome() : periodStart(reportPeriod(filter.days ?? 1));
+  // Staff see today's own swaps; owners and admins may look back (backoffice, plan phase 8),
+  // or read a range of days for the swap sheet export.
+  const staff = actor.role === "staff";
+  const ranged = !staff && (filter.from != null || filter.to != null);
+  const range = ranged ? swapDayRange(filter.from, filter.to) : null;
+  if (ranged && !range) throw new ApiError("invalid_date_range");
+  const since = staff ? dayStartLome() : (range?.since ?? periodStart(reportPeriod(filter.days ?? 1)));
   const { results } = await c.db
     .prepare(
       `${SWAP_SELECT} where l.station_id = ?1 and l.created_at >= ?2 and (?3 is null or l.customer_type = ?3)
-         and (?4 is null or l.staff_id = ?4) order by l.created_at desc limit 500`,
+         and (?4 is null or l.staff_id = ?4) and (?5 is null or l.created_at < ?5) order by l.created_at desc limit ?6`,
     )
-    .bind(stationId, since, type, actor.role === "staff" ? actor.user.id : null)
+    .bind(stationId, since, type, staff ? actor.user.id : null, range?.until ?? null, range ? SWAP_EXPORT_LIMIT : 500)
     .all<SwapRow>();
   return results.map(toSwap);
 }

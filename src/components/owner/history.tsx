@@ -1,21 +1,82 @@
 "use client";
 
+import { useState } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
-import { EmptyState } from "@/components/ui";
-import { useLiveQuery } from "@/lib/hooks";
-import type { ReportPeriod } from "@/lib/owner-backoffice";
-import type { BatteryEventView, SwapEntry } from "@/lib/station-work";
+import { Button, EmptyState, Input, useToast } from "@/components/ui";
+import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
+import type { Incident } from "@shared/incidents";
+import { IncidentItem } from "@/components/station-work/incident-page";
+import type { ReportPeriod } from "@shared/owner-backoffice";
+import type { BatteryEventView, SwapEntry } from "@shared/station-work";
+import { SwapSheetExport } from "@/components/station-work/swap-sheet";
 import { Loaded, ResponsiveRows, Section, useWhen, useXof } from "./shared";
 
 /** Swap log and counter history of one station over the period (owners and admins only). */
-export function HistoryView({ stationId, days }: { stationId: string | null; days: ReportPeriod }) {
+export function HistoryView({ stationId, stationName, days }: { stationId: string | null; stationName: string; days: ReportPeriod }) {
   const { t } = useI18n();
   if (!stationId) return <EmptyState text={t.owner.history.pickStation} />;
   return (
     <div className="space-y-4">
+      <Incidents stationId={stationId} />
+      <SwapSheetExport key={stationId} stationId={stationId} stationName={stationName} pickDates />
       <Swaps stationId={stationId} days={days} />
       <CounterHistory stationId={stationId} days={days} />
+    </div>
+  );
+}
+
+/** Problems the staff reported: open ones first, each with "Mark handled" and an optional note. */
+function Incidents({ stationId }: { stationId: string }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const x = t.work.incident;
+  const { data, error, reload } = useLiveQuery(() => backend.stationIncidents(stationId), stationId);
+  return (
+    <Section title={x.ownerList}>
+      <Loaded data={data} error={error} reload={reload}>
+        {(incidents) =>
+          incidents.length === 0 ? (
+            <p className="text-sm text-gp-muted">{x.none}</p>
+          ) : (
+            <ul className="-mx-4 divide-y divide-gp-border">
+              {incidents.map((i) => (
+                <IncidentItem key={i.id} incident={i} action={i.status === "open" ? <ResolveIncident incident={i} onDone={reload} /> : undefined} />
+              ))}
+            </ul>
+          )
+        }
+      </Loaded>
+    </Section>
+  );
+}
+
+function ResolveIncident({ incident, onDone }: { incident: Incident; onDone: () => void }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const x = t.work.incident;
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function resolve() {
+    setBusy(true);
+    try {
+      await backend.resolveIncident(incident.stationId, incident.id, note.trim() || null);
+      toast(x.resolved, { tone: "success" });
+      onDone();
+    } catch (err) {
+      toast(errorMessage(err), { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-1">
+      <Input className="min-w-0 flex-1" value={note} maxLength={500} placeholder={x.resolution} aria-label={x.resolution} onChange={(e) => setNote(e.target.value)} />
+      <Button variant="secondary" disabled={busy} onClick={() => void resolve()}>
+        {x.resolve}
+      </Button>
     </div>
   );
 }
@@ -45,7 +106,7 @@ function Swaps({ stationId, days }: { stationId: string; days: ReportPeriod }) {
                     <span className="tabular-nums">{xof(s.amountXof)}</span>
                   </div>
                   <div className="text-gp-muted">
-                    {[s.customer ?? s.driver, w.payments[s.payment], s.batteryTypeLabel].filter(Boolean).join(" · ")}
+                    {[s.customer ?? s.driver ?? s.customerName ?? s.plate, w.payments[s.payment], s.batteryTypeLabel].filter(Boolean).join(" · ")}
                   </div>
                   <div className="text-xs tabular-nums text-gp-muted">
                     {when(s.createdAt)} · {s.person}
@@ -55,7 +116,7 @@ function Swaps({ stationId, days }: { stationId: string; days: ReportPeriod }) {
               columns={[
                 { label: h.when, cell: (s) => <span className="whitespace-nowrap tabular-nums">{when(s.createdAt)}</span> },
                 { label: h.type, cell: (s) => w.customerTypes[s.customerType] },
-                { label: h.customer, cell: (s) => s.customer ?? s.driver ?? "–" },
+                { label: h.customer, cell: (s) => s.customer ?? s.driver ?? s.customerName ?? s.plate ?? "–" },
                 { label: h.payment, cell: (s) => w.payments[s.payment] },
                 { label: h.amount, cell: (s) => xof(s.amountXof), className: "text-right tabular-nums whitespace-nowrap" },
                 { label: h.person, cell: (s) => s.person },

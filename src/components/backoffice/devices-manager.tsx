@@ -3,15 +3,15 @@
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
-import { boxQrUrl, socketQrUrl } from "@/lib/charging";
-import { displayStatus } from "@/lib/iot/charging-points";
-import { canSwitch, DEVICE_LINKS, MAX_OUTLETS, type DeviceInput } from "@/lib/iot/devices";
+import { boxQrUrl, socketQrUrl } from "@shared/charging";
+import { displayStatus } from "@shared/iot/charging-points";
+import { canSwitch, DEVICE_LINKS, MAX_OUTLETS, type Device, type DeviceInput } from "@shared/iot/devices";
 import { useErrorMessage, useLiveQuery, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { QrImage } from "../parcels/qr-image";
 import { card, field, indexSnapshot, Loading, Pill, StaleNotice, useAdminSnapshot } from "./shared";
 
-const EMPTY: DeviceInput = { externalId: "", stationId: "", outlets: 2, link: "lorawan", vendor: "", model: "", protocol: null };
+const EMPTY: DeviceInput = { externalId: "", stationId: null, outlets: 2, link: "lorawan", vendor: "", model: "", protocol: null };
 
 const TONE = { free: "green", reserved: "blue", charging: "blue", done: "gray", fault: "red", offline: "red" } as const;
 
@@ -23,7 +23,7 @@ export function DevicesManager() {
   const relativeTime = useRelativeTime();
   const now = useNow(30_000);
   const { data: devices, error, reload } = useLiveQuery(() => backend.listDevices());
-  // Who owns each socket (src/lib/point-partners.ts): poinderecharge unless a partner is chosen.
+  // Who owns each socket (shared/point-partners.ts): poinderecharge unless a partner is chosen.
   const { data: partners } = useLiveQuery(() => backend.adminPointPartners());
   const { data: snap, error: snapError, reload: reloadSnap } = useAdminSnapshot();
   const [adding, setAdding] = useState(false);
@@ -37,6 +37,8 @@ export function DevicesManager() {
 
   const b = t.backoffice.devices;
   const idx = indexSnapshot(snap);
+  const stations = snap.stations.map((s) => ({ id: s.id, name: s.name }));
+  const stationLabel = (id: string | null) => (id ? idx.stationName(id) : b.noStation);
 
   async function run(action: () => Promise<void>, success: string | (() => string)) {
     try {
@@ -77,7 +79,7 @@ export function DevicesManager() {
 
       {adding && (
         <DeviceForm
-          stations={snap.stations.map((s) => ({ id: s.id, name: s.name }))}
+          stations={stations}
           onCancel={() => setAdding(false)}
           onSave={async (input) => {
             const id = input.externalId.trim().toUpperCase();
@@ -106,7 +108,7 @@ export function DevicesManager() {
                   <div className="min-w-0">
                     <div className="font-mono text-sm font-medium">{d.externalId}</div>
                     <div className="text-xs text-zinc-500">
-                      {idx.stationName(d.stationId)} · {[d.vendor, d.model].filter(Boolean).join(" ") || b.links[d.link]}
+                      {stationLabel(d.stationId)} · {[d.vendor, d.model].filter(Boolean).join(" ") || b.links[d.link]}
                       {d.protocol === "ocpp1.6" && ` · OCPP 1.6J ${d.ocppOpen ? b.ocppOpen : b.ocppKeyed}`} ·{" "}
                       {b.lastSeen}: {d.lastSeenAt ? relativeTime(d.lastSeenAt, now) : b.never}
                     </div>
@@ -128,6 +130,29 @@ export function DevicesManager() {
                         ))}
                       </select>
                     </label>
+                    {!d.stationId && (
+                      <label className="mt-2 flex items-center gap-2 text-xs">
+                        <span className="text-zinc-500">{b.assign}</span>
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const stationId = e.target.value;
+                            const station = idx.stationName(stationId);
+                            if (stationId && window.confirm(format(b.assignConfirm, { id: d.externalId, station }))) {
+                              run(() => backend.assignDeviceStation(d.externalId, stationId), format(b.assigned, { id: d.externalId, station }));
+                            }
+                          }}
+                          className={`${field} py-1 text-xs`}
+                        >
+                          <option value="">{b.assignChoose}</option>
+                          {stations.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -187,7 +212,7 @@ export function DevicesManager() {
                             />
                             {b.qrStart}
                           </label>
-                          {p.qrStart && d.qrToken && p.outlet !== null && (
+                          {p.qrStart && qrCode(d) && p.outlet !== null && (
                             <button
                               type="button"
                               onClick={() => setQrShown(qrShown === p.id ? null : p.id)}
@@ -199,9 +224,9 @@ export function DevicesManager() {
                           )}
                         </div>
                         {!switchable && <p className="text-xs text-zinc-500">{b.qrNotSwitchable}</p>}
-                        {p.qrStart && d.qrToken && p.outlet !== null && qrShown === p.id && (
+                        {p.qrStart && qrCode(d) && p.outlet !== null && qrShown === p.id && (
                           <div className="flex flex-col items-center gap-1 pt-1">
-                            <QrImage text={socketQrUrl(qrOrigin(), d.qrToken, p.outlet)} label={`${b.qrStart} ${p.label}`} size={200} />
+                            <QrImage text={socketQrUrl(qrOrigin(), qrCode(d)!, p.outlet)} label={`${b.qrStart} ${p.label}`} size={200} />
                             <div className="font-mono font-semibold">
                               {b.outlet} {p.outlet} · {p.label}
                             </div>
@@ -213,7 +238,7 @@ export function DevicesManager() {
                   })}
                 </ul>
                 {/* One sticker for the whole box: the customer picks the outlet in the app. */}
-                {d.qrToken && d.points.some((p) => p.qrStart) && (
+                {qrCode(d) && d.points.some((p) => p.qrStart) && (
                   <div className="space-y-2 border-t border-black/10 pt-2 text-sm dark:border-white/10">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-medium">{b.qrBox}</span>
@@ -241,8 +266,8 @@ export function DevicesManager() {
                     </div>
                     {qrShown === d.externalId && (
                       <div className="flex flex-col items-center gap-1 pt-1">
-                        <QrImage text={boxQrUrl(qrOrigin(), d.qrToken)} label={`${b.qrBox} ${d.externalId}`} size={200} />
-                        <div className="text-xs text-zinc-500">{idx.stationName(d.stationId)}</div>
+                        <QrImage text={boxQrUrl(qrOrigin(), qrCode(d)!)} label={`${b.qrBox} ${d.externalId}`} size={200} />
+                        <div className="text-xs text-zinc-500">{stationLabel(d.stationId)}</div>
                         <div className="font-mono font-semibold">{format(t.charging.qr.box, { label: d.externalId.slice(-4) })}</div>
                         <p className="text-center text-xs text-zinc-500">{format(b.qrBoxPrint, { n: d.points.length })}</p>
                       </div>
@@ -259,6 +284,11 @@ export function DevicesManager() {
 }
 
 /** The site the box's QR code opens: this one in a browser, the public app inside the native app. */
+/** The box's short code; a box the Worker has not given one yet prints its long token. */
+function qrCode(d: Device): string | null {
+  return d.qrCode ?? d.qrToken;
+}
+
 function qrOrigin(): string {
   return window.location.protocol.startsWith("http") ? window.location.origin : "https://app.poinderecharge.com";
 }
@@ -306,7 +336,7 @@ function DeviceForm({
       </label>
       <label className={label}>
         {f.station}
-        <select required value={input.stationId} onChange={(e) => set({ stationId: e.target.value })} className={field}>
+        <select value={input.stationId ?? ""} onChange={(e) => set({ stationId: e.target.value || null })} className={field}>
           <option value="">{f.chooseStation}</option>
           {stations.map((s) => (
             <option key={s.id} value={s.id}>
@@ -322,8 +352,9 @@ function DeviceForm({
           required
           min={1}
           max={MAX_OUTLETS}
-          value={input.outlets}
-          onChange={(e) => set({ outlets: Number(e.target.value) })}
+          // Empty while the field is cleared, so typing 10 after deleting the 2 gives "10", not "010".
+          value={input.outlets || ""}
+          onChange={(e) => set({ outlets: e.target.value === "" ? 0 : Number(e.target.value) })}
           className={field}
         />
       </label>

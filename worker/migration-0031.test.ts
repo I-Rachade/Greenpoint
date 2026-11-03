@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
-import type { DriverHome } from "../src/lib/drivers";
-import type { GreenpointView } from "../src/lib/greenpoint";
-import type { Profile, Reservation } from "../src/lib/types";
-import type { WalletView } from "../src/lib/wallet";
+import type { DriverHome } from "../shared/drivers";
+import type { GreenpointView } from "../shared/greenpoint";
+import type { Profile, Reservation } from "../shared/types";
+import type { WalletView } from "../shared/wallet";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { sha256 } from "./http";

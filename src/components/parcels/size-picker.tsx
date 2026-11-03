@@ -1,7 +1,7 @@
 "use client";
 
 import { format } from "@/lib/i18n/format";
-import { PARCEL_SIZES, type ParcelSize, type ParcelSizeTier } from "@/lib/parcels";
+import { PARCEL_SIZES, type ParcelSize, type ParcelSizeTier } from "@shared/parcels";
 import { useI18n } from "../i18n-provider";
 
 /** Big S / M / L / XL buttons with each size's limits and price; staff pick one instead of measuring, customers say what they send. */

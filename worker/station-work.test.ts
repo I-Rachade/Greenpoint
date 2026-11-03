@@ -1,8 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
-import { DRIVER_PASS_MINUTES, signDriverPass, type DriverPass } from "../src/lib/drivers";
-import { applyBatteryEvent, type BatteryEventView, type StationCounter, type SwapEntry } from "../src/lib/station-work";
-import type { StationView } from "../src/lib/types";
+import { DRIVER_PASS_MINUTES, signDriverPass, type DriverPass } from "../shared/drivers";
+import { applyBatteryEvent, type BatteryEventView, type StationCounter, type SwapEntry } from "../shared/station-work";
+import type { StationView } from "../shared/types";
 import { handleApi } from "./api";
 import { hashPin } from "./auth";
 import type { Env } from "./env";
@@ -207,7 +207,7 @@ describe("battery counter (W9, R3, R4, R5)", () => {
       expect(full(db, "lome")).toBe(state.full);
       const sum = db.prepare("select coalesce(sum(delta), 0) as n from battery_events where station_id = 'lome' and type <> 'empty_in'").get() as { n: number };
       expect(start + sum.n).toBe(state.full);
-      expect((await counter(env, "lome")).rows).toEqual([{ batteryTypeId: "", label: null, full: state.full, empty: 0 }]);
+      expect((await counter(env, "lome")).rows).toEqual([{ batteryTypeId: "", label: null, full: state.full, empty: 0, capacity: 10 }]);
     }
   });
 
@@ -248,8 +248,8 @@ describe("battery counter (W9, R3, R4, R5)", () => {
     // A station with battery types registers every battery it swaps (0041).
     expect((await swap(env, "afi", "be", { customerType: "cash", batteryTypeId: "ov72" })).body).toEqual({ error: "battery_number_required" });
     expect((await counter(env, "be")).rows).toEqual([
-      { batteryTypeId: "ov72", label: "Omnivoltaic 72 V", full: 1, empty: 1 },
-      { batteryTypeId: "sp72", label: "Spiro 72 V", full: 0, empty: 0 },
+      { batteryTypeId: "ov72", label: "Omnivoltaic 72 V", full: 1, empty: 1, capacity: 0, energy: null },
+      { batteryTypeId: "sp72", label: "Spiro 72 V", full: 0, empty: 0, capacity: 0, energy: null },
     ]);
     expect(full(db, "be")).toBe(1);
     const be = (await call<StationView[]>(env, "ama", "GET", "/api/stations")).body.find((s) => s.id === "be")!;
@@ -258,6 +258,145 @@ describe("battery counter (W9, R3, R4, R5)", () => {
       ["ov72", 1],
       ["sp72", 0],
     ]);
+  });
+});
+
+describe("places per battery type (0064)", () => {
+  async function typedStation(db: DatabaseSync) {
+    const now = new Date().toISOString();
+    db.exec(`
+      insert into battery_types (id, brand, name, created_at) values ('ov60', 'Omnivoltaic', '60 V', '${now}'), ('ov72', 'Omnivoltaic', '72 V', '${now}');
+      insert into station_battery_types (station_id, battery_type_id, full_batteries, capacity) values ('be', 'ov60', 2, 3), ('be', 'ov72', 1, 0);
+    `);
+  }
+
+  it("keeps a type within its own places, a type without places within the station's", async () => {
+    const { env, db } = await setup();
+    await typedStation(db);
+    expect((await counter(env, "be")).rows.map((r) => [r.batteryTypeId, r.full, r.capacity])).toEqual([
+      ["ov60", 2, 3],
+      ["ov72", 1, 0],
+    ]);
+    expect((await event(env, "afi", "be", { type: "full", batteryTypeId: "ov60" })).status).toBe(200);
+    expect((await event(env, "afi", "be", { type: "full", batteryTypeId: "ov60" })).body).toEqual({ error: "counter_full" });
+    // The other type has no places of its own: the station's 10 count all its batteries (3 + 1 now).
+    for (let i = 0; i < 6; i++) expect((await event(env, "afi", "be", { type: "full", batteryTypeId: "ov72" })).status).toBe(200);
+    expect((await event(env, "afi", "be", { type: "full", batteryTypeId: "ov72" })).body).toEqual({ error: "counter_full" });
+    expect(full(db, "be")).toBe(10);
+  });
+});
+
+describe("swaps priced by energy (Omnivoltaic, 0065)", () => {
+  const USSD = { ussdTmoney: "*145*5*{montant}*1088722#", ussdFlooz: "*155*2*2*22879392818*22879392818*{montant}#" };
+
+  /** Bè swaps Omnivoltaic 30 Ah and 45 Ah, priced by energy through the admin route, and Spiro at the station's price. */
+  async function energyStation(env: Env, db: DatabaseSync) {
+    const now = new Date().toISOString();
+    db.exec(`
+      insert into battery_types (id, brand, name, created_at) values
+        ('ov30', 'Omnivoltaic', '30 Ah', '${now}'), ('ov45', 'Omnivoltaic', '45 Ah', '${now}'), ('sp72', 'Spiro', '72 V', '${now}');
+      insert into station_battery_types (station_id, battery_type_id, full_batteries) values ('be', 'ov30', 3), ('be', 'ov45', 2), ('be', 'sp72', 2);
+    `);
+    for (const [id, name, price] of [["ov30", "30 Ah", 900], ["ov45", "45 Ah", 1200]] as const) {
+      const saved = await call(env, "admin", "POST", "/api/admin/battery-types", { id, input: { brand: "Omnivoltaic", name, isActive: true, pricing: "energy", priceFullXof: price, ...USSD } });
+      expect(saved.status).toBe(200);
+    }
+  }
+
+  const walkIn = (extra: Record<string, unknown> = {}) => ({
+    customerType: "cash",
+    batteryTypeId: "ov30",
+    batteryIn: "OV30-0001",
+    batteryOut: "OV30-0002",
+    inPct: 20,
+    outPct: 100,
+    plate: " tg 1234 ab ",
+    batteryInCondition: "ok",
+    batteryOutChecked: true,
+    mmNetwork: "tmoney",
+    mmRef: "tm 2611 0212 34",
+    ...extra,
+  });
+
+  it("charges (% OUT − % IN) × the price for 100 %, paid by Mobile Money with its transaction id", async () => {
+    const { env, db } = await setup();
+    await energyStation(env, db);
+    const rows = (await counter(env, "be")).rows;
+    expect(rows.find((r) => r.batteryTypeId === "ov30")?.energy).toEqual({ priceFullXof: 900, ussd: { tmoney: USSD.ussdTmoney, flooz: USSD.ussdFlooz } });
+    expect(rows.find((r) => r.batteryTypeId === "sp72")?.energy).toBeNull();
+    // The procedure's examples: 30 Ah 20 % → 100 % = 720 F; 45 Ah 35 % → 100 % = 780 F.
+    const a = await swap(env, "afi", "be", walkIn({ customerName: "Koffi" }));
+    expect(a.body).toMatchObject({ payment: "mobile_money", amountXof: 720, inPct: 20, outPct: 100, plate: "TG 1234 AB", customerName: "Koffi", mmNetwork: "tmoney", mmRef: "TM2611021234" });
+    const b = await swap(env, "afi", "be", walkIn({ batteryTypeId: "ov45", batteryIn: "OV45-1", batteryOut: "OV45-2", inPct: 35, mmNetwork: "flooz", mmRef: "FL-778899" }));
+    expect(b.body).toMatchObject({ payment: "mobile_money", amountXof: 780 });
+    // Rounded to the nearest 5 F: 33 % × 1 200 = 396 → 395.
+    const c = await swap(env, "afi", "be", walkIn({ batteryTypeId: "ov45", batteryIn: "OV45-3", batteryOut: "OV45-4", inPct: 50, outPct: 83, mmRef: "TM-000003" }));
+    expect(c.body).toMatchObject({ amountXof: 395 });
+    // An app customer pays by Mobile Money too, never from Green Credit.
+    const d = await swap(env, "afi", "be", walkIn({ customerType: "app", contact: "90000005", payment: "wallet", batteryIn: "OV30-3", batteryOut: "OV30-4", mmRef: "TM-000004" }));
+    expect(d.body).toMatchObject({ customer: "Ama", payment: "mobile_money", amountXof: 720 });
+    expect(db.prepare("select balance_xof from wallets where user_id = 'ama'").get()).toEqual({ balance_xof: 2000 });
+    // The other types keep the station's price.
+    expect((await swap(env, "afi", "be", { customerType: "cash", batteryTypeId: "sp72", batteryIn: "SP-1", batteryOut: "SP-2" })).body).toMatchObject({ payment: "cash", amountXof: 500 });
+    // Mobile Money goes to the brand: only the Spiro swap is cash at the station.
+    const cash = await call<{ dueXof: number }>(env, "afi", "GET", "/api/stations/be/cash", undefined, "be");
+    expect(cash.body).toMatchObject({ dueXof: 500 });
+  });
+
+  it("refuses a swap the procedure says to check first, and records nothing", async () => {
+    const { env, db } = await setup();
+    await energyStation(env, db);
+    const refused = async (extra: Record<string, unknown>) => (await swap(env, "afi", "be", walkIn(extra))).body;
+    expect(await refused({ outPct: 20 })).toEqual({ error: "energy_out_not_above_in" });
+    expect(await refused({ inPct: 90, outPct: 80 })).toEqual({ error: "energy_out_not_above_in" });
+    expect(await refused({ inPct: null })).toEqual({ error: "energy_pct_required" });
+    expect(await refused({ outPct: 101 })).toEqual({ error: "energy_pct_required" });
+    expect(await refused({ plate: "" })).toEqual({ error: "plate_required" });
+    expect(await refused({ batteryInCondition: null })).toEqual({ error: "battery_condition_required" });
+    expect(await refused({ batteryOutChecked: false })).toEqual({ error: "battery_out_check_required" });
+    expect(await refused({ mmRef: "" })).toEqual({ error: "mm_ref_required" });
+    expect(await refused({ mmNetwork: "orange" })).toEqual({ error: "mm_network_invalid" });
+    expect(await refused({ customerType: "first_purchase", batteryIn: null })).toEqual({ error: "energy_customer_type" });
+    expect(count(db, "select count(*) as n from swap_log")).toBe(0);
+    // One transaction id pays one swap.
+    expect((await swap(env, "afi", "be", walkIn())).status).toBe(200);
+    expect(await refused({ batteryIn: "OV30-5", batteryOut: "OV30-6", mmRef: "TM261102 1234" })).toEqual({ error: "mm_ref_used" });
+    // The same id on the other network is another transaction.
+    expect((await swap(env, "afi", "be", walkIn({ batteryIn: "OV30-5", batteryOut: "OV30-6", mmNetwork: "flooz" }))).body).toMatchObject({ amountXof: 720 });
+    expect(() => db.prepare("insert into swap_log (id, request_id, station_id, has_battery_in, customer_type, payment, staff_id, role, created_at) values ('x', 'req-x-000000', 'be', 1, 'cash', 'mobile_money', 'afi', 'staff', 'x')").run()).toThrow(/CHECK/);
+  });
+
+  it("puts a battery brought back damaged in repair, and never hands it out", async () => {
+    const { env, db } = await setup();
+    await energyStation(env, db);
+    expect((await swap(env, "afi", "be", walkIn({ batteryIn: "OV30-HOT", batteryInCondition: "hot" }))).status).toBe(200);
+    expect(db.prepare("select status from batteries where serial = 'OV30-HOT'").get()).toEqual({ status: "repair" });
+    expect(db.prepare("select h.type, h.status, h.reason from battery_history h join batteries b on b.id = h.battery_id where b.serial = 'OV30-HOT' order by h.type").all()).toEqual([
+      { type: "added_at_swap", status: null, reason: null },
+      { type: "in", status: null, reason: null },
+      { type: "status", status: "repair", reason: "Swap : rendue anormalement chaude" },
+    ]);
+    expect((await swap(env, "afi", "be", walkIn({ batteryIn: "OV30-7", batteryOut: "OV30-HOT", mmRef: "TM-000009" }))).body).toEqual({ error: "battery_out_not_in_service" });
+  });
+
+  it("lets only an admin set a type's price by energy, with a price and a USSD code", async () => {
+    const { env, db } = await setup();
+    await energyStation(env, db);
+    const save = (as: string, input: Record<string, unknown>) => call(env, as, "POST", "/api/admin/battery-types", { id: "ov30", input: { brand: "Omnivoltaic", name: "30 Ah", isActive: true, ...input } });
+    expect((await save("yao", { pricing: "energy", priceFullXof: 1, ...USSD })).status).toBe(403);
+    expect((await save("admin", { pricing: "energy", priceFullXof: null, ...USSD })).body).toEqual({ error: "energy_price_required" });
+    expect((await save("admin", { pricing: "energy", priceFullXof: 900, ussdTmoney: "*145*5*1088722#", ussdFlooz: "" })).body).toEqual({ error: "invalid_ussd" });
+    expect((await save("admin", { pricing: "energy", priceFullXof: 900, ussdTmoney: "", ussdFlooz: "" })).body).toEqual({ error: "ussd_required" });
+    // Only T-Money offered: Flooz is refused at the counter.
+    expect((await save("admin", { pricing: "energy", priceFullXof: 950, ussdTmoney: USSD.ussdTmoney, ussdFlooz: "" })).status).toBe(200);
+    expect((await swap(env, "afi", "be", walkIn({ mmNetwork: "flooz" }))).body).toEqual({ error: "mm_network_invalid" });
+    expect((await swap(env, "afi", "be", walkIn())).body).toMatchObject({ amountXof: 760 });
+    // A save without pricing keeps it; back to the station's price clears it.
+    expect((await save("admin", { isActive: true })).status).toBe(200);
+    expect(db.prepare("select pricing, price_full_xof from battery_types where id = 'ov30'").get()).toEqual({ pricing: "energy", price_full_xof: 950 });
+    expect((await save("admin", { pricing: "station" })).status).toBe(200);
+    expect(db.prepare("select pricing, price_full_xof, ussd_tmoney from battery_types where id = 'ov30'").get()).toEqual({ pricing: "station", price_full_xof: null, ussd_tmoney: null });
+    expect(db.prepare("select changes from audit_log where table_name = 'battery_types' and changes like '%950%'").all()).toHaveLength(2);
   });
 });
 
@@ -402,6 +541,98 @@ describe("swaps (W7, R6, R9, R10)", () => {
     expect(all.map((s) => s.customerType).sort()).toEqual(["cash", "fleet"]);
     expect((await call<SwapEntry[]>(env, "yao", "GET", "/api/stations/be/swaps?customerType=fleet")).body.map((s) => s.customerType)).toEqual(["fleet"]);
     expect((await call<SwapEntry[]>(env, "afi", "GET", "/api/stations/be/swaps")).body.map((s) => s.person)).toEqual(["Afi"]);
+  });
+
+  it("reads a range of days for the swap sheet: owners and admins only, valid dates only", async () => {
+    const { env, db } = await setup();
+    const old = await swap(env, "afi", "be", { customerType: "cash" });
+    await swap(env, "afi", "be", { customerType: "cash" });
+    const day = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+    db.prepare("update swap_log set created_at = ? where id = ?").run(`${day(3)}T09:15:00.000Z`, (old.body as SwapEntry).id);
+    const list = async (as: string, q: string) => (await call<SwapEntry[] & { error?: string }>(env, as, "GET", `/api/stations/be/swaps?${q}`)).body;
+    expect((await list("yao", `from=${day(3)}&to=${day(3)}`)).map((s) => s.id)).toEqual([(old.body as SwapEntry).id]);
+    expect(await list("yao", `from=${day(3)}&to=${day(0)}`)).toHaveLength(2);
+    expect(await list("yao", `from=${day(2)}&to=${day(0)}`)).toHaveLength(1);
+    // Backwards, impossible or too long ranges are refused.
+    expect(await list("yao", `from=${day(0)}&to=${day(3)}`)).toEqual({ error: "invalid_date_range" });
+    expect(await list("yao", "from=2026-02-30&to=2026-03-01")).toEqual({ error: "invalid_date_range" });
+    expect(await list("yao", `from=${day(400)}&to=${day(0)}`)).toEqual({ error: "invalid_date_range" });
+    // Staff keep today's own swaps whatever they ask.
+    expect(await list("afi", `from=${day(3)}&to=${day(3)}`)).toHaveLength(1);
+  });
+});
+
+describe("Green Credit held by a charge (0052)", () => {
+  const BOX = "0123456789abcdef0123456789abcdef";
+  /** A connected socket at Bè whose outlet starts by QR code, paid from Green Credit. */
+  async function withSocket() {
+    const s = await setup();
+    const now = new Date().toISOString();
+    s.db.exec(`
+      insert or replace into station_services (station_id, service, unlocked) values ('be', 'charging', 1);
+      insert into devices (external_id, station_id, vendor, link, outlets, last_seen_at, qr_token, created_at) values ('123456', 'be', 'Xingke', 'own_server', 1, '${now}', '${BOX}', '${now}');
+      insert into charging_points (id, station_id, label, status, device_id, outlet, last_seen_at, qr_start, created_at) values ('p1', 'be', '3456-1', 'free', '123456', 1, '${now}', 1, '${now}');
+    `);
+    return s;
+  }
+  const selfStart = (env: Env) => call<{ id?: string; error?: string }>(env, "ama", "POST", `/api/charging/outlets/${BOX}/start`, { pointId: "p1", pin: PIN });
+  const credit = (db: DatabaseSync) => (db.prepare("select balance_xof from wallets where user_id = 'ama'").get() as { balance_xof: number }).balance_xof;
+  const held = (db: DatabaseSync) => count(db, "select coalesce(sum(credit_held_xof), 0) as n from charging_sessions where status = 'charging'");
+  const swapped = (db: DatabaseSync) => count(db, "select coalesce(sum(amount_xof), 0) as n from wallet_transactions where details like '%swap%'");
+
+  it("lets a swap and a charge started at the same time never spend the credit twice", async () => {
+    const { db, env } = await withSocket();
+    const code = await creditCode(env, "ama");
+    const [charge, paid] = await Promise.all([selfStart(env), swap(env, "afi", "be", { customerType: "app", creditCode: code })]);
+    // Whichever came first: the credit never goes below 0 and every FCFA is either left, held or spent.
+    expect(credit(db)).toBeGreaterThanOrEqual(0);
+    expect(credit(db) + held(db) + swapped(db)).toBe(2000);
+    expect([charge.status, paid.status]).toContain(200);
+    if (charge.status === 200 && paid.status !== 200) expect(paid.body).toEqual({ error: "insufficient_balance" });
+  });
+
+  it("refuses a swap while a charge holds the whole credit (below the cap), and a charge after a swap holds what is left", async () => {
+    const { db, env } = await withSocket();
+    expect((await selfStart(env)).status).toBe(200);
+    expect(credit(db)).toBe(0);
+    expect((await swap(env, "afi", "be", { customerType: "app", creditCode: await creditCode(env, "ama") })).body).toEqual({ error: "insufficient_balance" });
+    expect(held(db)).toBe(2000);
+
+    const other = await withSocket();
+    expect((await swap(other.env, "afi", "be", { customerType: "app", creditCode: await creditCode(other.env, "ama") })).status).toBe(200);
+    expect((await selfStart(other.env)).status).toBe(200);
+    expect([credit(other.db), held(other.db)]).toEqual([0, 1500]);
+  });
+
+  it("holds at most the backoffice's cap, so a swap during the charge spends the rest", async () => {
+    const { db, env } = await withSocket();
+    db.exec("update wallets set balance_xof = 10000 where user_id = 'ama'");
+    const started = await selfStart(env);
+    expect(started.status).toBe(200);
+    // 3000 FCFA by default (app_settings.green_credit_charge_hold_xof): the charge stops there.
+    expect(db.prepare("select credit_limit_xof, credit_held_xof from charging_sessions").get()).toEqual({ credit_limit_xof: 3000, credit_held_xof: 3000 });
+    expect([credit(db), held(db)]).toEqual([7000, 3000]);
+    // A battery swap meanwhile is paid from the 7000 FCFA still free.
+    expect((await swap(env, "afi", "be", { customerType: "app", creditCode: await creditCode(env, "ama") })).status).toBe(200);
+    expect([credit(db), held(db), swapped(db)]).toEqual([6500, 3000, 500]);
+  });
+
+  it("applies a cap the admin changed to the next charge, and only an admin may change it", async () => {
+    const { db, env } = await withSocket();
+    db.exec("update wallets set balance_xof = 10000 where user_id = 'ama'");
+    for (const who of ["ama", "afi", "yao", "edem"]) {
+      expect((await call(env, who, "POST", "/api/admin/wallet/charge-hold", { chargeHoldXof: 9000 })).status).toBe(403);
+    }
+    expect((await call(env, "admin", "POST", "/api/admin/wallet/charge-hold", { chargeHoldXof: 0 })).status).toBe(400);
+    expect((await call(env, "admin", "POST", "/api/admin/wallet/charge-hold", { chargeHoldXof: 4500 })).status).toBe(200);
+    expect((await call<{ chargeHoldXof: number }>(env, "admin", "GET", "/api/admin/wallet")).body.chargeHoldXof).toBe(4500);
+    const first = await selfStart(env);
+    expect(db.prepare("select credit_held_xof from charging_sessions where id = ?").get(first.body.id!)).toEqual({ credit_held_xof: 4500 });
+    expect(credit(db)).toBe(5500);
+    // A cap below the outlet's minimum price refuses the charge, as a too small balance does.
+    db.exec("update charging_sessions set status = 'cancelled'");
+    expect((await call(env, "admin", "POST", "/api/admin/wallet/charge-hold", { chargeHoldXof: 50 })).status).toBe(200);
+    expect((await selfStart(env)).body).toEqual({ error: "insufficient_balance" });
   });
 });
 

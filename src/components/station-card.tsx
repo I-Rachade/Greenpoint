@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { availableSlots, offersCharging, offersSwap, stockBatteries } from "@/lib/availability";
-import { directionsUrl, formatDistance } from "@/lib/geo";
+import { availableSlots, offersCharging, offersSwap, stockBatteries } from "@shared/availability";
+import { directionsUrl, formatDistance } from "@shared/geo";
 import { format } from "@/lib/i18n/format";
 import { useFavorites } from "@/lib/prefs";
-import { brandFullBatteries, stationBrands } from "@/lib/battery-types";
-import { chargesEvs } from "@/lib/ev-chargers";
-import { hasRestArea, isUnattended } from "@/lib/station-extras";
-import { offersParcels } from "@/lib/station-points";
-import type { StationView } from "@/lib/types";
+import { brandFullBatteries, stationBrands } from "@shared/battery-types";
+import { chargesEvs } from "@shared/ev-chargers";
+import { hasRestArea, isUnattended } from "@shared/station-extras";
+import { offersParcels } from "@shared/station-points";
+import type { StationView } from "@shared/types";
 import { BatteryIcon, BenchIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, HeartIcon, NavigateIcon, PinIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { SolarBadge } from "./solar-badge";

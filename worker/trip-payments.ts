@@ -1,7 +1,7 @@
-import { owedToDriver, PAYOUT_NETWORKS, TRIP_PAYMENTS, type AdminDriverPayout, type DriverPayout, type PayoutNetwork, type TripPayment } from "../src/lib/drivers";
-import { normalizeTogoPhone } from "../src/lib/phone";
-import type { Profile } from "../src/lib/types";
-import { newTrxId } from "../src/lib/wallet";
+import { owedToDriver, PAYOUT_NETWORKS, TRIP_PAYMENTS, type AdminDriverPayout, type DriverPayout, type PayoutNetwork, type TripPayment } from "../shared/drivers";
+import { normalizeTogoPhone } from "../shared/phone";
+import type { Profile } from "../shared/types";
+import { newTrxId } from "../shared/wallet";
 import { ApiError, nowIso, uuid } from "./http";
 import { notifyUser } from "./notify";
 import type { ParcelCtx } from "./parcels";

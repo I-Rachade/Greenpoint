@@ -8,7 +8,7 @@ import {
   NavigationControl,
 } from "maplibre-gl";
 import { useEffect, useRef } from "react";
-import { LOME_CENTER, type LatLng } from "@/lib/geo";
+import { LOME_CENTER, type LatLng } from "@shared/geo";
 import { MAP_STYLE } from "../station-map";
 
 export type TrackPointKind = "driver" | "start" | "end" | "shop";

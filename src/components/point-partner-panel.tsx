@@ -7,12 +7,12 @@ import { Loaded, PeriodPicker, Section, useXof } from "@/components/owner/shared
 import { Pill } from "@/components/backoffice/shared";
 import { stationHref } from "@/components/station-card";
 import { CountUp } from "@/components/ui";
-import { formatKwh } from "@/lib/charging";
+import { formatKwh } from "@shared/charging";
 import { useLiveQuery, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { displayStatus } from "@/lib/iot/charging-points";
-import type { ReportPeriod } from "@/lib/owner-backoffice";
-import { pointsByStation, type PartnerPoint, type PointPartnerDashboard } from "@/lib/point-partners";
+import { displayStatus } from "@shared/iot/charging-points";
+import type { ReportPeriod } from "@shared/owner-backoffice";
+import { pointsByStation, type PartnerPoint, type PointPartnerDashboard } from "@shared/point-partners";
 import { useApp } from "./app-provider";
 
 const TONE = { free: "green", reserved: "blue", charging: "blue", done: "gray", fault: "red", offline: "red" } as const;

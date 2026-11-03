@@ -2,18 +2,25 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { pushEnabled, storePushToken } from "@/lib/push";
+import { pushEnabled, storedPushToken, storePushToken } from "@/lib/push";
+import { enableWebPush, webPushSupported } from "@/lib/web-push";
 import { useApp } from "./app-provider";
 
 /**
  * Signs this phone up for push notices of the signed-in account (new offers for drivers,
  * trip updates for customers) and opens the right screen when a notice is tapped.
- * Only in the app, and only when the build turned push on.
+ * Only in the app, and only when the build turned push on. In the browser the person turns
+ * notices on in Settings; once on, the subscription is renewed here on every start.
  */
 export function PushRegistrar() {
   const { backend, profile } = useApp();
   const router = useRouter();
   const userId = profile?.id ?? null;
+
+  useEffect(() => {
+    if (!userId || !webPushSupported() || !storedPushToken()) return;
+    void enableWebPush(backend, false).catch(() => undefined);
+  }, [backend, userId]);
 
   useEffect(() => {
     if (!userId || !pushEnabled()) return;

@@ -38,16 +38,26 @@ Browser / Android-App (Next.js, statisch)  ──►  Cloudflare Worker "pointde
 | `promotions` | Werbung für das Fenster beim Öffnen der App |
 | `audit_log` | Aktivitätsprotokoll: wer hat wann Status, Reservierungen, Rollen, Personal oder Stationen geändert (nur Admins lesen, siehe [BACKOFFICE.md](BACKOFFICE.md)) |
 
-Verfügbar = gemeldete freie Plätze bzw. volle Akkus minus aktive Reservierungen (`src/lib/availability.ts` und `reserve()` in `worker/api.ts` rechnen gleich). Schema: `worker/migrations/`..
+Verfügbar = gemeldete freie Plätze bzw. volle Akkus minus aktive Reservierungen (`shared/availability.ts` und `reserve()` in `worker/api.ts` rechnen gleich). Schema: `worker/migrations/`..
+
+## Drei Teile: App, API und Vertrag
+
+| Ordner | Was | Darf importieren |
+|---|---|---|
+| `src/` | Oberfläche (Next.js, statisch), läuft im Browser und in den Apps | `src/`, `shared/` |
+| `worker/` | API, Rechte, Datenbank, Geräte (Cloudflare Worker) | `worker/`, `shared/` |
+| `shared/` | Vertrag zwischen beiden: Typen, Fehlercodes (`shared/api.ts`) und Regeln, die App und Server gleich rechnen (Verfügbarkeit, Preise, Codes) | nur `shared/`; kein React, kein Browser (`window`, `localStorage` …) |
+
+Die App erreicht den Worker nur über `/api` (`src/lib/backend/cloudflare.ts`), nie über einen Import. ESLint (`eslint.config.mjs`) lehnt jeden Import über diese Grenzen ab. In der App heißt der Pfad `@shared/…`, im Worker `../shared/…`. Alles in `shared/` ist für jeden sichtbar, der die App lädt: Geheimnisse und Prüfungen, die nur der Server kennen darf, gehören in `worker/`.
 
 ## Zwei Backends
 
 `src/lib/backend/backend.ts` beschreibt, was die App braucht. Es gibt zwei Umsetzungen:
 
 - `DemoBackend`: alles im Browser (localStorage), Beispieldaten, Code `123456`. Standard bei `npm run dev` und wenn `NEXT_PUBLIC_BACKEND=demo` gesetzt ist.
-- `CloudflareBackend`: Produktion, ruft die API des Workers auf. Standard bei jedem Build auf Cloudflare.
+- `CloudflareBackend`: Produktion, ruft die API des Workers auf. Standard bei jedem Build auf Cloudflare und in den Android- und iOS-Builds.
 
-So kann jeder die App sofort ausprobieren, und die Oberfläche hängt nicht an der Datenbank.
+So kann jeder die App sofort ausprobieren, und die Oberfläche hängt nicht an der Datenbank. Die Demo steckt nur in Demo-Builds: Die übrige App liest nur `demo-flags.ts`, deshalb lässt ein Produktions-Build `demo.ts` samt Beispieldaten ganz weg. Die CI prüft das bei jedem PR.
 
 ## Später (Phase 2 und 3)
 

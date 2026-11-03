@@ -5,7 +5,7 @@ import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { LoadFailed } from "@/components/load-state";
 import { StaleNotice } from "@/components/stale-notice";
-import type { AdminSnapshot, AdminUser } from "@/lib/admin/types";
+import type { AdminSnapshot, AdminUser } from "@shared/admin/types";
 import { useLiveQuery } from "@/lib/hooks";
 
 /** Loads the backoffice data and keeps it live (reloads on every station or reservation change). */

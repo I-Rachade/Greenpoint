@@ -8,19 +8,20 @@ import {
   formatDuration,
   formatKwh,
   type ChargeSession,
-} from "@/lib/charging";
-import type { CounterCard } from "@/lib/charge-cards";
-import { displayStatus } from "@/lib/iot/charging-points";
+} from "@shared/charging";
+import type { CounterCard } from "@shared/charge-cards";
+import { parseCreditCode } from "@shared/wallet";
+import { displayStatus } from "@shared/iot/charging-points";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
-import type { ChargingPoint, StationView } from "@/lib/types";
+import type { ChargingPoint, StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
 import { QrImage } from "../parcels/qr-image";
 import { canScanQr, QrScanner } from "../parcels/qr-scanner";
 
-// Charging at a socket (src/lib/charging.ts): the staff screen, the customer's charges and "Mon code".
+// Charging at a socket (shared/charging.ts): the staff screen, the customer's charges and "Mon code".
 
 const input = "w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-base dark:border-white/20 dark:bg-zinc-900";
 const button = "rounded-full bg-gp-green-dark px-4 py-2 text-sm font-semibold text-white disabled:opacity-50";
@@ -103,8 +104,9 @@ function StartForm({ station, pointId, onDone, customer }: { station: StationVie
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
   const ch = t.charging;
+  // A customer scanned on the scanner page: their account still needs the one-time code from their app.
   const [app, setApp] = useState(!!customer);
-  const [contact, setContact] = useState(customer ?? "");
+  const [code, setCode] = useState("");
   const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -112,7 +114,8 @@ function StartForm({ station, pointId, onDone, customer }: { station: StationVie
     e.preventDefault();
     setBusy(true);
     try {
-      await backend.startCharge(station.id, { pointId, contact: app ? contact.trim() : undefined });
+      // Only the customer's one-time Green Credit code puts the charge on their account; without it, an anonymous cash charge.
+      await backend.startCharge(station.id, { pointId, creditCode: app ? (parseCreditCode(code) ?? code.trim()) : undefined });
       onDone();
     } catch (err) {
       onDone(errorMessage(err));
@@ -141,11 +144,13 @@ function StartForm({ station, pointId, onDone, customer }: { station: StationVie
         <div className="space-y-2">
           <input
             required
-            value={contact}
-            onChange={(e) => setContact(e.target.value)}
-            placeholder="+228 90 00 00 00"
+            inputMode="numeric"
+            autoComplete="off"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="1234 5678"
             aria-label={ch.contact}
-            className={input}
+            className={`${input} font-mono tracking-widest`}
           />
           <p className="text-xs text-zinc-500">{ch.contactHint}</p>
           {canScanQr() && !scanning && (
@@ -158,7 +163,7 @@ function StartForm({ station, pointId, onDone, customer }: { station: StationVie
               onClose={() => setScanning(false)}
               onResult={(text) => {
                 setScanning(false);
-                setContact(text);
+                setCode(parseCreditCode(text) ?? text);
               }}
             />
           )}
@@ -177,7 +182,7 @@ function StartForm({ station, pointId, onDone, customer }: { station: StationVie
 }
 
 /** Station staff: the connected outlets, starting and stopping a charge, collecting the cash, today's takings. */
-/** `customer`: an app customer's phone or e-mail, scanned on the scanner page; each start form comes filled in with it. */
+/** `customer`: an app customer scanned on the scanner page; each start form opens for an app customer (their one-time code is still needed). */
 export function StaffCharging({ station, customer }: { station: StationView; customer?: string }) {
   const { t, locale } = useI18n();
   const { backend } = useApp();
@@ -269,14 +274,20 @@ export function StaffCharging({ station, customer }: { station: StationView; cus
                     {p.ev && <span aria-hidden>🚗 </span>}
                     <span className="font-medium">{p.label}</span> {p.ev && <span className="text-xs text-zinc-500">({p.ev})</span>} · {t.station.outletStatus[shown]}
                   </span>
+                  {/* An outlet switched on without a charge here (e.g. an admin's test in the backoffice) is busy too: the server refuses (charge_busy). */}
                   {starting !== p.id && (
-                    <button type="button" disabled={shown === "offline" || shown === "fault"} onClick={() => setStarting(p.id)} className={button}>
+                    <button
+                      type="button"
+                      disabled={shown === "offline" || shown === "fault" || shown === "charging"}
+                      onClick={() => setStarting(p.id)}
+                      className={button}
+                    >
                       {ch.start}
                     </button>
                   )}
                 </div>
               )}
-              {starting === p.id && !charge && (
+              {starting === p.id && !charge && shown !== "charging" && (
                 <StartForm
                   station={station}
                   pointId={p.id}
@@ -397,10 +408,12 @@ function CardCounter({ station }: { station: StationView }) {
       </form>
       {found && (
         <div className="space-y-1 rounded-lg bg-zinc-100 px-3 py-2 dark:bg-zinc-900">
-          {found.linked ? (
+          {found.linked && found.balanceXof === undefined ? (
+            <p className="text-sm">{format(cc.linkedHidden, { tag: found.idTag })}</p>
+          ) : found.linked ? (
             <>
-              <p className={`text-sm font-medium ${found.balanceXof < 0 ? "text-red-600" : ""}`}>
-                {format(cc.credit, { tag: found.idTag, customer: found.customer ?? "", amount: xof(found.balanceXof) })}
+              <p className={`text-sm font-medium ${(found.balanceXof ?? 0) < 0 ? "text-red-600" : ""}`}>
+                {format(cc.credit, { tag: found.idTag, customer: found.customer ?? "", amount: xof(found.balanceXof ?? 0) })}
               </p>
               <p className="text-xs text-zinc-500">{cc.loadWithQr}</p>
             </>
@@ -604,7 +617,7 @@ export function MyCharges() {
   );
 }
 
-/** "Mon code": the QR code staff scan to start a charge on the customer's account. */
+/** "Mon code": the QR code staff scan to find the customer (a charge on their account needs their Green Credit code, 0052). */
 export function MyCode({ contact }: { contact: string }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);

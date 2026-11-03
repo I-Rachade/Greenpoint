@@ -1,5 +1,5 @@
-import { RESERVATION_MINUTES, type Reservation, type ReservationStatus, type ReservationType } from "../types";
-import type { AdminUser, StaffAssignment } from "./types";
+import { RESERVATION_MINUTES, type Reservation, type ReservationStatus, type ReservationType } from "@shared/types";
+import type { AdminUser, StaffAssignment } from "@shared/admin/types";
 
 // Example users and history for the backoffice in demo mode. The ids
 // `demo-<role>` are the ones the demo login uses (see DemoBackend.verifyCode).
@@ -21,6 +21,9 @@ export function demoUsers(now: Date): AdminUser[] {
 
 /** Staff work at exactly one station (W2, migration 0033): Kossi keeps the Grand Marché. */
 export const DEMO_STAFF: StaffAssignment[] = [{ stationId: "st-grand-marche", userId: "demo-operator" }];
+
+/** Afi owns the operator poinderecharge (operator_owners): its stations have someone there. */
+export const DEMO_OWNERS: { operatorId: string; userId: string }[] = [{ operatorId: "op-poinderecharge", userId: "demo-operator-2" }];
 
 /**
  * His other former stations, as migration 0033 lists them for the owner to re-staff

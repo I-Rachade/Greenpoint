@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { distanceMeters, formatDistance } from "../geo";
+import { distanceMeters, formatDistance } from "@shared/geo";
 import { en } from "../i18n/en";
 import { format } from "../i18n/format";
 import { fr } from "../i18n/fr";
-import { normalizeTogoPhone } from "../phone";
-import { normalizeEmail, parseContact } from "../contact";
+import { normalizeTogoPhone } from "@shared/phone";
+import { normalizeEmail, parseContact } from "@shared/contact";
 import { DEFAULT_PHONE_COUNTRY, PHONE_COUNTRIES, phoneWithCountry } from "../countries";
 
 describe("geo", () => {

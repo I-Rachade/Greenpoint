@@ -1,10 +1,10 @@
-import { validEvCharger, type EvCharger, type EvChargerInput, type StationEvCharger } from "../src/lib/ev-chargers";
-import type { AuditEntry, AuditTable } from "../src/lib/admin/types";
-import type { ChargingPointStatus } from "../src/lib/types";
+import { validEvCharger, type EvCharger, type EvChargerInput, type StationEvCharger } from "../shared/ev-chargers";
+import type { AuditEntry, AuditTable } from "../shared/admin/types";
+import type { ChargingPointStatus } from "../shared/types";
 import { ApiError, nowIso, uuid } from "./http";
 
 // Electric car chargers: added in the backoffice, then assigned to a station.
-// See src/lib/ev-chargers.ts and migrations 0020_ev_chargers.sql, 0048_ev_payment.sql
+// See shared/ev-chargers.ts and migrations 0020_ev_chargers.sql, 0048_ev_payment.sql
 // (a charger connected to an outlet of a connected device is started and paid in the app).
 
 interface Ctx {

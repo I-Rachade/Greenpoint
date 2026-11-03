@@ -1,9 +1,9 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { ParcelInfo } from "../src/lib/parcels";
-import type { StationService, StationServiceInfo } from "../src/lib/station-services";
-import type { StationView } from "../src/lib/types";
+import type { ParcelInfo } from "../shared/parcels";
+import type { StationService, StationServiceInfo } from "../shared/station-services";
+import type { StationView } from "../shared/types";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { setDriversEnabled, setLiteEnabled, setParcelsEnabled } from "./features";
@@ -44,6 +44,7 @@ async function setup() {
       ('kara', '${OP_B}', 'Kara', 9.55, 1.19, 'swap', 10, '00:00-24:00', '${now}');
     insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values ('be', 1, 5, 10, '${now}'), ('kara', 1, 0, 10, '${now}');
     insert into station_staff (station_id, user_id) values ('be', 'afi');
+    update stations set phone = '+22822000001' where id = 'be';
     insert into parcel_depots (station_id, is_active, note, lockers, updated_at) values ('be', 1, '', 0, '${now}');
   `);
   return { db, env };

@@ -1,15 +1,17 @@
 // Fleet managers (plan phase 6): self-registered fleets approved by an admin, invites by phone
 // number that the driver confirms (W6, R12), the driver limit of the standard tier (R13),
 // manual dispatch of open trips, the swaps billed to the fleet and the statistics of an
-// unlocked fleet. Shared rules in src/lib/fleet.ts, table fleets in 0032_fleets.sql.
-import { parseContact } from "../src/lib/contact";
+// unlocked fleet. Shared rules in shared/fleet.ts, table fleets in 0032_fleets.sql.
+import { parseContact } from "../shared/contact";
 import {
   driverLimit,
   FLEET_INVITE_DAYS,
   FLEET_TIERS,
+  fitsFleet,
   fleetRange,
   jobForManager,
   managesFleet,
+  openJobForManager,
   STANDARD_DRIVER_LIMIT,
   statsUnlocked,
   type AdminFleet,
@@ -27,17 +29,16 @@ import {
   type FleetTier,
   type FleetView,
   type MyFleetInvite,
-} from "../src/lib/fleet";
-import { freshPosition, newDriverCode, type DriverPosition, type LedgerEntry } from "../src/lib/drivers";
-import { normalizeTogoPhone } from "../src/lib/phone";
-import type { Profile } from "../src/lib/types";
+} from "../shared/fleet";
+import { freshPosition, newDriverCode, type DriverPosition, type LedgerEntry } from "../shared/drivers";
+import { normalizeTogoPhone } from "../shared/phone";
+import type { Profile } from "../shared/types";
 import {
   balance,
   BUSY_SQL,
   cleanApplication,
   currentJob,
   customerThingsOpen,
-  dispatch,
   DRIVER_SELECT,
   driverRow,
   driverSettings,
@@ -51,7 +52,7 @@ import {
 } from "./drivers";
 import { requireDrivers } from "./features";
 import { ApiError, nowIso, uuid } from "./http";
-import type { ParcelCtx } from "./parcels";
+import { sizes, type ParcelCtx } from "./parcels";
 import { DB_CUSTOMER, DB_DRIVER } from "./roles";
 
 // Fleets ----------------------------------------------------------------------------
@@ -153,7 +154,6 @@ export async function fleetView(c: ParcelCtx): Promise<FleetView> {
     await expireInvites(c.db);
     fleet = toInfo(row, await usedPlaces(c.db, user.id));
   }
-  await dispatch(c);
   const rows = await managedRows(c, user);
   const ids = rows.map((r) => r.user_id);
   const marks = ids.map(() => "?").join(", ");
@@ -194,7 +194,16 @@ export async function fleetView(c: ParcelCtx): Promise<FleetView> {
       };
     }),
   );
-  return { fleet, drivers, invites: invites.results.map(toInvite), openJobs: open.results.map((j) => jobForManager(toJob(j))), settings };
+  // A manager sees only the open trips one of their drivers could take, without the door (fitsFleet).
+  let openJobs = open.results.map((j) => toJob(j));
+  if (user.role !== "admin") {
+    const tiers = await sizes(c.db);
+    const maxKg = (size: string) => tiers.find((t) => t.size === size)?.maxWeightKg ?? 50;
+    openJobs = openJobs.filter((j) => fitsFleet(j, j.weightKg ?? maxKg(j.size), drivers, settings)).map(openJobForManager);
+  } else {
+    openJobs = openJobs.map(jobForManager);
+  }
+  return { fleet, drivers, invites: invites.results.map(toInvite), openJobs, settings };
 }
 
 /** A fresh reported position as the app sees it. */

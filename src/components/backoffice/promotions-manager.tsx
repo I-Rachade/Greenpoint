@@ -6,7 +6,7 @@ import { useI18n } from "@/components/i18n-provider";
 import { PromoCard } from "@/components/promo-popup";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { isRunning, safeImage, safeLink, type Promotion, type PromotionInput } from "@/lib/promo";
+import { isRunning, safeImage, safeLink, type Promotion, type PromotionInput } from "@shared/promo";
 import { card, field, Loading, Pill, StaleNotice, useDateTime } from "./shared";
 
 const EMPTY: PromotionInput = {

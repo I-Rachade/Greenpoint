@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveStation } from "../active-station";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
-import { reservableOutlets, reservableTypes } from "../reservations";
-import { boxFromCode, boxQrUrl, socketQrUrl } from "../charging";
+import { reservableOutlets, reservableTypes } from "@shared/reservations";
+import { boxFromCode, boxQrUrl, newBoxCode, shortLinkRedirect, socketQrUrl, validBoxToken } from "@shared/charging";
 
 // Runs without a browser: the demo falls back to in-memory storage.
 const STATION = "st-grand-marche"; // open around the clock in the demo data
@@ -149,6 +149,20 @@ describe("DemoBackend account deletion", () => {
 });
 
 describe("DemoBackend connected sockets", () => {
+  it("registers a socket without a station and places it later", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890123456", DEMO_CODE, "2580", "admin");
+    const outletsBefore = (await backend.listStations()).find((s) => s.id === STATION)!.chargingSlots;
+    await backend.createDevice({ externalId: "101106", stationId: null, outlets: 10 });
+    expect((await backend.listDevices()).find((d) => d.externalId === "101106")).toMatchObject({ stationId: null, points: [] });
+    expect((await backend.listStations()).find((s) => s.id === STATION)!.chargingSlots).toBe(outletsBefore);
+
+    await backend.assignDeviceStation("101106", STATION);
+    expect((await backend.listDevices()).find((d) => d.externalId === "101106")!.points).toHaveLength(10);
+    expect((await backend.listStations()).find((s) => s.id === STATION)!.chargingSlots).toBe(outletsBefore + 10);
+    await expect(backend.assignDeviceStation("101106", "other")).rejects.toMatchObject({ code: "station_not_found" });
+  });
+
   it("lets an admin add, switch and remove a socket", async () => {
     const backend = new DemoBackend();
     await backend.register("+22890123456", DEMO_CODE, "2580", "admin");
@@ -531,6 +545,54 @@ describe("DemoBackend driver phase 2 (as in the Worker)", () => {
     expect((await backend.driverHome()).payout).toMatchObject({ status: "paid", reference: "FL-1" });
   });
 
+  it("holds the share of a courier handed over by photo until the sender confirms, and settles cash only for the pass", async () => {
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    await backend.setDriversEnabled(true);
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.joinDriverQueue("st-be", HOME);
+    await asRole(backend, "customer");
+    const job = await backend.bookCourier({ pickup: HOME, dropoff: { lat: 6.13, lng: 1.22, note: "Porte bleue" }, recipientPhone: "+22897200001", content: "Pagne", size: "S" });
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    await backend.acceptJob(job.id);
+    await backend.boardRide(job.id);
+    // No FileReader in Node: a stand-in that reads every photo as the same data URL.
+    vi.stubGlobal(
+      "FileReader",
+      class {
+        result = "data:image/jpeg;base64,AQID";
+        onload: (() => void) | null = null;
+        readAsDataURL() {
+          this.onload?.();
+        }
+      },
+    );
+    await backend.uploadDeliveryPhoto(job.id, new File([new Uint8Array([1, 2, 3])], "door.jpg", { type: "image/jpeg" }));
+    vi.unstubAllGlobals();
+    await backend.finishRide(job.id);
+    expect((await backend.driverHome()).ledger.map((e) => e.kind)).toEqual(["collected"]);
+
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    expect((await backend.adminDrivers()).jobs.find((j) => j.id === job.id)?.proofReview).toBe("pending");
+    await asRole(backend, "customer");
+    expect((await backend.myJobs()).find((j) => j.id === job.id)?.proofReview).toBe("pending");
+    await backend.confirmCourierReceipt(job.id);
+    await expect(backend.confirmCourierReceipt(job.id)).rejects.toMatchObject({ code: "job_wrong_status" });
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    const home = await backend.driverHome();
+    expect(home.ledger.map((e) => e.kind).sort()).toEqual(["collected", "earning"]);
+    const pass = (await backend.driverPass()).payload;
+
+    // The driver hands in the cash at the counter: the typed code is not enough, the pass is.
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    setActiveStation("st-be");
+    await expect(backend.settleDriver("st-be", home.driver!.code!, home.driver!.balanceFcfa)).rejects.toMatchObject({ code: "driver_pass_required" });
+    await expect(backend.settleDriver("st-be", pass.replace(/.$/, (c) => (c === "0" ? "1" : "0")), home.driver!.balanceFcfa)).rejects.toMatchObject({ code: "driver_pass_invalid" });
+    await backend.settleDriver("st-be", pass, home.driver!.balanceFcfa);
+    setActiveStation(null);
+    await backend.register("+22893000009", DEMO_CODE, "2580", "driver");
+    expect((await backend.driverHome()).driver!.balanceFcfa).toBe(0);
+  });
+
   it("adds a nearby parcel trip to a busy driver's tour", async () => {
     await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
     await backend.setDriversEnabled(true);
@@ -569,14 +631,36 @@ describe("outlet QR codes", () => {
     expect(boxFromCode("poinderecharge:id:+22890123456")).toBeNull();
   });
 
+  it("print a short link of 8 characters, the outlet as one more, which the Worker redirects", () => {
+    const code = "k7q2xp9a";
+    const url = boxQrUrl("https://app.poinderecharge.com/", code);
+    expect(url).toBe(`https://app.poinderecharge.com/q/${code}`);
+    expect(url.length).toBe(41);
+    expect(boxFromCode(url)).toEqual({ token: code, outlet: null });
+    expect(socketQrUrl("https://app.poinderecharge.com", code, 3)).toBe(`${url}3`);
+    expect(socketQrUrl("https://app.poinderecharge.com", code, 16)).toBe(`${url}g`);
+    expect(boxFromCode(`${url}c`)).toEqual({ token: code, outlet: 12 });
+    // Some scanners upper-case a link; the code is lower case.
+    expect(boxFromCode(url.toUpperCase())).toEqual({ token: code, outlet: null });
+    expect(shortLinkRedirect(`${code}3`)).toBe(`/recharge?o=${code}&s=3`);
+    expect(shortLinkRedirect(code)).toBe(`/recharge?o=${code}`);
+    expect(shortLinkRedirect(`${code}h`)).toBeNull();
+    expect(shortLinkRedirect("short")).toBeNull();
+    expect(newBoxCode()).toMatch(/^[0-9a-z]{8}$/);
+    expect(validBoxToken(newBoxCode())).toBe(true);
+  });
+
   it("lets the customer pick a free outlet of the scanned box", async () => {
     const backend = new DemoBackend();
     await backend.register("+22890999999", DEMO_CODE, "2580", "admin");
     const device = (await backend.listDevices()).find((d) => d.externalId === "DEMO-UL01")!;
     for (const p of device.points) await backend.setQrStart(p.id, true);
-    const token = device.qrToken!;
+    const token = device.qrCode!;
+    expect(token).toMatch(/^[0-9a-z]{8}$/);
     const info = await backend.chargeOutlet(token);
     expect(info.outlets.map((o) => o.outlet)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    // Stickers printed with the long token still open the box.
+    expect((await backend.chargeOutlet(device.qrToken!)).outlets).toHaveLength(8);
     await backend.register("+22890123456", DEMO_CODE, "2580", "customer");
     const first = info.outlets.find((o) => o.state === "free")!;
     await backend.startOutletCharge(token, first.pointId, "2580");
@@ -588,6 +672,8 @@ describe("outlet QR codes", () => {
     const renewed = await backend.renewBoxQr("DEMO-UL01");
     expect(renewed).not.toBe(token);
     await expect(backend.chargeOutlet(token)).rejects.toBeDefined();
+    await expect(backend.chargeOutlet(device.qrToken!)).rejects.toBeDefined();
+    expect((await backend.chargeOutlet(renewed)).outlets).toHaveLength(8);
   });
 });
 
@@ -673,5 +759,19 @@ describe("DemoBackend station cash (as worker/station-cash.ts)", () => {
     // A shop station: swaps are ours; commission kept back on what is ours (the top-up is not a sale).
     await backend.saveStationCashSettings(PARTNER_STATION, { swapOwner: "poinderecharge", commissionPct: 10, commissionMode: "deduct" });
     expect((await backend.ownerCash(PARTNER_STATION))[0]).toMatchObject({ type: "shop", commissionXof: 0, dueXof: 2000 });
+  });
+
+  it("closes the Green Credit a staff member loaded at an own station (0051)", async () => {
+    const backend = new DemoBackend();
+    await backend.register("+22890000001", DEMO_CODE, "2580", "admin");
+    const me = (await backend.getProfile())!.id;
+    const memory = (backend as unknown as { memory: { wallet?: unknown } }).memory;
+    const at = new Date().toISOString();
+    memory.wallet = { enabled: true, balances: {}, frozen: [], transactions: [{ id: "t1", type: "topup", amountXof: 800, createdAt: at, stationId: STATION, staffId: me }] };
+    expect(await backend.myStationCash(STATION)).toMatchObject({ type: "own", staffId: me, dueXof: 800, lines: { creditXof: 800 } });
+    expect((await backend.ownerCash(STATION)).map((s) => s.staffId)).toEqual([me]);
+    const h = await backend.closeCashDay({ stationId: STATION, method: "cash", reference: "Caisse", amountXof: 800, expectedDueXof: 800 });
+    expect(h).toMatchObject({ staffId: me, dueXof: 800 });
+    expect(await backend.myStationCash(STATION)).toMatchObject({ dueXof: 0, pendingXof: 800 });
   });
 });

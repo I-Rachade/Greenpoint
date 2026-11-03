@@ -40,6 +40,7 @@ async function setup() {
       ('st', '${OWN}', 'Bè', 6.1319, 1.2228, 'both', 10, '00:00-24:00', '${T}'), ('st2', '${OWN}', 'Lomé', 6.17, 1.21, 'both', 10, '00:00-24:00', '${T}');
     insert into station_status (station_id, is_open, free_slots, full_batteries, updated_at) values ('st', 1, 2, 3, '${T}');
     insert into station_staff (station_id, user_id) values ('st', 'afi');
+    update stations set phone = '+22822000001' where id = 'st';
     insert into parcel_depots (station_id, is_active, note, lockers, updated_at) values ('st', 1, '', 0, '${T}'), ('st2', 1, '', 0, '${T}');
     insert into app_settings (key, value, updated_at) values ('drivers_enabled', '1', '${T}');
     insert into fleet_vehicles (id, type, plate, created_at) values ('v1', 'moto', 'TG 1', '${T}'), ('v2', 'moto', 'TG 2', '${T}'), ('v3', 'moto', 'TG 3', '${T}');

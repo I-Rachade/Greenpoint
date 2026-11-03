@@ -1,7 +1,7 @@
 // Plan phase 7: collection runs with a scan per parcel and the driver recorded, R14
 // (parcels only for customers), and the Atlas findings on bookings in this area.
 import { describe, expect, it } from "vitest";
-import type { Profile } from "../src/lib/types";
+import type { Profile } from "../shared/types";
 import { bookDelivery, bookPickup, bookCourier } from "./drivers";
 import type { Env } from "./env";
 import { cancelRun, departRun, receiveParcel, removeRunParcel, scanRunParcel, startRun, stationRuns } from "./parcel-runs";

@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useState, type ComponentType, type SVGProps } from "react";
-import { freshPosition, type DeliveryJob, type DriverPosition, type JobStatus } from "@/lib/drivers";
+import { freshPosition, type DeliveryJob, type DriverPosition, type JobStatus } from "@shared/drivers";
 import { useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { downloadText, toCsv } from "@/lib/csv";
@@ -20,7 +20,7 @@ import {
   type MerchantStatsQuery,
   type MerchantView,
   type StatsGroup,
-} from "@/lib/merchants";
+} from "@shared/merchants";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { JobStatusPill, useFcfa, useJobRoute } from "../drivers/shared";
@@ -33,7 +33,7 @@ import { BookedByLine, ShopReturn } from "./merchant-book";
 import { Block, field, JOB_STATUSES, useAction, useClock, useDuration, useLongDate } from "./shared";
 import { JobDetails } from "../drivers/customer-jobs";
 import type { TrackPoint } from "../drivers/track-map";
-import type { StationView } from "@/lib/types";
+import type { StationView } from "@shared/types";
 
 const TrackMap = dynamic(() => import("../drivers/track-map").then((m) => m.TrackMap), { ssr: false });
 

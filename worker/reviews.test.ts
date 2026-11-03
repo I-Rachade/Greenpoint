@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { StationInput, StationView } from "../src/lib/types";
-import { placeholderPhoto, stationPhotos, type StationReview } from "../src/lib/station-extras";
+import type { StationInput, StationView } from "../shared/types";
+import { placeholderPhoto, stationPhotos, type StationReview } from "../shared/station-extras";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { sha256 } from "./http";

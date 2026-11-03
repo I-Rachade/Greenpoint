@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ComponentType } from "react";
-import { BOOKABLE_VEHICLE_TYPES, DEFAULT_DRIVER_SETTINGS, type BookableVehicleType } from "@/lib/drivers";
+import { BOOKABLE_VEHICLE_TYPES, DEFAULT_DRIVER_SETTINGS, type BookableVehicleType } from "@shared/drivers";
 import { format } from "@/lib/i18n/format";
 import { useLiveQuery } from "@/lib/hooks";
 import { useApp } from "../app-provider";

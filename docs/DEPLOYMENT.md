@@ -18,6 +18,7 @@ Unter **Workers & Pages > pointderecharge-app > Settings > Build**:
 - **Variables and secrets** (Build): `NODE_VERSION` = `22`. Die früheren `NEXT_PUBLIC_SUPABASE_…`-Werte werden nicht mehr gebraucht und können gelöscht werden.
 - Jeder Push auf den Production branch veröffentlicht automatisch.
 - Domain: `wrangler.jsonc` legt `app.poinderecharge.com` beim Deploy als Custom domain an.
+- Das Backoffice läuft zusätzlich als eigener Worker **`pointderecharge-admin`** (`wrangler.admin.jsonc`, Deploy command `npx wrangler deploy -c wrangler.admin.jsonc`) unter `admin.poinderecharge.com` hinter Cloudflare Access, siehe [BACKOFFICE.md](BACKOFFICE.md#eigene-adresse-adminpoinderecharge-com-cloudflare-access).
 - Der Worker heißt weiter `pointderecharge-app`, obwohl die App jetzt poinderecharge heißt; ein Umbenennen würde einen neuen Worker erfordern. Der Worker `greenpoint` gehört der Landingpage und bleibt unverändert.
 
 ## 3. Einstellungen des Workers (Laufzeit)
@@ -28,15 +29,19 @@ Unter **Workers & Pages > pointderecharge-app > Settings > Variables and secrets
 |---|---|---|
 | `DIDIT_API_KEY` | Secret | API-Schlüssel aus der Didit Business Console (verschickt die SMS-Codes für Registrierung, neue PIN und Kontolöschung) |
 | `DIDIT_CHANNEL` | Text, optional | `sms` (Standard) oder `whatsapp`; ist der Kanal für eine Nummer nicht verfügbar, schickt Didit eine SMS |
-| `ADMIN_PHONES` | Text | Nummern, die bei der **Registrierung** Admin werden, z. B. `+22890123456` (mehrere mit Komma) |
-| `ADMIN_EMAILS` | Text, optional | E-Mail-Adressen, die bei der **Registrierung** Admin werden, z. B. `chef@poinderecharge.com` (mehrere mit Komma) |
 | `DEVICE_WEBHOOK_SECRET` | Secret, optional | Schlüssel der vernetzten Steckdosen, siehe [steckdosen-lora.md](steckdosen-lora.md) |
 | `XINGKE_API_HOST`, `XINGKE_API_TOKEN`, `XINGKE_CALLBACK_TOKEN` | Text, Secret, Secret, optional | Xingke-Cloud-API für die Steckdosen, siehe [steckdosen-lora.md](steckdosen-lora.md#xingke-cloud-api) |
+| `SHARE_TRACKER_PROVIDER`, `TUTRACK_ACCESS_KEY`, `TUTRACK_ACCESS_SECRET` | Text, Secret, Secret, optional | GPS-Tracker der Share-Fahrzeuge (Tutrack); ohne sie laufen die Tracker als Simulation, siehe [SHARE.md](SHARE.md) |
+| `TUTRACK_ENT_ID`, `TUTRACK_MQTT_USER`, `TUTRACK_MQTT_PASSWORD` | Text, Text, Secret, optional | MQTT-Push von Tutrack (Positionen, Alarme), siehe [SHARE.md](SHARE.md) |
 | `TEST_OTP` | Text, optional | Testnummern oder -adressen mit festem Code ohne SMS/E-Mail, z. B. `+22890000001=123456,test@poinderecharge.com=123456`. In Produktion leer lassen oder nur für eigene Kontakte. |
 | `OTP_HOURLY_LIMIT` | Text, optional | höchstens so viele SMS-Codes pro Stunde insgesamt (Standard 30) |
 | `PAYMENT_CALLBACK_SECRET` | Secret | langer Zufallswert für die Rückruf-Adresse des Zahlungsanbieters (siehe [ZAHLUNGEN.md](ZAHLUNGEN.md)) |
 | `PAYMENTS_PROVIDER`, `PAYGATE_AUTH_TOKEN` | Text, Secret | erst setzen, wenn das PayGate-Konto freigeschaltet ist; ohne beide läuft die Bezahlung als Simulation |
 | `EMAIL_HOURLY_LIMIT` | Text, optional | höchstens so viele Code-E-Mails pro Stunde insgesamt (Standard 100) |
+| `TURNSTILE_SITE_KEY` | Text, optional | Site-Key von Cloudflare Turnstile; zusammen mit `TURNSTILE_SECRET` verlangt das Login-Formular vor jedem Code die Roboter-Prüfung. Im Turnstile-Widget die Hostnamen der Website und `localhost` (Android- und iOS-App) eintragen. |
+| `TURNSTILE_SECRET` | Secret, optional | Secret-Key von Cloudflare Turnstile. Ohne beide Werte gibt es keine Prüfung; das Limit pro IP (10 Codes pro Stunde, 60 PIN-Logins in 15 Minuten) gilt immer. Mit beiden verlangt auch der PIN-Login nach einigen Fehlversuchen die Prüfung, siehe [SICHERHEIT.md](SICHERHEIT.md). |
+| `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` | Text, optional | Cloudflare Access des Backoffice (`https://<team>.cloudflareaccess.com` und AUD-Tag der Access-Anwendung); auch beim Worker `pointderecharge-admin` setzen. Siehe [BACKOFFICE.md](BACKOFFICE.md#eigene-adresse-adminpoinderecharge-com-cloudflare-access) |
+| `ADMIN_ACCESS_REQUIRED` | Text, optional | `1`: Admin-Konten melden sich nur noch über `admin.poinderecharge.com` mit Access an. Erst setzen, wenn die Access-Anmeldung dort funktioniert. |
 | `FCM_SERVICE_ACCOUNT` | Secret, optional | Push-Benachrichtigungen (Fahrer phase 2): der ganze JSON-Schlüssel eines Firebase-Dienstkontos, siehe Abschnitt 7a. Ohne ihn wird kein Push verschickt, E-Mails gehen weiter. |
 
 Didit: Konto auf https://business.didit.me anlegen, Guthaben aufladen (Telefon-Verifizierung ist erst nach der ersten Aufladung aktiv), unter der Anwendung den API-Schlüssel kopieren. Kosten: 0,04 $ pro verschickten Code plus Gebühr des Netzes je nach Land und Kanal (https://docs.didit.me/getting-started/phone-verification-pricing); die Prüfung des Codes ist kostenlos. Die App nimmt nur +228-Nummern an, damit keine teuren Codes ins Ausland gehen. Didit lehnt Wegwerf- und Internet-Nummern bei der Registrierung ab. SMS kosten nur bei Registrierung und vergessener PIN; der tägliche Login mit PIN ist kostenlos.
@@ -53,7 +58,7 @@ Ohne diese Schritte schlägt nur der E-Mail-Versand fehl (Meldung „Une erreur 
 
 ## 4. Rollen vergeben
 
-- Admin: Nummer in `ADMIN_PHONES` (oder Adresse in `ADMIN_EMAILS`) eintragen, bevor sie sich registriert. Wer schon angemeldet war: in der Cloudflare-Konsole (**D1 > poinderecharge-db > Console**) `update users set role = 'admin' where phone = '+228…';` bzw. `where email = '…';`.
+- Admin: Jedes neue Konto ist zuerst Kunde; Admin wird man nur in der Datenbank. Die Person registriert sich normal, dann in der Cloudflare-Konsole (**D1 > poinderecharge-db > Console**) `update users set role = 'admin' where phone = '+228…';` bzw. `where email = '…';`. Mit `ADMIN_ACCESS_REQUIRED=1` braucht sie außerdem Zugang zu Cloudflare Access (siehe [BACKOFFICE.md](BACKOFFICE.md#eigene-adresse-adminpoinderecharge-com-cloudflare-access)). Früher machten `ADMIN_PHONES`/`ADMIN_EMAILS` Nummern bei der Registrierung zum Admin; das gibt es nicht mehr, die Variablen können im Dashboard gelöscht werden.
 - Danach vergibt der Admin alle Rollen im Backoffice unter **Utilisateurs**. Personal entsteht, indem man jemanden einer Station zuordnet.
 
 ## 5. Datenbank-Änderungen
@@ -64,7 +69,7 @@ Neue Datei in `worker/migrations/` anlegen (z. B. `0002_….sql`), nie eine scho
 npm run db:migrate
 ```
 
-(braucht ein Cloudflare-Login: `npx wrangler login`). Die Cloudflare-Konsole unter D1 zeigt die Tabellen und erlaubt SQL.
+(braucht ein Cloudflare-Login: `npx wrangler login`). Ohne eigenen Rechner geht es über GitHub: der Workflow **D1 migrations** (`.github/workflows/d1-migrate.yml`) läuft, sobald neue Migrationen auf `main` landen, oder von Hand unter Actions → D1 migrations → Run workflow. Er braucht die Repository-Secrets `CLOUDFLARE_API_TOKEN` (Recht: D1 bearbeiten) und `CLOUDFLARE_ACCOUNT_ID`. Die Cloudflare-Konsole unter D1 zeigt die Tabellen und erlaubt SQL.
 
 ## 5a. Täglicher Cron (Paket-Depot)
 
@@ -88,14 +93,14 @@ Der zweite Cron-Trigger `* * * * *` schickt fällige Webhooks an Partner-Apps un
 
 ## 6. Lokal entwickeln
 
-- Nur Oberfläche, mit Beispieldaten im Browser: `npm run dev`.
+- Nur Oberfläche, mit Beispieldaten im Browser: `npm run dev`. Das Backoffice (`/admin`) gibt es nur mit `npm run dev:admin` (bzw. `npm run build:admin`); alle anderen Builds, auch die Handy-Apps, lassen es weg.
 - Mit echter API und lokaler Datenbank:
   1. `npx wrangler d1 migrations apply DB --local`
   2. Datei `.dev.vars` anlegen (wird nicht eingecheckt):
      ```
      TEST_OTP=+22890000001=123456,+22890000002=123456,test@example.com=123456
-     ADMIN_PHONES=+22890000001
      ```
+     Admin wird ein Konto nach der Registrierung mit `npx wrangler d1 execute DB --local --command "update users set role = 'admin' where phone = '+22890000001'"`.
   3. `NEXT_PUBLIC_BACKEND=cloudflare npm run dev:worker`, dann http://localhost:8787 öffnen.
 
 ## 7. Mobile App
@@ -117,6 +122,8 @@ Eingerichtet: Firebase-Projekt `poinderecharge-app` mit der Android-App `com.poi
 1. In der Firebase-Konsole ein Projekt anlegen und eine Android-App mit der Paket-ID aus `capacitor.config.ts` hinzufügen. `google-services.json` herunterladen und nach `android/app/google-services.json` legen.
 2. Unter **Projekteinstellungen > Dienstkonten** einen neuen privaten Schlüssel erzeugen und den ganzen JSON-Inhalt als Worker-Secret `FCM_SERVICE_ACCOUNT` speichern.
 3. Die App mit `NEXT_PUBLIC_PUSH=1` bauen (zusätzlich zu den Werten oben). Ohne diesen Wert fragt die App nicht nach Push, denn ohne `google-services.json` würde Android beim Registrieren abstürzen.
+
+**Web-App im Browser:** braucht keine Einrichtung und kein Firebase. Wer angemeldet ist, schaltet unter **Paramètres > Notifications sur cet appareil** die Hinweise für diesen Browser ein (Chrome, Edge, Firefox, Safari auf dem Mac; auf dem iPhone nur, wenn die Seite zum Home-Bildschirm hinzugefügt wurde). Der Worker schickt sie über Standard-Web-Push (`worker/web-push.ts`); das Schlüsselpaar dafür legt er beim ersten Aufruf selbst an und speichert es in `app_settings` (`web_push_vapid`). Angezeigt werden sie von `public/push-sw.js`.
 
 ## Rechtliche Seiten
 

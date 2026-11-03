@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { RepairCenter } from "../src/lib/repair-centers";
+import type { RepairCenter } from "../shared/repair-centers";
 import { handleApi } from "./api";
 import type { Env } from "./env";
 import { sha256 } from "./http";

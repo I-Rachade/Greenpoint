@@ -2,8 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { useState, type FormEvent } from "react";
-import { inServiceArea } from "@/lib/drivers";
-import type { LatLng } from "@/lib/geo";
+import { inServiceArea } from "@shared/drivers";
+import type { LatLng } from "@shared/geo";
 import { format } from "@/lib/i18n/format";
 import {
   ADDRESS_LABEL_MAX,
@@ -14,7 +14,7 @@ import {
   type MerchantAddressInput,
   type MerchantInfo,
   type MerchantShopInput,
-} from "@/lib/merchants";
+} from "@shared/merchants";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { Notice } from "../drivers/shared";

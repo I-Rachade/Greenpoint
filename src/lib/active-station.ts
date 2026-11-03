@@ -1,5 +1,5 @@
 // The station a person works at now (W3, W4): kept per device, sent with every
-// station action (header ACTIVE_STATION_HEADER, see src/lib/station-work.ts). Owners
+// station action (header ACTIVE_STATION_HEADER, see shared/station-work.ts). Owners
 // and admins choose it before any station action; staff with one station get theirs.
 
 const KEY = "poinderecharge-active-station";

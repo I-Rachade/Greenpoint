@@ -1,5 +1,5 @@
 // Battery register (migration 0041_batteries.sql): every swap battery by its number, per
-// brand, with its own history. Shared rules and types in src/lib/batteries.ts.
+// brand, with its own history. Shared rules and types in shared/batteries.ts.
 // recordSwap() (worker/station-work.ts) links its batteries with resolveSwapBattery() and
 // swapBatteryStatements(); the rest is the register pages (admins, owners read-only).
 
@@ -22,10 +22,10 @@ import {
   type BatteryView,
   type RegisterBatteriesInput,
   type RegisterBatteriesResult,
-} from "../src/lib/batteries";
-import { cleanBatteryLabel, type StationRole } from "../src/lib/station-work";
-import type { Profile } from "../src/lib/types";
-import { personLabel } from "../src/lib/wallet";
+} from "../shared/batteries";
+import { cleanBatteryLabel, type StationRole } from "../shared/station-work";
+import type { Profile } from "../shared/types";
+import { personLabel } from "../shared/wallet";
 import { ApiError, nowIso, uuid } from "./http";
 import { roleAtStation, type StationActor } from "./station-work";
 
@@ -357,6 +357,20 @@ async function requireAdmin(c: Ctx): Promise<Profile> {
   const user = await c.requireUser();
   if (user.role !== "admin") throw new ApiError("forbidden", 403);
   return user;
+}
+
+/**
+ * DELETE /api/admin/batteries/:id: removes a battery from the register with its own history (admins),
+ * e.g. a number typed wrong. The swaps keep their battery numbers (swap_log has the labels, not a
+ * link), so no swap, total or swap sheet changes. Scanned again at a swap, the number comes back.
+ */
+export async function deleteBattery(c: Ctx, id: string): Promise<void> {
+  await requireAdmin(c);
+  const res = await c.db.batch([
+    c.db.prepare("delete from battery_history where battery_id = ?").bind(id),
+    c.db.prepare("delete from batteries where id = ?").bind(id),
+  ]);
+  if (!res[1].meta.changes) throw new ApiError("not_found", 404);
 }
 
 /** POST /api/admin/batteries: registers numbers for a battery type (admins); known ones stay as they are. */

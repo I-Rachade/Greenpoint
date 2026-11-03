@@ -1,18 +1,34 @@
-import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "../batteries";
-import type { BatteryType, BatteryTypeInput } from "../battery-types";
-import type { AdminCharging, ChargeOutletInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
-import type { ChargeCard, ChargeCardInput, CounterCard } from "../charge-cards";
-import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
-import type { OwnerLive, OwnerReport, ReportPeriod } from "../owner-backoffice";
-import type { EvCharger, EvChargerInput } from "../ev-chargers";
-import type { RepairCenter, RepairCenterInput } from "../repair-centers";
-import type { Features } from "../features";
-import type { Device, DeviceInput } from "../iot/devices";
-import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "../parcels";
-import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
-import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
-import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "../point-partners";
-import type { Promotion, PromotionInput } from "../promo";
+import type {
+  AdminShare,
+  ShareDocument,
+  ShareMe,
+  ShareOverview,
+  ShareRide,
+  ShareStationInput,
+  ShareTariffInput,
+  ShareTrackPoint,
+  ShareVehicleInput,
+  ShareVehicleKind,
+  ShareVehicleStatus,
+  StationShare,
+} from "@shared/share";
+import type { Incident, IncidentInput } from "@shared/incidents";
+import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "@shared/batteries";
+import type { BatteryType, BatteryTypeInput } from "@shared/battery-types";
+import type { AdminCharging, ChargeOutletInfo, ChargeSession, ChargeTariffInput, StationCharging } from "@shared/charging";
+import type { ChargeCard, ChargeCardInput, CounterCard } from "@shared/charge-cards";
+import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "@shared/admin/types";
+import type { OwnerLive, OwnerReport, ReportPeriod } from "@shared/owner-backoffice";
+import type { EvCharger, EvChargerInput } from "@shared/ev-chargers";
+import type { RepairCenter, RepairCenterInput } from "@shared/repair-centers";
+import type { Features } from "@shared/features";
+import type { Device, DeviceInput } from "@shared/iot/devices";
+import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "@shared/parcels";
+import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "@shared/partners";
+import type { AdminOperator, MyStaffInvite, OperatorInput, OwnerStationInput, OwnerView } from "@shared/operators";
+import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "@shared/point-partners";
+import type { Promotion, PromotionInput } from "@shared/promo";
+import type { SecurityOverview } from "@shared/security";
 import type {
   AdminGreenpoint,
   GreenpointFactors,
@@ -20,8 +36,8 @@ import type {
   GreenpointRedemption,
   GreenpointRewardInput,
   GreenpointView,
-} from "../greenpoint";
-import type { AdminWallet, CounterCredit, CreditCode, CreditTopupInput, CreditTopupResult, WalletAdjustInput, WalletTransaction, WalletView } from "../wallet";
+} from "@shared/greenpoint";
+import type { AdminWallet, CounterCredit, CreditCode, CreditTopupInput, CreditTopupResult, WalletAdjustInput, WalletTransaction, WalletView } from "@shared/wallet";
 import type {
   AbandonReason,
   AdminDrivers,
@@ -44,8 +60,8 @@ import type {
   PayoutNetwork,
   DriverPayout,
   AdminDriverPayout,
-} from "../drivers";
-import type { ReviewInput, StationReview } from "../station-extras";
+} from "@shared/drivers";
+import type { ReviewInput, StationReview } from "@shared/station-extras";
 import type {
   AdminFleet,
   FleetDecision,
@@ -56,7 +72,7 @@ import type {
   FleetTier,
   FleetView,
   MyFleetInvite,
-} from "../fleet";
+} from "@shared/fleet";
 import type {
   AdminMerchant,
   DriverShops,
@@ -77,8 +93,8 @@ import type {
   MerchantTier,
   MerchantView,
   MyMerchantInvite,
-} from "../merchants";
-import type { LatLng } from "../geo";
+} from "@shared/merchants";
+import type { LatLng } from "@shared/geo";
 import type {
   Operator,
   VehicleType,
@@ -88,13 +104,13 @@ import type {
   StationInput,
   StationView,
   UserRole,
-} from "../types";
-import type { StationService, StationServiceInfo } from "../station-services";
+} from "@shared/types";
+import type { StationService, StationServiceInfo } from "@shared/station-services";
 import { getActiveStation } from "../active-station";
-import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEntry, type SwapFilter, type SwapInput } from "../station-work";
-import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "../station-cash";
+import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEntry, type SwapFilter, type SwapInput } from "@shared/station-work";
+import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "@shared/station-cash";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
-import { kindFrom, type ReservationKind } from "../reservations";
+import { kindFrom, type ReservationKind } from "@shared/reservations";
 import { storedPushToken, storePushToken } from "../push";
 
 const TOKEN_KEY = "poinderecharge-session";
@@ -123,6 +139,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "image_too_large",
   "invalid_device",
   "device_exists",
+  "device_has_station",
   "device_offline",
   "device_not_charging",
   "device_command_failed",
@@ -137,6 +154,9 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "parcel_not_arrived",
   "not_a_driver",
   "phone_required",
+  "hold_limit",
+  "captcha_failed",
+  "captcha_required",
   "driver_busy",
   "driver_not_found",
   "too_far",
@@ -157,6 +177,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "contact_taken",
   "rate_limited",
   "forbidden",
+  "admin_access_required",
   "wallet_disabled",
   "wallet_frozen",
   "insufficient_balance",
@@ -214,6 +235,8 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "swap_required",
   "driver_pass_invalid",
   "driver_pass_expired",
+  "driver_pass_required",
+  "pickup_code_required",
   "role_change_blocked",
   "fleet_not_approved",
   "fleet_locked",
@@ -280,7 +303,7 @@ export class CloudflareBackend implements Backend {
     const headers: Record<string, string> = {};
     const token = this.token;
     if (token) headers.Authorization = `Bearer ${token}`;
-    // Station actions carry the station the person works at now (src/lib/station-work.ts).
+    // Station actions carry the station the person works at now (shared/station-work.ts).
     const active = typeof window === "undefined" ? null : getActiveStation();
     if (active) headers[ACTIVE_STATION_HEADER] = active;
     let payload: BodyInit | undefined;
@@ -297,11 +320,12 @@ export class CloudflareBackend implements Backend {
     } catch {
       throw new BackendError("unknown", "network");
     }
-    const data = (await res.json().catch(() => null)) as T & { error?: string };
+    const data = (await res.json().catch(() => null)) as T & { error?: string; retryAfter?: number };
     if (!res.ok) {
       const code = KNOWN_CODES.find((c) => c === data?.error) ?? "unknown";
       if (code === "not_authenticated" && token) this.dropSession();
-      throw new BackendError(code, data?.error);
+      const wait = Number(data?.retryAfter ?? res.headers.get("Retry-After")) || undefined;
+      throw new BackendError(code, data?.error, wait);
     }
     return data;
   }
@@ -354,16 +378,20 @@ export class CloudflareBackend implements Backend {
     };
   }
 
-  async sendCode(contact: string) {
-    await this.call("POST", "/api/auth/send", { contact });
+  async sendCode(contact: string, captcha?: string) {
+    await this.call("POST", "/api/auth/send", { contact, captcha });
+  }
+
+  async captchaSiteKey() {
+    return (await this.call<{ siteKey: string | null }>("GET", "/api/auth/captcha")).siteKey;
   }
 
   register(contact: string, code: string, pin: string) {
     return this.startSession("/api/auth/register", { contact, code: code.trim(), pin });
   }
 
-  signIn(contact: string, pin: string) {
-    return this.startSession("/api/auth/login", { contact, pin });
+  signIn(contact: string, pin: string, _demoRole?: UserRole, captcha?: string) {
+    return this.startSession("/api/auth/login", { contact, pin, captcha });
   }
 
   private async startSession(path: string, body: unknown) {
@@ -378,7 +406,7 @@ export class CloudflareBackend implements Backend {
     // This phone gets no more notices for the account that leaves.
     const token = storedPushToken();
     if (token) {
-      await this.call("POST", "/api/push/token/remove", { token }).catch(() => undefined);
+      await this.removePushToken(token).catch(() => undefined);
       storePushToken(null);
     }
     await this.call("POST", "/api/auth/logout").catch(() => undefined);
@@ -463,10 +491,32 @@ export class CloudflareBackend implements Backend {
     return swap;
   }
 
+  async reportIncident(stationId: string, input: IncidentInput) {
+    const incident = await this.call<Incident>("POST", `/api/stations/${encodeURIComponent(stationId)}/incidents`, input);
+    this.changed();
+    return incident;
+  }
+
+  stationIncidents(stationId: string) {
+    return this.call<Incident[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/incidents`);
+  }
+
+  async resolveIncident(stationId: string, incidentId: string, resolution: string | null) {
+    const incident = await this.call<Incident>(
+      "POST",
+      `/api/stations/${encodeURIComponent(stationId)}/incidents/${encodeURIComponent(incidentId)}/resolve`,
+      { resolution },
+    );
+    this.changed();
+    return incident;
+  }
+
   stationSwaps(stationId: string, filter: SwapFilter = {}) {
     const q = new URLSearchParams();
     if (filter.customerType) q.set("customerType", filter.customerType);
     if (filter.days) q.set("days", String(filter.days));
+    if (filter.from) q.set("from", filter.from);
+    if (filter.to) q.set("to", filter.to);
     const qs = q.toString();
     return this.call<SwapEntry[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/swaps${qs ? `?${qs}` : ""}`);
   }
@@ -481,8 +531,27 @@ export class CloudflareBackend implements Backend {
     return this.call<OwnerView>("GET", "/api/owner");
   }
 
-  async ownerAddStaff(stationId: string, contact: string) {
+  async ownerInviteStaff(stationId: string, contact: string) {
     await this.call("POST", "/api/owner/staff", { stationId, contact });
+  }
+
+  ownerRevokeStaffInvite(inviteId: string) {
+    return this.act("POST", `/api/owner/staff-invites/${encodeURIComponent(inviteId)}/revoke`);
+  }
+
+  myStaffInvites() {
+    return this.call<MyStaffInvite[]>("GET", "/api/staff-invites");
+  }
+
+  async acceptStaffInvite(inviteId: string) {
+    await this.act("POST", `/api/staff-invites/${encodeURIComponent(inviteId)}/accept`);
+    // The account is a staff account now: the menu follows the role.
+    const profile = await this.getProfile();
+    this.authListeners.forEach((fn) => fn(profile));
+  }
+
+  declineStaffInvite(inviteId: string) {
+    return this.act("POST", `/api/staff-invites/${encodeURIComponent(inviteId)}/decline`);
   }
 
   async ownerRemoveStaff(stationId: string, userId: string) {
@@ -573,6 +642,11 @@ export class CloudflareBackend implements Backend {
     this.changed();
   }
 
+  async deleteBattery(id: string) {
+    await this.call("DELETE", `/api/admin/batteries/${encodeURIComponent(id)}`);
+    this.changed();
+  }
+
   lookupBattery(stationId: string, serial: string, batteryTypeId: string | null) {
     const q = new URLSearchParams({ serial });
     if (batteryTypeId) q.set("batteryTypeId", batteryTypeId);
@@ -620,6 +694,14 @@ export class CloudflareBackend implements Backend {
     const q = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== null && value !== "") q.set(key, String(value));
     return this.call<AdminReservationPage>("GET", `/api/admin/reservations?${q}`);
+  }
+
+  adminSecurity() {
+    return this.call<SecurityOverview>("GET", "/api/admin/security");
+  }
+
+  async unlockAccount(userId: string) {
+    await this.call("POST", `/api/admin/security/unlock/${encodeURIComponent(userId)}`);
   }
 
   auditLog(filter: AuditFilter) {
@@ -677,6 +759,11 @@ export class CloudflareBackend implements Backend {
     return { ocppKey };
   }
 
+  async assignDeviceStation(externalId: string, stationId: string) {
+    await this.call("POST", `/api/admin/devices/${encodeURIComponent(externalId)}/station`, { stationId });
+    this.changed();
+  }
+
   async deleteDevice(externalId: string) {
     await this.call("DELETE", `/api/admin/devices/${encodeURIComponent(externalId)}`);
     this.changed();
@@ -696,6 +783,10 @@ export class CloudflareBackend implements Backend {
 
   ownerCash(stationId: string | null) {
     return this.call<StationCash[]>("GET", `/api/owner/cash${stationId ? `?stationId=${encodeURIComponent(stationId)}` : ""}`);
+  }
+
+  myStationCash(stationId: string) {
+    return this.call<StationCash | null>("GET", `/api/stations/${encodeURIComponent(stationId)}/cash`);
   }
 
   async closeCashDay(input: HandoverInput) {
@@ -813,8 +904,8 @@ export class CloudflareBackend implements Backend {
     return parcel;
   }
 
-  async pickUpParcel(stationId: string, codeOrQr: string) {
-    const parcel = await this.call<Parcel>("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels/pickup`, { code: codeOrQr });
+  async pickUpParcel(stationId: string, codeOrQr: string, trackingNo?: string) {
+    const parcel = await this.call<Parcel>("POST", `/api/stations/${encodeURIComponent(stationId)}/parcels/pickup`, { code: codeOrQr, trackingNo });
     this.changed();
     return parcel;
   }
@@ -889,8 +980,16 @@ export class CloudflareBackend implements Backend {
   }
 
   // No change notice: other screens of the driver do not depend on it.
-  async registerPushToken(token: string, platform: "android" | "ios") {
+  async registerPushToken(token: string, platform: "android" | "ios" | "web") {
     await this.call("POST", "/api/push/token", { token, platform });
+  }
+
+  async removePushToken(token: string) {
+    await this.call("POST", "/api/push/token/remove", { token });
+  }
+
+  webPushKey() {
+    return this.call<{ publicKey: string }>("GET", "/api/push/web-key");
   }
 
   reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }) {
@@ -976,6 +1075,10 @@ export class CloudflareBackend implements Backend {
     return this.act("POST", `/api/jobs/${encodeURIComponent(id)}/cancel`);
   }
 
+  confirmCourierReceipt(jobId: string) {
+    return this.act("POST", `/api/jobs/${encodeURIComponent(jobId)}/confirm-receipt`);
+  }
+
   stationDrivers(stationId: string) {
     return this.call<StationDrivers>("GET", `/api/stations/${encodeURIComponent(stationId)}/drivers`);
   }
@@ -1028,6 +1131,14 @@ export class CloudflareBackend implements Backend {
 
   assignJob(jobId: string, driverId: string) {
     return this.act("POST", `/api/admin/jobs/${encodeURIComponent(jobId)}/assign`, { driverId });
+  }
+
+  approveCourierProof(jobId: string) {
+    return this.act("POST", `/api/admin/jobs/${encodeURIComponent(jobId)}/approve-proof`);
+  }
+
+  rejectCourierProof(jobId: string, reason: string) {
+    return this.act("POST", `/api/admin/jobs/${encodeURIComponent(jobId)}/reject-proof`, { reason });
   }
 
   setDriverManager(driverId: string, contact: string | null) {
@@ -1284,7 +1395,7 @@ export class CloudflareBackend implements Backend {
 
   async features(): Promise<Features> {
     // A server from before the Lite switch only names parcels and drivers; the rest was on.
-    return { wallet: true, evChargers: true, lite: false, ...(await this.call<Partial<Features>>("GET", "/api/features")) } as Features;
+    return { wallet: true, evChargers: true, share: false, lite: false, ...(await this.call<Partial<Features>>("GET", "/api/features")) } as Features;
   }
 
   async setParcelsEnabled(enabled: boolean) {
@@ -1382,6 +1493,11 @@ export class CloudflareBackend implements Backend {
     this.changed();
   }
 
+  async setChargeHold(chargeHoldXof: number) {
+    await this.call("POST", "/api/admin/wallet/charge-hold", { chargeHoldXof });
+    this.changed();
+  }
+
   async setStationGreenCredit(stationId: string, enabled: boolean) {
     await this.call("POST", `/api/admin/stations/${encodeURIComponent(stationId)}/green-credit`, { enabled });
     this.changed();
@@ -1475,8 +1591,8 @@ export class CloudflareBackend implements Backend {
   }
 
   async renewBoxQr(externalId: string) {
-    const { qrToken } = await this.call<{ qrToken: string }>("POST", `/api/admin/devices/${encodeURIComponent(externalId)}/qr`, {});
-    return qrToken;
+    const { qrCode } = await this.call<{ qrCode: string }>("POST", `/api/admin/devices/${encodeURIComponent(externalId)}/qr`, {});
+    return qrCode;
   }
 
   async stopSelfCharge(id: string) {
@@ -1532,4 +1648,132 @@ export class CloudflareBackend implements Backend {
     return this.call<CounterCard>("GET", `/api/stations/${encodeURIComponent(stationId)}/charge-cards/${encodeURIComponent(idTag)}`);
   }
 
+  // Share --------------------------------------------------------------------------
+
+  shareOverview() {
+    return this.call<ShareOverview>("GET", "/api/share");
+  }
+
+  shareMe() {
+    return this.call<ShareMe>("GET", "/api/share/me");
+  }
+
+  myShareRides() {
+    return this.call<ShareRide[]>("GET", "/api/share/rides/mine");
+  }
+
+  uploadShareDocument(kind: ShareDocument, image: Blob) {
+    return this.act("POST", `/api/share/documents/${kind}`, image);
+  }
+
+  private async shareRide(path: string, body?: unknown) {
+    const ride = await this.call<ShareRide>("POST", `/api/share/rides${path}`, body ?? {});
+    this.changed();
+    return ride;
+  }
+
+  reserveShare(input: { vehicleId?: string; qrToken?: string; toStationId: string | null; helmet: boolean; start?: boolean }) {
+    return this.shareRide("", input);
+  }
+
+  shareRideAction(id: string, action: "start" | "cancel" | "pause" | "resume") {
+    return this.shareRide(`/${encodeURIComponent(id)}/${action}`);
+  }
+
+  endShareRide(id: string, position: LatLng | null) {
+    return this.shareRide(`/${encodeURIComponent(id)}/end`, position ?? {});
+  }
+
+  async reportSharePosition(id: string, position: LatLng) {
+    await this.call("POST", `/api/share/rides/${encodeURIComponent(id)}/position`, position);
+  }
+
+  reportShareProblem(id: string, note: string) {
+    return this.shareRide(`/${encodeURIComponent(id)}/problem`, { note });
+  }
+
+  payShareWallet(id: string, input: { pin: string; idempotencyKey: string }) {
+    return this.shareRide(`/${encodeURIComponent(id)}/pay/wallet`, input);
+  }
+
+  async payShareMobile(id: string, input: { network: "flooz" | "tmoney"; phone: string }) {
+    const p = await this.call<{ id: string }>("POST", `/api/share/rides/${encodeURIComponent(id)}/pay/mobile`, input);
+    this.changed();
+    return p.id;
+  }
+
+  stationShare(stationId: string) {
+    return this.call<StationShare>("GET", `/api/stations/${encodeURIComponent(stationId)}/share`);
+  }
+
+  setStationShareVehicle(stationId: string, vehicleId: string, status: ShareVehicleStatus) {
+    return this.act("POST", `/api/stations/${encodeURIComponent(stationId)}/share/vehicles/${encodeURIComponent(vehicleId)}/status`, { status });
+  }
+
+  async payShareCash(stationId: string, rideId: string) {
+    const ride = await this.call<ShareRide>("POST", `/api/stations/${encodeURIComponent(stationId)}/share/rides/${encodeURIComponent(rideId)}/cash`, {});
+    this.changed();
+    return ride;
+  }
+
+  adminShare() {
+    return this.call<AdminShare>("GET", "/api/admin/share");
+  }
+
+  setShareEnabled(enabled: boolean) {
+    return this.act("POST", "/api/admin/features/share", { enabled });
+  }
+
+  saveShareVehicle(id: string | null, input: ShareVehicleInput) {
+    return this.act("POST", "/api/admin/share/vehicles", { id, input });
+  }
+
+  deleteShareVehicle(id: string) {
+    return this.act("DELETE", `/api/admin/share/vehicles/${encodeURIComponent(id)}`);
+  }
+
+  setShareVehicleState(id: string, status: ShareVehicleStatus, stationId: string | null) {
+    return this.act("POST", `/api/admin/share/vehicles/${encodeURIComponent(id)}/state`, { status, stationId });
+  }
+
+  shareVehicleCommand(id: string, action: "unlock" | "lock" | "locate") {
+    return this.act("POST", `/api/admin/share/vehicles/${encodeURIComponent(id)}/command`, { action });
+  }
+
+  saveShareStation(stationId: string, input: ShareStationInput) {
+    return this.act("POST", `/api/admin/share/stations/${encodeURIComponent(stationId)}`, input);
+  }
+
+  saveShareTariff(kind: ShareVehicleKind, input: ShareTariffInput) {
+    return this.act("POST", `/api/admin/share/tariffs/${kind}`, input);
+  }
+
+  decideShareVerification(userId: string, approve: boolean, reason: string) {
+    return this.act("POST", `/api/admin/share/verifications/${encodeURIComponent(userId)}`, { approve, reason });
+  }
+
+  adminEndShareRide(id: string, stationId: string | null, wrongDrop: boolean) {
+    return this.act("POST", `/api/admin/share/rides/${encodeURIComponent(id)}/end`, { stationId, wrongDrop });
+  }
+
+  waiveShareRide(id: string) {
+    return this.act("POST", `/api/admin/share/rides/${encodeURIComponent(id)}/waive`);
+  }
+
+  shareRideTrack(id: string) {
+    return this.call<ShareTrackPoint[]>("GET", `/api/admin/share/rides/${encodeURIComponent(id)}/track`);
+  }
+
+  resolveShareIncident(id: string, resolution: string) {
+    return this.act("POST", `/api/admin/share/incidents/${encodeURIComponent(id)}/resolve`, { resolution });
+  }
+
+  /** Private photos need the session, like the drivers' (driverFileUrl). */
+  async shareFileUrl(key: string) {
+    const headers: Record<string, string> = {};
+    if (this.token) headers.Authorization = `Bearer ${this.token}`;
+    const res = await fetch(`${this.apiBase}/api/admin/share-files/${key}`, { headers }).catch(() => null);
+    if (!res?.ok) throw new BackendError("forbidden");
+    return URL.createObjectURL(await res.blob());
+  }
 }

@@ -1,6 +1,6 @@
 // Partner API: other apps book parcel transports with an API key and receive
 // every status change by webhook (signed) or by polling. Shared types and rules:
-// src/lib/partners.ts. Docs: docs/PARTNER-API.md, public/partner-api/openapi.json
+// shared/partners.ts. Docs: docs/PARTNER-API.md, public/partner-api/openapi.json
 // and the page /developpeurs.
 //
 // A booking waits for drop-off at station A. The staff there take it in
@@ -8,8 +8,8 @@
 // tracking number; from then on it follows the parcel depot (worker/parcels.ts).
 // Every row written to parcel_events for a partner parcel is copied into
 // partner_events and sent to the partner, so new statuses (drivers) need no change here.
-import { normalizeTogoPhone } from "../src/lib/phone";
-import { newTrackingNo, PARCEL_SIZES, type Parcel, type ParcelMeasures, type ParcelSize } from "../src/lib/parcels";
+import { normalizeTogoPhone } from "../shared/phone";
+import { newTrackingNo, PARCEL_SIZES, type Parcel, type ParcelMeasures, type ParcelSize } from "../shared/parcels";
 import {
   BOOKING_DAYS,
   keyPrefix,
@@ -27,9 +27,10 @@ import {
   type PartnerInput,
   type PartnerKey,
   type StationBooking,
-} from "../src/lib/partners";
+} from "../shared/partners";
 import type { Env } from "./env";
 import { ApiError, json, nowIso, sha256, uuid } from "./http";
+import { PARTNER_RETRY_SECONDS, partnerAllowed } from "./security";
 import { unlockedSql } from "./services";
 import { DB_CUSTOMER } from "./roles";
 import { cleanMeasures, cleanName, requireDepot, requireStaff, requireStationActor, sizes, storeParcel, tierFor, type ParcelCtx } from "./parcels";
@@ -272,6 +273,8 @@ async function copyParcelEvents(env: Env) {
 /** Posts one message to the partner's webhook. */
 async function post(url: string, secret: string, type: string, id: string, body: string): Promise<{ status: number | null; error: string | null }> {
   const timestamp = Math.floor(Date.now() / 1000);
+  // Checked again before each send: an address saved before the rules got stricter is not called.
+  if (!validWebhookUrl(url)) return { status: null, error: "invalid_webhook_url" };
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -376,6 +379,7 @@ const MESSAGES: Record<string, string> = {
   missing_api_key: "Send your API key as 'Authorization: Bearer pdr_live_…'.",
   invalid_api_key: "This API key does not exist or was revoked.",
   partner_inactive: "This partner account is switched off. Contact poinderecharge.",
+  rate_limited: "Too many requests: at most 60 a minute per partner. Wait for the number of seconds in Retry-After.",
   invalid_request: "A field is missing or invalid, see 'field'.",
   invalid_json: "The body is not valid JSON.",
   phone_not_allowed: "Only Togolese phone numbers (+228) are accepted.",
@@ -710,6 +714,10 @@ export async function handlePartnerApi(request: Request, env: Env): Promise<Resp
   const method = request.method;
   try {
     const partner = await authenticate(request, env);
+    // 60 requests a minute per partner (worker/security.ts), documented on /developpeurs.
+    if (!(await partnerAllowed(env, request, partner.id))) {
+      return partnerJson({ error: "rate_limited", message: MESSAGES.rate_limited }, 429, { "Retry-After": String(PARTNER_RETRY_SECONDS) });
+    }
     let m: RegExpExecArray | null;
     if (path === "/stations" && method === "GET") return partnerJson(await stationsForPartners(env.DB));
     if (path === "/prices" && method === "GET") {

@@ -1,9 +1,9 @@
-import { isHolding } from "./availability";
+import { isHolding } from "@shared/availability";
 import type { Dictionary } from "./i18n/fr";
 import { format } from "./i18n/format";
-import type { Parcel } from "./parcels";
-import type { Promotion } from "./promo";
-import type { Reservation } from "./types";
+import type { Parcel } from "@shared/parcels";
+import type { Promotion } from "@shared/promo";
+import type { Reservation } from "@shared/types";
 
 export type AlertTone = "success" | "info" | "warning" | "muted";
 

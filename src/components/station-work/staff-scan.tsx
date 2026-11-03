@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { contactFromCode, isCustomerCode } from "@/lib/charging";
+import { contactFromCode, isCustomerCode } from "@shared/charging";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { parsePickupInput } from "@/lib/parcels";
-import { parseReservationQr, reservationKind, staffFlowHref } from "@/lib/reservations";
-import { isHolding } from "@/lib/availability";
-import type { StationView } from "@/lib/types";
+import { parsePickupInput } from "@shared/parcels";
+import { parseReservationQr, reservationKind, staffFlowHref } from "@shared/reservations";
+import { isHolding } from "@shared/availability";
+import type { StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { BoxIcon, QrIcon, TicketIcon, UserIcon } from "../icons";
 import { useI18n } from "../i18n-provider";

@@ -1,4 +1,8 @@
-import { countHolding, isHolding, offersCharging, offersSwap, withinOpeningHours } from "../availability";
+import { DEMO_CODE, HOSTED_DEMO } from "./demo-flags";
+import { checkIncident, cleanIncidentText, type Incident, type IncidentInput } from "@shared/incidents";
+import type { SecurityOverview } from "@shared/security";
+import type { AdminShare, ShareMe, ShareOverview, ShareRide, ShareTrackPoint, StationShare } from "@shared/share";
+import { countHolding, isHolding, offersCharging, offersSwap, withinOpeningHours } from "@shared/availability";
 import {
   MAX_UNUSED_RESERVATIONS_PER_DAY,
   RESERVATION_MINUTES,
@@ -14,7 +18,7 @@ import {
   type StationView,
   type UserRole,
   type VehicleType,
-} from "../types";
+} from "@shared/types";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
 import { applyDemoSwapBattery, resolveDemoBattery, seedDemoBatteries, type DemoBattery, type DemoBatteryEvent, type DemoSwapBattery } from "./demo-batteries";
 import {
@@ -33,7 +37,7 @@ import {
   type BatteryView,
   type RegisterBatteriesInput,
   type RegisterBatteriesResult,
-} from "../batteries";
+} from "@shared/batteries";
 import {
   freeOfType,
   heldTargets,
@@ -43,7 +47,7 @@ import {
   reservationKind,
   typeOfKind,
   type ReservationKind,
-} from "../reservations";
+} from "@shared/reservations";
 import { getActiveStation } from "../active-station";
 import {
   applyBatteryEvent,
@@ -51,6 +55,8 @@ import {
   cleanBatteryLabel,
   cleanReason,
   dayStartLome,
+  SWAP_EXPORT_LIMIT,
+  swapDayRange,
   isSwapCustomerType,
   takesBatteryIn,
   validAmount,
@@ -67,10 +73,11 @@ import {
   type SwapFilter,
   type SwapInput,
   type SwapPayment,
-} from "../station-work";
+} from "@shared/station-work";
 import {
   chargePrice,
   contactFromCode,
+  newBoxCode,
   DEFAULT_CHARGE_TARIFF,
   DEFAULT_EV_TARIFF,
   validTariff,
@@ -81,8 +88,8 @@ import {
   type ChargeTariff,
   type ChargeTariffInput,
   type StationCharging,
-} from "../charging";
-import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, type ChargeCard, type ChargeCardInput, type CounterCard } from "../charge-cards";
+} from "@shared/charging";
+import { cardTagVariants, cleanCardTag, sortCards, validAdjustment, type ChargeCard, type ChargeCardInput, type CounterCard } from "@shared/charge-cards";
 import {
   DEMO_CHARGING_POINTS,
   DEMO_OPERATORS,
@@ -97,8 +104,8 @@ import {
   demoReviews,
   type DemoReview,
 } from "./demo-data";
-import { cleanAmenities, cleanMainActivity, cleanPhotos, cleanReview, isUnattended, ratingOf, shortName, type ReviewInput, type StationReview } from "../station-extras";
-import { depotPoints, hasAnyPoint, kindFor } from "../station-points";
+import { cleanAmenities, cleanMainActivity, cleanPhotos, cleanReview, isUnattended, ratingOf, shortName, type ReviewInput, type StationReview } from "@shared/station-extras";
+import { depotPoints, hasAnyPoint, kindFor } from "@shared/station-points";
 import {
   cleanSwapOwner,
   COMMISSION_MODES,
@@ -116,11 +123,12 @@ import {
   type StationCash,
   type StationCashSettings,
   type SwapOwner,
-} from "../station-cash";
-import { validBatteryType, type BatteryType, type BatteryTypeInput } from "../battery-types";
-import { DEMO_STAFF, demoHistory, demoReassignments, demoUsers } from "../admin/demo-seed";
-import { cleanOpeningHours } from "../opening-hours";
-import { emptyDays, periodStart, reportPeriod, type Handover, type OwnerLive, type OwnerReport, type ReportPeriod, type StaffStats } from "../owner-backoffice";
+} from "@shared/station-cash";
+import { cleanTypeCapacity, counterLimits, validBatteryType, type BatteryType, type BatteryTypeInput } from "@shared/battery-types";
+import { checkEnergySwap, cleanUssdTemplate, CONDITION_REASON, energyPricingOf, validEnergyPrice, type EnergyPricing, type EnergySwap } from "@shared/energy-swap";
+import { DEMO_OWNERS, DEMO_STAFF, demoHistory, demoReassignments, demoUsers } from "../admin/demo-seed";
+import { cleanOpeningHours } from "@shared/opening-hours";
+import { emptyDays, periodStart, reportPeriod, type Handover, type OwnerLive, type OwnerReport, type ReportPeriod, type StaffStats } from "@shared/owner-backoffice";
 import {
   ADMIN_HISTORY_DAYS,
   ADMIN_PAGE_SIZE,
@@ -132,18 +140,20 @@ import {
   type AuditEntry,
   type AuditFilter,
   type StaffAssignment,
-} from "../admin/types";
-import { validPinFormat, weakPin } from "../pin";
-import { effectiveFeatures, type Features } from "../features";
-import { MAX_PROMO_IMAGE_BYTES, pickPromotion, type Promotion, type PromotionInput } from "../promo";
+} from "@shared/admin/types";
+import { validPinFormat, weakPin } from "@shared/pin";
+import { effectiveFeatures, type Features } from "@shared/features";
+import { MAX_PROMO_IMAGE_BYTES, pickPromotion, type Promotion, type PromotionInput } from "@shared/promo";
 import {
   DEFAULT_PARCEL_SIZES,
   newTrackingNo,
   PARCEL_CODE_LOCK_MINUTES,
   PARCEL_MAX_CODE_FAILURES,
+  PARCEL_STATION_MAX_CODE_FAILURES,
   PARCEL_PICKUP_DAYS,
   needsLabel,
   OPEN_PARCEL_STATUSES,
+  normalizeTrackingNo,
   parseHandoverInput,
   parsePickupInput,
   parseParcelScan,
@@ -160,7 +170,7 @@ import {
   type ParcelRunStatus,
   type ParcelScanKind,
   type ParcelSizeTier,
-} from "../parcels";
+} from "@shared/parcels";
 import {
   BOOKING_DAYS,
   keyPrefix,
@@ -172,8 +182,8 @@ import {
   type PartnerInput,
   type PartnerKey,
   type StationBooking,
-} from "../partners";
-import { normalizeTogoPhone } from "../phone";
+} from "@shared/partners";
+import { normalizeTogoPhone } from "@shared/phone";
 import {
   balanceOf,
   BUSY_JOB_STATUSES,
@@ -186,6 +196,7 @@ import {
   newDriverCode,
   parseDriverBadge,
   checkDriverPass,
+  isDriverPassFormat,
   fleetTag,
   signDriverPass,
   OPEN_JOB_EXPIRY_MINUTES,
@@ -230,17 +241,19 @@ import {
   type DriverPayout,
   type PayoutNetwork,
   type TripPayment,
-} from "../drivers";
-import { distanceMeters, type LatLng } from "../geo";
-import { parseContact } from "../contact";
+} from "@shared/drivers";
+import { distanceMeters, type LatLng } from "@shared/geo";
+import { parseContact } from "@shared/contact";
 import {
   cleanFleetName,
   driverLimit,
   FLEET_INVITE_DAYS,
   FLEET_TIERS,
+  fitsFleet,
   fleetRange,
   jobForManager,
   managesFleet,
+  openJobForManager,
   STANDARD_DRIVER_LIMIT,
   statsUnlocked,
   type AdminFleet,
@@ -254,7 +267,7 @@ import {
   type FleetTier,
   type FleetView,
   type MyFleetInvite,
-} from "../fleet";
+} from "@shared/fleet";
 import {
   CREDIT_CODE_MINUTES,
   CREDIT_TOPUP_MIN_XOF,
@@ -273,7 +286,7 @@ import {
   type WalletAdjustInput,
   type WalletTransaction,
   type WalletView,
-} from "../wallet";
+} from "@shared/wallet";
 import {
   DEFAULT_FACTORS,
   dayStart,
@@ -295,8 +308,18 @@ import {
   type GreenpointReward,
   type GreenpointRewardInput,
   type GreenpointView,
-} from "../greenpoint";
-import { OPERATOR_NAME_MAX, validPrice, type AdminOperator, type OperatorInput, type OwnerStationInput, type OwnerView } from "../operators";
+} from "@shared/greenpoint";
+import {
+  OPERATOR_NAME_MAX,
+  STAFF_INVITE_DAYS,
+  STAFF_INVITE_LIMIT,
+  validPrice,
+  type AdminOperator,
+  type MyStaffInvite,
+  type OperatorInput,
+  type OwnerStationInput,
+  type OwnerView,
+} from "@shared/operators";
 import {
   POINT_PARTNER_NAME_MAX,
   type AdminPointPartner,
@@ -304,11 +327,11 @@ import {
   type PointPartnerDashboard,
   type PointPartnerInput,
   type PointPartnerStatus,
-} from "../point-partners";
-import { validEvCharger, type EvCharger, type EvChargerInput } from "../ev-chargers";
-import { cleanRepairCenter, type RepairCenter, type RepairCenterInput } from "../repair-centers";
-import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "../iot/devices";
-import { ocppKey } from "../iot/ocpp";
+} from "@shared/point-partners";
+import { validEvCharger, type EvCharger, type EvChargerInput } from "@shared/ev-chargers";
+import { cleanRepairCenter, type RepairCenter, type RepairCenterInput } from "@shared/repair-centers";
+import { canSwitch, normalizeDeviceId, outletLabel, validDeviceInput, type Device, type DeviceInput } from "@shared/iot/devices";
+import { ocppKey } from "@shared/iot/ocpp";
 import {
   cleanMerchantName,
   cleanRate,
@@ -355,7 +378,7 @@ import {
   type MerchantToday,
   type MerchantView,
   type MyMerchantInvite,
-} from "../merchants";
+} from "@shared/merchants";
 import {
   customerStation,
   globalServices,
@@ -364,16 +387,11 @@ import {
   type ServiceRequestStatus,
   type StationService,
   type StationServiceInfo,
-} from "../station-services";
+} from "@shared/station-services";
 
+// CI (.github/workflows/ci.yml) looks for "poinderecharge-demo" to prove production builds leave this file out.
 const STORAGE_KEY = "poinderecharge-demo-v3";
-/** Every demo registration accepts this SMS code. */
-export const DEMO_CODE = "123456";
-/**
- * True when this build was made by Cloudflare (see next.config.ts) but set to the
- * demo backend. Visitors then see a clear notice and can only try the customer view.
- */
-export const HOSTED_DEMO = process.env.NEXT_PUBLIC_HOSTED_BUILD === "1" && process.env.NEXT_PUBLIC_BACKEND === "demo";
+export { DEMO_CODE, HOSTED_DEMO };
 
 function pickupCode(): string {
   return String(Math.floor(Math.random() * 10_000)).padStart(4, "0");
@@ -383,7 +401,7 @@ type DemoHandover = CashHandover & { createdById: string; decidedById: string | 
 
 /** A stored closing as the API shows it, without who made and decided it. */
 function handoverView(h: DemoHandover): CashHandover {
-  const view: CashHandover & Partial<Pick<DemoHandover, "createdById" | "decidedById">> = { ...h };
+  const view: CashHandover & Partial<Pick<DemoHandover, "createdById" | "decidedById">> = { ...h, staffId: h.staffId ?? null };
   delete view.createdById;
   delete view.decidedById;
   return view;
@@ -403,7 +421,7 @@ interface DemoState {
   promotions?: Promotion[];
   devices?: Device[];
   /** Parcel depot; parcels keep their pickup code here (demo only). */
-  parcels?: Parcel[];
+  parcels?: DemoParcel[];
   parcelDepots?: ParcelDepot[];
   batteryTypes?: BatteryType[];
   /** Electric car chargers, assigned to a station or not. */
@@ -414,14 +432,17 @@ interface DemoState {
   stationBatteryTypes?: Record<string, string[]>;
   /** Full batteries per battery type, by station id then type id (default: the station's total spread over its types). */
   typeBatteries?: Record<string, Record<string, number>>;
+  /** Places per battery type, by station id then type id (default: the station's places spread over its types), as migration 0064. */
+  typeCapacities?: Record<string, Record<string, number>>;
   parcelSizes?: ParcelSizeTier[];
-  parcelCodeFailures?: { stationId: string; at: string }[];
+  /** stationId: the key (station, "parcel:<id>" or "job:<id>"); atStation: the counter it was typed at (0058). */
+  parcelCodeFailures?: { stationId: string; at: string; atStation?: string }[];
   /** Collection runs and parcel scans (plan phase 7), as parcel_runs and parcel_scans (migration 0034). */
   parcelRuns?: DemoRun[];
   parcelScans?: DemoScan[];
   /** Wrong pickup codes per reservation (as reservation_code_failures, migration 0029). */
   reservationCodeFailures?: { reservationId: string; at: string }[];
-  /** Drivers (see src/lib/drivers.ts). */
+  /** Drivers (see shared/drivers.ts). */
   drivers?: DemoDriver[];
   fleet?: FleetVehicle[];
   jobs?: DemoJob[];
@@ -480,6 +501,7 @@ interface DemoState {
   /** Swap price per station in FCFA (stations.price_battery_xof); missing = DEMO_SWAP_PRICE at own stations. */
   swapPrices?: Record<string, number | null>;
   /** Swap log, newest first (as table swap_log); `owner` as swap_log.owner (0045, missing = the station's rule). */
+  incidents?: (Incident & { requestId: string })[];
   swaps?: (SwapEntry & { requestId: string; staffId: string; customerId: string | null; driverId?: string | null; fleetManagerId?: string | null; owner?: SwapOwner })[];
   /** Station type and the host's commission of partner stations (stations.swap_owner, commission_*; 0045). */
   stationCash?: Record<string, { swapOwner: SwapOwner | null; commissionPct: number; commissionMode: CommissionMode }>;
@@ -499,6 +521,8 @@ interface DemoState {
   merchantMembers?: DemoMember[];
   /** Employee invites, newest first (merchant_invites). */
   merchantInvites?: DemoMerchantInvite[];
+  /** Staff invites, oldest first (staff_invites, 0050). */
+  staffInvites?: DemoStaffInvite[];
   /** Favorite and assigned drivers of the shops (merchant_drivers). */
   merchantDrivers?: DemoMerchantDriver[];
   /** Check-ins of assigned drivers, newest first (merchant_checkins). */
@@ -534,6 +558,19 @@ interface DemoMember {
 
 interface DemoMerchantInvite extends MerchantInvite {
   merchantId: string;
+  userId: string | null;
+}
+
+/** As table staff_invites (0050): made for a phone number or e-mail address, account or not. */
+interface DemoStaffInvite {
+  id: string;
+  stationId: string;
+  contact: string;
+  invitedBy: string;
+  status: "pending" | "accepted" | "declined" | "revoked" | "expired";
+  createdAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
   userId: string | null;
 }
 
@@ -635,7 +672,11 @@ interface DemoServiceRow {
 }
 
 /** `partnerId`: the socket's point partner when the charge started (charging_sessions.partner_id). */
-type DemoCharge = ChargeSession & { userId: string | null; pointId: string; startedBy?: string; partnerId?: string | null };
+/** `paidBy`: who marked it paid in cash at the counter (as charging_sessions.paid_by). */
+type DemoCharge = ChargeSession & { userId: string | null; pointId: string; startedBy?: string; partnerId?: string | null; paidBy?: string | null };
+
+/** `createdById`: who stored it at the counter and took the cash (as parcels.created_by). */
+type DemoParcel = Parcel & { createdById?: string };
 
 type DemoPointPartner = { id: string; name: string; contactPhone: string | null; status: PointPartnerStatus; createdAt: string };
 
@@ -652,11 +693,13 @@ interface DemoWallet {
   balances: Record<string, number>;
   frozen: string[];
   /** Ledger, newest first, with the idempotency key of each payment. */
-  transactions: (AdminWalletTransaction & { key?: string; stationId?: string })[];
+  transactions: (AdminWalletTransaction & { key?: string; stationId?: string; staffId?: string })[];
   /** Green Credit stations (0047); absent: every demo station, so it can be tried right away. */
   creditStations?: string[];
   /** Highest balance (0 = no limit). */
   maxXof?: number;
+  /** The most a Green Credit charge holds (app_settings.green_credit_charge_hold_xof). */
+  chargeHoldXof?: number;
   /** Counter codes shown after the PIN (credit_codes). */
   codes?: { code: string; userId: string; expiresAt: string; used: boolean }[];
 }
@@ -665,6 +708,8 @@ interface DemoWallet {
 export const DEMO_WALLET_START = 25_000;
 /** The demo's balance limit, as migration 0047. */
 const DEMO_CREDIT_MAX = 50_000;
+/** What a Green Credit charge holds at most when no admin set it, as CHARGE_HOLD_DEFAULT_XOF in worker/wallet.ts. */
+const DEMO_CHARGE_HOLD = 3000;
 
 /** Signs the demo's driver passes (app_settings.driver_pass_secret on Cloudflare). */
 const DEMO_PASS_SECRET = "demo-driver-pass";
@@ -711,6 +756,8 @@ function freshState(): DemoState {
     profile: null,
     users: demoUsers(now),
     staff: DEMO_STAFF,
+    // Afi runs poinderecharge's stations, so they count as staffed (isUnattended) and can be reserved.
+    operatorOwners: DEMO_OWNERS,
     inactive: [],
     audit: [],
     promotions: [demoPromotion(now)],
@@ -726,9 +773,44 @@ function randomBoxToken(): string {
   return [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** A demo box's short QR code: fixed per device, like demoBoxToken. */
+function demoBoxCode(externalId: string): string {
+  let h = 0;
+  for (const c of externalId) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return (h.toString(36) + "00000000").slice(0, 8);
+}
+
 /** Saved demo states from before one QR code per box have no token. */
 function boxToken(d: Device): string {
   return d.qrToken ?? demoBoxToken(d.externalId);
+}
+
+/** Saved demo states from before short QR codes have none. */
+function boxCode(d: Device): string {
+  return d.qrCode ?? demoBoxCode(d.externalId);
+}
+
+/** A demo box placed at a station: one charging point per outlet, as the Worker creates them. */
+function placeDemoDevice(device: Device, stationId: string): Device {
+  return {
+    ...device,
+    stationId,
+    points: Array.from({ length: device.outlets }, (_, i) => ({
+      id: `cp-${device.externalId}-${i + 1}`,
+      stationId,
+      label: outletLabel(device.externalId, i + 1),
+      status: "free",
+      deviceId: device.externalId,
+      outlet: i + 1,
+      powerWatts: 0,
+      lastSeenAt: null,
+    })),
+  };
+}
+
+/** A connected socket makes the station a charging point. */
+function chargingKind(stations: DemoState["stations"], stationId: string): DemoState["stations"] {
+  return stations.map((s) => (s.id === stationId && !offersCharging(s.kind) ? { ...s, kind: kindFor(offersSwap(s.kind), true) } : s));
 }
 
 /** The connected socket of the "Déckon" station, as a device. */
@@ -748,6 +830,7 @@ function seedDevices(): Device[] {
       createdAt: "2026-10-01T08:00:00.000Z",
       partnerId: null,
       qrToken: demoBoxToken(first.deviceId!),
+      qrCode: demoBoxCode(first.deviceId!),
       points: DEMO_CHARGING_POINTS,
     },
     ...(
@@ -770,6 +853,7 @@ function seedDevices(): Device[] {
       createdAt: "2026-10-01T08:00:00.000Z",
       partnerId: null,
       qrToken: demoBoxToken(externalId),
+      qrCode: demoBoxCode(externalId),
       points: demoSocketPoints(stationId, externalId, outlets, free),
     })),
     {
@@ -786,6 +870,7 @@ function seedDevices(): Device[] {
       createdAt: "2026-10-01T08:00:00.000Z",
       partnerId: null,
       qrToken: demoBoxToken(DEMO_EV_POINT.deviceId!),
+      qrCode: demoBoxCode(DEMO_EV_POINT.deviceId!),
       points: [DEMO_EV_POINT],
     },
   ];
@@ -1131,10 +1216,11 @@ export class DemoBackend implements Backend {
       const types = state.batteryTypes ?? DEMO_BATTERY_TYPES;
       const swapped = (state.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES)[s.id] ?? [];
       const counts = typeCounts(state, s.id, status.fullBatteries);
+      const places = typeCapacities(state, s.id, s.batteryCapacity);
       const batteryTypes = types
         .filter((t) => swapped.includes(t.id))
         .sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name))
-        .map((t) => ({ ...t, fullBatteries: counts[t.id] ?? 0, reserved: holds.get(`swap:${t.id}`) ?? 0 }));
+        .map((t) => ({ ...t, fullBatteries: counts[t.id] ?? 0, capacity: places[t.id] ?? 0, reserved: holds.get(`swap:${t.id}`) ?? 0 }));
       const evChargers = (state.evChargers ?? DEMO_EV_CHARGERS)
         .filter((c) => c.stationId === s.id && c.isActive)
         .sort((a, b) => a.name.localeCompare(b.name))
@@ -1159,7 +1245,9 @@ export class DemoBackend implements Backend {
         parcelPoint,
         batteryTypes,
         evChargers,
-        hasStaff: (state.staff ?? DEMO_STAFF).some((a) => a.stationId === s.id),
+        // Staff of the station or an owner of its operator, as the Worker counts them.
+        hasStaff:
+          (state.staff ?? DEMO_STAFF).some((a) => a.stationId === s.id) || (state.operatorOwners ?? []).some((x) => x.operatorId === s.operatorId),
       };
     });
   }
@@ -1226,6 +1314,11 @@ export class DemoBackend implements Backend {
 
   onAuthChange(callback: (profile: Profile | null) => void) {
     return this.subscribe(() => callback(this.profileOf(this.load())));
+  }
+
+  /** The demo sends no codes, so it needs no robot check. */
+  async captchaSiteKey() {
+    return null;
   }
 
   async sendCode() {
@@ -1401,6 +1494,7 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const profile = this.requireProfile(state);
     if (profile.role !== "customer") throw new BackendError("forbidden");
+    if (!profile.phone) throw new BackendError("phone_required");
     const kind = kindFrom(kindOrType);
     if (!kind) throw new BackendError("unknown", "bad_request");
     const now = new Date();
@@ -1614,7 +1708,7 @@ export class DemoBackend implements Backend {
     return user ? personLabel(user) : null;
   }
 
-  // Station work (src/lib/station-work.ts), as worker/station-work.ts ------------------
+  // Station work (shared/station-work.ts), as worker/station-work.ts ------------------
 
   /** The person's role at the station, or null without rights there (as roleAtStation() in the Worker). */
   private roleAt(state: DemoState, profile: Profile, stationId: string): StationRole | null {
@@ -1653,8 +1747,25 @@ export class DemoBackend implements Backend {
     const empty = state.batteryEmpty?.[stationId] ?? {};
     const view = this.views(state, state.stations.filter((s) => s.id === stationId))[0];
     const types = view?.batteryTypes ?? [];
-    if (!types.length) return [{ batteryTypeId: "", label: null, full: status?.fullBatteries ?? 0, empty: empty[""] ?? 0 }];
-    return types.map((t) => ({ batteryTypeId: t.id, label: `${t.brand} ${t.name}`, full: t.fullBatteries, empty: empty[t.id] ?? 0 }));
+    if (!types.length) return [{ batteryTypeId: "", label: null, full: status?.fullBatteries ?? 0, empty: empty[""] ?? 0, capacity: view?.batteryCapacity ?? 0 }];
+    return types.map((t) => ({
+      batteryTypeId: t.id,
+      label: `${t.brand} ${t.name}`,
+      full: t.fullBatteries,
+      empty: empty[t.id] ?? 0,
+      capacity: t.capacity,
+      energy: energyPricingOf({ pricing: t.pricing, price_full_xof: t.priceFullXof, ussd_tmoney: t.ussdTmoney, ussd_flooz: t.ussdFlooz }),
+    }));
+  }
+
+  /** As energyOfKey() in worker/station-work.ts: the counter's energy pricing, null for the station's price. */
+  private energyOf(state: DemoState, stationId: string, key: CounterKey): EnergyPricing | null {
+    if (!key) return null;
+    const t = (state.batteryTypes ?? DEMO_BATTERY_TYPES).find((x) => x.id === key);
+    if (!t || t.pricing !== "energy") return null;
+    const energy = energyPricingOf({ pricing: t.pricing, price_full_xof: t.priceFullXof, ussd_tmoney: t.ussdTmoney, ussd_flooz: t.ussdFlooz });
+    if (!energy) throw new BackendError("swap_price_missing");
+    return energy;
   }
 
   private counterKey(state: DemoState, stationId: string, raw: CounterKey | null | undefined): CounterKey {
@@ -1681,7 +1792,7 @@ export class DemoBackend implements Backend {
     const row = rows.find((r) => r.batteryTypeId === e.key)!;
     const station = state.stations.find((s) => s.id === e.stationId)!;
     const total = rows.reduce((n, r) => n + r.full, 0);
-    const after = applyBatteryEvent(row, e.type, e.delta, { total, capacity: station.batteryCapacity });
+    const after = applyBatteryEvent(row, e.type, e.delta, counterLimits(rows, e.key, station.batteryCapacity));
     if (!after) return null;
     const now = new Date().toISOString();
     const event = {
@@ -1791,6 +1902,8 @@ export class DemoBackend implements Backend {
       return user;
     };
 
+    // A type priced by energy is paid by Mobile Money only, never from Green Credit (0065).
+    const energyWalkIn = input.reservationId ? null : this.energyOf(state, stationId, this.counterKey(state, stationId, input.batteryTypeId));
     let customer: AdminUser | null = null;
     let reservation: Reservation | null = null;
     let driver: { driverId: string; managerId: string; label: string } | null = null;
@@ -1808,7 +1921,7 @@ export class DemoBackend implements Backend {
       }
       const userId = reservation.userId;
       customer = users.find((u) => u.id === userId) ?? null;
-    } else if (type === "app" && input.payment !== "cash") {
+    } else if (type === "app" && input.payment !== "cash" && !energyWalkIn) {
       // Paid from Green Credit: the customer's counter code, shown after the PIN on their phone (0047).
       const user = this.creditCodeOwner(state, String(input.creditCode ?? input.contact ?? ""));
       if (user.id === actor.profile.id) throw new BackendError("own_reservation");
@@ -1840,11 +1953,24 @@ export class DemoBackend implements Backend {
       out: batteryOut ? resolveDemoBattery(register.batteries, batteryOut, batteryType) : null,
       in: batteryIn ? resolveDemoBattery(register.batteries, batteryIn, batteryType) : null,
     };
+    const energy = this.energyOf(state, stationId, key);
+    let energySwap: EnergySwap | null = null;
+    if (energy) {
+      const checked = checkEnergySwap(input, energy);
+      if (!checked.ok) throw new BackendError(checked.error === "bad_request" ? "unknown" : checked.error, checked.error);
+      energySwap = checked.swap;
+      if (batteriesOf.out?.status && batteriesOf.out.status !== "in_service") throw new BackendError("battery_out_not_in_service");
+      const ref = energySwap;
+      if ((state.swaps ?? []).some((x) => x.mmNetwork === ref.mmNetwork && x.mmRef === ref.mmRef)) throw new BackendError("mm_ref_used");
+    }
     const swapOwner = swapOwnerOf(station.isOwn, state.stationCash?.[station.id]?.swapOwner);
     let payment: SwapPayment;
     let amount: number;
     const price = swapPrice(state, station);
-    if (type === "fleet") {
+    if (energySwap) {
+      payment = "mobile_money";
+      amount = energySwap.amountXof;
+    } else if (type === "fleet") {
       payment = "fleet";
       amount = price ?? 0;
     } else if (type === "app" && input.payment !== "cash") {
@@ -1921,6 +2047,17 @@ export class DemoBackend implements Backend {
       payment,
       amountXof: amount,
       reservationId: reservation?.id ?? null,
+      ...(energySwap
+        ? {
+            inPct: energySwap.inPct,
+            outPct: energySwap.outPct,
+            plate: energySwap.plate,
+            customerName: energySwap.customerName,
+            batteryInCondition: energySwap.condition,
+            mmNetwork: energySwap.mmNetwork,
+            mmRef: energySwap.mmRef,
+          }
+        : {}),
       person: personLabel(actor.profile),
       role: actor.role,
       createdAt: new Date().toISOString(),
@@ -1943,6 +2080,35 @@ export class DemoBackend implements Backend {
         now: entry.createdAt,
       });
     }
+    if (energySwap && energySwap.condition !== "ok" && batteriesOf.in) {
+      // A battery brought back damaged, leaking, hot or smelling goes to repair.
+      const back = batteriesOf.in;
+      const b = reg.batteries.find((x) => x.serial === back.serial && x.brand === back.brand);
+      if (b) {
+        reg = {
+          ...reg,
+          batteries: reg.batteries.map((x) => (x.id === b.id ? { ...x, status: "repair" as const } : x)),
+          history: [
+            ...reg.history,
+            {
+              id: crypto.randomUUID(),
+              batteryId: b.id,
+              type: "status",
+              stationId,
+              swapId,
+              holderId: null,
+              status: "repair",
+              reason: CONDITION_REASON[energySwap.condition],
+              personId: actor.profile.id,
+              role: actor.role,
+              createdAt: entry.createdAt,
+              payment: null,
+              amountXof: null,
+            },
+          ],
+        };
+      }
+    }
     next = { ...next, batteries: reg.batteries, batteryHistory: reg.history };
     next = { ...next, swaps: [{ ...entry, requestId: input.requestId, staffId: actor.profile.id, customerId: customer?.id ?? null, driverId: driver?.driverId ?? null, fleetManagerId: driver?.managerId ?? null, owner: swapOwner }, ...(next.swaps ?? [])].slice(0, 1000) };
     if (reservation) {
@@ -1960,17 +2126,73 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const { profile, role } = this.stationReader(state, stationId);
     // Staff see today's own swaps; owners and admins may look back (backoffice, plan phase 8).
-    const since = role === "staff" ? dayStartLome() : periodStart(reportPeriod(filter.days ?? 1));
+    const ranged = role !== "staff" && (filter.from != null || filter.to != null);
+    const range = ranged ? swapDayRange(filter.from, filter.to) : null;
+    if (ranged && !range) throw new BackendError("invalid_date_range");
+    const since = role === "staff" ? dayStartLome() : (range?.since ?? periodStart(reportPeriod(filter.days ?? 1)));
     return (state.swaps ?? [])
       .filter(
         (x) =>
           x.stationId === stationId &&
           x.createdAt >= since &&
+          (!range || x.createdAt < range.until) &&
           (!filter.customerType || x.customerType === filter.customerType) &&
           (role !== "staff" || x.staffId === profile.id),
       )
-      .slice(0, 500)
+      .slice(0, range ? SWAP_EXPORT_LIMIT : 500)
       .map(swapView);
+  }
+
+  /** As reportIncident() in worker/incidents.ts (the alert to owners and admins is the Worker's). */
+  async reportIncident(stationId: string, input: IncidentInput): Promise<Incident> {
+    const state = this.load();
+    const { profile, role } = this.stationActor(state, stationId);
+    if (!input || !validRequestId(input.requestId)) throw new BackendError("unknown");
+    const done = (state.incidents ?? []).find((i) => i.requestId === input.requestId);
+    if (done) return done;
+    const checked = checkIncident(input);
+    if (!checked.ok) throw new BackendError(checked.error);
+    const incident: Incident & { requestId: string } = {
+      id: crypto.randomUUID(),
+      requestId: input.requestId,
+      stationId,
+      kind: checked.kind,
+      comment: checked.comment,
+      batteryLabel: checked.batteryLabel,
+      person: personLabel(profile),
+      role,
+      createdAt: new Date().toISOString(),
+      status: "open",
+      resolvedBy: null,
+      resolvedAt: null,
+      resolution: null,
+    };
+    this.save({ ...state, incidents: [incident, ...(state.incidents ?? [])] });
+    return incident;
+  }
+
+  async stationIncidents(stationId: string): Promise<Incident[]> {
+    const state = this.load();
+    this.stationReader(state, stationId);
+    const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    return (state.incidents ?? [])
+      .filter((i) => i.stationId === stationId && (i.status === "open" || i.createdAt >= since))
+      .sort((a, b) => (a.status === b.status ? b.createdAt.localeCompare(a.createdAt) : a.status === "open" ? -1 : 1));
+  }
+
+  async resolveIncident(stationId: string, incidentId: string, resolution: string | null): Promise<Incident> {
+    const state = this.load();
+    // From the owner back office: no active station needed (resolveIncident in the Worker).
+    const { profile, role } = this.stationReader(state, stationId);
+    if (role === "staff") throw new BackendError("forbidden");
+    const note = cleanIncidentText(resolution);
+    if (note === undefined) throw new BackendError("unknown");
+    const found = (state.incidents ?? []).find((i) => i.id === incidentId && i.stationId === stationId);
+    if (!found) throw new BackendError("unknown");
+    if (found.status === "resolved") return found;
+    const done = { ...found, status: "resolved" as const, resolvedBy: personLabel(profile), resolvedAt: new Date().toISOString(), resolution: note };
+    this.save({ ...state, incidents: (state.incidents ?? []).map((i) => (i.id === incidentId ? done : i)) });
+    return done;
   }
 
   /** Counter history of a report period: owners and admins only (stationBatteryEvents in the Worker). */
@@ -1993,7 +2215,7 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const operator = state.operators.find((o) => o.id === input.operatorId);
     if (!operator) throw new BackendError("unknown", "operator not found");
-    const { parcelDepot, batteryTypeIds, ...fields } = input;
+    const { parcelDepot, batteryTypeIds, batteryTypeCapacities, ...fields } = input;
     const allTypes = state.batteryTypes ?? DEMO_BATTERY_TYPES;
     if (batteryTypeIds?.some((t) => !allTypes.some((x) => x.id === t))) throw new BackendError("unknown", "unknown battery type");
     const existing = id ? (state.parcelDepots ?? seedDepots()).find((d) => d.stationId === id) : undefined;
@@ -2003,9 +2225,17 @@ export class DemoBackend implements Backend {
     }
     const before = id ? state.stations.find((s) => s.id === id) : undefined;
     const extras = id ? DEMO_STATION_EXTRAS[id] : undefined;
-    // Days and times, never empty (src/lib/opening-hours.ts), as in worker/api.ts.
+    // Days and times, never empty (shared/opening-hours.ts), as in worker/api.ts.
     const openingHours = cleanOpeningHours(fields.openingHours);
     if (!openingHours) throw new BackendError("opening_hours_invalid");
+    // Places per type (migration 0064): the station's places are their sum.
+    const wantedTypes = batteryTypeIds && offersSwap(input.kind) ? [...new Set(batteryTypeIds)] : [];
+    const placesBefore = id ? typeCapacities(state, id, before?.batteryCapacity ?? 0) : {};
+    const places =
+      batteryTypeCapacities && wantedTypes.length
+        ? Object.fromEntries(wantedTypes.map((t) => [t, t in batteryTypeCapacities ? cleanTypeCapacity(batteryTypeCapacities[t]) : (placesBefore[t] ?? 0)]))
+        : null;
+    if (places) fields.batteryCapacity = Object.values(places).reduce((a, n) => a + n, 0);
     const station: Station = {
       ...fields,
       openingHours,
@@ -2024,8 +2254,15 @@ export class DemoBackend implements Backend {
         { ...state, stations: state.stations.map((s) => (s.id === id ? station : s)) },
         { table: "stations", action: "update", rowId: id, stationId: id, changes: before ? diff(before, station) : {} },
       );
-      // A lower capacity brings the full batteries down to it, as counter corrections (capacityTrimStatements).
-      if (before && station.batteryCapacity < before.batteryCapacity) next = this.trimToCapacity(next, id, station.batteryCapacity);
+      if (places) {
+        // Per type, as typeCapacityTrimStatements() in the Worker (after the new types are stored).
+        next = { ...next, stationBatteryTypes: { ...(next.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES), [id]: wantedTypes } };
+        next = { ...next, typeCapacities: { ...next.typeCapacities, [id]: places } };
+        next = this.trimTypes(next, id, places);
+      } else if (before && station.batteryCapacity < before.batteryCapacity) {
+        // A lower capacity brings the full batteries down to it, as counter corrections (capacityTrimStatements).
+        next = this.trimToCapacity(next, id, station.batteryCapacity);
+      }
       this.save(next);
     } else {
       // A new station starts closed and empty: staff open it and mark batteries full as they come.
@@ -2049,11 +2286,37 @@ export class DemoBackend implements Backend {
         ...after,
         stationBatteryTypes: {
           ...(after.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES),
-          [station.id]: offersSwap(input.kind) ? [...new Set(batteryTypeIds)] : [],
+          [station.id]: wantedTypes,
+        },
+        typeCapacities: {
+          ...after.typeCapacities,
+          [station.id]: places ?? Object.fromEntries(wantedTypes.map((t) => [t, placesBefore[t] ?? 0])),
         },
       });
     }
     if (parcelDepot) await this.writeDepot(station.id, parcelDepot);
+  }
+
+  /** As typeCapacityTrimStatements() in worker/station-work.ts: each type down to its places (0 = not set). */
+  private trimTypes(state: DemoState, stationId: string, places: Record<string, number>): DemoState {
+    const profile = this.requireProfile(state);
+    let next = state;
+    for (const r of this.counterRows(state, stationId)) {
+      const cap = places[r.batteryTypeId] ?? 0;
+      if (!r.batteryTypeId || cap <= 0 || r.full <= cap) continue;
+      const done = this.counterEvent(next, {
+        stationId,
+        key: r.batteryTypeId,
+        type: "correction",
+        delta: cap - r.full,
+        reason: CAPACITY_REASON,
+        requestId: `capacity-${crypto.randomUUID()}`,
+        swapId: null,
+        actor: { profile, role: "admin" },
+      });
+      if (done) next = done.state;
+    }
+    return next;
   }
 
   /** As capacityTrimStatements() in worker/station-work.ts: one correction per counter, largest first. */
@@ -2253,6 +2516,14 @@ export class DemoBackend implements Backend {
     });
   }
 
+  async deleteBattery(id: string): Promise<void> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const { batteries, history } = this.batteryRegister(state);
+    if (!batteries.some((b) => b.id === id)) throw new BackendError("unknown", "not_found");
+    this.save({ ...state, batteries: batteries.filter((b) => b.id !== id), batteryHistory: history.filter((h) => h.batteryId !== id) });
+  }
+
   async lookupBattery(stationId: string, serial: string, batteryTypeId: string | null): Promise<BatteryLookup> {
     const state = this.load();
     this.stationReader(state, stationId);
@@ -2274,7 +2545,14 @@ export class DemoBackend implements Backend {
     this.requireAdmin(state);
     if (!validBatteryType(input)) throw new BackendError("unknown", "invalid battery type");
     const types = state.batteryTypes ?? DEMO_BATTERY_TYPES;
-    const type: BatteryType = { id: id ?? crypto.randomUUID(), brand: input.brand.trim(), name: input.name.trim(), isActive: input.isActive };
+    const before0 = types.find((t) => t.id === id);
+    const type: BatteryType = {
+      id: id ?? crypto.randomUUID(),
+      brand: input.brand.trim(),
+      name: input.name.trim(),
+      isActive: input.isActive,
+      ...demoPricing(input, before0),
+    };
     if (types.some((t) => t.id !== type.id && t.brand === type.brand && t.name === type.name)) throw new BackendError("battery_type_exists");
     const before = types.find((t) => t.id === id);
     this.save(
@@ -2470,6 +2748,16 @@ export class DemoBackend implements Backend {
     };
   }
 
+  /** The demo has no PIN locks and no security log: an empty page. */
+  async adminSecurity(): Promise<SecurityOverview> {
+    this.requireAdmin(this.load());
+    return { captchaOn: false, alarm: false, locked: [], last24h: {}, topIps: [], events: [] };
+  }
+
+  async unlockAccount(): Promise<void> {
+    this.requireAdmin(this.load());
+  }
+
   async auditLog(filter: AuditFilter): Promise<AuditEntry[]> {
     const state = this.load();
     this.requireAdmin(state);
@@ -2543,7 +2831,7 @@ export class DemoBackend implements Backend {
   private withStaff(state: DemoState, stationId: string, userId: string): DemoState {
     const staff = state.staff ?? DEMO_STAFF;
     const user = (state.users ?? demoUsers(new Date())).find((u) => u.id === userId);
-    if (user?.role === "fleet_manager" || user?.role === "driver") throw new BackendError("has_other_role");
+    if (user?.role === "fleet_manager" || user?.role === "driver" || user?.role === "merchant") throw new BackendError("has_other_role");
     if (!user) throw new BackendError("account_not_found");
     const current = staff.find((a) => a.userId === userId);
     if (current?.stationId === stationId) return state;
@@ -2680,6 +2968,16 @@ export class DemoBackend implements Backend {
           createdAt: r.createdAt,
           ...this.label(state, r.userId),
         })),
+      // The contact as the owner typed it, masked; never the name of an account that has it.
+      invites: this.staffInvitesOf(state)
+        .filter((i) => i.status === "pending" && ids.has(i.stationId))
+        .map((i) => ({
+          id: i.id,
+          stationId: i.stationId,
+          label: personLabel({ fullName: null, phone: i.contact.includes("@") ? null : i.contact, email: i.contact.includes("@") ? i.contact : null }),
+          createdAt: i.createdAt,
+          expiresAt: i.expiresAt,
+        })),
       prices: stations.map((s) => ({
         stationId: s.id,
         swapXof: swapPrice(state, s),
@@ -2689,10 +2987,116 @@ export class DemoBackend implements Backend {
     };
   }
 
-  async ownerAddStaff(stationId: string, contact: string) {
+  // Staff invites (as worker/api.ts, migration 0050) ------------------------------------
+
+  /** Open invites whose time ran out are 'expired' (expireStaffInvites in worker/api.ts). */
+  private staffInvitesOf(state: DemoState): DemoStaffInvite[] {
+    const now = new Date().toISOString();
+    return (state.staffInvites ?? []).map((i) => (i.status === "pending" && i.expiresAt <= now ? { ...i, status: "expired" as const, decidedAt: i.expiresAt } : i));
+  }
+
+  /** The same answer whether an account has the contact or not; the checks run on accepting. */
+  async ownerInviteStaff(stationId: string, rawContact: string) {
     const state = this.load();
-    this.requireOwnerOf(state, stationId);
-    this.save(this.withStaff(state, stationId, this.accountByContact(state, contact).id));
+    const profile = this.requireOwnerOf(state, stationId);
+    const contact = parseContact(rawContact ?? "");
+    if (!contact) throw new BackendError((rawContact ?? "").includes("@") ? "invalid_contact" : "phone_not_allowed");
+    if (!this.activeStations(state).some((s) => s.id === stationId)) throw new BackendError("station_not_found");
+    const invites = this.staffInvitesOf(state);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + STAFF_INVITE_DAYS * 86_400_000).toISOString();
+    const open = invites.find((i) => i.stationId === stationId && i.contact === contact.value && i.status === "pending");
+    // Inviting again gives the open invite a new expiry.
+    if (open) return this.save({ ...state, staffInvites: invites.map((i) => (i === open ? { ...i, expiresAt } : i)) });
+    if (invites.filter((i) => i.stationId === stationId && i.status === "pending").length >= STAFF_INVITE_LIMIT) throw new BackendError("invite_limit");
+    const invite: DemoStaffInvite = {
+      id: crypto.randomUUID(),
+      stationId,
+      contact: contact.value,
+      invitedBy: profile.id,
+      status: "pending",
+      createdAt: now.toISOString(),
+      expiresAt,
+      decidedAt: null,
+      userId: null,
+    };
+    this.save(withAudit({ ...state, staffInvites: [...invites, invite] }, { table: "staff_invites", action: "insert", rowId: invite.id, stationId, changes: { contact: contact.value } }));
+  }
+
+  async ownerRevokeStaffInvite(inviteId: string) {
+    const state = this.load();
+    this.requireAnyOwner(state);
+    const invites = this.staffInvitesOf(state);
+    const invite = invites.find((i) => i.id === inviteId);
+    if (!invite) throw new BackendError("invite_not_found");
+    this.requireOwnerOf(state, invite.stationId);
+    if (invite.status !== "pending") throw new BackendError("invite_not_found");
+    const now = new Date().toISOString();
+    this.save(
+      withAudit(
+        { ...state, staffInvites: invites.map((i) => (i.id === inviteId ? { ...i, status: "revoked" as const, decidedAt: now } : i)) },
+        { table: "staff_invites", action: "update", rowId: inviteId, stationId: invite.stationId, changes: { status: ["pending", "revoked"] } },
+      ),
+    );
+  }
+
+  async myStaffInvites(): Promise<MyStaffInvite[]> {
+    const state = this.load();
+    const profile = state.profile;
+    if (!profile || (!profile.phone && !profile.email)) return [];
+    const stations = this.activeStations(state);
+    return this.staffInvitesOf(state)
+      .filter((i) => i.status === "pending" && (i.contact === profile.phone || i.contact === profile.email) && stations.some((s) => s.id === i.stationId))
+      .map((i) => {
+        const station = stations.find((s) => s.id === i.stationId)!;
+        return { id: i.id, stationName: station.name, operatorName: state.operators.find((o) => o.id === station.operatorId)?.name ?? "", expiresAt: i.expiresAt };
+      });
+  }
+
+  /** The open invite for the signed-in account's contact, at an active station its inviter still runs. */
+  private staffInviteForMe(state: DemoState, profile: Profile, inviteId: string): DemoStaffInvite {
+    const invite = this.staffInvitesOf(state).find((i) => i.id === inviteId);
+    const station = invite && this.activeStations(state).find((s) => s.id === invite.stationId);
+    const inviter = invite && (state.users ?? demoUsers(new Date())).find((u) => u.id === invite.invitedBy);
+    const stillRuns = !!station && (inviter?.role === "admin" || (!!inviter && ownedOperators(state, inviter.id).includes(station.operatorId)));
+    if (!invite || invite.status !== "pending" || !stillRuns || (invite.contact !== profile.phone && invite.contact !== profile.email)) throw new BackendError("invite_not_found");
+    return invite;
+  }
+
+  /** As acceptStaffInvite in worker/api.ts: the checks of an assignment (withStaff) run now. */
+  async acceptStaffInvite(inviteId: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const invite = this.staffInviteForMe(state, profile, inviteId);
+    const now = new Date().toISOString();
+    const staffed = this.withStaff(state, invite.stationId, profile.id);
+    const role = (staffed.users ?? []).find((u) => u.id === profile.id)?.role ?? profile.role;
+    const invites = this.staffInvitesOf(state).map((i) =>
+      i.id === invite.id
+        ? { ...i, status: "accepted" as const, decidedAt: now, userId: profile.id }
+        : i.status === "pending" && (i.contact === profile.phone || i.contact === profile.email)
+          ? { ...i, status: "expired" as const, decidedAt: now }
+          : i,
+    );
+    this.save(
+      withAudit(
+        { ...staffed, staffInvites: invites, profile: staffed.profile ? { ...staffed.profile, role } : staffed.profile },
+        { table: "staff_invites", action: "update", rowId: invite.id, stationId: invite.stationId, userId: profile.id, changes: { status: ["pending", "accepted"] } },
+      ),
+    );
+  }
+
+  async declineStaffInvite(inviteId: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const invite = this.staffInviteForMe(state, profile, inviteId);
+    const now = new Date().toISOString();
+    this.save(
+      withAudit(
+        { ...state, staffInvites: this.staffInvitesOf(state).map((i) => (i.id === invite.id ? { ...i, status: "declined" as const, decidedAt: now, userId: profile.id } : i)) },
+        { table: "staff_invites", action: "update", rowId: invite.id, stationId: invite.stationId, userId: profile.id, changes: { status: ["pending", "declined"] } },
+      ),
+    );
   }
 
   async ownerRemoveStaff(stationId: string, userId: string) {
@@ -2945,11 +3349,73 @@ export class DemoBackend implements Backend {
     });
   }
 
+  /**
+   * Our own stations, one balance per staff member: the cash they took at the counter, Green Credit
+   * loaded, swaps, charges and parcels paid in cash, each for whoever took it (as cashOfOwnStations;
+   * the demo has no history before 0057, so every kind counts from the month's start).
+   */
+  private ownStationCashOf(state: DemoState, ids: string[] | null, staffId: string | null = null, now = new Date()): StationCash[] {
+    const own = state.stations.filter((st) => st.isOwn && (!ids || ids.includes(st.id)));
+    const handovers = (state.cashHandovers ?? []).filter((h) => h.staffId);
+    const items: (CashItem & { stationId: string; staffId: string })[] = [
+      ...this.wallet(state)
+        .transactions.filter((t) => t.type === "topup" && t.stationId && t.staffId)
+        .map((t) => ({ stationId: t.stationId!, staffId: t.staffId!, kind: "creditXof" as const, at: t.createdAt, amountXof: t.amountXof })),
+      ...(state.swaps ?? [])
+        .filter((x) => x.payment === "cash" && this.swapOwnerOfEntry(state, x) === "poinderecharge")
+        .map((x) => ({ stationId: x.stationId, staffId: x.staffId, kind: "swapsXof" as const, at: x.createdAt, amountXof: x.amountXof })),
+      ...(state.charges ?? [])
+        .filter((c) => c.status === "paid" && c.paidAt && c.paymentMethod === "cash" && c.paidBy)
+        .map((c) => ({ stationId: c.stationId, staffId: c.paidBy!, kind: "chargesXof" as const, at: c.paidAt!, amountXof: c.amountXof })),
+      ...this.parcelsOf(state)
+        .filter((p) => p.paymentMethod === "cash" && p.paidAt && p.status !== "cancelled" && p.createdById)
+        .map((p) => ({ stationId: p.fromStationId, staffId: p.createdById!, kind: "parcelsXof" as const, at: p.paidAt!, amountXof: p.priceFcfa })),
+    ];
+    const out: StationCash[] = [];
+    for (const st of own) {
+      const people = new Set([...items.filter((t) => t.stationId === st.id).map((t) => t.staffId), ...handovers.filter((h) => h.stationId === st.id).map((h) => h.staffId!)]);
+      if (staffId) {
+        people.clear();
+        people.add(staffId);
+      }
+      for (const person of people) {
+        out.push(
+          stationCash(
+            {
+              stationId: st.id,
+              stationName: st.name,
+              operatorName: state.operators.find((o) => o.id === st.operatorId)?.name ?? "",
+              swapOwner: "poinderecharge",
+              commissionPct: 0,
+              commissionMode: "monthly",
+              start: monthStartOf(now),
+              cash: items
+                .filter((t) => t.stationId === st.id && t.staffId === person)
+                .map((t): CashItem => ({ kind: t.kind, at: t.at, amountXof: t.amountXof })),
+              sales: [],
+              handovers: handovers.filter((h) => h.stationId === st.id && h.staffId === person).map(handoverView),
+              staff: { id: person, name: this.personName(state, person) ?? "?" },
+            },
+            now,
+          ),
+        );
+      }
+    }
+    return out.sort((a, b) => a.stationName.localeCompare(b.stationName) || a.staffName!.localeCompare(b.staffName!));
+  }
+
   async ownerCash(stationId: string | null): Promise<StationCash[]> {
     const state = this.load();
     const profile = this.requireProfile(state);
-    if (profile.role === "admin" && !stationId) return this.stationCashOf(state, null);
-    return this.stationCashOf(state, this.backofficeStations(state, stationId).ids);
+    const ids = profile.role === "admin" && !stationId ? null : this.backofficeStations(state, stationId).ids;
+    return [...this.stationCashOf(state, ids), ...this.ownStationCashOf(state, ids)];
+  }
+
+  async myStationCash(stationId: string): Promise<StationCash | null> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    if (!this.roleAt(state, profile, stationId)) throw new BackendError("forbidden");
+    return this.ownStationCashOf(state, [stationId], profile.id)[0] ?? null;
   }
 
   async closeCashDay(input: HandoverInput): Promise<CashHandover> {
@@ -2957,9 +3423,13 @@ export class DemoBackend implements Backend {
     if (error) throw new BackendError(error as BackendErrorCode);
     const state = this.load();
     const profile = this.requireProfile(state);
-    this.backofficeStations(state, input.stationId);
+    const own = !!state.stations.find((st) => st.id === input.stationId)?.isOwn;
+    const staffId = own ? (input.staffId ?? profile.id) : null;
+    if (staffId === profile.id) {
+      if (!this.roleAt(state, profile, input.stationId)) throw new BackendError("forbidden");
+    } else this.backofficeStations(state, input.stationId);
     const now = new Date();
-    const [cash] = this.stationCashOf(state, [input.stationId], now);
+    const [cash] = own ? this.ownStationCashOf(state, [input.stationId], staffId, now) : this.stationCashOf(state, [input.stationId], now);
     if (!cash) throw new BackendError("own_station");
     if (cash.dueXof !== input.expectedDueXof) throw new BackendError("cash_changed");
     const handover: CashHandover = {
@@ -2981,6 +3451,7 @@ export class DemoBackend implements Backend {
       decidedBy: null,
       decidedAt: null,
       rejectReason: null,
+      staffId,
     };
     const next = withAudit(
       { ...state, cashHandovers: [{ ...handover, createdById: profile.id, decidedById: null }, ...(state.cashHandovers ?? [])] },
@@ -3283,6 +3754,7 @@ export class DemoBackend implements Backend {
       ...d,
       partnerId: d.partnerId ?? null,
       qrToken: boxToken(d),
+      qrCode: boxCode(d),
       lastSeenAt: seen,
       points: d.points.map((p) => ({ ...p, lastSeenAt: seen })),
     }));
@@ -3292,14 +3764,15 @@ export class DemoBackend implements Backend {
     const state = this.load();
     this.requireAdmin(state);
     if (!validDeviceInput(input)) throw new BackendError("invalid_device");
-    if (!state.stations.some((s) => s.id === input.stationId)) throw new BackendError("station_not_found");
+    const stationId = input.stationId || null;
+    if (stationId && !state.stations.some((s) => s.id === stationId)) throw new BackendError("station_not_found");
     const externalId = normalizeDeviceId(input.externalId);
     const devices = state.devices ?? seedDevices();
     if (devices.some((d) => d.externalId === externalId)) throw new BackendError("device_exists");
     const outlets = input.outlets ?? 2;
     const device: Device = {
       externalId,
-      stationId: input.stationId,
+      stationId: null,
       vendor: input.vendor?.trim() ?? "",
       model: input.model?.trim() ?? "",
       link: input.link ?? "lorawan",
@@ -3310,28 +3783,34 @@ export class DemoBackend implements Backend {
       createdAt: new Date().toISOString(),
       partnerId: null,
       qrToken: randomBoxToken(),
-      points: Array.from({ length: outlets }, (_, i) => ({
-        id: `cp-${externalId}-${i + 1}`,
-        stationId: input.stationId,
-        label: outletLabel(externalId, i + 1),
-        status: "free",
-        deviceId: externalId,
-        outlet: i + 1,
-        powerWatts: 0,
-        lastSeenAt: null,
-      })),
+      qrCode: newBoxCode(),
+      points: [],
     };
-    // A connected socket makes the station a charging point.
-    const stations = state.stations.map((s) =>
-      s.id === input.stationId && !offersCharging(s.kind) ? { ...s, kind: kindFor(offersSwap(s.kind), true) } : s,
-    );
+    const placed = stationId ? placeDemoDevice(device, stationId) : device;
     this.save(
       withAudit(
-        { ...state, stations, devices: [device, ...devices] },
-        { table: "charging_points", action: "insert", rowId: externalId, stationId: input.stationId, changes: { device: externalId, outlets } },
+        { ...state, stations: stationId ? chargingKind(state.stations, stationId) : state.stations, devices: [placed, ...devices] },
+        { table: "charging_points", action: "insert", rowId: externalId, stationId, changes: { device: externalId, outlets } },
       ),
     );
     return device.protocol === "ocpp1.6" && !device.ocppOpen ? { ocppKey: ocppKey() } : {};
+  }
+
+  async assignDeviceStation(externalId: string, stationId: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const all = state.devices ?? seedDevices();
+    const device = all.find((d) => d.externalId === externalId);
+    if (!device) throw new BackendError("unknown", "not_found");
+    if (!state.stations.some((s) => s.id === stationId)) throw new BackendError("station_not_found");
+    if (device.stationId === stationId) return;
+    if (device.stationId) throw new BackendError("device_has_station");
+    this.save(
+      withAudit(
+        { ...state, stations: chargingKind(state.stations, stationId), devices: all.map((d) => (d === device ? placeDemoDevice(d, stationId) : d)) },
+        { table: "charging_points", action: "update", rowId: externalId, stationId, changes: { device: externalId, station_id: [null, stationId] } },
+      ),
+    );
   }
 
   async deleteDevice(externalId: string) {
@@ -3366,8 +3845,9 @@ export class DemoBackend implements Backend {
     const all = state.devices ?? seedDevices();
     if (!all.some((d) => d.externalId === externalId)) throw new BackendError("unknown", "not_found");
     const qrToken = randomBoxToken();
-    this.save({ ...state, devices: all.map((d) => (d.externalId === externalId ? { ...d, qrToken } : d)) });
-    return qrToken;
+    const qrCode = newBoxCode();
+    this.save({ ...state, devices: all.map((d) => (d.externalId === externalId ? { ...d, qrToken, qrCode } : d)) });
+    return qrCode;
   }
 
   async setDevicePartner(externalId: string, partnerId: string | null) {
@@ -3550,7 +4030,7 @@ export class DemoBackend implements Backend {
   // Parcel depot --------------------------------------------------------------
 
   /** Parcels past their pickup deadline go into storage (the Worker does this in a daily job). */
-  private parcelsOf(state: DemoState): Parcel[] {
+  private parcelsOf(state: DemoState): DemoParcel[] {
     const now = new Date().toISOString();
     return (state.parcels ?? []).map((p) =>
       p.status === "arrived" && p.pickupDeadline && p.pickupDeadline <= now
@@ -3606,7 +4086,8 @@ export class DemoBackend implements Backend {
         const received = mine(p.recipient);
         return {
           ...p,
-          pickupCode: received && p.status === "arrived" ? p.pickupCode : undefined,
+          // The sender sees the code too, to pass it on to the recipient.
+          pickupCode: p.status === "arrived" ? p.pickupCode : undefined,
           direction: received ? "received" : "sent",
           history: this.historyOf(state, p),
         } as Parcel;
@@ -3684,7 +4165,7 @@ export class DemoBackend implements Backend {
     const recipient = this.demoAccount(sender.state, recipientPhone, recipientName);
     state = recipient.state;
     const now = new Date().toISOString();
-    const parcel: Parcel = {
+    const parcel: DemoParcel = {
       id: crypto.randomUUID(),
       trackingNo: newTrackingNo(),
       fromStationId: stationId,
@@ -3700,6 +4181,7 @@ export class DemoBackend implements Backend {
       paidAt: now,
       status: "deposited",
       createdAt: now,
+      createdById: staff.id,
       inTransitAt: null,
       arrivedAt: null,
       pickedUpAt: null,
@@ -3815,7 +4297,7 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const { profile, role } = this.stationActor(state, stationId);
     if (!this.depotOpen(state, stationId)) throw new BackendError("depot_inactive");
-    const driver = this.byBadge(state, badge);
+    const driver = await this.byBadge(state, badge);
     const ids = [...new Set(parcelIds)];
     if (!ids.length) throw new BackendError("unknown", "no parcels");
     const parcels = this.parcelsOf(state);
@@ -3948,29 +4430,40 @@ export class DemoBackend implements Backend {
     return { ...arrived, pickupCode: undefined };
   }
 
-  async pickUpParcel(stationId: string, codeOrQr: string): Promise<Parcel> {
+  async pickUpParcel(stationId: string, codeOrQr: string, trackingNo?: string): Promise<Parcel> {
     const state = this.load();
     this.stationActor(state, stationId);
-    const since = Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000;
-    const failures = (state.parcelCodeFailures ?? []).filter((f) => f.stationId === stationId && new Date(f.at).getTime() > since);
-    if (failures.length >= PARCEL_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    // As pickUpParcel in worker/parcels.ts: the number finds the parcel, only the code hands it over.
     const input = parseHandoverInput(codeOrQr);
+    if (!input) throw new BackendError("wrong_pickup_code");
+    const typedNo = trackingNo ? normalizeTrackingNo(trackingNo) : null;
+    if (trackingNo && !typedNo) throw new BackendError("parcel_not_found");
+    if (input.trackingNo && typedNo && input.trackingNo !== typedNo) throw new BackendError("wrong_pickup_code");
+    const number = input.trackingNo ?? typedNo;
     const parcels = this.parcelsOf(state);
-    const parcel = input
-      ? parcels.find(
-          (p) =>
-            p.toStationId === stationId &&
-            p.status === "arrived" &&
-            (input.code ? p.pickupCode === input.code : true) &&
-            (!input.trackingNo || p.trackingNo === input.trackingNo),
-        )
-      : undefined;
-    if (parcel?.deliveryStatus === "out_for_delivery") throw new BackendError("parcel_with_driver");
+    const known = number ? parcels.find((p) => p.trackingNo === number) : undefined;
+    if (number) {
+      if (!known) throw new BackendError("parcel_not_found");
+      if (known.toStationId !== stationId || known.status !== "arrived") throw new BackendError("parcel_not_arrived");
+      if (known.deliveryStatus === "out_for_delivery") throw new BackendError("parcel_with_driver");
+    }
+    if (!input.code) throw new BackendError("pickup_code_required");
+    // Wrong codes lock that parcel, or bare codes at the station; and all of them at this station together, above a ceiling.
+    const key = known ? `parcel:${known.id}` : stationId;
+    const since = Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000;
+    const recent = (state.parcelCodeFailures ?? []).filter((f) => new Date(f.at).getTime() > since);
+    if (recent.filter((f) => f.stationId === key).length >= PARCEL_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    if (recent.filter((f) => f.atStation === stationId).length >= PARCEL_STATION_MAX_CODE_FAILURES) throw new BackendError("code_locked");
+    const parcel = known
+      ? known.pickupCode === input.code
+        ? known
+        : undefined
+      : parcels.find((p) => p.toStationId === stationId && p.status === "arrived" && p.pickupCode === input.code);
     if (!parcel) {
-      this.save({ ...state, parcelCodeFailures: [...failures, { stationId, at: new Date().toISOString() }] });
-      if (input && !input.code && parcels.some((p) => p.trackingNo === input.trackingNo)) throw new BackendError("parcel_not_arrived");
+      this.save({ ...state, parcelCodeFailures: [...(state.parcelCodeFailures ?? []), { stationId: key, at: new Date().toISOString(), atStation: stationId }] });
       throw new BackendError("wrong_pickup_code");
     }
+    if (parcel.deliveryStatus === "out_for_delivery") throw new BackendError("parcel_with_driver");
     const done: Parcel = { ...parcel, status: "picked_up", pickedUpAt: new Date().toISOString(), pickupCode: undefined };
     // The recipient came in person after booking a home delivery: the trip is off.
     const jobs = (state.jobs ?? []).map((j) =>
@@ -4153,6 +4646,8 @@ export class DemoBackend implements Backend {
       doneAt: j.doneAt,
       proofKey: j.proofKey,
       ...(j.merchantId ? { forShop: true as const } : {}),
+      ...(j.proofReview ? { proofReview: j.proofReview } : {}),
+      ...(j.proofReview === "rejected" && j.proofRejectReason ? { proofRejectReason: j.proofRejectReason } : {}),
     };
   }
 
@@ -4656,6 +5151,12 @@ export class DemoBackend implements Backend {
   /** The demo runs in the browser: no push notices. */
   async registerPushToken() {}
 
+  async removePushToken() {}
+
+  async webPushKey(): Promise<{ publicKey: string }> {
+    throw new Error("unsupported");
+  }
+
   async reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }) {
     const state = this.load();
     const { driver } = this.demoDriver(state);
@@ -4867,31 +5368,85 @@ export class DemoBackend implements Backend {
     const state = this.load();
     const { driver, job } = this.myDemoJob(state, id);
     if (job.kind !== "ride" && job.kind !== "courier") throw new BackendError("job_wrong_status");
-    if (job.kind === "courier") this.checkCourierHandover(state, job, code);
+    // Handed over with the photo alone: the driver's share waits for the sender or an admin (finishRide in worker/drivers.ts).
+    const byPhoto = job.kind === "courier" && this.checkCourierHandover(state, job, code) === "photo";
     const from: JobStatus[] = hasDoorStep(job) ? ["picked_up", "at_door"] : ["picked_up"];
-    const jobs = this.updateJob(state, job.id, from, { status: "done", doneAt: new Date().toISOString() });
+    const jobs = this.updateJob(state, job.id, from, { status: "done", doneAt: new Date().toISOString(), ...(byPhoto ? { proofReview: "pending" as const } : {}) });
     this.saveJobs(
       state,
       jobs,
-      { table: "delivery_jobs", action: "update", rowId: job.id, userId: driver.userId, changes: { status: [job.status, "done"], collect_fcfa: job.collectFcfa } },
+      {
+        table: "delivery_jobs",
+        action: "update",
+        rowId: job.id,
+        userId: driver.userId,
+        changes: { status: [job.status, "done"], collect_fcfa: job.collectFcfa, ...(byPhoto ? { proof_review: "pending" } : {}) },
+      },
       {
         greenpoint: this.tripGreenpoint(state, driver.userId, job, job.driverStationId),
         ledger: [
           // A courier (and a shop's ride) was paid when the trip started.
           ...(collectsAtStart(job) || !job.collectFcfa ? [] : [this.ledgerEntry(driver.userId, "collected", job.collectFcfa, job.id, null)]),
-          ...this.earning(state, job, driver.userId, null),
+          ...(byPhoto ? [] : this.earning(state, job, driver.userId, null)),
           ...(state.ledger ?? []),
         ],
       },
     );
   }
 
+  /** The held share of a courier handed over by photo is booked, once (approveCourierProof in worker/drivers.ts). */
+  private approveProof(state: DemoState, job: DemoJob, by: "sender" | "admin") {
+    if (job.kind !== "courier" || job.status !== "done" || job.proofReview !== "pending" || !job.driverId) throw new BackendError("job_wrong_status");
+    this.saveJobs(
+      state,
+      (state.jobs ?? []).map((j) => (j.id === job.id ? { ...j, proofReview: "approved" as const } : j)),
+      { table: "delivery_jobs", action: "update", rowId: job.id, userId: job.driverId, changes: { proof_review: ["pending", "approved"], by } },
+      { ledger: [...this.earning(state, job, job.driverId, null), ...(state.ledger ?? [])] },
+    );
+  }
+
+  async confirmCourierReceipt(jobId: string) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const shop = profile.role === "merchant" ? this.membershipOf(state, profile.id)?.shop : null;
+    if (!shop) this.refuseNonCustomer(profile);
+    const job = (state.jobs ?? []).find((j) => j.id === jobId);
+    if (!job) throw new BackendError("job_not_found");
+    const mine = shop ? job.merchantId === shop.id : job.customerUserId === profile.id;
+    if (profile.role !== "admin" && !mine) throw new BackendError("forbidden");
+    this.approveProof(state, job, mine ? "sender" : "admin");
+  }
+
+  async approveCourierProof(jobId: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const job = (state.jobs ?? []).find((j) => j.id === jobId);
+    if (!job) throw new BackendError("job_not_found");
+    this.approveProof(state, job, "admin");
+  }
+
+  /** As rejectProof in worker/drivers.ts: the held share is not booked, and the trip can no longer be approved. */
+  async rejectCourierProof(jobId: string, reason: string) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const why = reason.trim();
+    if (!why || why.length > 300) throw new BackendError("unknown", "bad_request");
+    const job = (state.jobs ?? []).find((j) => j.id === jobId);
+    if (!job) throw new BackendError("job_not_found");
+    if (job.kind !== "courier" || job.status !== "done" || job.proofReview !== "pending" || !job.driverId) throw new BackendError("job_wrong_status");
+    this.saveJobs(
+      state,
+      (state.jobs ?? []).map((j) => (j.id === job.id ? { ...j, proofReview: "rejected" as const, proofRejectReason: why } : j)),
+      { table: "delivery_jobs", action: "update", rowId: job.id, userId: job.driverId, changes: { proof_review: ["pending", "rejected"], reason: why } },
+    );
+  }
+
   /** Courier at the door, as checkCourierHandover() in worker/drivers.ts: the recipient's code, or a photo without one. */
-  private checkCourierHandover(state: DemoState, job: DemoJob, code: string | undefined) {
+  private checkCourierHandover(state: DemoState, job: DemoJob, code: string | undefined): "code" | "photo" {
     const typed = (code ?? "").replace(/\s/g, "");
     if (!typed) {
       if (!job.proofKey) throw new BackendError("proof_required");
-      return;
+      return "photo";
     }
     const lockKey = `job:${job.id}`;
     const since = Date.now() - PARCEL_CODE_LOCK_MINUTES * 60_000;
@@ -4901,6 +5456,7 @@ export class DemoBackend implements Backend {
       this.save({ ...state, parcelCodeFailures: [...(state.parcelCodeFailures ?? []), { stationId: lockKey, at: new Date().toISOString() }] });
       throw new BackendError("wrong_pickup_code");
     }
+    return "code";
   }
 
   async myJobs(): Promise<DeliveryJob[]> {
@@ -5156,8 +5712,18 @@ export class DemoBackend implements Backend {
     };
   }
 
-  private byBadge(state: DemoState, badge: string): DemoDriver {
-    const code = parseDriverBadge(badge);
+  /** As driverByBadge (worker/drivers.ts): a pass is checked; `needPass` (settlement) refuses the typed code. */
+  private async byBadge(state: DemoState, badge: string, needPass = false): Promise<DemoDriver> {
+    let code: string | null;
+    if (isDriverPassFormat(badge)) {
+      const pass = await checkDriverPass(DEMO_PASS_SECRET, badge);
+      if (!pass.ok) throw new BackendError(pass.error);
+      code = pass.code;
+    } else if (needPass) {
+      throw new BackendError("driver_pass_required");
+    } else {
+      code = parseDriverBadge(badge);
+    }
     const driver = (state.drivers ?? []).find((d) => d.code === code);
     if (!code || !this.drives(state, driver)) throw new BackendError("driver_not_found");
     return driver;
@@ -5180,7 +5746,7 @@ export class DemoBackend implements Backend {
   async driverAtStation(stationId: string, badge: string): Promise<DriverAtStation> {
     const state = this.load();
     this.requireStaff(state);
-    const d = this.byBadge(state, badge);
+    const d = await this.byBadge(state, badge);
     const vehicle = (state.fleet ?? seedFleet()).find((v) => v.id === d.vehicleId);
     const { handOver, receive } = this.stationJobs(state, stationId, d.userId);
     return {
@@ -5201,7 +5767,7 @@ export class DemoBackend implements Backend {
   async handToDriver(stationId: string, badge: string, jobId: string, parcelCode: string) {
     const state = this.load();
     const { profile, role } = this.stationActor(state, stationId);
-    const d = this.byBadge(state, badge);
+    const d = await this.byBadge(state, badge);
     const { handOver: job } = this.stationJobs(state, stationId, d.userId, jobId);
     if (!job || job.id !== jobId) throw new BackendError("job_wrong_status");
     this.tripParcel(state, job, parcelCode);
@@ -5226,7 +5792,7 @@ export class DemoBackend implements Backend {
   async receiveFromDriver(stationId: string, badge: string, jobId: string, parcelCode: string) {
     const loaded = this.load();
     const { profile, role } = this.stationActor(loaded, stationId);
-    const d = this.byBadge(loaded, badge);
+    const d = await this.byBadge(loaded, badge);
     const { receive: job } = this.stationJobs(loaded, stationId, d.userId, jobId);
     if (!job || job.id !== jobId) throw new BackendError("job_wrong_status");
     this.tripParcel(loaded, job, parcelCode);
@@ -5272,7 +5838,7 @@ export class DemoBackend implements Backend {
   async settleDriver(stationId: string, badge: string, amountFcfa: number) {
     const state = this.load();
     const actor = this.stationActor(state, stationId);
-    const d = this.byBadge(state, badge);
+    const d = await this.byBadge(state, badge, true);
     const current = this.balanceOfDriver(state, d.userId);
     if (amountFcfa !== current) throw new BackendError("balance_changed");
     if (current < 0 && (state.driverPayouts ?? []).some((p) => p.driverId === d.userId && p.status === "requested")) throw new BackendError("payout_pending");
@@ -5646,6 +6212,21 @@ export class DemoBackend implements Backend {
       fleet = this.fleetInfo(state, row);
     }
     const drivers = this.managedDrivers(state).sort((a, b) => a.fullName.localeCompare(b.fullName));
+    const views = drivers.map((d) => this.viewDriver(state, d, false));
+    const settings = this.settingsOf(state);
+    const maxKg = (size: string) => (state.parcelSizes ?? DEFAULT_PARCEL_SIZES).find((t) => t.size === size)?.maxWeightKg ?? 50;
+    // As fleetView in worker/fleet.ts: a manager sees only open trips their drivers could take, without the door.
+    const open = (state.jobs ?? [])
+      .filter((j) => j.status === "open")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, 100)
+      .map((j) => this.viewJob(state, j));
+    const openJobs =
+      profile.role === "admin"
+        ? open.map(jobForManager)
+        : open
+            .filter((j) => fitsFleet(j, j.weightKg ?? maxKg(j.size), drivers.map((d, i) => ({ status: d.status, vehicle: views[i].vehicle })), settings))
+            .map(openJobForManager);
     return {
       fleet,
       drivers: drivers.map((d) => {
@@ -5669,12 +6250,8 @@ export class DemoBackend implements Backend {
             .slice(0, 30)
             .map((i) => this.viewInvite(i))
         : [],
-      openJobs: (state.jobs ?? [])
-        .filter((j) => j.status === "open")
-        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-        .slice(0, 100)
-        .map((j) => jobForManager(this.viewJob(state, j))),
-      settings: this.settingsOf(state),
+      openJobs,
+      settings,
     };
   }
 
@@ -7199,6 +7776,10 @@ export class DemoBackend implements Backend {
     return this.wallet(state).maxXof ?? DEMO_CREDIT_MAX;
   }
 
+  private chargeHold(state: DemoState): number {
+    return this.wallet(state).chargeHoldXof ?? DEMO_CHARGE_HOLD;
+  }
+
   async myWallet(): Promise<WalletView> {
     const state = this.load();
     const profile = this.walletAccess(state);
@@ -7282,6 +7863,7 @@ export class DemoBackend implements Backend {
       userLabel: [user.fullName, user.phone ?? user.email].filter(Boolean).join(" · "),
       adminId: null,
       stationId,
+      staffId: actor.profile.id,
     };
     const used = this.useCreditCode(w, input.code);
     this.save({ ...state, wallet: { ...used, balances: { ...w.balances, [user.id]: before + amount }, transactions: [tx, ...w.transactions].slice(0, 500) } });
@@ -7298,6 +7880,7 @@ export class DemoBackend implements Backend {
     return {
       enabled: w.enabled,
       maxXof: this.creditMax(state),
+      chargeHoldXof: this.chargeHold(state),
       stations: state.stations.map((x) => ({ id: x.id, name: x.name, greenCredit: credit.has(x.id) })),
       totals: {
         balancesXof: [...ids].reduce((n, id) => n + this.balance(w, id), 0),
@@ -7357,6 +7940,18 @@ export class DemoBackend implements Backend {
     this.save(withAudit({ ...state, wallet: { ...this.wallet(state), maxXof } }, { table: "wallets", action: "update", rowId: "green_credit_max_xof", changes: { maxXof } }));
   }
 
+  async setChargeHold(chargeHoldXof: number) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!Number.isInteger(chargeHoldXof) || chargeHoldXof < 1 || chargeHoldXof > 10_000_000) throw new BackendError("unknown", "bad_request");
+    this.save(
+      withAudit(
+        { ...state, wallet: { ...this.wallet(state), chargeHoldXof } },
+        { table: "wallets", action: "update", rowId: "green_credit_charge_hold_xof", changes: { chargeHoldXof } },
+      ),
+    );
+  }
+
   async setStationGreenCredit(stationId: string, enabled: boolean) {
     const state = this.load();
     this.requireAdmin(state);
@@ -7379,6 +7974,10 @@ export class DemoBackend implements Backend {
     if (!remark) throw new BackendError("unknown", "bad_request");
     const user = this.findWalletUser(state, input.contact);
     const w = this.wallet(state);
+    // One booking per (admin, key), as worker/wallet.ts adjustBalance: a repeat answers the first.
+    const key = input.idempotencyKey ? `adjust:${state.profile?.id ?? ""}:${input.idempotencyKey}` : undefined;
+    const first = key ? w.transactions.find((x) => x.key === key && x.userId === user.id && x.type === "admin_adjust") : undefined;
+    if (first) return first;
     const after = this.balance(w, user.id) + (input.direction === "add" ? amount : -amount);
     if (after < 0) throw new BackendError("insufficient_balance");
     const tx: AdminWalletTransaction = {
@@ -7400,7 +7999,10 @@ export class DemoBackend implements Backend {
     };
     this.save(
       withAudit(
-        { ...state, wallet: { ...w, balances: { ...w.balances, [user.id]: after }, transactions: [tx, ...w.transactions].slice(0, 500) } },
+        {
+          ...state,
+          wallet: { ...w, balances: { ...w.balances, [user.id]: after }, transactions: [{ ...tx, ...(key ? { key } : {}) }, ...w.transactions].slice(0, 500) },
+        },
         { table: "wallets", action: "insert", rowId: tx.id, userId: user.id, changes: { direction: input.direction, amount_xof: amount, remark } },
       ),
     );
@@ -7658,7 +8260,7 @@ export class DemoBackend implements Backend {
 
   /** A running demo charge gains energy with time; the price follows. */
   private chargeView(c: DemoCharge, now = Date.now()): ChargeSession {
-    const { userId: _userId, pointId: _pointId, startedBy: _startedBy, partnerId: _partnerId, ...rest } = c;
+    const { userId: _userId, pointId: _pointId, startedBy: _startedBy, partnerId: _partnerId, paidBy: _paidBy, ...rest } = c;
     const view: ChargeSession = c.userId && c.startedBy === c.userId ? { ...rest, selfStarted: true } : rest;
     if (c.status !== "charging") return view;
     const energyWh = Math.round(((now - new Date(c.startedAt).getTime()) / 3_600_000) * DEMO_CHARGE_WATTS);
@@ -7774,11 +8376,12 @@ export class DemoBackend implements Backend {
       this.checkPickupCode(state, reservation, input.pickupCode);
     }
     const users = state.users ?? demoUsers(new Date());
-    const text = contactFromCode(input.contact ?? "");
+    // Without a reservation only the customer's one-time Green Credit code names them; without it, an anonymous cash charge.
+    const code = (input.creditCode ?? "").trim();
     const customer = reservation
       ? (users.find((u) => u.id === reservation.userId) ?? (state.profile?.id === reservation.userId ? state.profile : null))
-      : text
-        ? this.findWalletUser(state, text)
+      : code
+        ? this.creditCodeOwner(state, code)
         : null;
     if (customer?.id === staff.id) throw new BackendError("own_reservation");
     // The reservation used now: the one named, else the customer's outlet reservation here (this outlet
@@ -7809,7 +8412,9 @@ export class DemoBackend implements Backend {
       paidAt: null,
       greenpoints: 0,
     };
-    this.save({ ...state, reservations, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
+    // The code is used once, by this start.
+    const wallet = !reservation && code ? this.useCreditCode(this.wallet(state), code) : state.wallet;
+    this.save({ ...state, wallet, reservations, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
     return this.chargeView(charge);
   }
 
@@ -7849,7 +8454,7 @@ export class DemoBackend implements Backend {
   }
 
   /** Paid: the greenpoints follow the kWh for an app customer at a solar station (as chargeEarnStatement). */
-  private payCharge(state: DemoState, id: string, method: ChargeSession["paymentMethod"]): DemoState {
+  private payCharge(state: DemoState, id: string, method: ChargeSession["paymentMethod"], paidBy: string | null = null): DemoState {
     const c = (state.charges ?? []).find((x) => x.id === id);
     if (!c || c.status !== "stopped" || c.amountXof <= 0) throw new BackendError("charge_wrong_status");
     let next = state;
@@ -7878,15 +8483,15 @@ export class DemoBackend implements Backend {
       }
     }
     const charges = (next.charges ?? []).map((x) =>
-      x.id === id ? { ...x, status: "paid" as const, paymentMethod: method, paidAt: new Date().toISOString(), greenpoints: points } : x,
+      x.id === id ? { ...x, status: "paid" as const, paymentMethod: method, paidAt: new Date().toISOString(), greenpoints: points, paidBy } : x,
     );
     return { ...next, charges };
   }
 
   async payChargeCash(stationId: string, id: string): Promise<ChargeSession> {
     const state = this.load();
-    this.stationActor(state, stationId);
-    const next = this.payCharge(state, id, "cash");
+    const { profile } = this.stationActor(state, stationId);
+    const next = this.payCharge(state, id, "cash", profile.id);
     this.save(next);
     return this.chargeView(next.charges!.find((c) => c.id === id)!);
   }
@@ -7928,7 +8533,7 @@ export class DemoBackend implements Backend {
   /** As outletInfo() in worker/charging.ts. */
   async chargeOutlet(token: string): Promise<ChargeOutletInfo> {
     const state = this.load();
-    const device = (state.devices ?? seedDevices()).find((d) => boxToken(d) === token);
+    const device = (state.devices ?? seedDevices()).find((d) => boxCode(d) === token || boxToken(d) === token);
     const station = device && state.stations.find((s) => s.id === device.stationId);
     if (!device || !station) throw new BackendError("unknown", "not_found");
     const me = state.profile?.id ?? null;
@@ -8001,8 +8606,9 @@ export class DemoBackend implements Backend {
     }
     const w = this.wallet(state);
     if (w.frozen.includes(profile.id)) throw new BackendError("wallet_frozen");
-    const balance = this.balance(w, profile.id);
-    if (balance < Math.max(info.tariff.minXof, 5)) throw new BackendError("insufficient_balance");
+    // As chargeHoldFrom() in worker/charging.ts: the charge may cost the balance up to the cap.
+    const limit = Math.min(this.balance(w, profile.id), this.chargeHold(state));
+    if (limit < Math.max(info.tariff.minXof, 5)) throw new BackendError("insufficient_balance");
     const used = this.reservationToUse(state, profile.id, info.stationId, pointId, info.ev);
     const reservations = used ? state.reservations.map((r) => (r.id === used.id ? { ...r, status: "completed" as const } : r)) : state.reservations;
     const charge: DemoCharge = {
@@ -8026,7 +8632,7 @@ export class DemoBackend implements Backend {
       paymentMethod: null,
       paidAt: null,
       greenpoints: 0,
-      creditLimitXof: balance,
+      creditLimitXof: limit,
     };
     this.save({ ...state, reservations, charges: [charge, ...(state.charges ?? [])].slice(0, 200) });
     return this.chargeView(charge);
@@ -8222,6 +8828,123 @@ export class DemoBackend implements Backend {
     this.save({ ...state, chargeCards: (state.chargeCards ?? seedChargeCards()).filter((c) => c.idTag !== idTag) });
   }
 
+
+  // Share is not simulated in the demo: the module stays off there (demoFeatures), so the app never calls these.
+
+  async shareOverview(): Promise<ShareOverview> {
+    return { stations: [], tariffs: [] };
+  }
+
+  private shareOff(): never {
+    throw new BackendError("unknown", "not_found");
+  }
+
+  async shareMe(): Promise<ShareMe> {
+    return this.shareOff();
+  }
+
+  async myShareRides(): Promise<ShareRide[]> {
+    return [];
+  }
+
+  async uploadShareDocument(): Promise<void> {
+    this.shareOff();
+  }
+
+  async reserveShare(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async shareRideAction(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async endShareRide(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async reportSharePosition(): Promise<void> {}
+
+  async reportShareProblem(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async payShareWallet(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async payShareMobile(): Promise<string> {
+    return this.shareOff();
+  }
+
+  async stationShare(): Promise<StationShare> {
+    return this.shareOff();
+  }
+
+  async setStationShareVehicle(): Promise<void> {
+    this.shareOff();
+  }
+
+  async payShareCash(): Promise<ShareRide> {
+    return this.shareOff();
+  }
+
+  async adminShare(): Promise<AdminShare> {
+    this.requireAdmin(this.load());
+    return { enabled: false, simulated: true, vehicles: [], stations: [], tariffs: [], rides: [], verifications: [], incidents: [] };
+  }
+
+  async setShareEnabled(): Promise<void> {
+    throw new BackendError("unknown", "Share is not available in the demo");
+  }
+
+  async saveShareVehicle(): Promise<void> {
+    this.shareOff();
+  }
+
+  async deleteShareVehicle(): Promise<void> {
+    this.shareOff();
+  }
+
+  async setShareVehicleState(): Promise<void> {
+    this.shareOff();
+  }
+
+  async shareVehicleCommand(): Promise<void> {
+    this.shareOff();
+  }
+
+  async saveShareStation(): Promise<void> {
+    this.shareOff();
+  }
+
+  async saveShareTariff(): Promise<void> {
+    this.shareOff();
+  }
+
+  async decideShareVerification(): Promise<void> {
+    this.shareOff();
+  }
+
+  async adminEndShareRide(): Promise<void> {
+    this.shareOff();
+  }
+
+  async waiveShareRide(): Promise<void> {
+    this.shareOff();
+  }
+
+  async shareRideTrack(): Promise<ShareTrackPoint[]> {
+    return [];
+  }
+
+  async resolveShareIncident(): Promise<void> {
+    this.shareOff();
+  }
+
+  async shareFileUrl(): Promise<string> {
+    return this.shareOff();
+  }
 }
 
 interface DemoChargeCard {
@@ -8275,6 +8998,21 @@ function eventView(e: NonNullable<DemoState["batteryEvents"]>[number]): BatteryE
 }
 
 /** What the app sees of a stored swap (without request id, staff and customer id). */
+/** As pricingRow() in worker/battery-types.ts: the pricing fields of a saved battery type. */
+function demoPricing(input: BatteryTypeInput, before: BatteryType | undefined): Pick<BatteryType, "pricing" | "priceFullXof" | "ussdTmoney" | "ussdFlooz"> {
+  if (input.pricing === undefined) {
+    return before ? { pricing: before.pricing, priceFullXof: before.priceFullXof, ussdTmoney: before.ussdTmoney, ussdFlooz: before.ussdFlooz } : {};
+  }
+  if (input.pricing === "station") return { pricing: "station", priceFullXof: null, ussdTmoney: null, ussdFlooz: null };
+  if (input.pricing !== "energy") throw new BackendError("unknown", "bad_request");
+  if (!validEnergyPrice(input.priceFullXof)) throw new BackendError("energy_price_required");
+  const tmoney = cleanUssdTemplate(input.ussdTmoney);
+  const flooz = cleanUssdTemplate(input.ussdFlooz);
+  if (tmoney === undefined || flooz === undefined) throw new BackendError("invalid_ussd");
+  if (!tmoney && !flooz) throw new BackendError("ussd_required");
+  return { pricing: "energy", priceFullXof: input.priceFullXof, ussdTmoney: tmoney, ussdFlooz: flooz };
+}
+
 function swapView(x: NonNullable<DemoState["swaps"]>[number]): SwapEntry {
   return {
     id: x.id,
@@ -8289,6 +9027,13 @@ function swapView(x: NonNullable<DemoState["swaps"]>[number]): SwapEntry {
     payment: x.payment,
     amountXof: x.amountXof,
     reservationId: x.reservationId,
+    inPct: x.inPct ?? null,
+    outPct: x.outPct ?? null,
+    plate: x.plate ?? null,
+    customerName: x.customerName ?? null,
+    batteryInCondition: x.batteryInCondition ?? null,
+    mmNetwork: x.mmNetwork ?? null,
+    mmRef: x.mmRef ?? null,
     person: x.person,
     role: x.role,
     createdAt: x.createdAt,
@@ -8301,6 +9046,15 @@ const DEMO_SWAP_PRICE = 500;
 function swapPrice(state: DemoState, station: Station): number | null {
   const set = state.swapPrices?.[station.id];
   return set !== undefined ? set : station.isOwn ? DEMO_SWAP_PRICE : null;
+}
+
+/** Places per type at a station; until the backoffice sets them, the station's places spread evenly over its types (as migration 0064). */
+function typeCapacities(state: DemoState, stationId: string, capacity: number): Record<string, number> {
+  const stored = state.typeCapacities?.[stationId];
+  if (stored) return stored;
+  const swapped = (state.stationBatteryTypes ?? DEMO_STATION_BATTERY_TYPES)[stationId] ?? [];
+  const share = Math.floor(capacity / Math.max(1, swapped.length));
+  return Object.fromEntries(swapped.map((id, i) => [id, share + (i < capacity - share * swapped.length ? 1 : 0)]));
 }
 
 /** Full batteries per type at a station; until staff count them, the total spread evenly over its types. */

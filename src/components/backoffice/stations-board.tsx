@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { isDeviceSilent, statusAgeHours, STALE_STATUS_HOURS } from "@/lib/admin/insights";
-import { offersCharging, offersSwap } from "@/lib/availability";
+import { offersCharging, offersSwap } from "@shared/availability";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { card, indexSnapshot, Loading, Pill, StaleNotice, Table, td, th, useAdminSnapshot, userLabel } from "./shared";

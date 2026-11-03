@@ -4,7 +4,7 @@ import { useState } from "react";
 import { DEFAULT_PHONE_COUNTRY, PHONE_COUNTRIES, phoneWithCountry } from "@/lib/countries";
 import { useErrorMessage } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { canInviteMore, type MerchantInvite, type MerchantInviteStatus, type MerchantMember, type MerchantView } from "@/lib/merchants";
+import { canInviteMore, type MerchantInvite, type MerchantInviteStatus, type MerchantMember, type MerchantView } from "@shared/merchants";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { CountryPicker } from "../country-picker";

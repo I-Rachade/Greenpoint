@@ -14,8 +14,8 @@
     "directory": "./out",
     "binding": "ASSETS",
     "not_found_handling": "404-page",
-    // Only /api/* runs the Worker code; pages and files are served directly.
-    "run_worker_first": ["/api/*"]
+    // Only /api/* and the sockets' short QR links (/q/*) run the Worker code; pages and files are served directly.
+    "run_worker_first": ["/api/*", "/q/*"]
   },
   "d1_databases": [
     {
@@ -26,13 +26,31 @@
     }
   ],
   // Each OCPP charge point keeps a WebSocket to its own Durable Object (worker/ocpp.ts).
-  "durable_objects": { "bindings": [{ "name": "OCPP", "class_name": "OcppConnection" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OcppConnection"] }],
+  // One more holds the Tutrack MQTT subscription of the Share trackers (worker/tutrack-bridge.ts).
+  "durable_objects": {
+    "bindings": [
+      { "name": "OCPP", "class_name": "OcppConnection" },
+      { "name": "TUTRACK", "class_name": "TutrackBridge" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["OcppConnection"] },
+    { "tag": "v2", "new_sqlite_classes": ["TutrackBridge"] }
+  ],
+  // Request limits per minute (worker/security.ts). Counted per Cloudflare location, so a
+  // little more can pass; enough against robots. namespace_id: any number unique in the account.
+  "ratelimits": [
+    { "name": "API_IP_LIMIT", "namespace_id": "62001", "simple": { "limit": 300, "period": 60 } },
+    { "name": "API_USER_LIMIT", "namespace_id": "62002", "simple": { "limit": 120, "period": 60 } },
+    { "name": "API_WRITE_LIMIT", "namespace_id": "62003", "simple": { "limit": 30, "period": 60 } },
+    { "name": "API_STAFF_LIMIT", "namespace_id": "62004", "simple": { "limit": 600, "period": 60 } },
+    { "name": "PARTNER_LIMIT", "namespace_id": "62005", "simple": { "limit": 60, "period": 60 } }
+  ],
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "poinderecharge-media" }],
   // Login codes by e-mail through Cloudflare Email Service. The domain must be
   // onboarded under Email Service > Email Sending (see docs/DEPLOYMENT.md).
   "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["noreply@poinderecharge.com"] }],
-  // Settings and secrets (ADMIN_PHONES, ADMIN_EMAILS, TEST_OTP, DIDIT_API_KEY, …) are set in the
+  // Settings and secrets (TEST_OTP, DIDIT_API_KEY, ACCESS_AUD, …) are set in the
   // dashboard; keep them on deploy. See worker/env.ts.
   "keep_vars": true,
   // Daily at 08:00 in Lomé (UTC): parcel pickup reminders and returns (worker/parcels.ts).

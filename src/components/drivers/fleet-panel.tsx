@@ -4,11 +4,11 @@ import dynamic from "next/dynamic";
 import { useState, type ReactNode } from "react";
 import { useDateTime } from "@/components/backoffice/shared";
 import { DEFAULT_PHONE_COUNTRY, PHONE_COUNTRIES, phoneWithCountry } from "@/lib/countries";
-import { BUSY_JOB_STATUSES, freshPosition, jobFits, type DeliveryJob, type DriverStatus } from "@/lib/drivers";
-import { statsUnlocked, type FleetDriver, type FleetDriverStats, type FleetInfo, type FleetInvite, type FleetInviteStatus, type FleetView } from "@/lib/fleet";
+import { BUSY_JOB_STATUSES, freshPosition, jobFits, type DeliveryJob, type DriverStatus } from "@shared/drivers";
+import { statsUnlocked, type FleetDriver, type FleetDriverStats, type FleetInfo, type FleetInvite, type FleetInviteStatus, type FleetView } from "@shared/fleet";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import type { StationView } from "@/lib/types";
+import type { StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { CountryPicker } from "../country-picker";
@@ -543,7 +543,7 @@ function ShopRequests() {
   );
 }
 
-/** /flotte: a fleet manager's drivers, invites, manual dispatch, the swaps billed to the fleet and figures (src/lib/fleet.ts). */
+/** /flotte: a fleet manager's drivers, invites, manual dispatch, the swaps billed to the fleet and figures (shared/fleet.ts). */
 /** Driver phase 2: drivers on duty with a recent position, as blue dots. */
 function FleetMap({ drivers }: { drivers: FleetDriver[] }) {
   const { t } = useI18n();

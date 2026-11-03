@@ -7,9 +7,9 @@ import { hoursOf, OpeningHoursInput, openingHoursLine } from "@/components/openi
 import { Badge, Button, Input, useToast, type BadgeTone } from "@/components/ui";
 import { useErrorMessage } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { validPrice, type StationPrices } from "@/lib/operators";
-import { canRequest, serviceDisplay, type ServiceDisplay, type StationServiceInfo } from "@/lib/station-services";
-import type { StationView } from "@/lib/types";
+import { validPrice, type StationPrices } from "@shared/operators";
+import { canRequest, serviceDisplay, type ServiceDisplay, type StationServiceInfo } from "@shared/station-services";
+import type { StationView } from "@shared/types";
 import { Section } from "./shared";
 
 export const SERVICE_TONE: Record<ServiceDisplay, BadgeTone> = {

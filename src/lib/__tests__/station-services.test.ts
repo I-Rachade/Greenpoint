@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { reservableOutlets } from "../reservations";
+import { reservableOutlets } from "@shared/reservations";
 import { DEMO_CODE, DemoBackend } from "../backend/demo";
-import { customerStation } from "../station-services";
-import type { StationView } from "../types";
+import { customerStation } from "@shared/station-services";
+import type { StationView } from "@shared/types";
 
 // Service unlock per station in the demo backend, as worker/services.test.ts on Cloudflare.
 

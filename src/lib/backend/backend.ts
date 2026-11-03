@@ -1,7 +1,22 @@
-import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "../batteries";
-import type { BatteryType, BatteryTypeInput } from "../battery-types";
-import type { AdminCharging, ChargeOutletInfo, ChargeSession, ChargeTariffInput, StationCharging } from "../charging";
-import type { ChargeCard, ChargeCardInput, CounterCard } from "../charge-cards";
+import type {
+  AdminShare,
+  ShareDocument,
+  ShareMe,
+  ShareOverview,
+  ShareRide,
+  ShareStationInput,
+  ShareTariffInput,
+  ShareTrackPoint,
+  ShareVehicleInput,
+  ShareVehicleKind,
+  ShareVehicleStatus,
+  StationShare,
+} from "@shared/share";
+import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryStatusInput, RegisterBatteriesInput, RegisterBatteriesResult } from "@shared/batteries";
+import type { BatteryType, BatteryTypeInput } from "@shared/battery-types";
+import type { Incident, IncidentInput } from "@shared/incidents";
+import type { AdminCharging, ChargeOutletInfo, ChargeSession, ChargeTariffInput, StationCharging } from "@shared/charging";
+import type { ChargeCard, ChargeCardInput, CounterCard } from "@shared/charge-cards";
 import type {
   Operator,
   VehicleType,
@@ -12,18 +27,18 @@ import type {
   StationStatus,
   StationView,
   UserRole,
-} from "../types";
-import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "../admin/types";
-import type { OwnerLive, OwnerReport, ReportPeriod } from "../owner-backoffice";
-import type { EvCharger, EvChargerInput } from "../ev-chargers";
-import type { RepairCenter, RepairCenterInput } from "../repair-centers";
-import type { Features } from "../features";
-import type { Device, DeviceInput } from "../iot/devices";
-import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "../parcels";
-import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "../partners";
-import type { AdminOperator, OperatorInput, OwnerStationInput, OwnerView } from "../operators";
-import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "../point-partners";
-import type { Promotion, PromotionInput } from "../promo";
+} from "@shared/types";
+import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "@shared/admin/types";
+import type { OwnerLive, OwnerReport, ReportPeriod } from "@shared/owner-backoffice";
+import type { EvCharger, EvChargerInput } from "@shared/ev-chargers";
+import type { RepairCenter, RepairCenterInput } from "@shared/repair-centers";
+import type { Features } from "@shared/features";
+import type { Device, DeviceInput } from "@shared/iot/devices";
+import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "@shared/parcels";
+import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "@shared/partners";
+import type { AdminOperator, MyStaffInvite, OperatorInput, OwnerStationInput, OwnerView } from "@shared/operators";
+import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "@shared/point-partners";
+import type { Promotion, PromotionInput } from "@shared/promo";
 import type {
   AdminGreenpoint,
   GreenpointFactors,
@@ -31,7 +46,7 @@ import type {
   GreenpointRedemption,
   GreenpointRewardInput,
   GreenpointView,
-} from "../greenpoint";
+} from "@shared/greenpoint";
 import type {
   AbandonReason,
   AdminDrivers,
@@ -54,7 +69,7 @@ import type {
   PayoutNetwork,
   DriverPayout,
   AdminDriverPayout,
-} from "../drivers";
+} from "@shared/drivers";
 import type {
   AdminFleet,
   FleetDecision,
@@ -65,7 +80,7 @@ import type {
   FleetTier,
   FleetView,
   MyFleetInvite,
-} from "../fleet";
+} from "@shared/fleet";
 import type {
   AdminMerchant,
   DriverShops,
@@ -86,17 +101,16 @@ import type {
   MerchantTier,
   MerchantView,
   MyMerchantInvite,
-} from "../merchants";
-import type { StationService, StationServiceInfo } from "../station-services";
-import type { ReservationKind } from "../reservations";
-import type { BatteryEventInput, BatteryEventView, StationCounter, SwapEntry, SwapFilter, SwapInput } from "../station-work";
-import type { ReviewInput, StationReview } from "../station-extras";
-import type { LatLng } from "../geo";
-import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "../station-cash";
-import type { AdminWallet, CounterCredit, CreditCode, CreditTopupInput, CreditTopupResult, WalletAdjustInput, WalletTransaction, WalletView } from "../wallet";
-
-/** Where a code goes: by SMS to the phone number or by e-mail. */
-export type CodeChannel = "sms" | "email";
+} from "@shared/merchants";
+import type { StationService, StationServiceInfo } from "@shared/station-services";
+import type { ReservationKind } from "@shared/reservations";
+import type { BatteryEventInput, BatteryEventView, StationCounter, SwapEntry, SwapFilter, SwapInput } from "@shared/station-work";
+import type { ReviewInput, StationReview } from "@shared/station-extras";
+import type { LatLng } from "@shared/geo";
+import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "@shared/station-cash";
+import type { SecurityOverview } from "@shared/security";
+import type { BackendErrorCode, CodeChannel } from "@shared/api";
+import type { AdminWallet, CounterCredit, CreditCode, CreditTopupInput, CreditTopupResult, WalletAdjustInput, WalletTransaction, WalletView } from "@shared/wallet";
 
 /** Open/close and free charging places. Full batteries change only through counter events (station-work.ts). */
 export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots">>;
@@ -104,177 +118,21 @@ export type StatusPatch = Partial<Pick<StationStatus, "isOpen" | "freeSlots">>;
 /** Start a charge for a cash or app customer, or for the customer of an outlet reservation (with its code). */
 export interface StartChargeInput {
   pointId: string;
-  contact?: string;
+  /** Without a reservation: the customer's one-time counter code (Green Credit page of their app); empty: anonymous cash charge. */
+  creditCode?: string;
   reservationId?: string;
   pickupCode?: string;
 }
 
-/** Error codes shared by both backends, translated in the UI (see i18n `errors`). */
-export type BackendErrorCode =
-  | "not_authenticated"
-  | "already_reserved"
-  | "station_not_found"
-  | "station_closed"
-  | "station_unattended"
-  | "service_not_offered"
-  | "none_available"
-  | "daily_limit"
-  | "cooldown"
-  | "wrong_pickup_code"
-  | "own_reservation"
-  | "reservation_not_active"
-  | "phone_not_allowed"
-  | "invalid_contact"
-  | "contact_taken"
-  | "invalid_code"
-  | "invalid_pin"
-  | "pin_locked"
-  | "bad_pin"
-  | "weak_pin"
-  | "image_too_large"
-  | "invalid_device"
-  | "device_exists"
-  | "device_offline"
-  | "device_not_charging"
-  | "device_command_failed"
-  | "device_not_configured"
-  | "depot_inactive"
-  | "station_without_point"
-  | "battery_type_exists"
-  | "same_station"
-  | "parcel_too_large"
-  | "parcel_not_found"
-  | "parcel_wrong_status"
-  | "code_locked"
-  | "parcel_with_driver"
-  | "parcel_not_arrived"
-  | "not_a_driver"
-  | "phone_required"
-  | "driver_busy"
-  | "driver_not_found"
-  | "too_far"
-  | "cash_limit"
-  | "outside_area"
-  | "job_not_found"
-  | "job_wrong_status"
-  | "wait_longer"
-  | "photo_missing"
-  | "ride_open"
-  | "vehicle_soon"
-  | "drivers_soon"
-  | "vehicle_unavailable"
-  | "vehicle_too_small"
-  | "has_other_role"
-  | "partner_suspended"
-  | "already_point_partner"
-  | "no_vehicle"
-  | "documents_missing"
-  | "balance_changed"
-  | "invalid_webhook"
-  | "rate_limited"
-  | "payment_not_offered"
-  | "payment_exists"
-  | "provider_unavailable"
-  | "forbidden"
-  | "wallet_disabled"
-  | "wallet_frozen"
-  | "insufficient_balance"
-  | "nothing_owed"
-  | "payout_pending"
-  | "payout_not_open"
-  | "recipient_not_found"
-  | "account_not_found"
-  | "self_transfer"
-  | "invalid_amount"
-  | "amount_too_small"
-  | "amount_too_large"
-  | "daily_limit_exceeded"
-  | "monthly_limit_exceeded"
-  | "wallet_not_empty"
-  | "topup_unavailable"
-  | "credit_code_invalid"
-  | "credit_not_accepted"
-  | "credit_limit_reached"
-  | "card_needs_account"
-  | "reward_unavailable"
-  | "redemption_open"
-  | "not_enough_points"
-  | "charge_busy"
-  | "charge_wrong_status"
-  | "charge_unpaid"
-  | "charge_qr_disabled"
-  | "card_invalid"
-  | "card_unknown"
-  | "card_blocked"
-  | "card_has_balance"
-  | "point_reserved"
-  | "service_already_unlocked"
-  | "service_request_pending"
-  | "no_pending_request"
-  | "invalid_review"
-  | "active_station_required"
-  | "no_full_battery"
-  | "counter_full"
-  | "swap_price_missing"
-  | "same_battery"
-  | "battery_number_required"
-  | "battery_wrong_brand"
-  | "battery_type_required"
-  | "cash_only"
-  | "wrong_fleet"
-  | "not_a_customer"
-  | "request_conflict"
-  | "reason_required"
-  | "battery_type_unavailable"
-  | "battery_type_mismatch"
-  | "battery_reserved"
-  | "outlet_busy"
-  | "outlet_required"
-  | "swap_required"
-  | "driver_pass_invalid"
-  | "driver_pass_expired"
-  | "role_change_blocked"
-  | "fleet_not_approved"
-  | "fleet_locked"
-  | "fleet_limit"
-  | "invite_number_taken"
-  | "invite_account_not_empty"
-  | "invite_pending"
-  | "invite_not_found"
-  | "already_in_fleet"
-  | "account_exists"
-  | "parcel_not_in_run"
-  | "parcel_label_missing"
-  | "run_not_found"
-  | "run_wrong_status"
-  | "run_unscanned"
-  | "recipient_not_customer"
-  | "sender_not_customer"
-  | "no_origin_depot"
-  | "staff_other_station"
-  | "opening_hours_invalid"
-  | "proof_required"
-  | "merchant_not_approved"
-  | "merchant_limit"
-  | "already_in_merchant"
-  | "checked_in_at_shop"
-  | "driver_checked_in"
-  | "not_assigned"
-  | "assignment_not_found"
-  | "merchant_driver_exists"
-  | "driver_checked_in_here"
-  | "merchant_locked"
-  | "address_limit"
-  | "cash_changed"
-  | "handover_reference_required"
-  | "handover_note_required"
-  | "handover_decided"
-  | "reject_reason_required"
-  | "own_station"
-  | "unknown";
+export type { BackendErrorCode, CodeChannel };
 
 export class BackendError extends Error {
-  constructor(public code: BackendErrorCode, message?: string) {
+  constructor(
+    public code: BackendErrorCode,
+    message?: string,
+    /** Seconds until a refused try may be made again (locks and request limits), when the server says. */
+    public retryAfter?: number,
+  ) {
     super(message ?? code);
   }
 }
@@ -285,6 +143,8 @@ export class BackendError extends Error {
  */
 export interface Backend {
   readonly mode: "demo" | "cloudflare";
+  /** Demo only: back to the sample data (the banner's reset button). */
+  reset?(): void;
 
   // Stations (public)
   listStations(): Promise<StationView[]>;
@@ -300,14 +160,19 @@ export interface Backend {
    * Sends a code by SMS (phone number) or by e-mail (address), needed to register
    * and to set a new PIN when it is forgotten. `contact` is normalised (see lib/contact.ts).
    */
-  sendCode(contact: string): Promise<void>;
+  sendCode(contact: string, captcha?: string): Promise<void>;
+  /** The Cloudflare Turnstile site key the login form shows before sending a code; null while it is off. */
+  captchaSiteKey(): Promise<string | null>;
   /**
    * Checks the code, sets the 4-digit PIN and signs in (new account or new PIN).
    * `demoRole` is only honoured by the demo backend, so testers can try every view.
    */
   register(contact: string, code: string, pin: string, demoRole?: UserRole): Promise<Profile>;
-  /** Everyday login with phone number or e-mail address, and PIN. */
-  signIn(contact: string, pin: string, demoRole?: UserRole): Promise<Profile>;
+  /**
+   * Everyday login with phone number or e-mail address, and PIN. After a few failed tries the
+   * server answers captcha_required; the form then sends again with a Turnstile token.
+   */
+  signIn(contact: string, pin: string, demoRole?: UserRole, captcha?: string): Promise<Profile>;
   signOut(): Promise<void>;
   /** Sends a code to a phone number or e-mail address the signed-in user wants to add. */
   sendContactCode(contact: string): Promise<void>;
@@ -318,7 +183,7 @@ export interface Backend {
   /** Deletes the signed-in user's account for good, after checking the code. */
   deleteAccount(channel: CodeChannel, code: string): Promise<void>;
 
-  // Reviews and photos (see src/lib/station-extras.ts)
+  // Reviews and photos (see shared/station-extras.ts)
   /** Customer reviews of a station, newest first. Public; `isMine` marks the signed-in user's own. */
   stationReviews(stationId: string): Promise<StationReview[]>;
   /** Rates a station 1 to 5 stars with an optional comment; one review per customer and station (a new one replaces the old). */
@@ -331,7 +196,7 @@ export interface Backend {
   // Customer
   myReservations(): Promise<Reservation[]>;
   /**
-   * Reserves at a station (riders only, src/lib/reservations.ts): `kind` "swap" with the
+   * Reserves at a station (riders only, shared/reservations.ts): `kind` "swap" with the
    * battery type as `target`, or "charging_point" with an outlet or car charger (none at a
    * station without connected outlets). The older "battery" / "slot" still work.
    */
@@ -351,7 +216,7 @@ export interface Backend {
    */
   completeReservation(id: string, pickupCode: string): Promise<void>;
 
-  // Station work (src/lib/station-work.ts): every action is sent with the active station.
+  // Station work (shared/station-work.ts): every action is sent with the active station.
   /** Counters, today's changes and whether the viewer may correct. Needs the swap service. */
   stationCounter(stationId: string): Promise<StationCounter>;
   /** "Marked full" +1, "issue" −1, or a correction with reason (owner, admin). Same request id twice = one change. */
@@ -362,12 +227,29 @@ export interface Backend {
   stationSwaps(stationId: string, filter?: SwapFilter): Promise<SwapEntry[]>;
   /** Counter history of a report period, newest first: owners and admins only (backoffice). */
   stationBatteryEvents(stationId: string, days: ReportPeriod): Promise<BatteryEventView[]>;
+  /** Reports a problem at the station (charger, power, battery, payment, other); its owners and the admins are told. */
+  reportIncident(stationId: string, input: IncidentInput): Promise<Incident>;
+  /** The station's open problems, then the last 30 days' handled ones. */
+  stationIncidents(stationId: string): Promise<Incident[]>;
+  /** Owners and admins: marks a problem handled, with an optional note. */
+  resolveIncident(stationId: string, incidentId: string, resolution: string | null): Promise<Incident>;
 
-  // Operator accounts (see src/lib/operators.ts)
+  // Operator accounts (see shared/operators.ts)
   /** The operators the signed-in person runs, their stations and staff. */
   ownerView(): Promise<OwnerView>;
-  /** Makes the account with this phone number or e-mail address staff of one of the operator's stations. */
-  ownerAddStaff(stationId: string, contact: string): Promise<void>;
+  /**
+   * Invites the person with this phone number or e-mail address to work at one of the operator's
+   * stations (migration 0050). The same answer whether an account has the contact or not; the
+   * person becomes staff only by accepting (acceptStaffInvite).
+   */
+  ownerInviteStaff(stationId: string, contact: string): Promise<void>;
+  /** The owner takes back a staff invite nobody answered yet. */
+  ownerRevokeStaffInvite(inviteId: string): Promise<void>;
+  /** Open staff invites for the signed-in person's phone number or e-mail address (empty when signed out). */
+  myStaffInvites(): Promise<MyStaffInvite[]>;
+  /** The invited person becomes staff of the station (the checks of an assignment run now). */
+  acceptStaffInvite(inviteId: string): Promise<void>;
+  declineStaffInvite(inviteId: string): Promise<void>;
   ownerRemoveStaff(stationId: string, userId: string): Promise<void>;
   ownerSaveStation(stationId: string, input: OwnerStationInput): Promise<void>;
   /** Moves a staff member to another station of the owner (staff work at one station only, W2). */
@@ -375,11 +257,13 @@ export interface Backend {
   /** An entry of the list to re-staff (migration 0033) is dealt with. */
   resolveReassignment(id: string): Promise<void>;
 
-  // Owner backoffice (see src/lib/owner-backoffice.ts): one station or all (`null`)
+  // Owner backoffice (see shared/owner-backoffice.ts): one station or all (`null`)
   ownerLive(stationId: string | null): Promise<OwnerLive>;
-  // Station cash (see src/lib/station-cash.ts): partner stations only
-  /** The balance, what is due now and the handovers of the owner's partner stations (admins: all of them). */
+  // Station cash (see shared/station-cash.ts): partner stations, and per staff member at own stations
+  /** The balance, what is due now and the handovers of the owner's stations (admins: all of them). */
   ownerCash(stationId: string | null): Promise<StationCash[]>;
+  /** At an own station, the signed-in staff member's Green Credit cash and closings; null elsewhere. */
+  myStationCash(stationId: string): Promise<StationCash | null>;
   /** Closes the open period and records what was handed over (pending until an admin confirms it). */
   closeCashDay(input: HandoverInput): Promise<CashHandover>;
   /** Admins: the money of a handover arrived (confirm) or not (reject, with a reason). */
@@ -388,7 +272,7 @@ export interface Backend {
   saveStationCashSettings(stationId: string, settings: StationCashSettings): Promise<void>;
   ownerReport(stationId: string | null, days: ReportPeriod): Promise<OwnerReport>;
 
-  // Service unlock per station (see src/lib/station-services.ts)
+  // Service unlock per station (see shared/station-services.ts)
   /** Every service of the owner's stations, or of all stations for an admin. */
   stationServices(): Promise<StationServiceInfo[]>;
   /** The station's owner asks an admin to unlock a service. */
@@ -404,7 +288,7 @@ export interface Backend {
   /** Battery types of the motorbike brands, including switched-off ones (admins only). */
   listBatteryTypes(): Promise<BatteryType[]>;
   saveBatteryType(id: string | null, input: BatteryTypeInput): Promise<void>;
-  // Battery register (src/lib/batteries.ts): admins; owners read the batteries of their stations.
+  // Battery register (shared/batteries.ts): admins; owners read the batteries of their stations.
   /** Batteries per brand, last swapped first, with the brands and their counts. */
   listBatteries(filter?: BatteryFilter): Promise<BatteryList>;
   /** One battery with its history, newest first. */
@@ -413,6 +297,8 @@ export interface Backend {
   registerBatteries(input: RegisterBatteriesInput): Promise<RegisterBatteriesResult>;
   /** In service, repair, lost or retired, with an optional reason (admins). */
   setBatteryStatus(id: string, input: BatteryStatusInput): Promise<void>;
+  /** Removes a battery and its own history from the register (admins); swaps keep their numbers. */
+  deleteBattery(id: string): Promise<void>;
   /** The swap form: is this number known at this battery type, new, or of another brand? */
   lookupBattery(stationId: string, serial: string, batteryTypeId: string | null): Promise<BatteryLookup>;
   /** Electric car chargers, assigned or not, including switched-off ones (admins only). */
@@ -431,6 +317,10 @@ export interface Backend {
   /** One page of the reservations table (last ADMIN_HISTORY_DAYS days) and how many match. */
   adminReservations(query: AdminReservationQuery): Promise<AdminReservationPage>;
   auditLog(filter: AuditFilter): Promise<AuditEntry[]>;
+  /** The security page: locked accounts, figures of the last 24 hours, the security log (shared/security.ts). */
+  adminSecurity(): Promise<SecurityOverview>;
+  /** Lifts an account's PIN lock. */
+  unlockAccount(userId: string): Promise<void>;
   setUserRole(userId: string, role: UserRole): Promise<void>;
   assignStaff(stationId: string, userId: string): Promise<void>;
   unassignStaff(stationId: string, userId: string): Promise<void>;
@@ -443,11 +333,12 @@ export interface Backend {
   addOperatorOwner(operatorId: string, contact: string): Promise<void>;
   removeOperatorOwner(operatorId: string, userId: string): Promise<void>;
 
-  // Connected sockets (admins only; see src/lib/iot/devices.ts)
+  // Connected sockets (admins only; see shared/iot/devices.ts)
   listDevices(): Promise<Device[]>;
-  /** Registers a socket and creates one charging point per outlet. */
-  /** Registers a socket; an OCPP charge point gets its password (only now). */
+  /** Registers a socket, with or without a station; an OCPP charge point gets its password (only now). */
   createDevice(input: DeviceInput): Promise<{ ocppKey?: string }>;
+  /** Puts a socket registered without a station at one and creates its charging points. */
+  assignDeviceStation(externalId: string, stationId: string): Promise<void>;
   /** Removes a socket and its charging points. */
   deleteDevice(externalId: string): Promise<void>;
   /** Switches an outlet on (until full) or off; only where `canSwitch`. */
@@ -459,7 +350,7 @@ export interface Backend {
   /** Gives the socket to a point partner, or back to poinderecharge (`null`). */
   setDevicePartner(externalId: string, partnerId: string | null): Promise<void>;
 
-  // Point partners, who own sockets (see src/lib/point-partners.ts)
+  // Point partners, who own sockets (see shared/point-partners.ts)
   /** Admins: every partner with its accounts and sockets. */
   adminPointPartners(): Promise<AdminPointPartner[]>;
   /** Creates a partner (`id` null, active at once) or edits one. */
@@ -472,7 +363,7 @@ export interface Backend {
   /** The signed-in partner account's sockets and earnings of the period. */
   pointPartnerDashboard(days: ReportPeriod): Promise<PointPartnerDashboard>;
 
-  // Modules (see src/lib/features.ts)
+  // Modules (see shared/features.ts)
   /** Which modules are switched on. Public. */
   features(): Promise<Features>;
   /** Backoffice: switches the parcel module on or off for everyone (admins only). */
@@ -482,7 +373,7 @@ export interface Backend {
   /** Backoffice: switches the Lite version on or off for everyone (admins only). */
   setLiteEnabled(enabled: boolean): Promise<void>;
 
-  // Parcel depot (see src/lib/parcels.ts)
+  // Parcel depot (see shared/parcels.ts)
   /** Stations that take parcels, and the prices. Public. */
   parcelInfo(): Promise<ParcelInfo>;
   /** Parcels the signed-in customer sent or is to receive; the pickup code only for the recipient. */
@@ -507,8 +398,12 @@ export interface Backend {
   cancelRun(stationId: string, runId: string): Promise<void>;
   /** Staff at the destination scan a parcel in from a collection run: it gets its pickup code and the recipient is told. */
   receiveParcel(stationId: string, code: string): Promise<Parcel>;
-  /** Staff at the destination hand out a parcel for its code or scanned QR code. */
-  pickUpParcel(stationId: string, codeOrQr: string): Promise<Parcel>;
+  /**
+   * Staff at the destination hand out a parcel, only for the recipient's code or scanned QR
+   * code. `trackingNo`: the parcel number staff found it by (then wrong codes lock only that
+   * parcel). The number alone never hands it over: pickup_code_required.
+   */
+  pickUpParcel(stationId: string, codeOrQr: string, trackingNo?: string): Promise<Parcel>;
   /** Cancels a parcel that has not left the sending station. */
   cancelParcel(id: string): Promise<void>;
   /** Tells the recipient again that the parcel is waiting. */
@@ -520,7 +415,7 @@ export interface Backend {
   /** A parcel in storage was handed out after all, or auctioned. */
   closeStoredParcel(id: string, outcome: "released" | "auctioned"): Promise<void>;
 
-  // Drivers (see src/lib/drivers.ts)
+  // Drivers (see shared/drivers.ts)
   /** The signed-in user's driver page: application, current trip, history and cash. */
   driverHome(): Promise<DriverHome>;
   /** The signed QR code a driver shows at a station; valid DRIVER_PASS_MINUTES (R10). */
@@ -538,7 +433,11 @@ export interface Backend {
   leaveDriverQueue(): Promise<void>;
   /** The driver app's position while on duty (driver phase 2); kept: false when off duty. */
   /** Signs this phone up for push notices of the signed-in account (planung/fahrer.md phase 2). */
-  registerPushToken(token: string, platform: "android" | "ios"): Promise<void>;
+  registerPushToken(token: string, platform: "android" | "ios" | "web"): Promise<void>;
+  /** This phone or browser gets no more notices (the token it registered). */
+  removePushToken(token: string): Promise<void>;
+  /** The key a browser subscribes to push notices with (web app, worker/web-push.ts). */
+  webPushKey(): Promise<{ publicKey: string }>;
   reportDriverPosition(position: { lat: number; lng: number; accuracyM?: number | null }): Promise<{ kept: boolean }>;
   acceptJob(id: string): Promise<void>;
   /** The trip goes to the next in line; the driver goes to the back. */
@@ -568,6 +467,8 @@ export interface Backend {
   bookDelivery(parcelId: string, home: HomePoint, payWith?: TripPayment): Promise<DeliveryJob>;
   /** Customer (before the driver has the parcel) or admin. */
   cancelJob(id: string): Promise<void>;
+  /** The sender (or the shop) confirms a courier handed over by photo arrived: the driver's held share is booked. */
+  confirmCourierReceipt(jobId: string): Promise<void>;
   /** Station staff: drivers in line and parcels drivers take or bring. */
   stationDrivers(stationId: string): Promise<StationDrivers>;
   /** Station staff scanned a driver's QR code (or typed the code). */
@@ -590,12 +491,16 @@ export interface Backend {
   saveFleetVehicle(id: string | null, input: FleetVehicleInput): Promise<void>;
   saveDriverSettings(settings: DriverSettings): Promise<void>;
   assignJob(jobId: string, driverId: string): Promise<void>;
+  /** Backoffice: the photo of a courier handed over without the code is fine: the driver's held share is booked. */
+  approveCourierProof(jobId: string): Promise<void>;
+  /** Backoffice: the photo does not show the handover: the driver's held share is not booked; driver and sender are told why. */
+  rejectCourierProof(jobId: string, reason: string): Promise<void>;
   /** A displayable URL for a private photo (documents, door photos); admins only. */
   driverFileUrl(key: string): Promise<string>;
   /** Backoffice: links a driver to a fleet manager by phone or e-mail; null unlinks. */
   setDriverManager(driverId: string, contact: string | null): Promise<void>;
 
-  // Fleet managers (see src/lib/fleet.ts)
+  // Fleet managers (see shared/fleet.ts)
   /** The manager's drivers and the trips nobody has yet. */
   fleetView(): Promise<FleetView>;
   /** Trips, takings, cash and charging of the manager's drivers; days as YYYY-MM-DD. */
@@ -624,7 +529,7 @@ export interface Backend {
   reviewFleet(managerId: string, action: FleetDecision): Promise<void>;
   setFleetTier(managerId: string, tier: FleetTier): Promise<void>;
 
-  // Merchants (see src/lib/merchants.ts, planung/marchand.md)
+  // Merchants (see shared/merchants.ts, planung/marchand.md)
   /**
    * Merchant registration: its own path, never a customer account (W5). Makes the account,
    * its shop (pending until an admin approves it) and the membership as its merchant, and signs in.
@@ -678,7 +583,7 @@ export interface Backend {
   setMerchantOwner(merchantId: string, userId: string): Promise<void>;
   adminRemoveMerchantEmployee(merchantId: string, userId: string): Promise<void>;
 
-  // Partner API (see src/lib/partners.ts)
+  // Partner API (see shared/partners.ts)
   /** Parcels other apps booked for drop-off at this station (its staff). */
   stationBookings(stationId: string): Promise<StationBooking[]>;
   /** Staff take in a booked parcel after measuring it and checking its content; it becomes a parcel. */
@@ -694,7 +599,7 @@ export interface Backend {
   /** Sends a webhook message again. */
   retryPartnerEvent(eventId: string): Promise<void>;
 
-  // Advertising popup (see src/lib/promo.ts)
+  // Advertising popup (see shared/promo.ts)
   /** The ad to show when the app opens, or null. Public. */
   currentPromotion(): Promise<Promotion | null>;
   /** All ads, newest first (admins only). */
@@ -704,7 +609,7 @@ export interface Backend {
   /** Stores an image and returns its public URL (admins only). */
   uploadPromotionImage(file: File): Promise<string>;
 
-  // Green Credit (see src/lib/wallet.ts)
+  // Green Credit (see shared/wallet.ts)
   /** Balance, limit, Green Credit stations and history of the signed-in user. Fails with wallet_disabled while the module is off (admins may test). */
   myWallet(): Promise<WalletView>;
   /** The customer typed their PIN on their phone: the one-time code staff scan at the counter. */
@@ -718,12 +623,14 @@ export interface Backend {
   setWalletEnabled(enabled: boolean): Promise<void>;
   /** The highest balance a customer may hold (0 = no limit). */
   setCreditMax(maxXof: number): Promise<void>;
+  /** The most a Green Credit charge holds of the customer's credit (at least 1 FCFA). */
+  setChargeHold(chargeHoldXof: number): Promise<void>;
   /** Designates a station that loads and accepts Green Credit. */
   setStationGreenCredit(stationId: string, enabled: boolean): Promise<void>;
   adjustWallet(input: WalletAdjustInput): Promise<WalletTransaction>;
   setWalletFrozen(contact: string, frozen: boolean): Promise<void>;
 
-  // greenpoint (see src/lib/greenpoint.ts)
+  // greenpoint (see shared/greenpoint.ts)
   /** CO2 saved, level, greenpoints, rewards and history of the signed-in user. */
   myGreenpoint(): Promise<GreenpointView>;
   /** The vehicle that sets the CO2 of a swap or charge. */
@@ -738,7 +645,7 @@ export interface Backend {
   saveGreenpointFactors(factors: GreenpointFactors): Promise<void>;
   saveGreenpointReward(id: string | null, input: GreenpointRewardInput): Promise<void>;
 
-  // Charging at a socket (see src/lib/charging.ts)
+  // Charging at a socket (see shared/charging.ts)
   /** Station staff: the charges running or waiting for payment, today's charges and takings. */
   stationCharging(stationId: string): Promise<StationCharging>;
   /** Staff switch an outlet on for a cash customer, or an app customer by phone, e-mail or scanned QR code. */
@@ -782,4 +689,43 @@ export interface Backend {
   deleteChargeCard(idTag: string): Promise<void>;
   /** Station staff: whose account a card is linked to, and its Green Credit (cards are no longer topped up). */
   counterCard(stationId: string, idTag: string): Promise<CounterCard>;
+
+  // Share: renting e-motorbikes from station to station (see shared/share.ts)
+  /** Share stations with the vehicles parked there, and the prices. Public; empty while the module is off. */
+  shareOverview(): Promise<ShareOverview>;
+  /** The customer's check, open ride, rides to pay and how to pay them. */
+  shareMe(): Promise<ShareMe>;
+  myShareRides(): Promise<ShareRide[]>;
+  /** A photo of the ID, a selfie or the licence (cars only); admins check them. */
+  uploadShareDocument(kind: ShareDocument, image: Blob): Promise<void>;
+  /** Reserves a vehicle (by id or its QR code), or starts right away with start: true. */
+  reserveShare(input: { vehicleId?: string; qrToken?: string; toStationId: string | null; helmet: boolean; start?: boolean }): Promise<ShareRide>;
+  shareRideAction(id: string, action: "start" | "cancel" | "pause" | "resume"): Promise<ShareRide>;
+  /** Hands the vehicle back; the position is the phone's while the trackers are simulated. */
+  endShareRide(id: string, position: LatLng | null): Promise<ShareRide>;
+  reportSharePosition(id: string, position: LatLng): Promise<void>;
+  reportShareProblem(id: string, note: string): Promise<ShareRide>;
+  payShareWallet(id: string, input: { pin: string; idempotencyKey: string }): Promise<ShareRide>;
+  /** Asks Flooz/T-Money for the money; returns the payment's id, to ask again with refreshChargePayment. */
+  payShareMobile(id: string, input: { network: "flooz" | "tmoney"; phone: string }): Promise<string>;
+  /** Station staff: vehicles parked here, rides heading here, rides to take cash for. */
+  stationShare(stationId: string): Promise<StationShare>;
+  setStationShareVehicle(stationId: string, vehicleId: string, status: ShareVehicleStatus): Promise<void>;
+  payShareCash(stationId: string, rideId: string): Promise<ShareRide>;
+  /** Backoffice (admins only). */
+  adminShare(): Promise<AdminShare>;
+  setShareEnabled(enabled: boolean): Promise<void>;
+  saveShareVehicle(id: string | null, input: ShareVehicleInput): Promise<void>;
+  deleteShareVehicle(id: string): Promise<void>;
+  setShareVehicleState(id: string, status: ShareVehicleStatus, stationId: string | null): Promise<void>;
+  shareVehicleCommand(id: string, action: "unlock" | "lock" | "locate"): Promise<void>;
+  saveShareStation(stationId: string, input: ShareStationInput): Promise<void>;
+  saveShareTariff(kind: ShareVehicleKind, input: ShareTariffInput): Promise<void>;
+  decideShareVerification(userId: string, approve: boolean, reason: string): Promise<void>;
+  adminEndShareRide(id: string, stationId: string | null, wrongDrop: boolean): Promise<void>;
+  waiveShareRide(id: string): Promise<void>;
+  shareRideTrack(id: string): Promise<ShareTrackPoint[]>;
+  resolveShareIncident(id: string, resolution: string): Promise<void>;
+  /** A customer's private photo as a blob URL (admins only). */
+  shareFileUrl(key: string): Promise<string>;
 }

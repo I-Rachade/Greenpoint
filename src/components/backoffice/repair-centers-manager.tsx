@@ -5,7 +5,7 @@ import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { REPAIR_ADDRESS_MAX, REPAIR_NAME_MAX, type RepairCenter, type RepairCenterInput } from "@/lib/repair-centers";
+import { REPAIR_ADDRESS_MAX, REPAIR_NAME_MAX, type RepairCenter, type RepairCenterInput } from "@shared/repair-centers";
 import { card, field, Loading, Pill, StaleNotice } from "./shared";
 
 const EMPTY: RepairCenterInput = { operatorId: null, name: "", address: "", lat: 6.1725, lng: 1.2314, phone: null, openingHours: "", isActive: true };
@@ -21,7 +21,7 @@ const inputOf = (r: RepairCenter): RepairCenterInput => ({
   isActive: r.isActive,
 });
 
-/** Backoffice page for repair workshops away from stations (src/lib/repair-centers.ts). */
+/** Backoffice page for repair workshops away from stations (shared/repair-centers.ts). */
 export function RepairCentersManager() {
   const { t } = useI18n();
   const { backend } = useApp();
