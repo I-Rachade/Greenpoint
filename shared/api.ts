@@ -39,6 +39,7 @@ export type BackendErrorCode =
   | "device_command_failed"
   | "device_not_configured"
   | "depot_inactive"
+  | "operator_inactive"
   | "station_without_point"
   | "battery_type_exists"
   | "same_station"

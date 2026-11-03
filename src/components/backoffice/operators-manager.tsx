@@ -5,7 +5,7 @@ import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { OPERATOR_NAME_MAX, type AdminOperator, type OperatorInput } from "@shared/operators";
+import { OPERATOR_NAME_MAX, type AdminOperator, type OperatorInput, type OperatorStation } from "@shared/operators";
 import { card, field, Loading, Pill, StaleNotice } from "./shared";
 
 const button = "rounded-full bg-gp-green-dark px-3 py-1 text-xs text-white disabled:opacity-30";
@@ -69,6 +69,40 @@ function OperatorForm({
   );
 }
 
+/** Stations shown before "Show all". */
+const STATIONS_PREVIEW = 5;
+
+function StationList({ stations }: { stations: OperatorStation[] }) {
+  const { t } = useI18n();
+  const [all, setAll] = useState(false);
+  if (!stations.length) return <p className="text-zinc-500">{t.operators.noStations}</p>;
+  const shown = all ? stations : stations.slice(0, STATIONS_PREVIEW);
+  return (
+    <>
+      <ul className={`divide-y divide-black/5 dark:divide-white/10 ${all ? "max-h-80 overflow-y-auto pr-1" : ""}`}>
+        {shown.map((s) => (
+          <li key={s.id} className="flex items-center gap-2 py-1.5">
+            <span className="min-w-0 flex-1">
+              <span className={s.isActive ? "" : "text-zinc-500"}>{s.name}</span>
+              {s.address && <span className="block truncate text-xs text-zinc-500">{s.address}</span>}
+            </span>
+            {s.isActive ? (
+              <Pill tone="green">{t.operators.stationActive}</Pill>
+            ) : (
+              <Pill tone={s.pausedWithOperator ? "amber" : "gray"}>{s.pausedWithOperator ? t.operators.stationPaused : t.operators.stationInactive}</Pill>
+            )}
+          </li>
+        ))}
+      </ul>
+      {stations.length > STATIONS_PREVIEW && (
+        <button type="button" className="text-xs font-medium text-gp-green-dark underline dark:text-gp-green" onClick={() => setAll((v) => !v)}>
+          {all ? t.operators.hideStations : format(t.operators.showStations, { n: stations.length })}
+        </button>
+      )}
+    </>
+  );
+}
+
 function OperatorCard({
   operator,
   onChanged,
@@ -111,6 +145,17 @@ function OperatorCard({
     );
   }
 
+  async function toggleActive() {
+    const active = !operator.isActive;
+    if (!active) {
+      const n = operator.stations.filter((s) => s.isActive).length;
+      if (!window.confirm(format(t.operators.confirmDeactivate, { operator: operator.name, n }))) return;
+    }
+    if (await act(() => backend.setOperatorActive(operator.id, active))) {
+      onMessage(format(active ? t.operators.activated : t.operators.deactivated, { operator: operator.name }), true);
+    }
+  }
+
   async function addOwner(e: FormEvent) {
     e.preventDefault();
     if (await act(() => backend.addOperatorOwner(operator.id, contact))) setContact("");
@@ -121,14 +166,29 @@ function OperatorCard({
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-lg font-semibold">{operator.name}</h2>
         <Pill tone={operator.isOwn ? "green" : "gray"}>{operator.isOwn ? t.operators.own : t.operators.partner}</Pill>
-        <span className="flex-1" />
-        <button type="button" className={outline} onClick={() => setEditing(true)}>
-          {t.operators.edit}
-        </button>
+        {!operator.isActive && <Pill tone="red">{t.operators.inactive}</Pill>}
+        <div className="ml-auto flex gap-2">
+          <button
+            type="button"
+            className={operator.isActive ? outline : button}
+            aria-pressed={operator.isActive}
+            onClick={toggleActive}
+          >
+            {operator.isActive ? t.operators.deactivate : t.operators.activate}
+          </button>
+          <button type="button" className={outline} onClick={() => setEditing(true)}>
+            {t.operators.edit}
+          </button>
+        </div>
       </div>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">
         {[operator.contactPhone, format(t.operators.stations, { n: operator.stationCount })].filter(Boolean).join(" · ")}
       </p>
+      {!operator.isActive && <p className="text-sm text-red-700 dark:text-red-300">{t.operators.inactiveHint}</p>}
+      <div className="space-y-1 text-sm">
+        <h3 className="font-medium">{t.operators.stationList}</h3>
+        <StationList stations={operator.stations} />
+      </div>
       <div className="space-y-1 text-sm">
         <h3 className="font-medium">{t.operators.owners}</h3>
         {operator.owners.length === 0 ? (
