@@ -145,6 +145,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "device_command_failed",
   "device_not_configured",
   "depot_inactive",
+  "operator_inactive",
   "same_station",
   "parcel_too_large",
   "parcel_not_found",
@@ -732,6 +733,11 @@ export class CloudflareBackend implements Backend {
 
   adminOperators() {
     return this.call<AdminOperator[]>("GET", "/api/admin/operators");
+  }
+
+  async setOperatorActive(operatorId: string, active: boolean) {
+    await this.call("POST", `/api/admin/operators/${encodeURIComponent(operatorId)}/active`, { active });
+    this.changed();
   }
 
   async saveOperator(id: string | null, input: OperatorInput) {

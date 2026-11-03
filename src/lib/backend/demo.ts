@@ -468,6 +468,9 @@ interface DemoState {
   pointPartnerAccounts?: { userId: string; partnerId: string; createdAt: string }[];
   /** Contact phones of operators, set in the backoffice. */
   operatorPhones?: Record<string, string | null>;
+  /** Operators switched off, and the stations that went off with them (migration 0067). */
+  inactiveOperators?: string[];
+  pausedWithOperator?: string[];
   /** Parcel module switch of the backoffice (missing = on). */
   parcelsEnabled?: boolean;
   /** Courses, express and trips at home; off until an admin switches it on (as in worker/features.ts). */
@@ -3664,14 +3667,54 @@ export class DemoBackend implements Backend {
     const state = this.load();
     this.requireAdmin(state);
     const owners = state.operatorOwners ?? [];
+    const inactive = new Set(state.inactive ?? []);
+    const paused = new Set(state.pausedWithOperator ?? []);
+    const off = new Set(state.inactiveOperators ?? []);
     return [...state.operators]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map((o) => ({
-        ...o,
-        contactPhone: state.operatorPhones?.[o.id] ?? null,
-        stationCount: state.stations.filter((s) => s.operatorId === o.id).length,
-        owners: owners.filter((x) => x.operatorId === o.id).map((x) => this.label(state, x.userId)),
-      }));
+      .map((o) => {
+        const stations = state.stations
+          .filter((s) => s.operatorId === o.id)
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((s) => ({ id: s.id, name: s.name, address: s.address, isActive: !inactive.has(s.id), pausedWithOperator: paused.has(s.id) }));
+        return {
+          ...o,
+          contactPhone: state.operatorPhones?.[o.id] ?? null,
+          isActive: !off.has(o.id),
+          stationCount: stations.length,
+          stations,
+          owners: owners.filter((x) => x.operatorId === o.id).map((x) => this.label(state, x.userId)),
+        };
+      });
+  }
+
+  async setOperatorActive(operatorId: string, active: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!state.operators.some((o) => o.id === operatorId)) throw new BackendError("unknown", "operator not found");
+    const off = new Set(state.inactiveOperators ?? []);
+    if (off.has(operatorId) === !active) return;
+    const inactive = new Set(state.inactive ?? []);
+    const paused = new Set(state.pausedWithOperator ?? []);
+    const own = state.stations.filter((s) => s.operatorId === operatorId).map((s) => s.id);
+    const affected = active ? own.filter((id) => paused.has(id)) : own.filter((id) => !inactive.has(id));
+    for (const id of affected) {
+      if (active) {
+        inactive.delete(id);
+        paused.delete(id);
+      } else {
+        inactive.add(id);
+        paused.add(id);
+      }
+    }
+    if (active) off.delete(operatorId);
+    else off.add(operatorId);
+    this.save(
+      withAudit(
+        { ...state, inactive: [...inactive], pausedWithOperator: [...paused], inactiveOperators: [...off] },
+        { table: "operators", action: "update", rowId: operatorId, changes: { is_active: [!active, active], stations: affected.length } },
+      ),
+    );
   }
 
   async saveOperator(id: string | null, input: OperatorInput) {
@@ -3733,10 +3776,16 @@ export class DemoBackend implements Backend {
   async setStationActive(stationId: string, active: boolean) {
     const state = this.load();
     this.requireAdmin(state);
+    const station = state.stations.find((s) => s.id === stationId);
+    if (active && station && (state.inactiveOperators ?? []).includes(station.operatorId)) throw new BackendError("operator_inactive");
     const inactive = (state.inactive ?? []).filter((id) => id !== stationId);
     this.save(
       withAudit(
-        { ...state, inactive: active ? inactive : [...inactive, stationId] },
+        {
+          ...state,
+          inactive: active ? inactive : [...inactive, stationId],
+          pausedWithOperator: (state.pausedWithOperator ?? []).filter((id) => id !== stationId),
+        },
         { table: "stations", action: "update", rowId: stationId, stationId, changes: { is_active: [!active, active] } },
       ),
     );

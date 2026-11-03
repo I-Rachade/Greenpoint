@@ -1037,6 +1037,7 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
       ...(types?.statements ?? []),
       ...extraStatements,
       ...trims,
+      ...followOperatorStatements(c, id),
     ]);
     return;
   }
@@ -1054,6 +1055,7 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
     ...(depotInput ? await depotStatements(c, admin.id, newId, depotInput) : []),
     ...(types?.statements ?? []),
     ...extraStatements,
+    ...followOperatorStatements(c, newId),
   ]);
 }
 
@@ -1715,13 +1717,13 @@ async function ownerSaveStation(c: Ctx, stationId: string, input: OwnerStationIn
 
 async function adminOperators(c: Ctx): Promise<AdminOperator[]> {
   await c.requireAdmin();
-  const [operators, owners] = await Promise.all([
+  const [operators, stations, owners] = await Promise.all([
     c.db
-      .prepare(
-        `select o.id, o.name, o.is_own, o.contact_phone, (select count(*) from stations s where s.operator_id = o.id) as station_count
-         from operators o order by o.name`,
-      )
-      .all<{ id: string; name: string; is_own: number; contact_phone: string | null; station_count: number }>(),
+      .prepare("select o.id, o.name, o.is_own, o.is_active, o.contact_phone from operators o order by o.name")
+      .all<{ id: string; name: string; is_own: number; is_active: number; contact_phone: string | null }>(),
+    c.db
+      .prepare("select id, operator_id, name, address, is_active, paused_with_operator from stations order by name collate nocase")
+      .all<{ id: string; operator_id: string; name: string; address: string; is_active: number; paused_with_operator: number }>(),
     c.db
       .prepare(
         `select oo.operator_id, u.id, u.phone, u.email, u.full_name from operator_owners oo
@@ -1729,14 +1731,67 @@ async function adminOperators(c: Ctx): Promise<AdminOperator[]> {
       )
       .all<PersonRow & { operator_id: string }>(),
   ]);
-  return operators.results.map((o) => ({
-    id: o.id,
-    name: o.name,
-    isOwn: !!o.is_own,
-    contactPhone: o.contact_phone,
-    stationCount: o.station_count,
-    owners: owners.results.filter((r) => r.operator_id === o.id).map(person),
-  }));
+  return operators.results.map((o) => {
+    const own = stations.results
+      .filter((s) => s.operator_id === o.id)
+      .map((s) => ({ id: s.id, name: s.name, address: s.address, isActive: !!s.is_active, pausedWithOperator: !!s.paused_with_operator }));
+    return {
+      id: o.id,
+      name: o.name,
+      isOwn: !!o.is_own,
+      isActive: !!o.is_active,
+      contactPhone: o.contact_phone,
+      stationCount: own.length,
+      stations: own,
+      owners: owners.results.filter((r) => r.operator_id === o.id).map(person),
+    };
+  });
+}
+
+/**
+ * Switches an operator off or on (migration 0067). Off: its active stations go off and are marked
+ * paused_with_operator. On: exactly those come back on; stations switched off on their own stay off.
+ */
+async function setOperatorActive(c: Ctx, operatorId: string, active: boolean) {
+  const admin = await c.requireAdmin();
+  const before = await c.db.prepare("select is_active from operators where id = ?").bind(operatorId).first<{ is_active: number }>();
+  if (!before) throw new ApiError("not_found", 404);
+  if (!!before.is_active === active) return;
+  const affected = await c.db
+    .prepare(`select id from stations where operator_id = ? and ${active ? "paused_with_operator = 1" : "is_active = 1"}`)
+    .bind(operatorId)
+    .all<{ id: string }>();
+  await c.db.batch([
+    c.db.prepare("update operators set is_active = ? where id = ?").bind(active ? 1 : 0, operatorId),
+    active
+      ? c.db.prepare("update stations set is_active = 1, paused_with_operator = 0 where operator_id = ? and paused_with_operator = 1").bind(operatorId)
+      : c.db.prepare("update stations set is_active = 0, paused_with_operator = 1 where operator_id = ? and is_active = 1").bind(operatorId),
+    c.audit(admin.id, "operators", "update", operatorId, { is_active: [!active, active], stations: affected.results.length }),
+    ...affected.results.map((s) =>
+      c.audit(admin.id, "stations", "update", s.id, { is_active: [!active, active], with_operator: operatorId }, { stationId: s.id }),
+    ),
+  ]);
+}
+
+/**
+ * A station follows its operator (migration 0067): under an operator that is off, an active station
+ * goes off (paused with it); under one that is on, a station paused with its old operator comes back.
+ */
+function followOperatorStatements(c: Ctx, stationId: string) {
+  return [
+    c.db
+      .prepare(
+        `update stations set is_active = 0, paused_with_operator = 1 where id = ? and is_active = 1
+         and operator_id in (select id from operators where is_active = 0)`,
+      )
+      .bind(stationId),
+    c.db
+      .prepare(
+        `update stations set is_active = 1, paused_with_operator = 0 where id = ? and paused_with_operator = 1
+         and operator_id in (select id from operators where is_active = 1)`,
+      )
+      .bind(stationId),
+  ];
 }
 
 /** Creates a partner operator (`id` null) or renames one; whether it is our own never changes here. */
@@ -1806,8 +1861,15 @@ async function removeOperatorOwner(c: Ctx, operatorId: string, userId: string) {
 
 async function setStationActive(c: Ctx, stationId: string, active: boolean) {
   const admin = await c.requireAdmin();
-  const res = await c.db.prepare("update stations set is_active = ? where id = ?").bind(active ? 1 : 0, stationId).run();
-  if (!res.meta.changes) throw new ApiError("station_not_found", 404);
+  const station = await c.db
+    .prepare("select o.is_active as operator_active from stations s join operators o on o.id = s.operator_id where s.id = ?")
+    .bind(stationId)
+    .first<{ operator_active: number }>();
+  if (!station) throw new ApiError("station_not_found", 404);
+  // A station of an operator that is off stays off until the operator is back on (migration 0067).
+  if (active && !station.operator_active) throw new ApiError("operator_inactive", 409);
+  // Switched by hand: it no longer comes back with its operator.
+  await c.db.prepare("update stations set is_active = ?, paused_with_operator = 0 where id = ?").bind(active ? 1 : 0, stationId).run();
   await c.audit(admin.id, "stations", "update", stationId, { is_active: [!active, active] }, { stationId }).run();
 }
 
@@ -2202,6 +2264,11 @@ const ROUTES: [string, RegExp, Handler][] = [
       const { id, input } = await readJson<{ id: string | null; input: OperatorInput }>(c.request);
       return saveOperator(c, id ? String(id) : null, input);
     },
+  ],
+  [
+    "POST",
+    /^\/api\/admin\/operators\/([\w-]+)\/active$/,
+    async (c, [id]) => setOperatorActive(c, id, !!(await readJson<{ active: boolean }>(c.request)).active),
   ],
   [
     "POST",

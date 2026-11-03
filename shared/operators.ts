@@ -89,10 +89,24 @@ export function validPrice(value: unknown): value is number | null {
   return value === null || (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 100_000 && value % 5 === 0);
 }
 
-/** Backoffice row: an operator, how many stations it has and who runs it. */
+/** A station as listed under its operator in the backoffice. */
+export interface OperatorStation {
+  id: string;
+  name: string;
+  address: string;
+  isActive: boolean;
+  /** Off only because its operator was switched off: it comes back on with the operator (migration 0067). */
+  pausedWithOperator: boolean;
+}
+
+/** Backoffice row: an operator, its stations, whether it is on and who runs it. */
 export interface AdminOperator extends Operator {
   contactPhone: string | null;
+  /** Off: all its stations are off too (migration 0067). */
+  isActive: boolean;
   stationCount: number;
+  /** Its stations, by name. */
+  stations: OperatorStation[];
   owners: OperatorPerson[];
 }
 

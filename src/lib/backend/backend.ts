@@ -325,8 +325,10 @@ export interface Backend {
   assignStaff(stationId: string, userId: string): Promise<void>;
   unassignStaff(stationId: string, userId: string): Promise<void>;
   setStationActive(stationId: string, active: boolean): Promise<void>;
-  /** Operators with their stations count and the accounts that run them. */
+  /** Operators with their stations and the accounts that run them. */
   adminOperators(): Promise<AdminOperator[]>;
+  /** Switches an operator off (its active stations go off with it) or back on (those come back on). */
+  setOperatorActive(operatorId: string, active: boolean): Promise<void>;
   /** Creates a partner operator (`id` null) or renames one. */
   saveOperator(id: string | null, input: OperatorInput): Promise<void>;
   /** Lets the account with this phone number or e-mail address run the operator. */
