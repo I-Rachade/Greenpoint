@@ -178,7 +178,6 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "contact_taken",
   "rate_limited",
   "forbidden",
-  "admin_access_required",
   "wallet_disabled",
   "wallet_frozen",
   "insufficient_balance",
