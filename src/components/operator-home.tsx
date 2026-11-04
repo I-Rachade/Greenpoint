@@ -274,6 +274,14 @@ function StationHome({ station, role }: { station: StationView; role: StationRol
       >
         {t.work.incident.link}
       </Link>
+      {profile?.role === "admin" && (
+        <Link
+          href="/operator/bluetooth"
+          className="flex min-h-12 items-center justify-center rounded-2xl border border-gp-border bg-gp-surface px-4 text-base font-semibold text-gp-green-dark active:scale-[0.99] dark:text-gp-green"
+        >
+          {t.ble.link}
+        </Link>
+      )}
     </>
   );
 }

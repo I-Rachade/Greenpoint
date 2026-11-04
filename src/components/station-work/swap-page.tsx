@@ -17,6 +17,7 @@ import { QrIcon } from "../icons";
 import { useI18n } from "../i18n-provider";
 import { LoadFailed } from "../load-state";
 import { canScanQr, QrScanner } from "../parcels/qr-scanner";
+import { BatteryBleRead } from "../ble/battery-ble-read";
 import { useReservationWhat } from "../reservation-list";
 import { Button, Card, EmptyState, Input, SkeletonCard, SuccessCheck, useReducedMotion, useToast } from "../ui";
 import { WorkShell } from "./work-shell";
@@ -456,6 +457,13 @@ function SwapForm({
 
       {current === "in" && (
       <>
+        <BatteryBleRead
+          serial={batteryIn}
+          onRead={(r) => {
+            if (r.serial && !batteryIn.trim()) setBatteryIn(r.serial);
+            if (energy && r.socPct !== null) setInPct(String(r.socPct));
+          }}
+        />
         <ScanField
           label={s.batteryIn}
           hint={numbersRequired ? s.batteryHintRequired : s.batteryHint}
@@ -479,6 +487,13 @@ function SwapForm({
       )}
       {current === "out" && (
       <>
+      <BatteryBleRead
+        serial={batteryOut}
+        onRead={(r) => {
+          if (r.serial && !batteryOut.trim()) setBatteryOut(r.serial);
+          if (energy && r.socPct !== null) setOutPct(String(r.socPct));
+        }}
+      />
       <ScanField
         label={s.batteryOut}
         hint={numbersRequired ? s.batteryHintRequired : s.batteryHint}
