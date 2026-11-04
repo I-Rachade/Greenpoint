@@ -312,6 +312,7 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
   // Other people (customers on their way): a blue dot with a small label, all kept in view with the selected station once.
   const otherMarkersRef = useRef(new Map<string, Marker>());
   const othersFittedRef = useRef(false);
+  const routeFittedRef = useRef(false);
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -426,7 +427,6 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
   }, [position, reduced]);
 
   // With a route, keep the user and the station in view once the user's position first arrives.
-  const routeFittedRef = useRef(false);
   useEffect(() => {
     const map = mapRef.current;
     const station = stations.find((s) => s.id === selectedId);
