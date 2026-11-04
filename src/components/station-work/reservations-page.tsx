@@ -191,7 +191,7 @@ function EnRouteList({ station }: { station: StationView }) {
 
   const chip = (on: boolean) =>
     `inline-flex min-h-10 shrink-0 items-center rounded-full px-4 text-sm font-semibold ${
-      on ? "bg-gp-forest text-white" : "border border-gp-border bg-gp-surface text-gp-forest dark:border-white/15 dark:text-zinc-100"
+      on ? "bg-gp-forest text-white dark:bg-gp-green dark:text-gp-forest" : "border border-gp-border bg-gp-surface text-gp-forest dark:border-white/15 dark:text-zinc-100"
     }`;
 
   return (
