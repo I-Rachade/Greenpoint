@@ -18,6 +18,8 @@ import {
   isSwapCustomerType,
   takesBatteryIn,
   CAPACITY_REASON,
+  checkSwapEdit,
+  SWAP_DELETED_REASON,
   SWAP_EXPORT_LIMIT,
   swapDayRange,
   validAmount,
@@ -31,6 +33,7 @@ import {
   type StationCounter,
   type StationRole,
   type SwapCustomerType,
+  type SwapEditInput,
   type SwapEntry,
   type SwapFilter,
   type SwapInput,
@@ -206,6 +209,8 @@ interface EventSpec {
   onlyIf?: { sql: string; value: string };
   /** Issue: leave the full batteries active reservations hold (a swap without reservation). */
   keepHeld?: boolean;
+  /** Correction: also take this many empty batteries off (a deleted swap's battery brought back, −1). */
+  emptyDelta?: -1 | 0;
 }
 
 /**
@@ -215,7 +220,8 @@ interface EventSpec {
  */
 function eventStatements(db: D1Database, e: EventSpec): D1PreparedStatement[] {
   const fullDelta = e.type === "empty_in" ? 0 : e.delta;
-  const emptyAfter = e.type === "full" ? "max(bc.empty - 1, 0)" : e.type === "empty_in" ? "bc.empty + 1" : "bc.empty";
+  const emptyAfter =
+    e.type === "full" || (e.type === "correction" && e.emptyDelta === -1) ? "max(bc.empty - 1, 0)" : e.type === "empty_in" ? "bc.empty + 1" : "bc.empty";
   const guard =
     e.type === "issue"
       ? e.keepHeld
@@ -952,4 +958,169 @@ export async function stationSwaps(c: WorkCtx, stationId: string, filter: SwapFi
     .bind(stationId, since, type, staff ? actor.user.id : null, range?.until ?? null, range ? SWAP_EXPORT_LIMIT : 500)
     .all<SwapRow>();
   return results.map(toSwap);
+}
+
+// Editing and deleting a swap (owners and admins, backoffice history) ---------------------
+
+/** The station's owners and admins; the swap must be one of this station's. */
+async function swapEditor(c: WorkCtx, stationId: string, swapId: string): Promise<{ actor: StationActor; row: SwapRow & { battery_in_id: string | null; battery_out_id: string | null; wallet_trx_id: string | null; has_battery_in: number } }> {
+  const actor = await stationReader(c, stationId);
+  if (actor.role === "staff") throw new ApiError("forbidden", 403);
+  const row = await c.db
+    .prepare(`${SWAP_SELECT} where l.id = ? and l.station_id = ?`)
+    .bind(swapId, stationId)
+    .first<SwapRow & { battery_in_id: string | null; battery_out_id: string | null; wallet_trx_id: string | null; has_battery_in: number }>();
+  if (!row) throw new ApiError("swap_not_found", 404);
+  return { actor, row };
+}
+
+function swapAudit(db: D1Database, actor: StationActor, action: "update" | "delete", row: SwapRow, changes: Record<string, unknown>) {
+  return db
+    .prepare("insert into audit_log (at, actor, table_name, action, row_id, station_id, user_id, changes) values (?, ?, 'swap_log', ?, ?, ?, ?, ?)")
+    .bind(nowIso(), actor.user.id, action, row.id, row.station_id, row.customer_user_id ?? row.driver_id ?? null, JSON.stringify(changes));
+}
+
+/**
+ * PATCH /api/stations/:id/swaps/:swapId: corrects the customer's name, the plate, the amount or
+ * the Mobile Money transaction id of a recorded swap (owners of the station, admins). Totals,
+ * cash to hand over and fleet bills are read from the log, so they follow. Logged in the activity log.
+ */
+export async function editSwap(c: WorkCtx, stationId: string, swapId: string, input: SwapEditInput): Promise<SwapEntry> {
+  const { actor, row } = await swapEditor(c, stationId, swapId);
+  const checked = checkSwapEdit(input, { payment: row.payment, energy: row.in_pct !== null });
+  if (!checked.ok) throw new ApiError(checked.error);
+  const changes = checked.changes;
+  const was: Record<string, unknown> = { customer_name: row.customer_name, plate: row.plate, amount_xof: row.amount_xof, mm_ref: row.mm_ref };
+  const changed = Object.entries(changes).filter(([k, v]) => was[k] !== v);
+  if (changed.length) {
+    if (changes.mm_ref && changes.mm_ref !== row.mm_ref) {
+      const used = await c.db.prepare("select 1 from swap_log where mm_network = ? and mm_ref = ? and id <> ?").bind(row.mm_network, changes.mm_ref, row.id).first();
+      if (used) throw new ApiError("mm_ref_used", 409);
+    }
+    const sets = changed.map(([k], i) => `${k} = ?${i + 2}`).join(", ");
+    try {
+      await c.db.batch([
+        c.db.prepare(`update swap_log set ${sets} where id = ?1`).bind(row.id, ...changed.map(([, v]) => v)),
+        swapAudit(c.db, actor, "update", row, Object.fromEntries(changed.map(([k, v]) => [k, [was[k], v]]))),
+      ]);
+    } catch (err) {
+      if (isUnique(err)) throw new ApiError("mm_ref_used", 409);
+      throw err;
+    }
+  }
+  const after = await c.db.prepare(`${SWAP_SELECT} where l.id = ?`).bind(row.id).first<SwapRow>();
+  if (!after) throw new ApiError("swap_not_found", 404);
+  return toSwap(after);
+}
+
+/**
+ * DELETE /api/stations/:id/swaps/:swapId?restoreCounter=0|1: removes a swap recorded by mistake
+ * (owners of the station, admins), in one batch:
+ * - the counter (unless restoreCounter=0): a correction puts the full battery back and takes
+ *   the empty one brought in off, logged with the reason "Échange supprimé";
+ * - the battery register: the swap's moves leave the batteries' history, the battery handed out
+ *   is back at the station, the one brought in back where it was before; a battery that only
+ *   came into the register with this swap leaves it;
+ * - paid from Green Credit (admins only): the amount goes back to the customer's credit, once;
+ * - the log row itself. Totals, cash to hand over and fleet bills are read from the log, so they follow.
+ * A reservation the swap completed stays completed; greenpoints it earned stay.
+ */
+export async function deleteSwap(c: WorkCtx, stationId: string, swapId: string, restoreCounter: boolean): Promise<void> {
+  const { actor, row } = await swapEditor(c, stationId, swapId);
+  if (row.payment === "wallet" && actor.role !== "admin") throw new ApiError("swap_credit_admin_only", 403);
+  const db = c.db;
+  const now = nowIso();
+  const exists = "exists (select 1 from swap_log where id = ?)";
+  const statements: D1PreparedStatement[] = [];
+  if (restoreCounter) {
+    statements.push(
+      ...eventStatements(db, {
+        stationId,
+        key: row.battery_type_id,
+        type: "correction",
+        delta: 1,
+        emptyDelta: row.has_battery_in ? -1 : 0,
+        reason: SWAP_DELETED_REASON,
+        // One per swap: deleting it twice breaks the unique request id and changes nothing.
+        requestId: `swap-delete:${row.id}`,
+        swapId: row.id,
+        actor,
+        now,
+        onlyIf: { sql: "exists (select 1 from swap_log where id = ?12)", value: row.id },
+      }),
+    );
+  }
+  // Battery register: first the batteries this swap brought into it (nothing else of theirs).
+  statements.push(
+    db
+      .prepare(
+        `delete from batteries where id in (select battery_id from battery_history where swap_id = ?1 and type = 'added_at_swap')
+           and not exists (select 1 from battery_history h where h.battery_id = batteries.id and coalesce(h.swap_id, '') <> ?1)
+           and ${exists}`,
+      )
+      .bind(row.id, row.id),
+    db.prepare(`delete from battery_history where swap_id = ?1 and type in ('out', 'in', 'added_at_swap') and ${exists}`).bind(row.id, row.id),
+  );
+  // Where the batteries are, when this swap was their last move: handed out = back at the station;
+  // brought in = where their move before left them (else unknown).
+  const last = (column: string) =>
+    `(select ${column} from battery_history h where h.battery_id = ?1 and h.type in ('out', 'in') order by h.created_at desc limit 1)`;
+  if (row.battery_out_id) {
+    statements.push(
+      db
+        .prepare(
+          `update batteries set location = 'station', station_id = ?2, holder_user_id = null, last_swap_at = ${last("h.created_at")}
+           where id = ?1 and last_swap_at = ?3 and exists (select 1 from swap_log where id = ?4)`,
+        )
+        .bind(row.battery_out_id, stationId, row.created_at, row.id),
+    );
+  }
+  if (row.battery_in_id) {
+    statements.push(
+      db
+        .prepare(
+          `update batteries set
+             location = coalesce(${last("case h.type when 'out' then 'customer' else 'station' end")}, 'unknown'),
+             station_id = ${last("case h.type when 'in' then h.station_id end")},
+             holder_user_id = ${last("case h.type when 'out' then h.holder_user_id end")},
+             last_swap_at = ${last("h.created_at")}
+           where id = ?1 and last_swap_at = ?2 and exists (select 1 from swap_log where id = ?3)`,
+        )
+        .bind(row.battery_in_id, row.created_at, row.id),
+    );
+  }
+  if (row.payment === "wallet" && row.wallet_trx_id && row.customer_user_id && row.amount_xof > 0) {
+    // The credit back, once: (trx_id, attribute) is unique on the ledger.
+    statements.push(
+      db.prepare("update wallets set balance_xof = balance_xof + ?1, updated_at = ?2 where user_id = ?3 and exists (select 1 from swap_log where id = ?4)").bind(row.amount_xof, now, row.customer_user_id, row.id),
+      db
+        .prepare(
+          `insert into wallet_transactions (id, trx_id, user_id, type, attribute, amount_xof, fee_xof, total_xof, balance_after_xof,
+             counterparty_label, remark, admin_id, details, created_at, station_id)
+           select ?1, ?2, ?3, 'charge', 'received', ?4, 0, ?4, (select balance_xof from wallets where user_id = ?3),
+             (select name from stations where id = ?5), ?6, ?7, ?8, ?9, ?5
+           where exists (select 1 from swap_log where id = ?10)`,
+        )
+        .bind(uuid(), row.wallet_trx_id, row.customer_user_id, row.amount_xof, stationId, "Remboursement : échange supprimé", actor.user.id, JSON.stringify({ swap: row.id, swapRefund: true }), now, row.id),
+    );
+  }
+  statements.push(
+    swapAudit(db, actor, "delete", row, {
+      customer_type: row.customer_type,
+      payment: row.payment,
+      amount_xof: row.amount_xof,
+      battery_in: row.battery_in_label,
+      battery_out: row.battery_out_label,
+      created_at: row.created_at,
+      counter_restored: restoreCounter,
+      ...(row.payment === "wallet" ? { refunded_xof: row.amount_xof } : {}),
+    }),
+    db.prepare("delete from swap_log where id = ?").bind(row.id),
+  );
+  try {
+    await db.batch(statements);
+  } catch (err) {
+    if (isUnique(err)) throw new ApiError("swap_not_found", 404);
+    throw err;
+  }
 }

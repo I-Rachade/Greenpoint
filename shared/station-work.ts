@@ -1,5 +1,5 @@
 import type { StationService } from "./station-services";
-import type { BatteryCondition, EnergyPricing, MmNetwork } from "./energy-swap";
+import { cleanCustomerName, cleanMmRef, cleanPlate, type BatteryCondition, type EnergyPricing, type MmNetwork } from "./energy-swap";
 
 /**
  * Station work (plan phase 3): the battery counter, the swap log and the active station.
@@ -257,6 +257,71 @@ export const SWAP_AMOUNT_MAX = 1_000_000;
 export function validAmount(n: unknown): n is number {
   return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= SWAP_AMOUNT_MAX;
 }
+
+// Editing and deleting a swap (owners and admins, backoffice history) ------------------
+
+/**
+ * What an owner or admin may correct on a recorded swap: the walk-in customer's name, the plate,
+ * the amount and the Mobile Money transaction id. A field left out stays as it is. The customer
+ * type, battery type and battery numbers stay: a swap recorded wrong there is deleted and
+ * recorded again.
+ */
+export interface SwapEditInput {
+  customerName?: string | null;
+  plate?: string | null;
+  amountXof?: number;
+  mmRef?: string | null;
+}
+
+/** The changes a swap edit makes, as swap_log columns. */
+export interface SwapEditChanges {
+  customer_name?: string | null;
+  plate?: string | null;
+  amount_xof?: number;
+  mm_ref?: string;
+}
+
+export type SwapEditError = "bad_request" | "invalid_amount" | "plate_required" | "mm_ref_required" | "swap_amount_locked";
+
+/**
+ * Checks an edit against the swap it changes. Paid from Green Credit: the amount is what left
+ * the customer's credit, so it stays (deleting the swap refunds it). Priced by energy (0065):
+ * the plate stays required. The transaction id only on a swap paid by Mobile Money.
+ */
+export function checkSwapEdit(
+  input: SwapEditInput | null | undefined,
+  swap: { payment: SwapPayment; energy: boolean },
+): { ok: true; changes: SwapEditChanges } | { ok: false; error: SwapEditError } {
+  if (!input || typeof input !== "object") return { ok: false, error: "bad_request" };
+  const changes: SwapEditChanges = {};
+  if (input.customerName !== undefined) {
+    const name = cleanCustomerName(input.customerName);
+    if (name === undefined) return { ok: false, error: "bad_request" };
+    changes.customer_name = name;
+  }
+  if (input.plate !== undefined) {
+    const empty = input.plate === null || String(input.plate).trim() === "";
+    const plate = empty ? null : cleanPlate(input.plate);
+    if (!empty && !plate) return { ok: false, error: "plate_required" };
+    if (!plate && swap.energy) return { ok: false, error: "plate_required" };
+    changes.plate = plate;
+  }
+  if (input.amountXof !== undefined) {
+    if (!validAmount(input.amountXof)) return { ok: false, error: "invalid_amount" };
+    if (swap.payment === "wallet") return { ok: false, error: "swap_amount_locked" };
+    changes.amount_xof = input.amountXof;
+  }
+  if (input.mmRef !== undefined) {
+    if (swap.payment !== "mobile_money") return { ok: false, error: "bad_request" };
+    const ref = cleanMmRef(input.mmRef);
+    if (!ref) return { ok: false, error: "mm_ref_required" };
+    changes.mm_ref = ref;
+  }
+  return { ok: true, changes };
+}
+
+/** Reason of the counter correction that puts a deleted swap's battery back. */
+export const SWAP_DELETED_REASON = "Échange supprimé";
 
 // Station home -----------------------------------------------------------------------
 
