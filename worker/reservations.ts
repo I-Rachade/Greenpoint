@@ -27,6 +27,12 @@ export interface ReservationRow {
   cancel_reason: string | null;
   pickup_code: string;
   charging_point_id?: string | null;
+  /** Missing on rows read before migration 0068. */
+  share_lat?: number | null;
+  share_lng?: number | null;
+  share_at?: string | null;
+  ready_at?: string | null;
+  redirected_at?: string | null;
   /** RESERVATION_SELECT only. */
   target_label?: string | null;
   target_kind?: ReservationTargetKind | null;
@@ -50,6 +56,8 @@ export const RESERVATION_SELECT = `
 
 /** `withCode`: the customer's own list. `withCustomer`: the station's list (staff see who, never the code). */
 export function toReservation(r: ReservationRow, opts: { withCode?: boolean; withCustomer?: boolean } = {}): Reservation {
+  // The position (and the phone that comes with the consent) only while the reservation holds.
+  const shared = r.share_lat != null && r.share_lng != null && r.share_at != null && stillActive(r);
   return {
     id: r.id,
     userId: r.user_id,
@@ -63,9 +71,15 @@ export function toReservation(r: ReservationRow, opts: { withCode?: boolean; wit
     target: r.target ?? null,
     targetLabel: r.target_label ?? null,
     targetKind: r.target_kind ?? null,
-    ...(opts.withCode ? { pickupCode: r.pickup_code } : {}),
+    readyAt: r.ready_at ?? null,
+    redirectedAt: r.redirected_at ?? null,
+    ...(opts.withCode ? { pickupCode: r.pickup_code, sharing: shared } : {}),
     ...(opts.withCustomer
-      ? { customer: r.c_name || r.c_phone || r.c_email ? personLabel({ fullName: r.c_name ?? null, phone: r.c_phone ?? null, email: r.c_email ?? null }) : null }
+      ? {
+          customer: r.c_name || r.c_phone || r.c_email ? personLabel({ fullName: r.c_name ?? null, phone: r.c_phone ?? null, email: r.c_email ?? null }) : null,
+          customerPosition: shared ? { lat: r.share_lat!, lng: r.share_lng!, at: r.share_at! } : null,
+          customerPhone: shared ? (r.c_phone ?? null) : null,
+        }
       : {}),
   };
 }
@@ -151,4 +165,15 @@ export async function heldTargetsByStation(db: D1Database): Promise<Map<string, 
     out.set(r.station_id, station);
   }
   return out;
+}
+
+/** Clears the positions of reservations that no longer hold (minute cron): they are kept only during the trip. */
+export async function clearEndedPositions(db: D1Database): Promise<void> {
+  await db
+    .prepare(
+      `update reservations set share_lat = null, share_lng = null, share_at = null
+       where share_at is not null and (status != 'active' or expires_at <= ?)`,
+    )
+    .bind(nowIso())
+    .run();
 }

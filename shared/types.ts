@@ -121,6 +121,18 @@ export interface Reservation {
   targetKind?: ReservationTargetKind | null;
   /** Station list only: who reserved (name, else masked phone or e-mail). */
   customer?: string | null;
+  /** Live trip (migration 0068): when the station marked the battery or place ready. */
+  readyAt?: string | null;
+  /** When the station asked the customer to go to another station (its stock ran out). */
+  redirectedAt?: string | null;
+  /** Customer's own list: whether they share their position with the station. */
+  sharing?: boolean;
+  /**
+   * Station list only, while the reservation holds and the customer agreed to share it:
+   * their last position, and their phone number so the staff can call them.
+   */
+  customerPosition?: { lat: number; lng: number; at: string } | null;
+  customerPhone?: string | null;
 }
 
 export interface Profile {

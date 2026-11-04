@@ -66,6 +66,9 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/reservations": ["rider"],
   "POST /api/reservations/:id/cancel": CUSTOMER, // one's own; an admin any
   "POST /api/reservations/:id/complete": STATION,
+  "POST /api/reservations/:id/position": ["rider"], // one's own
+  "POST /api/reservations/:id/ready": STATION,
+  "POST /api/reservations/:id/redirect": STATION,
   "GET /api/staff/stations": STATION,
   "GET /api/owner": OWNER,
   "POST /api/owner/staff": OWNER,

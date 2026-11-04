@@ -1155,6 +1155,30 @@ function diff<T extends object>(before: T, after: T): Record<string, unknown> {
  * without the Cloudflare API. Changes sync live between tabs of the same browser
  * (open the operator view in one tab and the map in another).
  */
+/** Demo extra on a stored reservation: where an example customer set off (they ride toward the station). */
+type StoredReservation = Reservation & { demoFrom?: LatLng };
+
+/** The staff's demo station, where example customers are on their way (seedEnRoute). */
+const EN_ROUTE_STATION = "st-grand-marche";
+/** Example customers on their way: who, what, from where (degrees off the station), code, ready. */
+const EN_ROUTE_SEED: { userId: string; target: string; dLat: number; dLng: number; code: string; ready: boolean }[] = [
+  { userId: "demo-u1", target: "bt-spiro-72", dLat: -0.0052, dLng: -0.0036, code: "4827", ready: true },
+  { userId: "demo-u3", target: "bt-ovt-60", dLat: 0.012, dLng: 0.0095, code: "1903", ready: false },
+  { userId: "demo-u2", target: "bt-ovt-72", dLat: -0.0185, dLng: 0.0215, code: "7751", ready: false },
+];
+/** Straight-line speed of an example customer: 22 km/h on roads about 1.3 times longer (shared/geo.ts). */
+const DEMO_RIDE_M_PER_MIN = 22_000 / 60 / 1.3;
+
+/** Where an example customer is now: on the straight line from where they set off, at scooter speed, never quite there. */
+function riding(r: StoredReservation, station: LatLng, now: Date): { lat: number; lng: number; at: string } {
+  const from = r.demoFrom!;
+  const total = distanceMeters(from, station);
+  const minutes = (now.getTime() - Date.parse(r.createdAt)) / 60_000;
+  const f = total > 0 ? Math.min(0.97, (minutes * DEMO_RIDE_M_PER_MIN) / total) : 1;
+  const round = (n: number) => Math.round(n * 1e5) / 1e5;
+  return { lat: round(from.lat + (station.lat - from.lat) * f), lng: round(from.lng + (station.lng - from.lng) * f), at: now.toISOString() };
+}
+
 export class DemoBackend implements Backend {
   readonly mode = "demo" as const;
   private listeners = new Set<() => void>();
@@ -1491,9 +1515,33 @@ export class DemoBackend implements Backend {
     const state = this.load();
     if (!state.profile) return [];
     const id = state.profile.id;
+    const now = new Date();
+    // As toReservation() in worker/reservations.ts: the customer sees whether they share, not the stored point.
     return state.reservations
       .filter((r) => r.userId === id)
+      .map((r: StoredReservation): StoredReservation => ({
+        ...r,
+        demoFrom: undefined,
+        customerPosition: undefined,
+        customerPhone: undefined,
+        sharing: !!r.customerPosition && isHolding(r, now),
+      }))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /** As shareReservationPosition() in worker/api.ts: one's own active reservation; null stops sharing. */
+  async shareReservationPosition(id: string, position: { lat: number; lng: number } | null) {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const r = state.reservations.find((x) => x.id === id);
+    if (!r || r.userId !== profile.id) throw new BackendError("forbidden");
+    if (position && !isHolding(r)) throw new BackendError("reservation_not_active");
+    if (position && (!Number.isFinite(position.lat) || !Number.isFinite(position.lng) || Math.abs(position.lat) > 90 || Math.abs(position.lng) > 180)) {
+      throw new BackendError("invalid_position");
+    }
+    const customerPosition = position ? { lat: position.lat, lng: position.lng, at: new Date().toISOString() } : null;
+    // Saved without notifying: the app sends a point every half minute, nothing else changes.
+    this.save({ ...state, reservations: state.reservations.map((x) => (x.id === id ? { ...x, customerPosition } : x)) });
   }
 
   /** As reserve() in worker/api.ts: riders only; a free battery of the type, or a free outlet or car charger. */
@@ -1678,11 +1726,102 @@ export class DemoBackend implements Backend {
   }
 
   async stationReservations(stationId: string) {
-    // Staff never see the pickup code; the customer shows it.
+    this.seedEnRoute(stationId);
+    const now = new Date();
+    const station = DEMO_STATIONS.find((s) => s.id === stationId);
+    // Staff never see the pickup code; the customer shows it. The position and the phone only
+    // while it holds and the customer shares it (as toReservation() in worker/reservations.ts).
     return this.load()
       .reservations.filter((r) => r.stationId === stationId)
-      .map((r) => ({ ...r, pickupCode: undefined, customer: this.customerLabel(r.userId) }))
+      .map((r: StoredReservation) => {
+        const shared = !!r.customerPosition && isHolding(r, now);
+        return {
+          ...r,
+          demoFrom: undefined,
+          pickupCode: undefined,
+          customer: this.customerLabel(r.userId),
+          customerPosition: shared ? (r.demoFrom && station ? riding(r, station, now) : r.customerPosition) : null,
+          customerPhone: shared ? this.customerPhone(r.userId) : null,
+        } as Reservation;
+      })
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /**
+   * Demo only: when nobody is on their way to the staff's station (the Grand Marché), three
+   * example customers reserve there and ride toward it, sharing their position, so the
+   * "Clients en route" screen has something to show. They run out like any reservation.
+   */
+  private seedEnRoute(stationId: string) {
+    const station = DEMO_STATIONS.find((s) => s.id === stationId);
+    if (stationId !== EN_ROUTE_STATION || !station) return;
+    const state = this.load();
+    const now = new Date();
+    if (state.reservations.some((r) => r.stationId === stationId && isHolding(r, now))) return;
+    const types = new Map(DEMO_BATTERY_TYPES.map((t) => [t.id, t]));
+    const rows: StoredReservation[] = EN_ROUTE_SEED.map((c, i) => {
+      const type = types.get(c.target);
+      const from = { lat: station.lat + c.dLat, lng: station.lng + c.dLng };
+      return {
+        id: `demo-en-route-${now.getTime()}-${i}`,
+        userId: c.userId,
+        stationId,
+        type: "battery",
+        kind: "swap",
+        target: c.target,
+        targetLabel: type ? `${type.brand} ${type.name}` : null,
+        targetKind: "battery_type",
+        status: "active",
+        createdAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + RESERVATION_MINUTES * 60_000).toISOString(),
+        pickupCode: c.code,
+        readyAt: c.ready ? now.toISOString() : null,
+        redirectedAt: null,
+        customerPosition: { ...from, at: now.toISOString() },
+        demoFrom: from,
+      };
+    });
+    this.save({ ...state, reservations: [...state.reservations, ...rows] });
+  }
+
+  /** Phone number of an account, for the staff while the customer shares their trip. */
+  private customerPhone(userId: string): string | null {
+    const state = this.load();
+    const user = (state.users ?? demoUsers(new Date())).find((u) => u.id === userId) ?? (state.profile?.id === userId ? state.profile : null);
+    return user?.phone ?? null;
+  }
+
+  /** As markReservation() in worker/api.ts: at the active station (R7), never one's own, while it holds. */
+  async markReservationReady(id: string) {
+    this.markReservation(id, "readyAt");
+  }
+
+  async redirectReservation(id: string) {
+    this.markReservation(id, "redirectedAt");
+  }
+
+  private markReservation(id: string, field: "readyAt" | "redirectedAt") {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    const r = state.reservations.find((x) => x.id === id);
+    if (!r) throw new BackendError("forbidden");
+    this.stationActor(state, r.stationId);
+    if (r.userId === profile.id) throw new BackendError("own_reservation");
+    if (!isHolding(r)) throw new BackendError("reservation_not_active");
+    const at = new Date().toISOString();
+    this.save(
+      withAudit(
+        { ...state, reservations: state.reservations.map((x) => (x.id === id ? { ...x, [field]: at } : x)) },
+        {
+          table: "reservations",
+          action: "update",
+          rowId: id,
+          stationId: r.stationId,
+          userId: r.userId,
+          changes: { [field === "readyAt" ? "ready_at" : "redirected_at"]: [r[field] ?? null, at] },
+        },
+      ),
+    );
   }
 
   /** As completeReservation() in worker/api.ts: charging reservations only; a swap reservation is completed by its swap. */

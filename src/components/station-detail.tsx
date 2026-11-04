@@ -35,6 +35,7 @@ import { AMENITY_ICONS, OpenBadge, useHoursLabel, useTodayHoursLabel } from "./s
 import { SolarBadge } from "./solar-badge";
 import { StationReviews } from "./station-reviews";
 import { Countdown, SuccessCheck } from "./ui";
+import { enRouteHref } from "./en-route-link";
 import { useActiveReservation } from "./use-alerts";
 
 const StationMap = dynamic(() => import("./station-map").then((m) => m.StationMap), { ssr: false });
@@ -643,7 +644,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
           )}
           {battery && profile && activeHere && (
             <Link
-              href="/reservations"
+              href={enRouteHref(activeHere.id)}
               className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl bg-gp-green/15 px-4 py-3 text-sm text-gp-forest dark:text-zinc-100"
             >
               <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-gp-green-dark dark:bg-gp-green" />
@@ -745,9 +746,9 @@ export function StationDetail({ station, distance, onChanged }: Props) {
       <ConfirmSheet
         open={sheetOpen && !!reserved}
         title={t.phase1a.reservedTitle}
-        confirmLabel={t.phase1a.viewReservation}
+        confirmLabel={t.enRoute.go}
         cancelLabel={t.station.close}
-        onConfirm={() => router.push("/reservations")}
+        onConfirm={() => reserved && router.push(enRouteHref(reserved.id))}
         onCancel={() => setSheetOpen(false)}
       >
         <div className="flex flex-col items-center gap-2 py-2 text-center">
