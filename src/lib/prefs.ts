@@ -5,7 +5,8 @@ import { useCallback, useSyncExternalStore } from "react";
 /**
  * Small per-device preferences kept in localStorage: favourite stations, theme,
  * whether the introduction was seen, which notifications were read, and the battery
- * brand last chosen in the station filter (the station page then offers that brand first).
+ * brand last chosen in the station filter (the station page then offers that brand first),
+ * and the rider's last Bluetooth reading of their own battery (home "Mon scooter").
  * Every read and write is wrapped: storage can be missing (private mode, blocked
  * site data) and the app must still work, just without remembering.
  */
@@ -16,6 +17,7 @@ const KEYS = {
   onboarded: "poinderecharge-onboarded",
   alertsRead: "poinderecharge-alerts-read",
   brand: "poinderecharge-brand",
+  myBattery: "poinderecharge-my-battery",
 } as const;
 
 export type Theme = "system" | "light" | "dark";
@@ -113,4 +115,31 @@ export function useBrandPref(): [string | null, (brand: string | null) => void] 
   const raw = useStored(KEYS.brand);
   const set = useCallback((brand: string | null) => write(KEYS.brand, brand && brand !== "all" ? brand : null), []);
   return [raw, set];
+}
+
+/** The rider's own battery as last read by Bluetooth on this phone (home "Mon scooter", mockup A1). */
+export interface MyBatteryReading {
+  socPct: number;
+  voltageMv: number | null;
+  remainingMah: number | null;
+  serial: string | null;
+  at: string;
+}
+
+function parseBattery(raw: string | null): MyBatteryReading | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as Partial<MyBatteryReading>;
+    if (typeof v.socPct !== "number" || typeof v.at !== "string") return null;
+    const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : null);
+    return { socPct: v.socPct, voltageMv: num(v.voltageMv), remainingMah: num(v.remainingMah), serial: typeof v.serial === "string" ? v.serial : null, at: v.at };
+  } catch {
+    return null;
+  }
+}
+
+export function useMyBattery(): [MyBatteryReading | null, (r: MyBatteryReading | null) => void] {
+  const raw = useStored(KEYS.myBattery);
+  const set = useCallback((r: MyBatteryReading | null) => write(KEYS.myBattery, r ? JSON.stringify(r) : null), []);
+  return [parseBattery(raw), set];
 }
