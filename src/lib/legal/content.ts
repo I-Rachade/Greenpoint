@@ -63,6 +63,7 @@ const fr: Record<LegalDocId, LegalDoc> = {
         heading: "Cartes",
         body: [
           "Fonds de carte : OpenFreeMap, données © les contributeurs d'OpenStreetMap (www.openstreetmap.org/copyright).",
+          "Trajets : OSRM (Open Source Routing Machine), données © les contributeurs d'OpenStreetMap.",
         ],
       },
       {
@@ -249,6 +250,7 @@ const fr: Record<LegalDocId, LegalDoc> = {
             "Cloudflare, Inc. (États-Unis) : hébergement du site, de l'application et de la base de données ; les données sont stockées dans un centre de données en Europe de l'Ouest.",
             "Didit (Union européenne, Espagne) : envoi et vérification du code SMS ; reçoit votre numéro de téléphone.",
             "OpenFreeMap : affichage des fonds de carte ; reçoit l'adresse IP de votre appareil, pas votre position.",
+            "Serveur de trajets OSRM (project-osrm.org, Allemagne) : calcul du trajet dessiné sur la carte ; reçoit l'adresse IP de votre appareil, votre position arrondie à environ 50 m et celle de la station, sans votre nom ni votre numéro.",
           ],
           "Si le paiement dans l'application est proposé, le prestataire de paiement (PayGate Global, Togo) et votre opérateur (Moov Africa ou Togocom) recevront les données nécessaires au paiement. Cette politique sera mise à jour avant.",
         ],
@@ -330,7 +332,10 @@ const en: Record<LegalDocId, LegalDoc> = {
       },
       {
         heading: "Maps",
-        body: ["Base maps: OpenFreeMap, data © OpenStreetMap contributors (www.openstreetmap.org/copyright)."],
+        body: [
+          "Base maps: OpenFreeMap, data © OpenStreetMap contributors (www.openstreetmap.org/copyright).",
+          "Routes: OSRM (Open Source Routing Machine), data © OpenStreetMap contributors.",
+        ],
       },
       {
         heading: "Intellectual property",
@@ -516,6 +521,7 @@ const en: Record<LegalDocId, LegalDoc> = {
             "Cloudflare, Inc. (United States): hosting of the websites, the app and the database; data is stored in a data centre in Western Europe.",
             "Didit (European Union, Spain): sending and checking the SMS code; receives your phone number.",
             "OpenFreeMap: map tiles; receives your device's IP address, not your location.",
+            "OSRM routing server (project-osrm.org, Germany): the route drawn on the map; receives your device's IP address, your position rounded to about 50 m and the station's, without your name or number.",
           ],
           "If in-app payment is offered, the payment provider (PayGate Global, Togo) and your mobile operator (Moov Africa or Togocom) will receive the data needed for the payment. This policy will be updated beforehand.",
         ],

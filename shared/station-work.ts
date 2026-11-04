@@ -379,3 +379,32 @@ export function newRequestId(): string {
 
 /** The reason of the correction that brings a counter down to a lower capacity. */
 export const CAPACITY_REASON = "Capacité réduite";
+
+/**
+ * When the battery that has been charging the longest came in, from today's counter
+ * events of one counter (mockup B4: "the next full one"). Empties charge first in, first
+ * out: an "empty_in" adds one, a "full" takes the oldest out. Returns "before_today" when
+ * that battery was already charging this morning, and null when today's events do not
+ * explain the empties now charging (a staff member only sees their own events) or none is.
+ */
+export function oldestCharging(events: BatteryEventView[], key: CounterKey, empty: number): string | "before_today" | null {
+  if (empty <= 0) return null;
+  const mine = events.filter((e) => e.batteryTypeId === key).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  if (mine.length === 0) return "before_today";
+  const first = mine[0];
+  // Empties already there before the first event of the day.
+  // A "full" at 0 empties may have taken the last one or none: either way none is left.
+  let before = first.type === "empty_in" ? first.emptyAfter - 1 : first.type === "full" && first.emptyAfter > 0 ? first.emptyAfter + 1 : first.emptyAfter;
+  const queue: string[] = [];
+  let prev = before;
+  for (const e of mine) {
+    if (e.type === "empty_in") queue.push(e.createdAt);
+    else if (e.type === "full" && prev > 0) {
+      if (before > 0) before -= 1;
+      else queue.shift();
+    }
+    prev = e.emptyAfter;
+  }
+  if (before + queue.length !== empty || prev !== empty) return null;
+  return before > 0 ? "before_today" : (queue[0] ?? null);
+}

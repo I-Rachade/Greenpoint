@@ -2,13 +2,15 @@
 
 import { useRef, useState } from "react";
 import { BackendError } from "@/lib/backend";
-import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
+import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
-import { newRequestId, type BatteryEventInput, type BatteryEventView, type CounterRow, type StationCounter } from "@shared/station-work";
+import { newRequestId, oldestCharging, type BatteryEventInput, type BatteryEventView, type CounterRow, type StationCounter } from "@shared/station-work";
 import type { StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
+import { ClockIcon } from "../icons";
+import { formatDuration } from "@shared/charging";
 import { LoadFailed } from "../load-state";
 import { Button, Card, EmptyState, Input, SkeletonCard, useToast } from "../ui";
 import { RoleBadge, WorkShell } from "./work-shell";
@@ -37,6 +39,7 @@ function CounterCard({
   total,
   capacity,
   canCorrect,
+  since,
   onCorrect,
   onDone,
 }: {
@@ -45,6 +48,8 @@ function CounterCard({
   total: number;
   capacity: number;
   canCorrect: boolean;
+  /** When the battery charging the longest came in (oldestCharging()); null = unknown or none. */
+  since: string | null;
   onCorrect: () => void;
   onDone: () => void;
 }) {
@@ -53,6 +58,7 @@ function CounterCard({
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const c = t.work.counter;
+  const now = useNow(60_000);
   // While taps are on their way the number shows what they will make; then the server's again.
   const inFlight = useRef(0);
   const [local, setLocal] = useState<{ full: number; total: number } | null>(null);
@@ -143,6 +149,14 @@ function CounterCard({
           <span className="text-gp-muted">{format(c.freeOfPlaces, { free, places: shownPlaces })}</span>
         )}
       </p>
+      {since && charging > 0 && (
+        <p className="flex items-center gap-1.5 text-sm text-gp-muted">
+          <ClockIcon size={16} className="shrink-0" />
+          {since === "before_today"
+            ? c.oldestBeforeToday
+            : format(c.oldestSince, { time: formatDuration(Math.max(0, (now.getTime() - new Date(since).getTime()) / 1000)) })}
+        </p>
+      )}
       <div className="flex items-center gap-3 border-t border-gp-border pt-3 dark:border-white/10">
         {canCorrect ? (
           <Button variant="ghost" size="sm" onClick={onCorrect}>
@@ -297,6 +311,7 @@ function StationCounterView({ station, mine }: { station: StationView; mine: boo
             total={total}
             capacity={data.capacity}
             canCorrect={data.canCorrect}
+            since={oldestCharging(data.events, row.batteryTypeId, row.empty)}
             onCorrect={() => setCorrecting(row)}
             onDone={reload}
           />

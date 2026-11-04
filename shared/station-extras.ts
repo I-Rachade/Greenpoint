@@ -150,3 +150,29 @@ export function placeholderPhoto(station: PictureFields): string {
 export function stationPhotos(station: PictureFields): string[] {
   return station.photos && station.photos.length > 0 ? station.photos : [placeholderPhoto(station)];
 }
+
+/** Themes the review comments often mention (mockup A4); the words are matched without accents. */
+export const REVIEW_THEMES = {
+  fast: ["rapide", "vite", "quick", "fast"],
+  friendly: ["aimable", "gentil", "sympa", "accueil", "poli", "friendly", "kind", "polite", "welcom"],
+  ready: ["prete", "pret", "reserv", "ready"],
+  clean: ["propre", "clean"],
+  shade: ["ombre", "banc", "shade", "bench"],
+  wait: ["attente", "attendre", "attendu", "queue", "wait"],
+} as const;
+export type ReviewTheme = keyof typeof REVIEW_THEMES;
+
+const fold = (text: string) => text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+/** The themes the comments mention, most mentioned first (each review counts once per theme), at most `max`. */
+export function reviewThemes(reviews: Pick<StationReview, "comment">[], max = 3): { theme: ReviewTheme; n: number }[] {
+  const out: { theme: ReviewTheme; n: number }[] = [];
+  for (const theme of Object.keys(REVIEW_THEMES) as ReviewTheme[]) {
+    const n = reviews.filter((r) => {
+      const text = fold(r.comment);
+      return REVIEW_THEMES[theme].some((w) => text.includes(w));
+    }).length;
+    if (n > 0) out.push({ theme, n });
+  }
+  return out.sort((a, b) => b.n - a.n).slice(0, max);
+}

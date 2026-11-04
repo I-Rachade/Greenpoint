@@ -1,11 +1,12 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Map as MapLibreMap, Marker, NavigationControl, Popup } from "maplibre-gl";
-import { useEffect, useRef } from "react";
+import { Map as MapLibreMap, Marker, NavigationControl, Popup, setWorkerUrl } from "maplibre-gl";
+import { useEffect, useRef, useState } from "react";
 import { stationAvailability } from "@shared/availability";
 import { LOME_CENTER, type LatLng } from "@shared/geo";
 import { format } from "@/lib/i18n/format";
+import { roadRoute, routeKey, type LngLat } from "@/lib/road-route";
 import type { RepairCenter } from "@shared/repair-centers";
 import type { ShareStation } from "@shared/share";
 import { isUnattended } from "@shared/station-extras";
@@ -13,6 +14,9 @@ import type { StationView } from "@shared/types";
 import { AVAILABILITY_COLORS } from "./availability-badge";
 import { useI18n } from "./i18n-provider";
 import { useReducedMotion } from "./ui";
+
+// MapLibre's worker, copied into public/ by next.config.ts: the bundle cannot find it by itself.
+if (typeof window !== "undefined") setWorkerUrl(new URL("/maplibre-gl-worker.mjs", window.location.href).href);
 
 // Free vector tiles from OpenStreetMap data, no API key, commercial use allowed.
 export const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
@@ -30,8 +34,10 @@ interface Props {
   labels?: Record<string, string>;
   /** Zoom buttons; off where other controls sit in that corner. */
   controls?: boolean;
-  /** Draw a line from the user to the selected station and keep both in view. */
+  /** Draw the way by road from the user to the selected station (a straight dashed line while none is known) and keep both in view. */
   route?: boolean;
+  /** Told whether the line drawn follows the roads (true) or is the straight fallback (false). */
+  onRouteKind?: (road: boolean) => void;
   /** Room kept free over the map's edges (px) when fitting the route, e.g. under the cards. */
   padding?: { top: number; bottom: number; left: number; right: number };
   /** Other people on the map, e.g. customers on their way (staff screen B2): a small blue dot with a label. */
@@ -150,7 +156,7 @@ function workshopCard(w: RepairCenter, labels: { title: string; call: string }):
   return box;
 }
 
-export function StationMap({ stations, workshops = [], share = [], position, selectedId, onSelect, labels, route = false, padding, controls = true, others }: Props) {
+export function StationMap({ stations, workshops = [], share = [], position, selectedId, onSelect, labels, route = false, onRouteKind, padding, controls = true, others }: Props) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -219,31 +225,60 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
     }
   }, [stations, selectedId, labels]);
 
-  // The way to the selected station: a straight dashed line (no route is fetched), kept in view with the user.
+  // The way to the selected station by road (src/lib/road-route.ts), asked again only when the
+  // rider has moved about 50 m; a straight dashed line until it comes or when there is none.
+  const target = route && position ? stations.find((s) => s.id === selectedId) ?? null : null;
+  const wantedKey = target && position ? routeKey(position, target) : null;
+  const [road, setRoad] = useState<{ key: string; coordinates: LngLat[] } | null>(null);
+  useEffect(() => {
+    if (!wantedKey || !target || !position) return;
+    const ctrl = new AbortController();
+    roadRoute(position, target, ctrl.signal).then((r) => {
+      if (!ctrl.signal.aborted && r) setRoad({ key: wantedKey, coordinates: r.coordinates });
+    });
+    return () => ctrl.abort();
+    // The key changes with the rounded positions; the exact ones are read when it does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantedKey]);
+  const roadLine = road && road.key === wantedKey ? road.coordinates : null;
+  const onRouteKindRef = useRef(onRouteKind);
+  useEffect(() => {
+    onRouteKindRef.current = onRouteKind;
+  });
+  useEffect(() => {
+    if (route) onRouteKindRef.current?.(!!roadLine);
+  }, [route, roadLine]);
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !route) return;
     const station = stations.find((s) => s.id === selectedId);
-    const coordinates = position && station ? [[position.lng, position.lat], [station.lng, station.lat]] : [];
+    const coordinates = roadLine ?? (position && station ? [[position.lng, position.lat], [station.lng, station.lat]] : []);
     const data = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates } };
+    // Two layers on one source: white casing + solid green for a road route, dashed green for the straight line.
+    const show = (id: string, on: boolean) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", on ? "visible" : "none");
     const draw = () => {
       const source = map.getSource(ROUTE_SOURCE) as { setData?: (d: unknown) => void } | undefined;
-      if (source?.setData) return source.setData(data);
-      map.addSource(ROUTE_SOURCE, { type: "geojson", data });
-      map.addLayer({
-        id: ROUTE_SOURCE,
-        type: "line",
-        source: ROUTE_SOURCE,
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#12823B", "line-width": 4, "line-dasharray": [1.5, 1.5] },
-      });
+      if (source?.setData) source.setData(data);
+      else {
+        map.addSource(ROUTE_SOURCE, { type: "geojson", data });
+        const layout = { "line-cap": "round" as const, "line-join": "round" as const };
+        map.addLayer({ id: `${ROUTE_SOURCE}-casing`, type: "line", source: ROUTE_SOURCE, layout, paint: { "line-color": "#FFFFFF", "line-width": 9 } });
+        map.addLayer({ id: `${ROUTE_SOURCE}-road`, type: "line", source: ROUTE_SOURCE, layout, paint: { "line-color": "#12823B", "line-width": 5 } });
+        map.addLayer({ id: ROUTE_SOURCE, type: "line", source: ROUTE_SOURCE, layout, paint: { "line-color": "#12823B", "line-width": 4, "line-dasharray": [1.5, 1.5] } });
+      }
+      show(`${ROUTE_SOURCE}-casing`, !!roadLine);
+      show(`${ROUTE_SOURCE}-road`, !!roadLine);
+      show(ROUTE_SOURCE, !roadLine);
     };
-    if (map.isStyleLoaded()) draw();
+    // Once the line exists, update it straight away: the style reads as "not loaded" while a
+    // source is busy, and "load" only fires once.
+    if (map.getSource(ROUTE_SOURCE) || map.isStyleLoaded()) draw();
     else map.once("load", draw);
     return () => {
       map.off("load", draw);
     };
-  }, [route, position, selectedId, stations]);
+  }, [route, position, selectedId, stations, roadLine]);
 
   // Workshop markers: grey with a wrench, below the stations; a tap opens their card.
   const workshopMarkersRef = useRef<Marker[]>([]);
@@ -440,6 +475,24 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
       { padding: padding ?? 60, maxZoom: 16, duration: 0 },
     );
   }, [route, position, selectedId, stations, padding]);
+
+  // When the road route to a newly selected station arrives, fit the whole route once (it may
+  // bend outside the straight line's box); not again while the rider moves along it.
+  const roadFittedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !roadLine || !selectedId || roadFittedRef.current === selectedId) return;
+    roadFittedRef.current = selectedId;
+    const lngs = roadLine.map((c) => c[0]);
+    const lats = roadLine.map((c) => c[1]);
+    map.fitBounds(
+      [
+        [Math.min(...lngs), Math.min(...lats)],
+        [Math.max(...lngs), Math.max(...lats)],
+      ],
+      { padding: padding ?? 60, maxZoom: 16, duration: reduced ? 0 : 600 },
+    );
+  }, [roadLine, selectedId, padding, reduced]);
 
   // Move to the selected station: a flight, or a jump with reduced motion.
   useEffect(() => {
