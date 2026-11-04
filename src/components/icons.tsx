@@ -489,3 +489,9 @@ export const ChartIcon = (p: IconProps) => (
     <path d="M7 16v-5M12 16V6M17 16v-8" />
   </Svg>
 );
+
+export const CheckIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m5 12.5 4.5 4.5L19 7.5" />
+  </Svg>
+);
