@@ -79,6 +79,8 @@ export interface StationView extends Station {
   batteryTypes?: StationBatteryType[];
   /** Average stars and number of customer reviews. */
   rating?: StationRating;
+  /** Price of a battery swap in FCFA (stations.price_battery_xof); null or missing = not set. */
+  swapPriceXof?: number | null;
   /** Active electric car chargers assigned to the station (see ev-chargers.ts). */
   evChargers?: StationEvCharger[];
   /** At least one staff member is assigned (station_staff); missing = assumed. See isUnattended() in station-extras.ts. */

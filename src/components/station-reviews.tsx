@@ -38,16 +38,14 @@ function ReviewItem({ review, onDelete }: { review: StationReview; onDelete?: ()
   const relativeTime = useRelativeTime();
   const name = review.authorName ?? t.stationLook.reviews.anonymous;
   return (
-    <li className="rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm dark:border-white/10">
+    <li className="rounded-[20px] border border-gp-border bg-gp-surface p-4 dark:border-white/10">
       <div className="flex items-center gap-3">
         <Avatar name={name} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold">{name}</div>
-          <div className="flex items-center gap-2 text-xs text-gp-muted dark:text-zinc-400">
-            <Stars value={review.rating} size={13} />
-            <span>{relativeTime(review.createdAt, new Date())}</span>
-          </div>
+          <div className="text-xs text-gp-muted dark:text-zinc-400">{relativeTime(review.createdAt, new Date())}</div>
         </div>
+        <Stars value={review.rating} size={15} className="shrink-0" />
         {onDelete && (
           <button
             type="button"
@@ -130,14 +128,19 @@ export function StationReviews({ station, onChanged }: { station: StationView; o
         <h2 id="reviews-title" className="font-heading text-lg font-semibold">
           {r.title}
         </h2>
-        {summary.count > 0 && <span className="text-sm text-gp-muted dark:text-zinc-400">{format(r.count, { n: summary.count })}</span>}
+        {others.length > FIRST_REVIEWS && (
+          <button type="button" onClick={() => setShowAll(!showAll)} className="min-h-11 text-sm font-semibold text-gp-green-dark hover:underline dark:text-gp-green">
+            {showAll ? r.showLess : r.seeAll}
+          </button>
+        )}
       </div>
 
       {summary.count > 0 && (
-        <div className="flex items-center gap-5 rounded-2xl border border-gp-border bg-gp-surface p-4 shadow-sm dark:border-white/10">
-          <div className="text-center">
-            <div className="font-heading text-4xl font-bold leading-none">{summary.average.toFixed(1)}</div>
-            <Stars value={summary.average} size={14} className="mt-1.5" />
+        <div className="flex items-center gap-5 rounded-[20px] border border-gp-border bg-gp-surface p-4 shadow-sm dark:border-white/10">
+          <div className="shrink-0 text-center">
+            <div className="font-heading text-5xl font-bold leading-none">{summary.average.toFixed(1)}</div>
+            <Stars value={summary.average} size={14} className="mt-2" />
+            <div className="mt-1 text-xs text-gp-muted dark:text-zinc-400">{format(r.count, { n: summary.count })}</div>
           </div>
           <ul className="min-w-0 flex-1 space-y-1">
             {counts.map((n, i) => (
@@ -146,7 +149,7 @@ export function StationReviews({ station, onChanged }: { station: StationView; o
                   {5 - i}
                   <StarIcon size={11} filled className="text-gp-yellow" />
                 </span>
-                <span className="h-2 flex-1 overflow-hidden rounded-full bg-gp-border dark:bg-white/10">
+                <span className="h-2 flex-1 overflow-hidden rounded-full bg-gp-border/70 dark:bg-white/10">
                   <span className="block h-full rounded-full bg-gp-yellow" style={{ width: `${summary.count ? (n / summary.count) * 100 : 0}%` }} />
                 </span>
                 <span className="w-5 text-right">{n}</span>

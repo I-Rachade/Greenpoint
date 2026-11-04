@@ -3363,6 +3363,25 @@ export const fr = {
     workshopOf: "Atelier de réparation {brand}",
     call: "Appeler",
     unattendedHint: "Il manque encore à cette station un téléphone ou du personnel : la réservation n'est pas possible.",
+    /** Station screen (redesign A3/A4). */
+    summary: {
+      distance: "Distance",
+      byScooter: "À scooter",
+      minutes: "{n} min",
+      noReview: "Pas encore d'avis",
+      glance: "En un coup d'œil",
+      fullBatteries: "Batteries pleines",
+      freeOutlets: "Prises libres",
+      openNow: "Ouvert",
+      closedNow: "Fermé",
+      byType: "Batteries par type",
+      typeAvailable: "Disponible",
+      typeLow: "Peu",
+      typeOut: "Épuisé",
+      swapPrice: "Échange de batterie",
+      reserve: "Réserver",
+      services: "Services sur place",
+    },
     amenities: {
       title: "Points de repos et services",
       none: "Aucun service indiqué pour cette station.",
@@ -3395,6 +3414,7 @@ export const fr = {
       stars: "{n} sur 5",
       chooseStars: "Choisir {n} étoiles",
       viewAll: "Voir tous les avis",
+      seeAll: "Tout voir",
       showLess: "Moins d'avis",
     },
     admin: {

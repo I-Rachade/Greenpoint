@@ -370,6 +370,8 @@ interface StationRow {
   main_activity?: string | null;
   rating_avg: number | null;
   rating_count: number;
+  /** Missing on rows read without it. */
+  price_battery_xof?: number | null;
 }
 
 interface PromotionRow {
@@ -425,6 +427,7 @@ function toStationView(r: StationRow): StationView & { isActive: boolean } {
     mainActivity: cleanMainActivity(r.main_activity),
     rating: { average: r.rating_avg ? Math.round(r.rating_avg * 10) / 10 : 0, count: r.rating_count ?? 0 },
     hasStaff: (r.staff_count ?? 1) > 0,
+    swapPriceXof: r.price_battery_xof ?? null,
   };
 }
 

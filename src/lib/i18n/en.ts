@@ -3363,6 +3363,25 @@ export const en: Dictionary = {
     workshopOf: "{brand} repair workshop",
     call: "Call",
     unattendedHint: "This station has no phone number or staff yet, so it cannot be reserved.",
+    /** Station screen (redesign A3/A4). */
+    summary: {
+      distance: "Distance",
+      byScooter: "By scooter",
+      minutes: "{n} min",
+      noReview: "No reviews yet",
+      glance: "At a glance",
+      fullBatteries: "Full batteries",
+      freeOutlets: "Free outlets",
+      openNow: "Open",
+      closedNow: "Closed",
+      byType: "Batteries by type",
+      typeAvailable: "Available",
+      typeLow: "Low",
+      typeOut: "Out",
+      swapPrice: "Battery swap",
+      reserve: "Reserve",
+      services: "On-site services",
+    },
     amenities: {
       title: "Rest area and services",
       none: "No services listed for this station.",
@@ -3395,6 +3414,7 @@ export const en: Dictionary = {
       stars: "{n} out of 5",
       chooseStars: "Choose {n} stars",
       viewAll: "See all reviews",
+      seeAll: "See all",
       showLess: "Fewer reviews",
     },
     admin: {
