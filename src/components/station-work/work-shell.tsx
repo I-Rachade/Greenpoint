@@ -103,15 +103,18 @@ export function WorkShell({
     body = (
       <>
         <StaleNotice error={error} onRetry={reload} />
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gp-muted">{station.name}</span>
-          <RoleBadge role={role} />
-          {stations.length > 1 && (
-            <button type="button" onClick={() => setActive(null)} className="min-h-11 rounded-full px-3 text-sm font-semibold text-gp-green-dark dark:text-gp-green">
-              {t.work.change}
-            </button>
-          )}
-        </div>
+        {/* The station home shows the name and role in its own header; the row stays to change station. */}
+        {(!home || stations.length > 1) && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gp-muted">{station.name}</span>
+            <RoleBadge role={role} />
+            {stations.length > 1 && (
+              <button type="button" onClick={() => setActive(null)} className="min-h-11 rounded-full px-3 text-sm font-semibold text-gp-green-dark dark:text-gp-green">
+                {t.work.change}
+              </button>
+            )}
+          </div>
+        )}
         {title && <h1 className="font-heading text-2xl font-semibold">{title}</h1>}
         {services && !services.some((s) => active.includes(s)) ? (
           <EmptyState text={t.work.serviceOff} />

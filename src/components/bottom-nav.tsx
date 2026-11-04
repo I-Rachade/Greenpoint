@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { useApp } from "./app-provider";
-import { BoxIcon, ListIcon, MapIcon, QrIcon, ScooterIcon, StoreIcon, TruckIcon, UserIcon } from "./icons";
+import { BoxIcon, ClockIcon, ListIcon, MapIcon, QrIcon, ScooterIcon, StoreIcon, TruckIcon, UserIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
 import { isStationStaff } from "@shared/operators";
@@ -22,7 +22,7 @@ export function BottomNav() {
   const { profile, features } = useApp();
   const pathname = usePathname();
   const { unread } = useAlerts();
-  // Station staff only get the map and their account; their station opens from the account page.
+  // Station staff get the map, their station, its day and their account (mockup B1).
   const staff = isStationStaff(profile);
   // Drivers get the map, their driver page and their account (plan phase 5).
   const driver = isDriverAccount(profile);
@@ -58,11 +58,22 @@ export function BottomNav() {
       active: ["/livraisons", "/colis", "/courses"].some((p) => pathname.startsWith(p)),
       show: features.parcels && customer,
     },
+    // Station staff (mockup B1): their station and its day, next to the map.
+    {
+      href: "/operator",
+      label: t.ui.tabs.myStation,
+      icon: ListIcon,
+      active: pathname === "/operator" || (staff && pathname.startsWith("/operator/") && !pathname.startsWith("/operator/activite")),
+      show: staff,
+    },
+    { href: "/operator/activite", label: t.ui.tabs.activity, icon: ClockIcon, active: pathname.startsWith("/operator/activite"), show: staff },
     {
       href: profile ? "/compte" : "/login",
       label: t.ui.tabs.account,
       icon: UserIcon,
-      active: ["/compte", "/operator", "/parametres", "/reservations", "/portefeuille", "/favoris", "/notifications"].some((p) => pathname.startsWith(p)),
+      active: ["/compte", ...(staff ? [] : ["/operator"]), "/parametres", "/reservations", "/portefeuille", "/favoris", "/notifications"].some((p) =>
+        pathname.startsWith(p),
+      ),
       badge: unread,
       show: true,
     },
