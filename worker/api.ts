@@ -14,7 +14,7 @@ import { batteryDetail, deleteBattery, listBatteries, lookupBattery, registerBat
 import type { BatteryStatusInput, RegisterBatteriesInput } from "../shared/batteries";
 import { reportIncident, resolveIncident, stationIncidents } from "./incidents";
 import type { IncidentInput } from "../shared/incidents";
-import { capacityTrimStatements, typeCapacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
+import { capacityTrimStatements, deleteSwap, editSwap, typeCapacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
 import type { StationRole } from "../shared/station-work";
 import {
   checkPickupCode,
@@ -30,7 +30,7 @@ import {
   type ReservationRow,
 } from "./reservations";
 import { kindFrom, typeOfKind } from "../shared/reservations";
-import type { BatteryEventInput, SwapFilter, SwapInput } from "../shared/station-work";
+import type { BatteryEventInput, SwapEditInput, SwapFilter, SwapInput } from "../shared/station-work";
 import {
   ADMIN_HISTORY_DAYS,
   ADMIN_PAGE_SIZE,
@@ -2290,6 +2290,12 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/stations\/([\w-]+)\/counter$/, (c, [id]) => stationCounter(c, id)],
   ["POST", /^\/api\/stations\/([\w-]+)\/battery-events$/, async (c, [id]) => postBatteryEvent(c, id, await readJson<BatteryEventInput>(c.request))],
   ["POST", /^\/api\/stations\/([\w-]+)\/swaps$/, async (c, [id]) => recordSwap(c, id, await readJson<SwapInput>(c.request))],
+  ["PATCH", /^\/api\/stations\/([\w-]+)\/swaps\/([\w-]+)$/, async (c, [id, swap]) => editSwap(c, id, swap, await readJson<SwapEditInput>(c.request))],
+  [
+    "DELETE",
+    /^\/api\/stations\/([\w-]+)\/swaps\/([\w-]+)$/,
+    async (c, [id, swap]) => (await deleteSwap(c, id, swap, c.url.searchParams.get("restoreCounter") !== "0"), { ok: true }),
+  ],
   ["POST", /^\/api\/stations\/([\w-]+)\/incidents$/, async (c, [id]) => reportIncident(c, id, await readJson<IncidentInput>(c.request))],
   ["GET", /^\/api\/stations\/([\w-]+)\/incidents$/, (c, [id]) => stationIncidents(c, id)],
   [

@@ -54,7 +54,9 @@ import {
   CAPACITY_REASON,
   cleanBatteryLabel,
   cleanReason,
+  checkSwapEdit,
   dayStartLome,
+  SWAP_DELETED_REASON,
   SWAP_EXPORT_LIMIT,
   swapDayRange,
   isSwapCustomerType,
@@ -69,6 +71,7 @@ import {
   type CounterRow,
   type StationCounter,
   type StationRole,
+  type SwapEditInput,
   type SwapEntry,
   type SwapFilter,
   type SwapInput,
@@ -2144,6 +2147,116 @@ export class DemoBackend implements Backend {
       )
       .slice(0, range ? SWAP_EXPORT_LIMIT : 500)
       .map(swapView);
+  }
+
+  /** The station's owners and admins, and the swap (as swapEditor() in worker/station-work.ts). */
+  private swapEditor(state: DemoState, stationId: string, swapId: string) {
+    const { profile, role } = this.stationReader(state, stationId);
+    if (role === "staff") throw new BackendError("forbidden");
+    const swap = (state.swaps ?? []).find((x) => x.id === swapId && x.stationId === stationId);
+    if (!swap) throw new BackendError("swap_not_found");
+    return { profile, role, swap };
+  }
+
+  /** As editSwap() in worker/station-work.ts. */
+  async editSwap(stationId: string, swapId: string, input: SwapEditInput): Promise<SwapEntry> {
+    const state = this.load();
+    const { swap } = this.swapEditor(state, stationId, swapId);
+    const checked = checkSwapEdit(input, { payment: swap.payment, energy: swap.inPct != null });
+    if (!checked.ok) throw new BackendError(checked.error === "bad_request" ? "unknown" : checked.error, checked.error);
+    const c = checked.changes;
+    if (c.mm_ref && (state.swaps ?? []).some((x) => x.id !== swap.id && x.mmNetwork === swap.mmNetwork && x.mmRef === c.mm_ref)) throw new BackendError("mm_ref_used");
+    const next = {
+      ...swap,
+      ...(c.customer_name !== undefined ? { customerName: c.customer_name } : {}),
+      ...(c.plate !== undefined ? { plate: c.plate } : {}),
+      ...(c.amount_xof !== undefined ? { amountXof: c.amount_xof } : {}),
+      ...(c.mm_ref !== undefined ? { mmRef: c.mm_ref } : {}),
+    };
+    this.save(
+      withAudit(
+        { ...state, swaps: (state.swaps ?? []).map((x) => (x.id === swap.id ? next : x)) },
+        { table: "swap_log", action: "update", rowId: swap.id, stationId, changes: c as Record<string, unknown> },
+      ),
+    );
+    return swapView(next);
+  }
+
+  /** As deleteSwap() in worker/station-work.ts: counter, battery register and Green Credit put back. */
+  async deleteSwap(stationId: string, swapId: string, restoreCounter: boolean): Promise<void> {
+    const state = this.load();
+    const { profile, role, swap } = this.swapEditor(state, stationId, swapId);
+    if (swap.payment === "wallet" && role !== "admin") throw new BackendError("swap_credit_admin_only");
+    let next: DemoState = state;
+    if (restoreCounter) {
+      const done = this.counterEvent(next, {
+        stationId,
+        key: swap.batteryTypeId,
+        type: "correction",
+        delta: 1,
+        reason: SWAP_DELETED_REASON,
+        requestId: `swap-delete:${swap.id}`,
+        swapId: swap.id,
+        actor: { profile, role },
+      });
+      if (done) {
+        next = done.state;
+        if (takesBatteryIn(swap.customerType)) {
+          const empty = next.batteryEmpty?.[stationId]?.[swap.batteryTypeId] ?? 0;
+          next = { ...next, batteryEmpty: { ...next.batteryEmpty, [stationId]: { ...next.batteryEmpty?.[stationId], [swap.batteryTypeId]: Math.max(empty - 1, 0) } } };
+        }
+      }
+    }
+    // Battery register: the swap's moves go, numbers only it brought in leave, the battery handed out is back.
+    const reg = this.batteryRegister(next);
+    const added = new Set(reg.history.filter((h) => h.swapId === swap.id && h.type === "added_at_swap").map((h) => h.batteryId));
+    const onlyHere = new Set([...added].filter((id) => !reg.history.some((h) => h.batteryId === id && h.swapId !== swap.id)));
+    const history = reg.history.filter((h) => !onlyHere.has(h.batteryId) && !(h.swapId === swap.id && (h.type === "out" || h.type === "in" || h.type === "added_at_swap")));
+    const batteries = reg.batteries
+      .filter((b) => !onlyHere.has(b.id))
+      .map((b) => {
+        if (b.lastSwapAt !== swap.createdAt) return b;
+        const prev = history.filter((h) => h.batteryId === b.id && (h.type === "out" || h.type === "in")).sort((a, z) => z.createdAt.localeCompare(a.createdAt))[0];
+        if (b.serial === swap.batteryOut) return { ...b, location: "station" as const, stationId, holderId: null, lastSwapAt: prev?.createdAt ?? null };
+        if (b.serial !== swap.batteryIn) return b;
+        return prev
+          ? { ...b, location: prev.type === "out" ? ("customer" as const) : ("station" as const), stationId: prev.type === "in" ? prev.stationId : null, holderId: prev.type === "out" ? prev.holderId : null, lastSwapAt: prev.createdAt }
+          : { ...b, location: "unknown" as const, stationId: null, holderId: null, lastSwapAt: null };
+      });
+    next = { ...next, batteries, batteryHistory: history };
+    if (swap.payment === "wallet" && swap.customerId) {
+      const w = this.wallet(next);
+      const paid = w.transactions.find((t) => t.key === `swap:${swap.requestId}`);
+      const balance = this.balance(w, swap.customerId) + swap.amountXof;
+      const tx: DemoWallet["transactions"][number] = {
+        id: crypto.randomUUID(),
+        trxId: paid?.trxId ?? newTrxId("charge"),
+        type: "charge",
+        attribute: "received",
+        status: "success",
+        amountXof: swap.amountXof,
+        feeXof: 0,
+        totalXof: swap.amountXof,
+        balanceAfterXof: balance,
+        counterparty: state.stations.find((x) => x.id === stationId)?.name ?? null,
+        remark: "Remboursement : échange supprimé",
+        createdAt: new Date().toISOString(),
+        userId: swap.customerId,
+        userLabel: paid?.userLabel ?? "",
+        adminId: profile.id,
+      };
+      next = { ...next, wallet: { ...w, balances: { ...w.balances, [swap.customerId]: balance }, transactions: [tx, ...w.transactions] } };
+    }
+    next = { ...next, swaps: (next.swaps ?? []).filter((x) => x.id !== swap.id) };
+    this.save(
+      withAudit(next, {
+        table: "swap_log",
+        action: "delete",
+        rowId: swap.id,
+        stationId,
+        changes: { customer_type: swap.customerType, payment: swap.payment, amount_xof: swap.amountXof, counter_restored: restoreCounter },
+      }),
+    );
   }
 
   /** As reportIncident() in worker/incidents.ts (the alert to owners and admins is the Worker's). */

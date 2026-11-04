@@ -636,6 +636,111 @@ describe("Green Credit held by a charge (0052)", () => {
   });
 });
 
+describe("editing and deleting a swap (backoffice history)", () => {
+  const edit = (env: Env, as: string, station: string, id: string, body: Record<string, unknown>) =>
+    call<SwapEntry>(env, as, "PATCH", `/api/stations/${station}/swaps/${id}`, body);
+  const remove = (env: Env, as: string, station: string, id: string, query = "") => call(env, as, "DELETE", `/api/stations/${station}/swaps/${id}${query}`);
+
+  it("lets the owner and admins correct the name, plate and amount; staff and other owners not", async () => {
+    const { env, db } = await setup();
+    const s = (await swap(env, "afi", "be", { customerType: "cash" })).body;
+    expect((await edit(env, "afi", "be", s.id, { amountXof: 300 })).status).toBe(403);
+    expect((await edit(env, "kossi", "be", s.id, { amountXof: 300 })).status).toBe(403);
+    expect((await edit(env, "kossi", "kara", s.id, { amountXof: 300 })).body).toEqual({ error: "swap_not_found" });
+    const ok = await edit(env, "yao", "be", s.id, { amountXof: 300, customerName: "  Malik  ", plate: "tg 12 ab" });
+    expect(ok.body).toMatchObject({ id: s.id, amountXof: 300, customerName: "Malik", plate: "TG 12 AB" });
+    expect((await edit(env, "admin", "be", s.id, { plate: "" })).body).toMatchObject({ plate: null });
+    expect((await edit(env, "admin", "be", s.id, { amountXof: -1 })).body).toEqual({ error: "invalid_amount" });
+    // Only a Mobile Money swap has a transaction id.
+    expect((await edit(env, "admin", "be", s.id, { mmRef: "TM12345" })).body).toEqual({ error: "bad_request" });
+    const log = db.prepare("select actor, action, row_id, station_id, changes from audit_log where table_name = 'swap_log' order by id").all() as { changes: string }[];
+    expect(log).toHaveLength(2);
+    expect(JSON.parse(log[0].changes)).toEqual({ customer_name: [null, "Malik"], plate: [null, "TG 12 AB"], amount_xof: [500, 300] });
+  });
+
+  it("keeps the amount of a swap paid from Green Credit; deleting it refunds the credit (admins only)", async () => {
+    const { env, db } = await setup();
+    const s = (await swap(env, "afi", "be", { customerType: "app", creditCode: await creditCode(env, "ama") })).body;
+    expect(db.prepare("select balance_xof from wallets where user_id = 'ama'").get()).toEqual({ balance_xof: 1500 });
+    expect((await edit(env, "yao", "be", s.id, { amountXof: 100 })).body).toEqual({ error: "swap_amount_locked" });
+    expect((await remove(env, "yao", "be", s.id)).body).toEqual({ error: "swap_credit_admin_only" });
+    expect((await remove(env, "admin", "be", s.id)).status).toBe(200);
+    expect(db.prepare("select balance_xof from wallets where user_id = 'ama'").get()).toEqual({ balance_xof: 2000 });
+    expect(db.prepare("select type, attribute, amount_xof, balance_after_xof from wallet_transactions order by created_at, attribute desc").all()).toEqual([
+      { type: "charge", attribute: "send", amount_xof: 500, balance_after_xof: 1500 },
+      { type: "charge", attribute: "received", amount_xof: 500, balance_after_xof: 2000 },
+    ]);
+    expect((await remove(env, "admin", "be", s.id)).body).toEqual({ error: "swap_not_found" });
+    expect(db.prepare("select balance_xof from wallets where user_id = 'ama'").get()).toEqual({ balance_xof: 2000 });
+  });
+
+  it("puts the battery back on the counter when deleting, unless told not to", async () => {
+    const { env, db } = await setup();
+    const a = (await swap(env, "afi", "be", { customerType: "cash" })).body;
+    const b = (await swap(env, "afi", "be", { customerType: "cash" })).body;
+    expect(full(db, "be")).toBe(1);
+    expect((await counter(env, "be")).rows[0]).toMatchObject({ full: 1, empty: 2 });
+    expect((await remove(env, "afi", "be", a.id)).status).toBe(403);
+    expect((await remove(env, "yao", "be", a.id)).status).toBe(200);
+    expect(full(db, "be")).toBe(2);
+    expect((await counter(env, "be")).rows[0]).toMatchObject({ full: 2, empty: 1 });
+    expect(db.prepare("select type, delta, reason, swap_id from battery_events where request_id = ?").get(`swap-delete:${a.id}`)).toEqual({
+      type: "correction",
+      delta: 1,
+      reason: "Échange supprimé",
+      swap_id: a.id,
+    });
+    expect((await remove(env, "admin", "be", b.id, "?restoreCounter=0")).status).toBe(200);
+    expect((await counter(env, "be")).rows[0]).toMatchObject({ full: 2, empty: 1 });
+    expect(count(db, "select count(*) as n from swap_log")).toBe(0);
+    expect((await call<SwapEntry[]>(env, "yao", "GET", "/api/stations/be/swaps")).body).toEqual([]);
+    expect(count(db, "select count(*) as n from audit_log where table_name = 'swap_log' and action = 'delete'")).toBe(2);
+  });
+
+  it("moves the batteries back in the register and drops numbers only this swap brought in", async () => {
+    const { env, db } = await setup();
+    const now = new Date().toISOString();
+    db.exec(`
+      insert into battery_types (id, brand, name, created_at) values ('sp72', 'Spiro', '72 V', '${now}');
+      insert into station_battery_types (station_id, battery_type_id, full_batteries) values ('be', 'sp72', 3);
+    `);
+    // SP-1 comes in at the first swap and goes out at the second; SP-2 and SP-3 are new at the second.
+    await swap(env, "afi", "be", { customerType: "cash", batteryTypeId: "sp72", batteryIn: "SP-1", batteryOut: "SP-0" });
+    const second = (await swap(env, "afi", "be", { customerType: "app", contact: "90000005", payment: "cash", batteryTypeId: "sp72", batteryIn: "SP-2", batteryOut: "SP-1" })).body;
+    const where = (serial: string) => db.prepare("select location, station_id, holder_user_id from batteries where serial = ?").get(serial);
+    expect(where("SP-1")).toEqual({ location: "customer", station_id: null, holder_user_id: "ama" });
+    expect((await remove(env, "yao", "be", second.id)).status).toBe(200);
+    expect(where("SP-1")).toEqual({ location: "station", station_id: "be", holder_user_id: null });
+    expect(where("SP-2")).toBeUndefined();
+    expect(count(db, `select count(*) as n from battery_history where swap_id = '${second.id}'`)).toBe(0);
+    expect(count(db, "select count(*) as n from batteries")).toBe(2);
+  });
+
+  it("corrects a Mobile Money transaction id, never to one that paid another swap", async () => {
+    const { env, db } = await setup();
+    const now = new Date().toISOString();
+    db.exec(`
+      insert into battery_types (id, brand, name, created_at) values ('ov30', 'Omnivoltaic', '30 Ah', '${now}');
+      insert into station_battery_types (station_id, battery_type_id, full_batteries) values ('be', 'ov30', 3);
+    `);
+    const priced = await call(env, "admin", "POST", "/api/admin/battery-types", {
+      id: "ov30",
+      input: { brand: "Omnivoltaic", name: "30 Ah", isActive: true, pricing: "energy", priceFullXof: 900, ussdTmoney: "*145*{montant}#", ussdFlooz: "" },
+    });
+    expect(priced.status).toBe(200);
+    const walkIn = (n: string, ref: string) => ({
+      customerType: "cash", batteryTypeId: "ov30", batteryIn: `OV-${n}A`, batteryOut: `OV-${n}B`, inPct: 20, outPct: 100,
+      plate: "TG 1", batteryInCondition: "ok", batteryOutChecked: true, mmNetwork: "tmoney", mmRef: ref,
+    });
+    const a = (await swap(env, "afi", "be", walkIn("1", "TM-0001"))).body;
+    const b = (await swap(env, "afi", "be", walkIn("2", "TM-0002"))).body;
+    expect(a.amountXof).toBe(720);
+    expect((await edit(env, "yao", "be", b.id, { mmRef: "tm-0001" })).body).toEqual({ error: "mm_ref_used" });
+    expect((await edit(env, "yao", "be", b.id, { plate: "" })).body).toEqual({ error: "plate_required" });
+    expect((await edit(env, "yao", "be", b.id, { mmRef: "tm 0003", amountXof: 630, customerName: "Malik" })).body).toMatchObject({ mmRef: "TM0003", amountXof: 630, customerName: "Malik" });
+  });
+});
+
 describe("role matrix of the station work routes (R2)", () => {
   const routes = [
     { name: "counter", method: "GET", path: "/api/stations/be/counter", body: undefined },

@@ -107,7 +107,7 @@ import type {
 } from "@shared/types";
 import type { StationService, StationServiceInfo } from "@shared/station-services";
 import { getActiveStation } from "../active-station";
-import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEntry, type SwapFilter, type SwapInput } from "@shared/station-work";
+import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEditInput, type SwapEntry, type SwapFilter, type SwapInput } from "@shared/station-work";
 import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "@shared/station-cash";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
 import { kindFrom, type ReservationKind } from "@shared/reservations";
@@ -519,6 +519,17 @@ export class CloudflareBackend implements Backend {
     if (filter.to) q.set("to", filter.to);
     const qs = q.toString();
     return this.call<SwapEntry[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/swaps${qs ? `?${qs}` : ""}`);
+  }
+
+  async editSwap(stationId: string, swapId: string, input: SwapEditInput) {
+    const swap = await this.call<SwapEntry>("PATCH", `/api/stations/${encodeURIComponent(stationId)}/swaps/${encodeURIComponent(swapId)}`, input);
+    this.changed();
+    return swap;
+  }
+
+  async deleteSwap(stationId: string, swapId: string, restoreCounter: boolean) {
+    await this.call("DELETE", `/api/stations/${encodeURIComponent(stationId)}/swaps/${encodeURIComponent(swapId)}${restoreCounter ? "" : "?restoreCounter=0"}`);
+    this.changed();
   }
 
   stationBatteryEvents(stationId: string, days: ReportPeriod) {
