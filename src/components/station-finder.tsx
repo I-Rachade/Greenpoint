@@ -13,7 +13,7 @@ import { hasRestArea } from "@shared/station-extras";
 import { VEHICLE_TYPES, type StationView, type VehicleType } from "@shared/types";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
-import { BellIcon, ChevronIcon, FilterIcon, SearchIcon } from "./icons";
+import { BellIcon, ChevronIcon, ExpandIcon, FilterIcon, SearchIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { LoadFailed, OfflineNotice } from "./load-state";
 import { StationCard, StationPhotoCard, stationHref } from "./station-card";
@@ -201,8 +201,18 @@ export function StationFinder() {
             <ChevronIcon size={18} className="shrink-0 text-gp-green" />
           </Link>
         )}
+        {!selected && (
+          <Link
+            href="/carte"
+            aria-label={t.map.full.open}
+            title={t.map.full.open}
+            className="absolute bottom-2 right-2 flex h-10 w-10 items-center justify-center rounded-full bg-gp-surface text-gp-forest shadow-md dark:text-zinc-100"
+          >
+            <ExpandIcon size={20} />
+          </Link>
+        )}
         {state === "denied" && !selected && (
-          <p className="absolute bottom-2 left-2 right-2 rounded-lg bg-white/90 px-3 py-2 text-xs shadow dark:bg-zinc-900/90">{t.map.locationDenied}</p>
+          <p className="absolute bottom-2 left-2 right-14 rounded-lg bg-white/90 px-3 py-2 text-xs shadow dark:bg-zinc-900/90">{t.map.locationDenied}</p>
         )}
         {selected && (
           <div className="absolute inset-x-2 bottom-2 md:left-auto md:right-4 md:bottom-4 md:w-96">

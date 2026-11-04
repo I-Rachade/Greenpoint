@@ -64,6 +64,15 @@ export const fr = {
     nearest: "Plus proche",
     noResults: "Aucune station ne correspond aux filtres.",
     stations: "{count} stations",
+    /** Full-screen map (mockup A2). */
+    full: {
+      title: "Stations les plus proches",
+      open: "Agrandir la carte",
+      fullBatteries: "Batteries pleines",
+      openNow: "Ouvert maintenant",
+      straight: "Trait à vol d'oiseau, pas le trajet exact",
+      card: "Station {n} sur {total}",
+    },
   },
   availability: {
     available: "Disponible",

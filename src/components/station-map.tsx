@@ -26,11 +26,22 @@ interface Props {
   position: LatLng | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** A small label above some markers, e.g. their distance (full-screen map, mockup A2). */
+  labels?: Record<string, string>;
+  /** Zoom buttons; off where other controls sit in that corner. */
+  controls?: boolean;
+  /** Draw a line from the user to the selected station and keep both in view. */
+  route?: boolean;
+  /** Room kept free over the map's edges (px) when fitting the route, e.g. under the cards. */
+  padding?: { top: number; bottom: number; left: number; right: number };
 }
 
+const ROUTE_SOURCE = "gp-route";
+
 /** What a marker looks like; when this is unchanged after a live update, the marker is left alone. */
-function markerLook(station: StationView, selected: boolean): string {
+function markerLook(station: StationView, selected: boolean, label?: string): string {
   return [
+    label ?? "",
     station.name,
     station.kind,
     station.isSolar,
@@ -42,7 +53,7 @@ function markerLook(station: StationView, selected: boolean): string {
 }
 
 /** Draws a station marker into `el` (a button created once per station and kept). */
-function drawMarker(el: HTMLButtonElement, station: StationView, selected: boolean) {
+function drawMarker(el: HTMLButtonElement, station: StationView, selected: boolean, label?: string) {
   el.replaceChildren();
   el.setAttribute("aria-label", station.name);
   el.setAttribute("aria-pressed", String(selected));
@@ -86,7 +97,29 @@ function drawMarker(el: HTMLButtonElement, station: StationView, selected: boole
     });
     el.appendChild(sun);
   } else {
-    el.style.position = "";
+    el.style.position = label ? "relative" : "";
+  }
+  // Distance pill above the marker; dark on the selected station.
+  if (label) {
+    const pill = document.createElement("span");
+    pill.textContent = label;
+    Object.assign(pill.style, {
+      position: "absolute",
+      bottom: "calc(100% + 6px)",
+      left: "50%",
+      transform: "translateX(-50%)",
+      padding: "2px 7px",
+      borderRadius: "8px",
+      background: selected ? "var(--gp-forest)" : "white",
+      color: selected ? "white" : "var(--gp-forest)",
+      fontSize: "11px",
+      fontWeight: "700",
+      lineHeight: "16px",
+      whiteSpace: "nowrap",
+      boxShadow: "0 1px 4px rgba(0,0,0,.25)",
+      pointerEvents: "none",
+    });
+    el.appendChild(pill);
   }
 }
 
@@ -115,7 +148,7 @@ function workshopCard(w: RepairCenter, labels: { title: string; call: string }):
   return box;
 }
 
-export function StationMap({ stations, workshops = [], share = [], position, selectedId, onSelect }: Props) {
+export function StationMap({ stations, workshops = [], share = [], position, selectedId, onSelect, labels, route = false, padding, controls = true }: Props) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -137,12 +170,14 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
       zoom: 12,
       attributionControl: { compact: true },
     });
-    map.addControl(new NavigationControl({ showCompass: false }), "top-right");
+    if (controls) map.addControl(new NavigationControl({ showCompass: false }), "top-right");
     mapRef.current = map;
     return () => {
       map.remove();
       mapRef.current = null;
     };
+    // The controls are set once, with the map.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Station markers, keyed by station: a live update only touches the markers that changed.
@@ -153,20 +188,21 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
     const seen = new Set<string>();
     for (const station of stations) {
       seen.add(station.id);
-      const look = markerLook(station, station.id === selectedId);
+      const label = labels?.[station.id];
+      const look = markerLook(station, station.id === selectedId, label);
       const current = markers.get(station.id);
       if (current) {
         const at = current.marker.getLngLat();
         if (at.lng !== station.lng || at.lat !== station.lat) current.marker.setLngLat([station.lng, station.lat]);
         if (current.look !== look) {
-          drawMarker(current.el, station, station.id === selectedId);
+          drawMarker(current.el, station, station.id === selectedId, label);
           current.look = look;
         }
         continue;
       }
       const el = document.createElement("button");
       el.type = "button";
-      drawMarker(el, station, station.id === selectedId);
+      drawMarker(el, station, station.id === selectedId, label);
       const id = station.id;
       el.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -179,7 +215,33 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
       marker.remove();
       markers.delete(id);
     }
-  }, [stations, selectedId]);
+  }, [stations, selectedId, labels]);
+
+  // The way to the selected station: a straight dashed line (no route is fetched), kept in view with the user.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !route) return;
+    const station = stations.find((s) => s.id === selectedId);
+    const coordinates = position && station ? [[position.lng, position.lat], [station.lng, station.lat]] : [];
+    const data = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates } };
+    const draw = () => {
+      const source = map.getSource(ROUTE_SOURCE) as { setData?: (d: unknown) => void } | undefined;
+      if (source?.setData) return source.setData(data);
+      map.addSource(ROUTE_SOURCE, { type: "geojson", data });
+      map.addLayer({
+        id: ROUTE_SOURCE,
+        type: "line",
+        source: ROUTE_SOURCE,
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#12823B", "line-width": 4, "line-dasharray": [1.5, 1.5] },
+      });
+    };
+    if (map.isStyleLoaded()) draw();
+    else map.once("load", draw);
+    return () => {
+      map.off("load", draw);
+    };
+  }, [route, position, selectedId, stations]);
 
   // Workshop markers: grey with a wrench, below the stations; a tap opens their card.
   const workshopMarkersRef = useRef<Marker[]>([]);
@@ -295,6 +357,14 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
     const map = mapRef.current;
     const station = stations.find((s) => s.id === selectedId);
     if (!map || !station) return;
+    if (route && position) {
+      const bounds: [[number, number], [number, number]] = [
+        [Math.min(position.lng, station.lng), Math.min(position.lat, station.lat)],
+        [Math.max(position.lng, station.lng), Math.max(position.lat, station.lat)],
+      ];
+      map.fitBounds(bounds, { padding: padding ?? 60, maxZoom: 16, duration: reduced ? 0 : 800 });
+      return;
+    }
     const view = { center: [station.lng, station.lat] as [number, number], zoom: Math.max(map.getZoom(), 14) };
     if (reduced) map.jumpTo(view);
     else map.flyTo(view);
