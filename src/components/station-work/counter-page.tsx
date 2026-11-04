@@ -26,6 +26,10 @@ export async function sendEvent(send: () => Promise<BatteryEventView>): Promise<
   }
 }
 
+/** More places than this show as a bar instead of one box each. */
+const MAX_BOXES = 24;
+const SLOT = { full: "bg-gp-green", charging: "bg-gp-yellow/60", free: "bg-gp-border/70 dark:bg-white/10" };
+
 /** One counter: big number, "marked full" +1 and "issue" −1. Taps show at once and are sent one by one. */
 function CounterCard({
   station,
@@ -88,32 +92,71 @@ function CounterCard({
     });
   }
 
+  // One box per place (full, charging, free), as on the rack; a bar when there are too many places to draw.
+  const charging = row.empty;
+  const free = shownPlaces > 0 ? Math.max(0, shownPlaces - full - charging) : 0;
+  const level = full <= 0 ? "out" : full <= 2 ? "low" : "ok";
+  const chip = {
+    ok: "bg-gp-green/15 text-gp-green-dark dark:text-gp-green",
+    low: "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-300",
+    out: "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300",
+  }[level];
+  const boxes = shownPlaces > 0 && shownPlaces <= MAX_BOXES;
+
   return (
     <Card key={shake} className={`space-y-3 p-4 ${shake ? "animate-gp-shake" : ""}`}>
       <div className="flex items-start justify-between gap-2">
-        <h2 className="font-semibold">{row.label ?? c.station}</h2>
-        {canCorrect && (
+        <h2 className="font-heading text-lg font-semibold">{row.label ?? c.station}</h2>
+        <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${chip}`}>
+          <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />
+          {c.levels[level]}
+        </span>
+      </div>
+      {boxes ? (
+        <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(shownPlaces, 6)}, minmax(0, 1fr))` }} aria-hidden>
+          {Array.from({ length: shownPlaces }, (_, i) => (
+            <span
+              key={i}
+              className={`h-6 rounded-lg transition-colors duration-240 ${i < full ? SLOT.full : i < full + charging ? SLOT.charging : SLOT.free}`}
+            />
+          ))}
+        </div>
+      ) : (
+        shownPlaces > 0 && (
+          <div className="flex h-3 overflow-hidden rounded-full bg-gp-border/70 dark:bg-white/10" aria-hidden>
+            <span className={SLOT.full} style={{ width: `${(full / shownPlaces) * 100}%` }} />
+            <span className={SLOT.charging} style={{ width: `${(Math.min(charging, shownPlaces - full) / shownPlaces) * 100}%` }} />
+          </div>
+        )
+      )}
+      <p className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm" aria-live="polite">
+        <span>
+          <b key={full} className="inline-block animate-gp-bump font-heading text-lg tabular-nums">
+            {full}
+          </b>{" "}
+          {c.full}
+        </span>
+        <span>
+          <b className="tabular-nums">{charging}</b> {c.chargingWord}
+        </span>
+        {shownPlaces > 0 && (
+          <span className="text-gp-muted">{format(c.freeOfPlaces, { free, places: shownPlaces })}</span>
+        )}
+      </p>
+      <div className="flex items-center gap-3 border-t border-gp-border pt-3 dark:border-white/10">
+        {canCorrect ? (
           <Button variant="ghost" size="sm" onClick={onCorrect}>
             {c.correct}
           </Button>
+        ) : (
+          <span className="flex-1" />
         )}
-      </div>
-      <div className="flex items-baseline justify-center gap-2" aria-live="polite">
-        <span key={full} className="animate-gp-bump font-heading text-6xl font-bold tabular-nums">
-          {full}
-        </span>
-        <span className="text-lg text-gp-muted">
-          {shownPlaces > 0 && <span className="tabular-nums">/ {shownPlaces} </span>}
-          {c.full}
-        </span>
-      </div>
-      <p className="text-center text-sm text-gp-muted">{format(c.charging, { n: row.empty })}</p>
-      <div className="grid grid-cols-2 gap-3">
-        <Button variant="secondary" size="lg" onClick={() => tap("issue")} aria-label={`${c.issue} −1`}>
-          −1 {c.issue}
+        <span className="flex-1" />
+        <Button variant="secondary" size="lg" onClick={() => tap("issue")} aria-label={`${c.issue} −1`} className="w-16">
+          −
         </Button>
         <Button size="lg" onClick={() => tap("full")} aria-label={`${c.markFull} +1`}>
-          +1 {c.markFull}
+          {c.plusFull}
         </Button>
       </div>
     </Card>
@@ -236,8 +279,15 @@ function StationCounterView({ station, mine }: { station: StationView; mine: boo
   const total = data.rows.reduce((n, r) => n + r.full, 0);
   return (
     <>
-      <p className="text-sm text-gp-muted">{t.work.counter.intro}</p>
-      {data.rows.length === 0 && <EmptyState text={t.work.serviceOff} />}
+      {data.rows.length === 0 ? (
+        <EmptyState text={t.work.serviceOff} />
+      ) : (
+        <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gp-muted" aria-hidden>
+          <li className="flex items-center gap-1.5"><span className={`h-3 w-3 rounded ${SLOT.full}`} />{t.work.counter.legend.full}</li>
+          <li className="flex items-center gap-1.5"><span className={`h-3 w-3 rounded ${SLOT.charging}`} />{t.work.counter.legend.charging}</li>
+          <li className="flex items-center gap-1.5"><span className={`h-3 w-3 rounded ${SLOT.free}`} />{t.work.counter.legend.free}</li>
+        </ul>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
         {data.rows.map((row) => (
           <CounterCard
@@ -252,6 +302,7 @@ function StationCounterView({ station, mine }: { station: StationView; mine: boo
           />
         ))}
       </div>
+      {data.rows.length > 0 && <p className="text-center text-sm text-gp-muted">{t.work.counter.intro}</p>}
       <CorrectionSheet key={correcting?.batteryTypeId ?? "none"} station={station} row={correcting} onClose={() => setCorrecting(null)} />
       <EventList counter={data} mine={mine} />
     </>
