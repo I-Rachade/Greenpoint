@@ -12,6 +12,7 @@ Die App ist die Webapp in einer nativen Hülle ([Capacitor](https://capacitorjs.
 | `resources/` | Quellbilder für App-Icon und Startbildschirm |
 | `src/lib/native.ts` | `isNativeApp()`: läuft der Code in der App oder im Browser? |
 | `src/lib/use-position.ts` | Standort: in der App über das native Plugin, im Browser über die Web-API |
+| `src/components/ble/ble-diagnostic.tsx`, `shared/ble.ts` | Bluetooth (Plugin `@capacitor-community/bluetooth-le`): Diagnose-Seite `/operator/bluetooth` nur für Admins, liest die GATT-Dienste einer Batterie, Trames als JSON exportierbar. Nur in der App, nicht im Browser |
 | `src/components/native-shell.tsx` | Zurück-Taste (Android) und Links auf app.poinderecharge.com, die die App öffnen |
 | `.github/workflows/android.yml` | baut bei jedem PR eine installierbare Test-APK, mit Upload-Schlüssel auch das App Bundle für Google Play |
 | `.github/workflows/ios.yml` | baut die iOS-App bei jedem PR auf einem Mac von GitHub (Simulator, ohne Signatur); mit App-Store-Connect-Schlüssel signiert und lädt sie zu TestFlight hoch |

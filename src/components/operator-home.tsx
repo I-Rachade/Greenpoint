@@ -116,7 +116,7 @@ function OpenToggle({ station, activeReservations }: { station: StationView; act
 
 function StationHome({ station }: { station: StationView }) {
   const { t } = useI18n();
-  const { backend, features } = useApp();
+  const { backend, features, profile } = useApp();
   const now = useNow(15_000);
   // Share (shared/share.ts): a tile at stations that take Share vehicles, while the module is on.
   const { data: share } = useLiveQuery(
@@ -163,6 +163,14 @@ function StationHome({ station }: { station: StationView }) {
       >
         {t.work.incident.link}
       </Link>
+      {profile?.role === "admin" && (
+        <Link
+          href="/operator/bluetooth"
+          className="flex min-h-12 items-center justify-center rounded-2xl border border-gp-border bg-gp-surface px-4 text-base font-semibold text-gp-green-dark active:scale-[0.99] dark:text-gp-green"
+        >
+          {t.ble.link}
+        </Link>
+      )}
     </>
   );
 }
