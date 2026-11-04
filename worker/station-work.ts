@@ -30,6 +30,7 @@ import {
   type BatteryEventView,
   type CounterKey,
   type CounterRow,
+  type MyLastSwap,
   type StationCounter,
   type StationRole,
   type SwapCustomerType,
@@ -985,6 +986,21 @@ function swapAudit(db: D1Database, actor: StationActor, action: "update" | "dele
  * the Mobile Money transaction id of a recorded swap (owners of the station, admins). Totals,
  * cash to hand over and fleet bills are read from the log, so they follow. Logged in the activity log.
  */
+/** The signed-in customer's latest swap, at any station, or null (home "Mon scooter"). */
+export async function myLastSwap(db: D1Database, userId: string): Promise<MyLastSwap | null> {
+  const r = await db
+    .prepare(
+      `select l.created_at, l.station_id, s.name as station_name, t.brand || ' ' || t.name as type_label, l.battery_out_label, l.out_pct
+       from swap_log l join stations s on s.id = l.station_id left join battery_types t on t.id = l.battery_type_id
+       where l.customer_user_id = ? order by l.created_at desc limit 1`,
+    )
+    .bind(userId)
+    .first<{ created_at: string; station_id: string; station_name: string; type_label: string | null; battery_out_label: string | null; out_pct: number | null }>();
+  return r
+    ? { at: r.created_at, stationId: r.station_id, stationName: r.station_name, batteryTypeLabel: r.type_label, batteryOut: r.battery_out_label, outPct: r.out_pct }
+    : null;
+}
+
 export async function editSwap(c: WorkCtx, stationId: string, swapId: string, input: SwapEditInput): Promise<SwapEntry> {
   const { actor, row } = await swapEditor(c, stationId, swapId);
   const checked = checkSwapEdit(input, { payment: row.payment, energy: row.in_pct !== null });

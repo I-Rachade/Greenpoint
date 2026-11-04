@@ -69,6 +69,7 @@ import {
   type BatteryEventView,
   type CounterKey,
   type CounterRow,
+  type MyLastSwap,
   type StationCounter,
   type StationRole,
   type SwapEditInput,
@@ -8405,6 +8406,31 @@ export class DemoBackend implements Backend {
   private openCode(g: DemoGreenpoint, userId: string) {
     const now = new Date().toISOString();
     return g.redemptions.find((r) => r.userId === userId && r.status === "open" && r.expiresAt > now) ?? null;
+  }
+
+  async myLastSwap(): Promise<MyLastSwap | null> {
+    const state = this.load();
+    const profile = this.requireProfile(state);
+    if (profile.role !== "customer" && profile.role !== "admin") throw new BackendError("forbidden");
+    const mine = (state.swaps ?? []).filter((x) => x.customerId === profile.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    const station = (id: string) => state.stations.find((s) => s.id === id);
+    if (mine) {
+      return {
+        at: mine.createdAt,
+        stationId: mine.stationId,
+        stationName: station(mine.stationId)?.name ?? "",
+        batteryTypeLabel: mine.batteryTypeLabel,
+        batteryOut: mine.batteryOut,
+        outPct: mine.outPct ?? null,
+      };
+    }
+    // Demo: a swap yesterday evening at the Grand Marché, so the home has something to show.
+    const s = station(EN_ROUTE_STATION);
+    if (!s) return null;
+    const at = new Date();
+    at.setUTCDate(at.getUTCDate() - 1);
+    at.setUTCHours(17, 40, 0, 0);
+    return { at: at.toISOString(), stationId: s.id, stationName: s.name, batteryTypeLabel: "Omnivoltaic 72 V", batteryOut: "B0724525100136", outPct: 96 };
   }
 
   async myGreenpoint(): Promise<GreenpointView> {

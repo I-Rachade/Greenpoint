@@ -217,6 +217,17 @@ export interface SwapEntry {
   createdAt: string;
 }
 
+/** A customer's latest swap (home "Mon scooter", mockup A1): where, which battery and its charge when given. */
+export interface MyLastSwap {
+  at: string;
+  stationId: string;
+  stationName: string;
+  batteryTypeLabel: string | null;
+  batteryOut: string | null;
+  /** % of the battery handed over, on energy-priced swaps. */
+  outPct: number | null;
+}
+
 export interface SwapFilter {
   customerType?: SwapCustomerType | null;
   /** Days back from today (owner backoffice: 1, 7, 30 or 365); staff always see today. */

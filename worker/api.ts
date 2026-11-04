@@ -14,7 +14,7 @@ import { batteryDetail, deleteBattery, listBatteries, lookupBattery, registerBat
 import type { BatteryStatusInput, RegisterBatteriesInput } from "../shared/batteries";
 import { reportIncident, resolveIncident, stationIncidents } from "./incidents";
 import type { IncidentInput } from "../shared/incidents";
-import { capacityTrimStatements, deleteSwap, editSwap, typeCapacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
+import { capacityTrimStatements, deleteSwap, editSwap, myLastSwap, typeCapacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
 import type { StationRole } from "../shared/station-work";
 import {
   checkPickupCode,
@@ -2454,6 +2454,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     const { contact, frozen } = await readJson<{ contact?: string; frozen?: boolean }>(c.request);
     return setWalletFrozen(c.env, admin, contact, !!frozen);
   }],
+  ["GET", /^\/api\/me\/last-swap$/, async (c) => myLastSwap(c.db, (await customerUser(c)).id)],
   ["GET", /^\/api\/payments\/mine$/, async (c) => myPayments(c.env, await customerUser(c))],
   ["POST", /^\/api\/payments\/([\w-]+)\/refresh$/, async (c, [id]) => refreshPayment(c.env, await customerUser(c), id)],
   // greenpoint (worker/greenpoint.ts)

@@ -104,7 +104,7 @@ import type {
 } from "@shared/merchants";
 import type { StationService, StationServiceInfo } from "@shared/station-services";
 import type { ReservationKind } from "@shared/reservations";
-import type { BatteryEventInput, BatteryEventView, StationCounter, SwapEditInput, SwapEntry, SwapFilter, SwapInput } from "@shared/station-work";
+import type { BatteryEventInput, BatteryEventView, MyLastSwap, StationCounter, SwapEditInput, SwapEntry, SwapFilter, SwapInput } from "@shared/station-work";
 import type { ReviewInput, StationReview } from "@shared/station-extras";
 import type { LatLng } from "@shared/geo";
 import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "@shared/station-cash";
@@ -651,6 +651,8 @@ export interface Backend {
   // greenpoint (see shared/greenpoint.ts)
   /** CO2 saved, level, greenpoints, rewards and history of the signed-in user. */
   myGreenpoint(): Promise<GreenpointView>;
+  /** The signed-in customer's latest swap, or null (home "Mon scooter"). */
+  myLastSwap(): Promise<MyLastSwap | null>;
   /** The vehicle that sets the CO2 of a swap or charge. */
   setGreenpointVehicle(vehicle: VehicleType): Promise<void>;
   /** A code for a reward, valid REDEEM_CODE_MINUTES; points are taken when staff enter it. */

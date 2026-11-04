@@ -107,7 +107,7 @@ import type {
 } from "@shared/types";
 import type { StationService, StationServiceInfo } from "@shared/station-services";
 import { getActiveStation } from "../active-station";
-import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEditInput, type SwapEntry, type SwapFilter, type SwapInput } from "@shared/station-work";
+import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type MyLastSwap, type StationCounter, type SwapEditInput, type SwapEntry, type SwapFilter, type SwapInput } from "@shared/station-work";
 import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "@shared/station-cash";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
 import { kindFrom, type ReservationKind } from "@shared/reservations";
@@ -1548,6 +1548,10 @@ export class CloudflareBackend implements Backend {
 
   myGreenpoint() {
     return this.call<GreenpointView>("GET", "/api/greenpoint");
+  }
+
+  myLastSwap() {
+    return this.call<MyLastSwap | null>("GET", "/api/me/last-swap");
   }
 
   async setGreenpointVehicle(vehicle: VehicleType) {

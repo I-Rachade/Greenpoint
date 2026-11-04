@@ -1,5 +1,5 @@
-import { StationFinder } from "@/components/station-finder";
+import { Home as HomeScreen } from "@/components/home";
 
 export default function Home() {
-  return <StationFinder />;
+  return <HomeScreen />;
 }
