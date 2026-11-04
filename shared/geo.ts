@@ -28,3 +28,17 @@ export function formatDistance(meters: number): string {
 export function directionsUrl(to: LatLng): string {
   return `https://www.google.com/maps/dir/?api=1&destination=${to.lat},${to.lng}`;
 }
+
+/** Roads are longer than the straight line between two points in town. */
+const ROAD_FACTOR = 1.3;
+/** Average speed of a motorbike in Lomé traffic, km/h. */
+const SCOOTER_KMH = 22;
+
+/**
+ * Rough minutes by motorbike for a straight-line distance (station screen): no route is
+ * fetched, so it adds a road factor to the haversine distance. At least 1 minute.
+ */
+export function scooterMinutes(meters: number): number {
+  if (!Number.isFinite(meters) || meters <= 0) return 1;
+  return Math.max(1, Math.round((meters * ROAD_FACTOR) / ((SCOOTER_KMH * 1000) / 60)));
+}

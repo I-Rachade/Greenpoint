@@ -1251,6 +1251,7 @@ export class DemoBackend implements Backend {
         parcelPoint,
         batteryTypes,
         evChargers,
+        swapPriceXof: swapPrice(state, s),
         // Staff of the station or an owner of its operator, as the Worker counts them.
         hasStaff:
           (state.staff ?? DEMO_STAFF).some((a) => a.stationId === s.id) || (state.operatorOwners ?? []).some((x) => x.operatorId === s.operatorId),

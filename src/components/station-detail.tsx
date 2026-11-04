@@ -3,11 +3,12 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   availableBatteries,
   availableSlots,
   isHolding,
+  isOpenNow,
   isStale,
   offersCharging,
   offersSwap,
@@ -15,10 +16,10 @@ import {
   withinOpeningHours,
 } from "@shared/availability";
 import { batteryTypeLabel } from "@shared/battery-types";
-import { directionsUrl, formatDistance } from "@shared/geo";
+import { directionsUrl, formatDistance, scooterMinutes } from "@shared/geo";
 import { displayStatus, type ChargingPointDisplay } from "@shared/iot/charging-points";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
-import { format } from "@/lib/i18n/format";
+import { format, formatXof } from "@/lib/i18n/format";
 import { loginHref } from "@/lib/next-path";
 import { AMENITIES, isUnattended, stationPhotos } from "@shared/station-extras";
 import { useBrandPref } from "@/lib/prefs";
@@ -27,10 +28,10 @@ import { RESERVATION_MINUTES, type Reservation, type StationView } from "@shared
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
 import { ConfirmSheet } from "./confirm-sheet";
-import { BackIcon, BatteryIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, ScooterIcon, ShareIcon, StoreIcon, SunIcon } from "./icons";
+import { BackIcon, BatteryIcon, BoltIcon, BoxIcon, CarIcon, ClockIcon, NavigateIcon, PhoneIcon, PinIcon, PlugIcon, ScooterIcon, ShareIcon, StarIcon, StoreIcon, SunIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { EvBadge, FavoriteButton, RestBadge, stationHref } from "./station-card";
-import { AMENITY_ICONS, OpenBadge, RatingInline, useHoursLabel, useTodayHoursLabel } from "./station-look";
+import { AMENITY_ICONS, OpenBadge, useHoursLabel, useTodayHoursLabel } from "./station-look";
 import { SolarBadge } from "./solar-badge";
 import { StationReviews } from "./station-reviews";
 import { Countdown, SuccessCheck } from "./ui";
@@ -46,6 +47,18 @@ const OUTLET_COLORS: Record<ChargingPointDisplay, string> = {
   fault: "bg-red-600",
   offline: "bg-zinc-400",
 };
+
+/** Stock of one battery type as the customer reads it: none left, a few (as stationAvailability), or enough. */
+type TypeLevel = "out" | "low" | "ok";
+function typeLevel(full: number): TypeLevel {
+  return full <= 0 ? "out" : full <= 2 ? "low" : "ok";
+}
+const TYPE_CHIP: Record<TypeLevel, string> = {
+  ok: "bg-gp-green/15 text-gp-green-dark dark:text-gp-green",
+  low: "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-300",
+  out: "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300",
+};
+const TYPE_BAR: Record<TypeLevel, string> = { ok: "bg-gp-green", low: "bg-gp-low", out: "bg-gp-closed" };
 
 interface Props {
   station: StationView;
@@ -99,20 +112,20 @@ function PhotoGallery({ station, scrollerRef }: { station: StationView; scroller
       <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/35 to-transparent" aria-hidden />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/40 to-transparent" aria-hidden />
       {photos.length > 1 && (
-        <div className="absolute inset-x-0 bottom-8 flex justify-center gap-1.5" aria-hidden>
+        <div className="absolute inset-x-0 bottom-24 flex justify-center gap-1.5" aria-hidden>
           {photos.map((_, i) => (
             <span key={i} className={`h-1.5 rounded-full transition-all ${i === index ? "w-5 bg-white" : "w-1.5 bg-white/60"}`} />
           ))}
         </div>
       )}
-      <OpenBadge station={station} className="absolute bottom-8 right-3 shadow" />
     </div>
   );
 }
 
 export function StationDetail({ station, distance, onChanged }: Props) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const L = t.stationLook;
+  const S = L.summary;
   const { backend, profile, features } = useApp();
   const router = useRouter();
   const now = useNow();
@@ -122,6 +135,16 @@ export function StationDetail({ station, distance, onChanged }: Props) {
   const todayLabel = useTodayHoursLabel();
   const { position } = usePosition();
   const gallery = useRef<HTMLDivElement>(null);
+  const summaryRef = useRef<HTMLDivElement>(null);
+  /** The dark summary has scrolled away: a slim bar with the name stays at the top. */
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const el = summaryRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([entry]) => setCompact(!entry.isIntersecting), { threshold: 0 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   /** The reservation just made here; its code is shown in a sheet until closed. */
@@ -216,18 +239,16 @@ export function StationDetail({ station, distance, onChanged }: Props) {
   const secondary =
     "flex flex-1 items-center justify-center gap-2 rounded-2xl border-2 border-gp-green-dark bg-gp-surface px-4 py-3 text-sm font-semibold text-gp-green-dark dark:border-gp-green dark:text-gp-green";
 
-  const iconSecondary =
-    "flex w-14 shrink-0 items-center justify-center rounded-2xl border-2 border-gp-green-dark bg-gp-surface text-gp-green-dark dark:border-gp-green dark:text-gp-green";
+  const types = swap ? (station.batteryTypes ?? []) : [];
+  // The station's one swap price; a type priced by the energy added has none, so no price is shown then.
+  const swapPrice = swap && station.swapPriceXof && !types.some((bt) => bt.pricing === "energy") ? station.swapPriceXof : null;
+  // With the price on the left, the route is an icon and the reserve button says just "Reserve".
+  // Not with two reserve buttons: "Reserve" alone would not say which.
+  const compactBar = swapPrice !== null && !activeHere && !twoReserve;
 
-  const stockCard = (Icon: typeof BoltIcon, label: string, value: string, ok: boolean) => (
-    <div className="flex flex-col items-center gap-1 rounded-2xl border border-gp-border bg-gp-surface p-3 text-center shadow-sm dark:border-white/10">
-      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gp-green/15 text-gp-green-dark dark:text-gp-green">
-        <Icon size={22} />
-      </span>
-      <span className="text-sm font-semibold">{label}</span>
-      <span className={`text-sm font-semibold ${ok ? "text-gp-green-dark dark:text-gp-green" : "text-gp-closed"}`}>{value}</span>
-    </div>
-  );
+  const iconSecondary =
+    "flex h-12 w-14 shrink-0 items-center justify-center rounded-2xl border-2 border-gp-green-dark bg-gp-surface text-gp-green-dark dark:border-gp-green dark:text-gp-green";
+
   const infoRow = (Icon: typeof BoltIcon, label: string, value: string) => (
     <li className="flex items-start gap-3 py-2.5">
       <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gp-green/10 text-gp-green-dark dark:text-gp-green">
@@ -240,8 +261,52 @@ export function StationDetail({ station, distance, onChanged }: Props) {
     </li>
   );
 
+  const open = isOpenNow(station, now);
+
+  /** One tile of "At a glance": icon, big figure, label. */
+  type Tile = { key: string; Icon: typeof BoltIcon; value: string; label: string; warn?: boolean };
+  const tiles: Tile[] = [];
+  if (swap)
+    tiles.push({
+      key: "swap",
+      Icon: BatteryIcon,
+      value: station.batteryCapacity > 0 ? `${batteries}/${station.batteryCapacity}` : String(batteries),
+      label: S.fullBatteries,
+      warn: availableBatteries(station) === 0,
+    });
+  if (charging) {
+    const total = connected ? points.filter((p) => p.deviceId !== null).length : station.chargingSlots;
+    tiles.push({ key: "charging", Icon: PlugIcon, value: total > 0 ? `${slots}/${total}` : String(slots), label: S.freeOutlets, warn: slots === 0 });
+  }
+  tiles.push({ key: "hours", Icon: ClockIcon, value: todayLabel(station.openingHours, now), label: open ? S.openNow : S.closedNow, warn: !open });
+  if (station.parcelPoint?.counter) tiles.push({ key: "counter", Icon: BoxIcon, value: "✓", label: t.station.parcelCounter });
+  if ((station.parcelPoint?.lockers ?? 0) > 0)
+    tiles.push({ key: "lockers", Icon: BoxIcon, value: String(station.parcelPoint!.lockers), label: t.station.parcelLockers });
+
   return (
     <div>
+      {/* Slim bar once the summary is scrolled away (mockup A4). */}
+      <div className="sticky top-0 z-20 h-0">
+        <div
+          aria-hidden={!compact}
+          className={`flex items-center gap-3 border-b border-gp-border bg-gp-surface/95 px-3 py-2 backdrop-blur transition-opacity duration-200 dark:border-white/10 ${
+            compact ? "opacity-100" : "pointer-events-none opacity-0"
+          }`}
+        >
+          <button
+            type="button"
+            tabIndex={compact ? 0 : -1}
+            onClick={() => (window.history.length > 1 ? router.back() : router.push("/"))}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-gp-border dark:border-white/15"
+            aria-label={t.ui.back}
+          >
+            <BackIcon size={20} />
+          </button>
+          <span className="min-w-0 flex-1 truncate font-heading text-base font-semibold">{station.name}</span>
+          <OpenBadge station={station} className="shrink-0" />
+        </div>
+      </div>
+
       <div className="relative">
         <PhotoGallery station={station} scrollerRef={gallery} />
         <div className="absolute inset-x-3 top-3 flex items-center gap-2">
@@ -249,6 +314,11 @@ export function StationDetail({ station, distance, onChanged }: Props) {
             <BackIcon size={22} />
           </button>
           <span className="flex-1" />
+          {station.phone && (
+            <a href={`tel:${station.phone}`} aria-label={t.station.call} className={overlayButton}>
+              <PhoneIcon size={19} />
+            </a>
+          )}
           <FavoriteButton stationId={station.id} className="bg-white/90 shadow-md backdrop-blur hover:bg-white" />
           <button type="button" onClick={share} className={overlayButton} aria-label={L.share}>
             <ShareIcon size={20} />
@@ -256,51 +326,54 @@ export function StationDetail({ station, distance, onChanged }: Props) {
         </div>
       </div>
 
-      <div className="relative -mt-5 space-y-6 rounded-t-3xl bg-background px-4 pb-6 pt-5 md:mt-0 md:rounded-none">
+      {/* Dark summary laid over the bottom of the photo: name, open, distance, time by scooter, rating. */}
+      <div ref={summaryRef} className="relative z-[1] mx-4 -mt-20 rounded-[20px] bg-gp-forest p-4 text-white shadow-xl shadow-gp-forest/30 dark:ring-1 dark:ring-white/10">
         <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gp-green text-gp-forest" aria-hidden>
+            {station.kind === "parcel" ? <BoxIcon size={20} /> : <BoltIcon size={20} />}
+          </span>
           <div className="min-w-0 flex-1">
-            <h1 className="font-heading text-2xl font-semibold leading-tight">{station.name}</h1>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gp-forest dark:text-zinc-200">
-              <span className="flex items-center gap-1">
-                <ClockIcon size={15} className="text-gp-muted" />
-                {todayLabel(station.openingHours, now)}
-              </span>
-              {distance !== null && (
-                <span className="flex items-center gap-1 border-l border-gp-border pl-3 dark:border-white/15">
-                  <PinIcon size={15} className="text-gp-muted" />
-                  {formatDistance(distance)}
-                </span>
-              )}
-              {(station.rating?.count ?? 0) > 0 && (
-                <span className="border-l border-gp-border pl-3 dark:border-white/15">
-                  <RatingInline station={station} />
-                </span>
-              )}
-            </div>
-            <p className="mt-1 text-sm text-gp-muted dark:text-zinc-400">{station.address}</p>
+            <h1 className="font-heading text-lg font-semibold leading-snug">{station.name}</h1>
+            <p className="mt-0.5 text-sm text-white/75">{station.address}</p>
           </div>
-          {station.phone ? (
-            <a
-              href={`tel:${station.phone}`}
-              aria-label={t.station.call}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border-2 border-gp-green-dark text-gp-green-dark dark:border-gp-green dark:text-gp-green"
-            >
-              <PhoneIcon size={20} />
-            </a>
-          ) : (
-            <a
-              href={directionsUrl(station)}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={t.station.directions}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border-2 border-gp-green-dark text-gp-green-dark dark:border-gp-green dark:text-gp-green"
-            >
-              <NavigateIcon size={20} />
-            </a>
-          )}
+          <OpenBadge station={station} className="mt-1 shrink-0" />
         </div>
+        <dl className="mt-4 flex flex-wrap gap-x-7 gap-y-2">
+          {distance !== null && (
+            <>
+              <div>
+                <dd className="font-heading text-2xl font-bold leading-tight">{formatDistance(distance)}</dd>
+                <dt className="text-xs text-white/70">{S.distance}</dt>
+              </div>
+              <div>
+                <dd className="font-heading text-2xl font-bold leading-tight">{format(S.minutes, { n: scooterMinutes(distance) })}</dd>
+                <dt className="text-xs text-white/70">{S.byScooter}</dt>
+              </div>
+            </>
+          )}
+          <div>
+            {(station.rating?.count ?? 0) > 0 ? (
+              <>
+                <dd className="flex items-center gap-1 font-heading text-2xl font-bold leading-tight text-gp-yellow">
+                  {station.rating!.average.toFixed(1)}
+                  <StarIcon size={20} filled />
+                </dd>
+                <dt className="text-xs text-white/70">{format(L.reviews.count, { n: station.rating!.count })}</dt>
+              </>
+            ) : (
+              <>
+                <dd className="flex h-8 items-center text-gp-yellow">
+                  <StarIcon size={20} />
+                </dd>
+                <dt className="text-xs text-white/70">{S.noReview}</dt>
+              </>
+            )}
+          </div>
+        </dl>
+      </div>
 
-        <div className="-mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+      <div className="space-y-6 px-4 pb-6 pt-4">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
           <RestBadge station={station} />
           <EvBadge station={station} />
           {station.isSolar && <SolarBadge />}
@@ -319,126 +392,123 @@ export function StationDetail({ station, distance, onChanged }: Props) {
           </p>
         )}
 
-        <Section title={L.amenities.title}>
-          {amenities.length === 0 ? (
-            <p className="text-sm text-gp-muted dark:text-zinc-400">{L.amenities.none}</p>
-          ) : (
-            <ul className="grid grid-cols-4 gap-y-3 rounded-2xl border border-gp-border bg-gp-surface px-1 py-3 shadow-sm sm:grid-cols-5 dark:border-white/10">
-              {amenities.map((a) => {
-                const Icon = AMENITY_ICONS[a];
+        <Section title={S.glance}>
+          <ul className="grid gap-2" style={{ gridTemplateColumns: `repeat(${tiles.length === 4 ? 2 : Math.min(tiles.length, 3)}, minmax(0, 1fr))` }}>
+            {tiles.map(({ key, Icon, value, label, warn }) => (
+              <li key={key} className="rounded-[14px] bg-gp-border/40 p-3 dark:bg-white/5">
+                <Icon size={18} className="text-gp-green-dark dark:text-gp-green" />
+                <div className={`mt-1.5 truncate font-heading text-lg font-bold leading-tight ${warn ? "text-gp-closed" : ""}`}>{value}</div>
+                <div className="text-xs text-gp-muted dark:text-zinc-400">{label}</div>
+              </li>
+            ))}
+          </ul>
+
+          {connected && (
+            <div className="flex items-center gap-3 rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm dark:border-white/10">
+              <span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gp-green/15 text-gp-green-dark dark:text-gp-green">
+                <ScooterIcon size={26} />
+                <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-gp-green-dark text-white">
+                  <BoltIcon size={12} />
+                </span>
+              </span>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-semibold">{t.station.moto.title}</h3>
+                <p className={`text-sm font-semibold ${slots > 0 ? "text-gp-green-dark dark:text-gp-green" : "text-gp-closed"}`}>
+                  {slots === 0 ? t.station.moto.none : format(slots === 1 ? t.station.moto.one : t.station.moto.many, { n: slots })}
+                  <span className="font-normal text-gp-muted dark:text-zinc-400"> {format(t.station.moto.of, { total: points.length })}</span>
+                </p>
+              </div>
+              {unattended ? null : profile ? (
+                <button
+                  type="button"
+                  disabled={busy || slots === 0 || outletChoices.length === 0 || !!activeHere}
+                  onClick={reserveOutlet}
+                  className="shrink-0 rounded-xl bg-gp-green-dark px-3 py-2 text-xs font-semibold text-white hover:bg-gp-forest disabled:opacity-40"
+                >
+                  {t.station.moto.reserve}
+                </button>
+              ) : (
+                <Link href={loginHref(stationHref(station.id))} className="shrink-0 rounded-xl border-2 border-gp-green-dark px-3 py-1.5 text-xs font-semibold text-gp-green-dark dark:border-gp-green dark:text-gp-green">
+                  {t.station.moto.reserve}
+                </Link>
+              )}
+            </div>
+          )}
+
+          {points.some((p) => p.qrStart) && (
+            <Link href="/recharge" className={`${secondary} flex-none`}>
+              <BoltIcon size={16} />
+              {t.charging.qr.scan}
+            </Link>
+          )}
+
+          {points.length > 0 && !connected && (
+            <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm dark:border-white/10">
+              <h3 className="text-sm font-semibold">{t.station.outlets}</h3>
+              <ul className="mt-1 divide-y divide-gp-border text-sm dark:divide-white/10">
+                {points.map((p) => {
+                  const shown = displayStatus(p, now);
+                  return (
+                    <li key={p.id} className="flex items-center justify-between gap-2 py-2">
+                      <span className="flex items-center gap-2">
+                        <span className={`h-2.5 w-2.5 rounded-full ${OUTLET_COLORS[shown]}`} aria-hidden />
+                        {p.label}
+                      </span>
+                      <span className="text-gp-muted dark:text-zinc-400">{t.station.outletStatus[shown]}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          {battery && types.length === 0 && (
+            <p className="text-xs text-gp-muted">{format(t.station.updated, { time: relativeTime(station.status.updatedAt, now) })}</p>
+          )}
+          {station.status.isOpen && !withinOpeningHours(station.openingHours, now) && (
+            <p className="text-sm text-red-700 dark:text-red-400">{t.station.outsideHours}</p>
+          )}
+          {battery && isStale(station, now) && <p className="text-sm text-amber-700 dark:text-amber-400">{t.station.stale}</p>}
+        </Section>
+
+        {types.length > 0 && (
+          <Section
+            title={S.byType}
+            action={<span className="text-xs text-gp-muted dark:text-zinc-400">{format(t.station.updated, { time: relativeTime(station.status.updatedAt, now) })}</span>}
+          >
+            <ul className="divide-y divide-gp-border dark:divide-white/10">
+              {types.map((bt) => {
+                const n = freeOfType(bt);
+                const level = typeLevel(n);
+                const total = bt.capacity ?? 0;
                 return (
-                  <li key={a} className="flex flex-col items-center gap-1 px-1 text-center">
-                    <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gp-green/10 text-gp-green-dark dark:text-gp-green">
-                      <Icon size={22} />
+                  <li key={bt.id} className="flex items-center gap-3 py-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gp-border/40 dark:bg-white/5" aria-hidden>
+                      <BatteryIcon size={20} />
                     </span>
-                    <span className="text-[11px] font-medium leading-tight text-gp-green-dark dark:text-gp-green">{L.amenities[a]}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <b className="truncate text-sm font-semibold">{batteryTypeLabel(bt)}</b>
+                        <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold ${TYPE_CHIP[level]}`}>
+                          <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />
+                          {level === "out" ? S.typeOut : level === "low" ? S.typeLow : S.typeAvailable}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        {total > 0 && (
+                          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-gp-border dark:bg-white/10" aria-hidden>
+                            <span className={`block h-full rounded-full ${TYPE_BAR[level]}`} style={{ width: `${Math.min(100, (n / total) * 100)}%` }} />
+                          </span>
+                        )}
+                        <span className={`text-xs font-semibold ${total > 0 ? "" : "flex-1 text-right"}`}>
+                          {total > 0 ? format(L.fullOf, { n, total }) : format(t.station.typeFull, { n })}
+                        </span>
+                      </div>
+                    </div>
                   </li>
                 );
               })}
             </ul>
-          )}
-        </Section>
-
-        {(battery || station.parcelPoint) && (
-          <Section title={L.available}>
-            <div className="grid grid-cols-2 gap-3">
-              {charging && !connected && stockCard(BoltIcon, L.charging, format(L.freeOf, { n: slots, total: station.chargingSlots }), slots > 0)}
-              {swap && stockCard(BatteryIcon, L.swap, format(L.fullOf, { n: batteries, total: station.batteryCapacity }), availableBatteries(station) > 0)}
-              {station.parcelPoint?.counter && stockCard(BoxIcon, t.station.parcelCounter, "✓", true)}
-              {(station.parcelPoint?.lockers ?? 0) > 0 &&
-                stockCard(BoxIcon, t.station.parcelLockers, format(t.station.lockers, { n: station.parcelPoint!.lockers }), true)}
-            </div>
-
-            {swap && (station.batteryTypes ?? []).length > 0 && (
-              <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm dark:border-white/10">
-                <h3 className="flex items-center gap-2 text-sm font-semibold">
-                  <BatteryIcon size={16} /> {t.station.batteryTypes}
-                </h3>
-                <ul className="mt-1 divide-y divide-gp-border text-sm dark:divide-white/10">
-                  {(station.batteryTypes ?? []).map((bt) => (
-                    <li key={bt.id} className="flex items-center justify-between gap-3 py-1.5">
-                      <span>{batteryTypeLabel(bt)}</span>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                          freeOfType(bt) > 0 ? "bg-gp-green/10 text-gp-green-dark" : "bg-zinc-500/10 text-gp-muted"
-                        }`}
-                      >
-                        {(bt.capacity ?? 0) > 0
-                          ? format(L.fullOf, { n: freeOfType(bt), total: bt.capacity })
-                          : format(t.station.typeFull, { n: freeOfType(bt) })}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {connected && (
-              <div className="flex items-center gap-3 rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm dark:border-white/10">
-                <span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gp-green/15 text-gp-green-dark dark:text-gp-green">
-                  <ScooterIcon size={26} />
-                  <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-gp-green-dark text-white">
-                    <BoltIcon size={12} />
-                  </span>
-                </span>
-                <div className="min-w-0 flex-1">
-                  <h3 className="text-sm font-semibold">{t.station.moto.title}</h3>
-                  <p className={`text-sm font-semibold ${slots > 0 ? "text-gp-green-dark dark:text-gp-green" : "text-gp-closed"}`}>
-                    {slots === 0 ? t.station.moto.none : format(slots === 1 ? t.station.moto.one : t.station.moto.many, { n: slots })}
-                    <span className="font-normal text-gp-muted dark:text-zinc-400"> {format(t.station.moto.of, { total: points.length })}</span>
-                  </p>
-                </div>
-                {unattended ? null : profile ? (
-                  <button
-                    type="button"
-                    disabled={busy || slots === 0 || outletChoices.length === 0 || !!activeHere}
-                    onClick={reserveOutlet}
-                    className="shrink-0 rounded-xl bg-gp-green-dark px-3 py-2 text-xs font-semibold text-white hover:bg-gp-forest disabled:opacity-40"
-                  >
-                    {t.station.moto.reserve}
-                  </button>
-                ) : (
-                  <Link href={loginHref(stationHref(station.id))} className="shrink-0 rounded-xl border-2 border-gp-green-dark px-3 py-1.5 text-xs font-semibold text-gp-green-dark dark:border-gp-green dark:text-gp-green">
-                    {t.station.moto.reserve}
-                  </Link>
-                )}
-              </div>
-            )}
-
-            {points.some((p) => p.qrStart) && (
-              <Link href="/recharge" className={`${secondary} flex-none`}>
-                <BoltIcon size={16} />
-                {t.charging.qr.scan}
-              </Link>
-            )}
-
-            {points.length > 0 && !connected && (
-              <div className="rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm dark:border-white/10">
-                <h3 className="text-sm font-semibold">{t.station.outlets}</h3>
-                <ul className="mt-1 divide-y divide-gp-border text-sm dark:divide-white/10">
-                  {points.map((p) => {
-                    const shown = displayStatus(p, now);
-                    return (
-                      <li key={p.id} className="flex items-center justify-between gap-2 py-2">
-                        <span className="flex items-center gap-2">
-                          <span className={`h-2.5 w-2.5 rounded-full ${OUTLET_COLORS[shown]}`} aria-hidden />
-                          {p.label}
-                        </span>
-                        <span className="text-gp-muted dark:text-zinc-400">{t.station.outletStatus[shown]}</span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            )}
-
-            {battery && (
-              <p className="text-xs text-gp-muted">{format(t.station.updated, { time: relativeTime(station.status.updatedAt, now) })}</p>
-            )}
-            {station.status.isOpen && !withinOpeningHours(station.openingHours, now) && (
-              <p className="text-sm text-red-700 dark:text-red-400">{t.station.outsideHours}</p>
-            )}
-            {battery && isStale(station, now) && <p className="text-sm text-amber-700 dark:text-amber-400">{t.station.stale}</p>}
           </Section>
         )}
 
@@ -496,6 +566,29 @@ export function StationDetail({ station, distance, onChanged }: Props) {
           </Section>
         )}
 
+        <Section title={S.services}>
+          {amenities.length === 0 ? (
+            <p className="text-sm text-gp-muted dark:text-zinc-400">{L.amenities.none}</p>
+          ) : (
+            <ul className="flex flex-wrap gap-2">
+              {amenities.map((a) => {
+                const Icon = AMENITY_ICONS[a];
+                return (
+                  <li
+                    key={a}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-gp-border bg-gp-surface px-3 py-1.5 text-sm font-medium dark:border-white/10"
+                  >
+                    <Icon size={16} className="text-gp-green-dark dark:text-gp-green" />
+                    {L.amenities[a]}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Section>
+
+        <StationReviews station={station} onChanged={onChanged} />
+
         {photos.length > 1 && (
           <Section title={L.morePhotos}>
             <div className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
@@ -528,7 +621,6 @@ export function StationDetail({ station, distance, onChanged }: Props) {
           </div>
         </Section>
 
-        <StationReviews station={station} onChanged={onChanged} />
       </div>
 
       <div className="sticky bottom-0 z-10 border-t border-gp-border bg-gp-surface/95 px-4 pb-3 pt-3 backdrop-blur dark:border-white/10">
@@ -542,7 +634,13 @@ export function StationDetail({ station, distance, onChanged }: Props) {
             {message.text}
           </p>
         )}
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          {compactBar && (
+            <div className="-order-1 mr-1 shrink-0">
+              <div className="text-[11px] text-gp-muted dark:text-zinc-400">{S.swapPrice}</div>
+              <div className="whitespace-nowrap font-heading text-lg font-bold leading-tight">{formatXof(swapPrice, locale)}</div>
+            </div>
+          )}
           {battery && profile && activeHere && (
             <Link
               href="/reservations"
@@ -567,9 +665,14 @@ export function StationDetail({ station, distance, onChanged }: Props) {
             <p className="flex flex-1 items-center rounded-2xl bg-zinc-500/10 px-4 py-3 text-sm text-gp-muted dark:text-zinc-400">{L.unattendedHint}</p>
           )}
           {battery && !unattended && profile && swap && !activeHere && (
-            <button type="button" disabled={busy || availableBatteries(station) === 0 || noFreeType} onClick={reserveBattery} className={primary}>
+            <button
+              type="button"
+              disabled={busy || availableBatteries(station) === 0 || noFreeType}
+              onClick={reserveBattery}
+              className={primary}
+            >
               <BatteryIcon size={18} />
-              {t.station.reserveBattery}
+              {compactBar ? S.reserve : t.station.reserveBattery}
             </button>
           )}
           {battery && !unattended && profile && charging && !connected && !activeHere && (
@@ -580,7 +683,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
           )}
           {battery && !unattended && !profile && (
             <Link href={loginHref(stationHref(station.id))} className={primary}>
-              {t.station.loginToReserve}
+              {compactBar ? S.reserve : t.station.loginToReserve}
             </Link>
           )}
           <a
@@ -588,10 +691,10 @@ export function StationDetail({ station, distance, onChanged }: Props) {
             target="_blank"
             rel="noopener noreferrer"
             aria-label={t.station.directions}
-            className={twoReserve || activeHere ? iconSecondary : secondary}
+            className={`${twoReserve || activeHere || compactBar ? iconSecondary : secondary} ${compactBar ? "-order-1" : ""}`}
           >
             <NavigateIcon size={18} />
-            {!twoReserve && !activeHere && t.station.directions}
+            {!twoReserve && !activeHere && !compactBar && t.station.directions}
           </a>
         </div>
       </div>
