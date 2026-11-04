@@ -65,6 +65,15 @@ export const en: Dictionary = {
     nearest: "Nearest",
     noResults: "No station matches the filters.",
     stations: "{count} stations",
+    /** Full-screen map (mockup A2). */
+    full: {
+      title: "Nearest stations",
+      open: "Open the full map",
+      fullBatteries: "Full batteries",
+      openNow: "Open now",
+      straight: "Straight line, not the exact way",
+      card: "Station {n} of {total}",
+    },
   },
   availability: {
     available: "Available",
