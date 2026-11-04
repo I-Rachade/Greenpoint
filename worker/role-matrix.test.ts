@@ -98,6 +98,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/admin/repair-centers": ADMIN,
   "DELETE /api/admin/repair-centers/:id": ADMIN,
   "POST /api/admin/operators": ADMIN,
+  "POST /api/admin/operators/:id/active": ADMIN,
   "POST /api/admin/operators/:id/owners": ADMIN,
   "DELETE /api/admin/operators/:id/owners/:id": ADMIN,
   "PATCH /api/stations/:id/status": STATION,
@@ -106,6 +107,8 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/stations/:id/battery-events": STATION, // corrections: owner and admin (station-work.test)
   "POST /api/stations/:id/swaps": STATION,
   "GET /api/stations/:id/swaps": STATION,
+  "PATCH /api/stations/:id/swaps/:id": OWNER, // backoffice history: correct a swap
+  "DELETE /api/stations/:id/swaps/:id": OWNER, // backoffice history: delete a swap
   "POST /api/stations/:id/incidents": STATION,
   "GET /api/stations/:id/incidents": STATION,
   "POST /api/stations/:id/incidents/:id/resolve": OWNER, // owners and admins mark a report handled
@@ -129,7 +132,6 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/admin/wallet/adjust": ADMIN,
   "POST /api/admin/wallet/freeze": ADMIN,
   "GET /api/payments/mine": CUSTOMER,
-  "POST /api/payments": CUSTOMER,
   "POST /api/payments/:id/refresh": CUSTOMER,
   "GET /api/greenpoint": CUSTOMER,
   "GET /api/greenpoint/total": ALL,

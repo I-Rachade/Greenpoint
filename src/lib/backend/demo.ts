@@ -54,7 +54,9 @@ import {
   CAPACITY_REASON,
   cleanBatteryLabel,
   cleanReason,
+  checkSwapEdit,
   dayStartLome,
+  SWAP_DELETED_REASON,
   SWAP_EXPORT_LIMIT,
   swapDayRange,
   isSwapCustomerType,
@@ -69,6 +71,7 @@ import {
   type CounterRow,
   type StationCounter,
   type StationRole,
+  type SwapEditInput,
   type SwapEntry,
   type SwapFilter,
   type SwapInput,
@@ -468,6 +471,9 @@ interface DemoState {
   pointPartnerAccounts?: { userId: string; partnerId: string; createdAt: string }[];
   /** Contact phones of operators, set in the backoffice. */
   operatorPhones?: Record<string, string | null>;
+  /** Operators switched off, and the stations that went off with them (migration 0067). */
+  inactiveOperators?: string[];
+  pausedWithOperator?: string[];
   /** Parcel module switch of the backoffice (missing = on). */
   parcelsEnabled?: boolean;
   /** Courses, express and trips at home; off until an admin switches it on (as in worker/features.ts). */
@@ -2143,6 +2149,116 @@ export class DemoBackend implements Backend {
       .map(swapView);
   }
 
+  /** The station's owners and admins, and the swap (as swapEditor() in worker/station-work.ts). */
+  private swapEditor(state: DemoState, stationId: string, swapId: string) {
+    const { profile, role } = this.stationReader(state, stationId);
+    if (role === "staff") throw new BackendError("forbidden");
+    const swap = (state.swaps ?? []).find((x) => x.id === swapId && x.stationId === stationId);
+    if (!swap) throw new BackendError("swap_not_found");
+    return { profile, role, swap };
+  }
+
+  /** As editSwap() in worker/station-work.ts. */
+  async editSwap(stationId: string, swapId: string, input: SwapEditInput): Promise<SwapEntry> {
+    const state = this.load();
+    const { swap } = this.swapEditor(state, stationId, swapId);
+    const checked = checkSwapEdit(input, { payment: swap.payment, energy: swap.inPct != null });
+    if (!checked.ok) throw new BackendError(checked.error === "bad_request" ? "unknown" : checked.error, checked.error);
+    const c = checked.changes;
+    if (c.mm_ref && (state.swaps ?? []).some((x) => x.id !== swap.id && x.mmNetwork === swap.mmNetwork && x.mmRef === c.mm_ref)) throw new BackendError("mm_ref_used");
+    const next = {
+      ...swap,
+      ...(c.customer_name !== undefined ? { customerName: c.customer_name } : {}),
+      ...(c.plate !== undefined ? { plate: c.plate } : {}),
+      ...(c.amount_xof !== undefined ? { amountXof: c.amount_xof } : {}),
+      ...(c.mm_ref !== undefined ? { mmRef: c.mm_ref } : {}),
+    };
+    this.save(
+      withAudit(
+        { ...state, swaps: (state.swaps ?? []).map((x) => (x.id === swap.id ? next : x)) },
+        { table: "swap_log", action: "update", rowId: swap.id, stationId, changes: c as Record<string, unknown> },
+      ),
+    );
+    return swapView(next);
+  }
+
+  /** As deleteSwap() in worker/station-work.ts: counter, battery register and Green Credit put back. */
+  async deleteSwap(stationId: string, swapId: string, restoreCounter: boolean): Promise<void> {
+    const state = this.load();
+    const { profile, role, swap } = this.swapEditor(state, stationId, swapId);
+    if (swap.payment === "wallet" && role !== "admin") throw new BackendError("swap_credit_admin_only");
+    let next: DemoState = state;
+    if (restoreCounter) {
+      const done = this.counterEvent(next, {
+        stationId,
+        key: swap.batteryTypeId,
+        type: "correction",
+        delta: 1,
+        reason: SWAP_DELETED_REASON,
+        requestId: `swap-delete:${swap.id}`,
+        swapId: swap.id,
+        actor: { profile, role },
+      });
+      if (done) {
+        next = done.state;
+        if (takesBatteryIn(swap.customerType)) {
+          const empty = next.batteryEmpty?.[stationId]?.[swap.batteryTypeId] ?? 0;
+          next = { ...next, batteryEmpty: { ...next.batteryEmpty, [stationId]: { ...next.batteryEmpty?.[stationId], [swap.batteryTypeId]: Math.max(empty - 1, 0) } } };
+        }
+      }
+    }
+    // Battery register: the swap's moves go, numbers only it brought in leave, the battery handed out is back.
+    const reg = this.batteryRegister(next);
+    const added = new Set(reg.history.filter((h) => h.swapId === swap.id && h.type === "added_at_swap").map((h) => h.batteryId));
+    const onlyHere = new Set([...added].filter((id) => !reg.history.some((h) => h.batteryId === id && h.swapId !== swap.id)));
+    const history = reg.history.filter((h) => !onlyHere.has(h.batteryId) && !(h.swapId === swap.id && (h.type === "out" || h.type === "in" || h.type === "added_at_swap")));
+    const batteries = reg.batteries
+      .filter((b) => !onlyHere.has(b.id))
+      .map((b) => {
+        if (b.lastSwapAt !== swap.createdAt) return b;
+        const prev = history.filter((h) => h.batteryId === b.id && (h.type === "out" || h.type === "in")).sort((a, z) => z.createdAt.localeCompare(a.createdAt))[0];
+        if (b.serial === swap.batteryOut) return { ...b, location: "station" as const, stationId, holderId: null, lastSwapAt: prev?.createdAt ?? null };
+        if (b.serial !== swap.batteryIn) return b;
+        return prev
+          ? { ...b, location: prev.type === "out" ? ("customer" as const) : ("station" as const), stationId: prev.type === "in" ? prev.stationId : null, holderId: prev.type === "out" ? prev.holderId : null, lastSwapAt: prev.createdAt }
+          : { ...b, location: "unknown" as const, stationId: null, holderId: null, lastSwapAt: null };
+      });
+    next = { ...next, batteries, batteryHistory: history };
+    if (swap.payment === "wallet" && swap.customerId) {
+      const w = this.wallet(next);
+      const paid = w.transactions.find((t) => t.key === `swap:${swap.requestId}`);
+      const balance = this.balance(w, swap.customerId) + swap.amountXof;
+      const tx: DemoWallet["transactions"][number] = {
+        id: crypto.randomUUID(),
+        trxId: paid?.trxId ?? newTrxId("charge"),
+        type: "charge",
+        attribute: "received",
+        status: "success",
+        amountXof: swap.amountXof,
+        feeXof: 0,
+        totalXof: swap.amountXof,
+        balanceAfterXof: balance,
+        counterparty: state.stations.find((x) => x.id === stationId)?.name ?? null,
+        remark: "Remboursement : échange supprimé",
+        createdAt: new Date().toISOString(),
+        userId: swap.customerId,
+        userLabel: paid?.userLabel ?? "",
+        adminId: profile.id,
+      };
+      next = { ...next, wallet: { ...w, balances: { ...w.balances, [swap.customerId]: balance }, transactions: [tx, ...w.transactions] } };
+    }
+    next = { ...next, swaps: (next.swaps ?? []).filter((x) => x.id !== swap.id) };
+    this.save(
+      withAudit(next, {
+        table: "swap_log",
+        action: "delete",
+        rowId: swap.id,
+        stationId,
+        changes: { customer_type: swap.customerType, payment: swap.payment, amount_xof: swap.amountXof, counter_restored: restoreCounter },
+      }),
+    );
+  }
+
   /** As reportIncident() in worker/incidents.ts (the alert to owners and admins is the Worker's). */
   async reportIncident(stationId: string, input: IncidentInput): Promise<Incident> {
     const state = this.load();
@@ -3664,14 +3780,54 @@ export class DemoBackend implements Backend {
     const state = this.load();
     this.requireAdmin(state);
     const owners = state.operatorOwners ?? [];
+    const inactive = new Set(state.inactive ?? []);
+    const paused = new Set(state.pausedWithOperator ?? []);
+    const off = new Set(state.inactiveOperators ?? []);
     return [...state.operators]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map((o) => ({
-        ...o,
-        contactPhone: state.operatorPhones?.[o.id] ?? null,
-        stationCount: state.stations.filter((s) => s.operatorId === o.id).length,
-        owners: owners.filter((x) => x.operatorId === o.id).map((x) => this.label(state, x.userId)),
-      }));
+      .map((o) => {
+        const stations = state.stations
+          .filter((s) => s.operatorId === o.id)
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((s) => ({ id: s.id, name: s.name, address: s.address, isActive: !inactive.has(s.id), pausedWithOperator: paused.has(s.id) }));
+        return {
+          ...o,
+          contactPhone: state.operatorPhones?.[o.id] ?? null,
+          isActive: !off.has(o.id),
+          stationCount: stations.length,
+          stations,
+          owners: owners.filter((x) => x.operatorId === o.id).map((x) => this.label(state, x.userId)),
+        };
+      });
+  }
+
+  async setOperatorActive(operatorId: string, active: boolean) {
+    const state = this.load();
+    this.requireAdmin(state);
+    if (!state.operators.some((o) => o.id === operatorId)) throw new BackendError("unknown", "operator not found");
+    const off = new Set(state.inactiveOperators ?? []);
+    if (off.has(operatorId) === !active) return;
+    const inactive = new Set(state.inactive ?? []);
+    const paused = new Set(state.pausedWithOperator ?? []);
+    const own = state.stations.filter((s) => s.operatorId === operatorId).map((s) => s.id);
+    const affected = active ? own.filter((id) => paused.has(id)) : own.filter((id) => !inactive.has(id));
+    for (const id of affected) {
+      if (active) {
+        inactive.delete(id);
+        paused.delete(id);
+      } else {
+        inactive.add(id);
+        paused.add(id);
+      }
+    }
+    if (active) off.delete(operatorId);
+    else off.add(operatorId);
+    this.save(
+      withAudit(
+        { ...state, inactive: [...inactive], pausedWithOperator: [...paused], inactiveOperators: [...off] },
+        { table: "operators", action: "update", rowId: operatorId, changes: { is_active: [!active, active], stations: affected.length } },
+      ),
+    );
   }
 
   async saveOperator(id: string | null, input: OperatorInput) {
@@ -3733,10 +3889,16 @@ export class DemoBackend implements Backend {
   async setStationActive(stationId: string, active: boolean) {
     const state = this.load();
     this.requireAdmin(state);
+    const station = state.stations.find((s) => s.id === stationId);
+    if (active && station && (state.inactiveOperators ?? []).includes(station.operatorId)) throw new BackendError("operator_inactive");
     const inactive = (state.inactive ?? []).filter((id) => id !== stationId);
     this.save(
       withAudit(
-        { ...state, inactive: active ? inactive : [...inactive, stationId] },
+        {
+          ...state,
+          inactive: active ? inactive : [...inactive, stationId],
+          pausedWithOperator: (state.pausedWithOperator ?? []).filter((id) => id !== stationId),
+        },
         { table: "stations", action: "update", rowId: stationId, stationId, changes: { is_active: [!active, active] } },
       ),
     );

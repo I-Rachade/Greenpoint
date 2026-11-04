@@ -1,11 +1,10 @@
 import { normalizeTogoPhone } from "../shared/phone";
 import type { Profile } from "../shared/types";
-import { swapOwnerOf, type SwapOwner } from "../shared/station-cash";
 import type { Env } from "./env";
 import { TOPUP_IDENTIFIER_PREFIX, topupCallback } from "./wallet-topups";
 import { chargePaymentSucceeded } from "./charging";
 import { sharePaymentSucceeded } from "./share";
-import { ApiError, nowIso, readJson, uuid } from "./http";
+import { ApiError, nowIso, uuid } from "./http";
 import {
   PAYMENT_NETWORKS,
   ProviderError,
@@ -17,7 +16,9 @@ import {
   type ProviderStatus,
 } from "./payment-providers";
 
-// Flooz / T-Money payments for reservations, for charges at a socket (worker/charging.ts) and for Share rides (worker/share.ts).
+// Flooz / T-Money payments for charges at a socket (worker/charging.ts) and for Share rides (worker/share.ts).
+// Reservations and Green Credit are not paid with Flooz/T-Money (October 2026); a reservation payment from
+// before still settles through the callback.
 // The price comes from the station or the charge, never from the app; the provider's callback is only a hint to ask the
 // provider for the status. See docs/ZAHLUNGEN.md.
 
@@ -112,49 +113,6 @@ async function applyStatus(env: Env, actor: string | null, p: PaymentRow, s: Pro
     await sharePaymentSucceeded(env, { ...updated, share_ride_id: updated.share_ride_id });
   }
   return updated;
-}
-
-/** POST /api/payments { reservationId, network, phone }: ask the customer's wallet for the money. */
-export async function startPayment(env: Env, user: Profile, request: Request): Promise<Payment> {
-  const body = await readJson<{ reservationId?: unknown; network?: unknown; phone?: unknown }>(request);
-  const network = body.network as PaymentNetwork;
-  if (typeof body.reservationId !== "string" || !PAYMENT_NETWORKS.includes(network)) throw new ApiError("bad_request");
-  const phone = typeof body.phone === "string" ? normalizeTogoPhone(body.phone) : null;
-  if (!phone) throw new ApiError("phone_not_allowed");
-  // The simulated provider marks payments paid without money: customers never pay against it.
-  if (!mobilePaymentOffered(env, user)) throw new ApiError("payment_not_offered", 409);
-
-  const r = await env.DB.prepare(
-    `select r.id, r.user_id, r.station_id, r.type, r.status, r.expires_at,
-            s.price_battery_xof, s.price_slot_xof, o.is_own, s.swap_owner
-       from reservations r
-       join stations s on s.id = r.station_id
-       left join operators o on o.id = s.operator_id
-      where r.id = ?`,
-  )
-    .bind(body.reservationId)
-    .first<{
-      id: string;
-      user_id: string;
-      station_id: string;
-      type: "battery" | "slot";
-      status: string;
-      expires_at: string;
-      price_battery_xof: number | null;
-      price_slot_xof: number | null;
-      is_own: number | null;
-      swap_owner: SwapOwner | null;
-    }>();
-  if (!r || r.user_id !== user.id) throw new ApiError("not_found", 404);
-  if (r.status !== "active" || r.expires_at <= nowIso()) throw new ApiError("reservation_not_active", 409);
-  // Collecting money for third-party operators may count as a payment service
-  // under BCEAO Instruction 001-01-2024 (see planung/rechtliches-togo.md). Until
-  // the provider offers split payments, only what is ours takes payments: a battery where the
-  // swap is ours (our stations, shop stations: 0045), a slot at our own stations.
-  const price = r.type === "battery" ? r.price_battery_xof : r.price_slot_xof;
-  const ours = r.type === "battery" ? swapOwnerOf(!!r.is_own, r.swap_owner) === "poinderecharge" : !!r.is_own;
-  if (!ours || price == null) throw new ApiError("payment_not_offered", 409);
-  return createPayment(env, user, { stationId: r.station_id, reservationId: r.id, sessionId: null, shareRideId: null, amountXof: price, network, phone });
 }
 
 /** Whether a customer can pay a charge with Flooz/T-Money: never against the simulated provider, except admins testing. */

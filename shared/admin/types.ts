@@ -104,6 +104,7 @@ export type AuditTable =
   | "station_services"
   | "settings"
   | "cash_handovers"
+  | "swap_log"
   | "share_rides"
   | "share_vehicles"
   | "share_stations"
@@ -152,6 +153,7 @@ export const AUDIT_TABLES: AuditTable[] = [
   "partner_bookings",
   "wallets",
   "cash_handovers",
+  "swap_log",
   "share_rides",
   "share_vehicles",
   "share_stations",

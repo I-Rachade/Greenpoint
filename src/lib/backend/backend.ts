@@ -104,7 +104,7 @@ import type {
 } from "@shared/merchants";
 import type { StationService, StationServiceInfo } from "@shared/station-services";
 import type { ReservationKind } from "@shared/reservations";
-import type { BatteryEventInput, BatteryEventView, StationCounter, SwapEntry, SwapFilter, SwapInput } from "@shared/station-work";
+import type { BatteryEventInput, BatteryEventView, StationCounter, SwapEditInput, SwapEntry, SwapFilter, SwapInput } from "@shared/station-work";
 import type { ReviewInput, StationReview } from "@shared/station-extras";
 import type { LatLng } from "@shared/geo";
 import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "@shared/station-cash";
@@ -225,6 +225,13 @@ export interface Backend {
   recordSwap(stationId: string, input: SwapInput): Promise<SwapEntry>;
   /** Today's swaps at the station, newest first (staff: their own); owners and admins any report period (`days`). */
   stationSwaps(stationId: string, filter?: SwapFilter): Promise<SwapEntry[]>;
+  /** Corrects a recorded swap's customer name, plate, amount or Mobile Money id (owners of the station, admins). */
+  editSwap(stationId: string, swapId: string, input: SwapEditInput): Promise<SwapEntry>;
+  /**
+   * Deletes a swap recorded by mistake (owners of the station, admins; paid from Green Credit:
+   * admins, who refund it). `restoreCounter` puts its full battery back on the counter.
+   */
+  deleteSwap(stationId: string, swapId: string, restoreCounter: boolean): Promise<void>;
   /** Counter history of a report period, newest first: owners and admins only (backoffice). */
   stationBatteryEvents(stationId: string, days: ReportPeriod): Promise<BatteryEventView[]>;
   /** Reports a problem at the station (charger, power, battery, payment, other); its owners and the admins are told. */
@@ -325,8 +332,10 @@ export interface Backend {
   assignStaff(stationId: string, userId: string): Promise<void>;
   unassignStaff(stationId: string, userId: string): Promise<void>;
   setStationActive(stationId: string, active: boolean): Promise<void>;
-  /** Operators with their stations count and the accounts that run them. */
+  /** Operators with their stations and the accounts that run them. */
   adminOperators(): Promise<AdminOperator[]>;
+  /** Switches an operator off (its active stations go off with it) or back on (those come back on). */
+  setOperatorActive(operatorId: string, active: boolean): Promise<void>;
   /** Creates a partner operator (`id` null) or renames one. */
   saveOperator(id: string | null, input: OperatorInput): Promise<void>;
   /** Lets the account with this phone number or e-mail address run the operator. */

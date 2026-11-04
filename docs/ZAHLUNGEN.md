@@ -1,20 +1,22 @@
 # Zahlungen mit Flooz und T-Money
 
-Stand: vorbereitet, **nicht live**. Ohne Zugangsdaten des Zahlungsanbieters läuft alles gegen einen simulierten Anbieter; niemand wird belastet. Die Oberfläche in der App (Bezahlen-Knopf) fehlt noch.
+Stand: vorbereitet, **nicht live**. Ohne Zugangsdaten des Zahlungsanbieters läuft alles gegen einen simulierten Anbieter; niemand wird belastet (nur Admins sehen die Option zum Testen).
+
+Flooz/T-Money bezahlt nur **beendete Ladungen an unseren Steckdosen** (Motorrad und Autoladesäulen an einer verbundenen Steckdose). **Reservierungen und Green Credit werden nicht mit Flooz/T-Money bezahlt** (Oktober 2026): Green Credit wird nur bar am Schalter mit dem QR-Code geladen. Eine früher gestartete Reservierungszahlung wird über den Rückruf noch abgeschlossen.
 
 Anbietervergleich und was dafür zu beantragen ist: `planung/zahlungsanbieter.md` im Projektordner.
 
 ## Ablauf
 
 ```
-App ──(1) POST /api/payments──► Worker ──(2)──► PayGate Global ──(3) Bestätigung──► Handy des Kunden
+App ──(1) POST /api/charging/:id/pay/mobile──► Worker ──(2)──► PayGate Global ──(3) Bestätigung──► Handy des Kunden
  ▲                                │                    │
  │                                ▼                    │ (4) Rückruf
  └──(6) /api/payments/:id/refresh  D1 payments ◄─(5)── POST /api/payments/callback?key=…
 ```
 
-1. Die App ruft `POST /api/payments` mit `{ reservationId, network: "flooz" | "tmoney", phone }` auf (angemeldet).
-2. Der Worker legt eine Zahlung `pending` an. **Der Betrag kommt aus der Station** (`price_battery_xof` bzw. `price_slot_xof`), nie aus der App. Danach fordert er die Zahlung beim Anbieter an.
+1. Die App ruft `POST /api/charging/:id/pay/mobile` mit `{ network: "flooz" | "tmoney", phone }` für eine beendete Ladung auf (angemeldet).
+2. Der Worker legt eine Zahlung `pending` an. **Der Betrag kommt aus der Ladung** (Energie × Preis der Station, mindestens der Mindestpreis), nie aus der App. Danach fordert er die Zahlung beim Anbieter an.
 3. Der Kunde bestätigt auf dem Handy mit seinem Flooz- bzw. T-Money-PIN.
 4. Der Anbieter ruft `POST /api/payments/callback?key=<PAYMENT_CALLBACK_SECRET>` auf.
 5. Der Worker **glaubt dem Inhalt des Rückrufs nicht**, sondern fragt den Status selbst beim Anbieter ab. Nur `pending`-Zahlungen ändern sich; ein doppelter oder später Rückruf kann eine erfolgreiche Zahlung nicht mehr umwerfen.
@@ -23,7 +25,7 @@ App ──(1) POST /api/payments──► Worker ──(2)──► PayGate Glob
 ## Regeln im Code
 
 - Nur **eigene Stationen** (`operators.is_own`) nehmen Zahlungen an. Geld für fremde Betreiber einzusammeln kann nach BCEAO-Instruktion 001-01-2024 ein Zahlungsdienst sein (siehe `planung/rechtliches-togo.md`). Das wird erst freigeschaltet, wenn der Anbieter Split-Payment anbietet und ein Anwalt zugestimmt hat.
-- Höchstens eine offene oder erfolgreiche Zahlung pro Reservierung (eindeutiger Index, gilt auch bei gleichzeitigen Anfragen). Nach einer abgelehnten Zahlung darf der Kunde es erneut versuchen.
+- Höchstens eine offene oder erfolgreiche Zahlung pro Ladung (eindeutiger Index, gilt auch bei gleichzeitigen Anfragen). Nach einer abgelehnten Zahlung darf der Kunde es erneut versuchen.
 - Preise in FCFA, ganze Zahl, Vielfaches von 5. Ohne Preis wird für die Station nichts verlangt.
 - Löscht ein Kunde sein Konto, bleiben seine Zahlungen für die Buchhaltung erhalten, aber ohne Nutzer und ohne Mobile-Money-Nummer (Trigger in der Migration).
 - Kunden sehen nur ihre eigenen Zahlungen. Jede Zahlung und jeder Statuswechsel landet im Aktivitätsprotokoll.
@@ -35,7 +37,7 @@ App ──(1) POST /api/payments──► Worker ──(2)──► PayGate Glob
 |---|---|
 | `worker/migrations/0006_payments.sql` | Tabelle `payments`, Preise an `stations` |
 | `worker/payment-providers.ts` | Anbieter (PayGate Global, Simulation), ohne Abhängigkeiten |
-| `worker/payments.ts` | Routen: Zahlung starten, nachfragen, eigene Zahlungen, Rückruf |
+| `worker/payments.ts` | Zahlung einer Ladung anlegen, nachfragen, eigene Zahlungen, Rückruf |
 | `worker/payments.test.ts` | Tests, laufen auf SQLite mit den echten Migrationen |
 
 Ein weiterer Anbieter (z. B. Semoa oder CinetPay) ist eine weitere Umsetzung von `PaymentProvider` in `payment-providers.ts`; Datenbank und App bleiben gleich.

@@ -133,6 +133,50 @@ describe("operator accounts", () => {
     expect(me?.ownerOf).toEqual([operatorId]);
   });
 
+  it("lists each operator's stations and switches them off and back on with the operator", async () => {
+    const { env, operatorId, lome, kara, be } = await withOperator();
+    const op = async () => ((await call(env, "admin", "GET", "/api/admin/operators")).body as AdminOperator[]).find((o) => o.id === operatorId)!;
+    const live = async () => ((await call(env, "admin", "GET", "/api/stations")).body as StationView[]).map((s) => s.id);
+    expect((await op()).stations).toEqual([
+      { id: kara, name: "Kara Gare", address: "", isActive: true, pausedWithOperator: false },
+      { id: lome, name: "Lomé Centre", address: "", isActive: true, pausedWithOperator: false },
+    ]);
+    // Kara was switched off on its own before: it must stay off when the operator comes back.
+    expect((await call(env, "admin", "POST", `/api/admin/stations/${kara}/active`, { active: false })).status).toBe(200);
+
+    expect((await call(env, "yao", "POST", `/api/admin/operators/${operatorId}/active`, { active: false })).status).toBe(403);
+    expect((await call(env, "admin", "POST", `/api/admin/operators/${operatorId}/active`, { active: false })).status).toBe(200);
+    expect(await op()).toMatchObject({
+      isActive: false,
+      stations: [
+        { id: kara, isActive: false, pausedWithOperator: false },
+        { id: lome, isActive: false, pausedWithOperator: true },
+      ],
+    });
+    expect(await live()).not.toContain(lome);
+    expect(await live()).toContain(be);
+    // A station cannot come back on by itself while its operator is off.
+    expect(await call(env, "admin", "POST", `/api/admin/stations/${lome}/active`, { active: true })).toEqual({
+      status: 409,
+      body: { error: "operator_inactive" },
+    });
+    // A station moved to an operator that is off goes off; moved back, it comes back on.
+    await call(env, "admin", "POST", "/api/admin/stations", { id: be, input: station(operatorId, "Bè") });
+    expect((await op()).stations.find((s) => s.id === be)).toMatchObject({ isActive: false, pausedWithOperator: true });
+    await call(env, "admin", "POST", "/api/admin/stations", { id: be, input: station("00000000-0000-4000-8000-000000000001", "Bè") });
+    expect(await live()).toContain(be);
+
+    expect((await call(env, "admin", "POST", `/api/admin/operators/${operatorId}/active`, { active: true })).status).toBe(200);
+    expect(await op()).toMatchObject({
+      isActive: true,
+      stations: [
+        { id: kara, isActive: false, pausedWithOperator: false },
+        { id: lome, isActive: true, pausedWithOperator: false },
+      ],
+    });
+    expect((await call(env, "admin", "POST", "/api/admin/operators/nope/active", { active: false })).status).toBe(404);
+  });
+
   it("refuses an unknown account and non-admins", async () => {
     const { env, operatorId } = await withOperator();
     expect(await call(env, "admin", "POST", `/api/admin/operators/${operatorId}/owners`, { contact: "90 99 99 99" })).toEqual({

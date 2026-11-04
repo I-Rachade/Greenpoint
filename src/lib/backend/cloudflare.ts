@@ -107,7 +107,7 @@ import type {
 } from "@shared/types";
 import type { StationService, StationServiceInfo } from "@shared/station-services";
 import { getActiveStation } from "../active-station";
-import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEntry, type SwapFilter, type SwapInput } from "@shared/station-work";
+import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type StationCounter, type SwapEditInput, type SwapEntry, type SwapFilter, type SwapInput } from "@shared/station-work";
 import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "@shared/station-cash";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
 import { kindFrom, type ReservationKind } from "@shared/reservations";
@@ -145,6 +145,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "device_command_failed",
   "device_not_configured",
   "depot_inactive",
+  "operator_inactive",
   "same_station",
   "parcel_too_large",
   "parcel_not_found",
@@ -177,7 +178,6 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "contact_taken",
   "rate_limited",
   "forbidden",
-  "admin_access_required",
   "wallet_disabled",
   "wallet_frozen",
   "insufficient_balance",
@@ -521,6 +521,17 @@ export class CloudflareBackend implements Backend {
     return this.call<SwapEntry[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/swaps${qs ? `?${qs}` : ""}`);
   }
 
+  async editSwap(stationId: string, swapId: string, input: SwapEditInput) {
+    const swap = await this.call<SwapEntry>("PATCH", `/api/stations/${encodeURIComponent(stationId)}/swaps/${encodeURIComponent(swapId)}`, input);
+    this.changed();
+    return swap;
+  }
+
+  async deleteSwap(stationId: string, swapId: string, restoreCounter: boolean) {
+    await this.call("DELETE", `/api/stations/${encodeURIComponent(stationId)}/swaps/${encodeURIComponent(swapId)}${restoreCounter ? "" : "?restoreCounter=0"}`);
+    this.changed();
+  }
+
   stationBatteryEvents(stationId: string, days: ReportPeriod) {
     return this.call<BatteryEventView[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/battery-events?days=${days}`);
   }
@@ -732,6 +743,11 @@ export class CloudflareBackend implements Backend {
 
   adminOperators() {
     return this.call<AdminOperator[]>("GET", "/api/admin/operators");
+  }
+
+  async setOperatorActive(operatorId: string, active: boolean) {
+    await this.call("POST", `/api/admin/operators/${encodeURIComponent(operatorId)}/active`, { active });
+    this.changed();
   }
 
   async saveOperator(id: string | null, input: OperatorInput) {
