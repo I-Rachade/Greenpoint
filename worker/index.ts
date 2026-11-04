@@ -8,6 +8,7 @@ import { parcelsEnabled } from "./features";
 import { corsHeaders } from "./http";
 import { handleOcppUpgrade, logOcppAttempt } from "./ocpp";
 import { runParcelDeadlines } from "./parcels";
+import { clearEndedPositions } from "./reservations";
 import { runPartnerDeadlines, runPartnerEvents } from "./partners";
 import { runShareTimers } from "./share";
 import { runCashAlerts } from "./station-cash";
@@ -72,6 +73,7 @@ export default {
    * its module is switched off; parcels catch up once the module is back on.
    * The minute cron also takes silent sockets out of the free places.
    * The minute cron also runs out Share reservations and keeps the Tutrack bridge running.
+   * The minute cron also forgets the positions of reservations that ended (migration 0068).
    * At 10:00 the minute cron also tells the admins which stations did not close their cash.
    */
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
@@ -88,6 +90,7 @@ export default {
     if (controller.cron !== DAILY_CRON) ctx.waitUntil(runShareTimers(env).catch((err) => console.error("share timers", err)));
     if (controller.cron !== DAILY_CRON) ctx.waitUntil(ensureTutrackBridge(env).catch((err) => console.error("tutrack bridge", err)));
     if (controller.cron !== DAILY_CRON) ctx.waitUntil(recountSilentFreeSlots(env.DB).catch((err) => console.error("free slots", err)));
+    if (controller.cron !== DAILY_CRON) ctx.waitUntil(clearEndedPositions(env.DB).catch((err) => console.error("reservation positions", err)));
     const at = new Date(controller.scheduledTime);
     if (controller.cron !== DAILY_CRON && at.getUTCHours() === CASH_DEADLINE_HOUR && at.getUTCMinutes() === 0) {
       ctx.waitUntil(runCashAlerts(env, at).catch((err) => console.error("cash alerts", err)));

@@ -42,3 +42,19 @@ export function scooterMinutes(meters: number): number {
   if (!Number.isFinite(meters) || meters <= 0) return 1;
   return Math.max(1, Math.round((meters * ROAD_FACTOR) / ((SCOOTER_KMH * 1000) / 60)));
 }
+
+export type CompassPoint = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
+const COMPASS: CompassPoint[] = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
+
+/** Compass bearing from `a` to `b`, in degrees clockwise from north (0–360). */
+export function bearing(a: LatLng, b: LatLng): number {
+  const rad = Math.PI / 180;
+  const y = Math.sin((b.lng - a.lng) * rad) * Math.cos(b.lat * rad);
+  const x = Math.cos(a.lat * rad) * Math.sin(b.lat * rad) - Math.sin(a.lat * rad) * Math.cos(b.lat * rad) * Math.cos((b.lng - a.lng) * rad);
+  return (Math.atan2(y, x) / rad + 360) % 360;
+}
+
+/** The nearest of the eight compass points to a bearing, for "head north-east". */
+export function compassPoint(deg: number): CompassPoint {
+  return COMPASS[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
+}

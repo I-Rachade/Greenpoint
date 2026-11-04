@@ -202,6 +202,11 @@ export interface Backend {
    */
   reserve(stationId: string, kind: ReservationKind | ReservationType, target?: string | null): Promise<Reservation>;
   cancelReservation(id: string): Promise<void>;
+  /**
+   * The customer shares their position with the station during their active reservation
+   * (migration 0068), after agreeing to it on the "En route" screen; null stops sharing.
+   */
+  shareReservationPosition(id: string, position: { lat: number; lng: number } | null): Promise<void>;
 
   // Station staff
   staffStations(): Promise<StationView[]>;
@@ -215,6 +220,10 @@ export interface Backend {
    * reservation by starting the charge (startCharge with `reservationId`). 5 wrong codes lock it.
    */
   completeReservation(id: string, pickupCode: string): Promise<void>;
+  /** The station marks a reservation ready (R7); the customer is told. */
+  markReservationReady(id: string): Promise<void>;
+  /** The station asks the customer to go to another station, its stock ran out (R7); the customer is told. */
+  redirectReservation(id: string): Promise<void>;
 
   // Station work (shared/station-work.ts): every action is sent with the active station.
   /** Counters, today's changes and whether the viewer may correct. Needs the swap service. */

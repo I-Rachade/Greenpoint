@@ -19,6 +19,7 @@ import { LoadFailed, OfflineNotice } from "./load-state";
 import { StationCard, StationPhotoCard, stationHref } from "./station-card";
 import { OpenBadge, RatingInline, StationPhoto } from "./station-look";
 import { Countdown, SkeletonCard } from "./ui";
+import { enRouteHref } from "./en-route-link";
 import { useActiveReservation } from "./use-alerts";
 
 // MapLibre needs the browser (WebGL), so it is never rendered on the server.
@@ -188,7 +189,7 @@ export function StationFinder() {
         />
         {active && (
           <Link
-            href="/reservations"
+            href={enRouteHref(active.reservation.id)}
             className="animate-gp-fade-in absolute left-2 right-12 top-2 flex items-center gap-2 rounded-2xl bg-gp-forest px-3 py-2 text-sm text-white shadow-lg md:right-auto md:max-w-sm"
           >
             <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-gp-green" />

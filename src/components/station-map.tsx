@@ -34,6 +34,8 @@ interface Props {
   route?: boolean;
   /** Room kept free over the map's edges (px) when fitting the route, e.g. under the cards. */
   padding?: { top: number; bottom: number; left: number; right: number };
+  /** Other people on the map, e.g. customers on their way (staff screen B2): a small blue dot with a label. */
+  others?: { id: string; lat: number; lng: number; label?: string }[];
 }
 
 const ROUTE_SOURCE = "gp-route";
@@ -148,7 +150,7 @@ function workshopCard(w: RepairCenter, labels: { title: string; call: string }):
   return box;
 }
 
-export function StationMap({ stations, workshops = [], share = [], position, selectedId, onSelect, labels, route = false, padding, controls = true }: Props) {
+export function StationMap({ stations, workshops = [], share = [], position, selectedId, onSelect, labels, route = false, padding, controls = true, others }: Props) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -307,10 +309,82 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
     };
   }, [share, t]);
 
-  // The map is removed with its markers; forget them too.
+  // Other people (customers on their way): a blue dot with a small label, all kept in view with the selected station once.
+  const otherMarkersRef = useRef(new Map<string, Marker>());
+  const othersFittedRef = useRef(false);
+  const routeFittedRef = useRef(false);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const markers = otherMarkersRef.current;
+    const seen = new Set<string>();
+    for (const o of others ?? []) {
+      seen.add(o.id);
+      const current = markers.get(o.id);
+      if (current) {
+        current.setLngLat([o.lng, o.lat]);
+        const pill = current.getElement().querySelector("span[data-label]");
+        if (pill) pill.textContent = o.label ?? "";
+        continue;
+      }
+      // The marker element itself is placed by MapLibre (absolute); the dot inside carries the label.
+      const el = document.createElement("div");
+      const dot = document.createElement("div");
+      Object.assign(dot.style, { position: "relative", width: "14px", height: "14px", borderRadius: "9999px", background: "var(--gp-info)", border: "3px solid white", boxShadow: "0 1px 4px rgba(0,0,0,.35)" });
+      el.append(dot);
+      if (o.label !== undefined) {
+        const pill = document.createElement("span");
+        pill.dataset.label = "";
+        Object.assign(pill.style, {
+          position: "absolute",
+          bottom: "16px",
+          left: "50%",
+          transform: "translateX(-50%)",
+          padding: "1px 6px",
+          borderRadius: "9999px",
+          background: "white",
+          color: "#0B3B2E",
+          fontSize: "11px",
+          fontWeight: "700",
+          lineHeight: "16px",
+          whiteSpace: "nowrap",
+          boxShadow: "0 1px 3px rgba(0,0,0,.3)",
+        });
+        pill.textContent = o.label;
+        dot.append(pill);
+      }
+      markers.set(o.id, new Marker({ element: el }).setLngLat([o.lng, o.lat]).addTo(map));
+    }
+    for (const [id, marker] of markers) {
+      if (seen.has(id)) continue;
+      marker.remove();
+      markers.delete(id);
+    }
+    const station = stations.find((st) => st.id === selectedId);
+    if (!othersFittedRef.current && station && (others ?? []).length > 0) {
+      othersFittedRef.current = true;
+      const lngs = [station.lng, ...others!.map((o) => o.lng)];
+      const lats = [station.lat, ...others!.map((o) => o.lat)];
+      map.fitBounds(
+        [
+          [Math.min(...lngs), Math.min(...lats)],
+          [Math.max(...lngs), Math.max(...lats)],
+        ],
+        { padding: padding ?? 40, maxZoom: 16, duration: 0 },
+      );
+    }
+  }, [others, stations, selectedId, padding]);
+
+  // The map is removed with its markers; forget them too (and fit again on the next map).
   useEffect(() => {
     const markers = markersRef.current;
-    return () => markers.clear();
+    const otherMarkers = otherMarkersRef.current;
+    return () => {
+      markers.clear();
+      otherMarkers.clear();
+      othersFittedRef.current = false;
+      routeFittedRef.current = false;
+    };
   }, []);
 
   // User position: blue dot with a slow, calm pulse (none with reduced motion).
@@ -352,6 +426,21 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
     userMarkerRef.current = new Marker({ element: el }).setLngLat([position.lng, position.lat]).addTo(map);
   }, [position, reduced]);
 
+  // With a route, keep the user and the station in view once the user's position first arrives.
+  useEffect(() => {
+    const map = mapRef.current;
+    const station = stations.find((s) => s.id === selectedId);
+    if (!map || !station || !route || !position || routeFittedRef.current) return;
+    routeFittedRef.current = true;
+    map.fitBounds(
+      [
+        [Math.min(position.lng, station.lng), Math.min(position.lat, station.lat)],
+        [Math.max(position.lng, station.lng), Math.max(position.lat, station.lat)],
+      ],
+      { padding: padding ?? 60, maxZoom: 16, duration: 0 },
+    );
+  }, [route, position, selectedId, stations, padding]);
+
   // Move to the selected station: a flight, or a jump with reduced motion.
   useEffect(() => {
     const map = mapRef.current;
@@ -376,13 +465,14 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
   const centredRef = useRef(false);
   useEffect(() => {
     const map = mapRef.current;
-    if (map && position && !centredRef.current) {
+    // With a route the map keeps the user and the station in view instead (above).
+    if (map && position && !centredRef.current && !route) {
       centredRef.current = true;
       const view = { center: [position.lng, position.lat] as [number, number], zoom: 13 };
       if (reduced) map.jumpTo(view);
       else map.flyTo(view);
     }
-  }, [position, reduced]);
+  }, [position, reduced, route]);
 
   return <div ref={containerRef} className="h-full w-full" />;
 }

@@ -452,6 +452,10 @@ export class CloudflareBackend implements Backend {
     this.changed();
   }
 
+  async shareReservationPosition(id: string, position: { lat: number; lng: number } | null) {
+    await this.call("POST", `/api/reservations/${encodeURIComponent(id)}/position`, position ?? { stop: true });
+  }
+
   // Station staff -----------------------------------------------------------------
 
   staffStations() {
@@ -470,6 +474,16 @@ export class CloudflareBackend implements Backend {
 
   async completeReservation(id: string, pickupCode: string) {
     await this.call("POST", `/api/reservations/${encodeURIComponent(id)}/complete`, { pickupCode });
+    this.changed();
+  }
+
+  async markReservationReady(id: string) {
+    await this.call("POST", `/api/reservations/${encodeURIComponent(id)}/ready`);
+    this.changed();
+  }
+
+  async redirectReservation(id: string) {
+    await this.call("POST", `/api/reservations/${encodeURIComponent(id)}/redirect`);
     this.changed();
   }
 

@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { MyCharges } from "./charging/charging";
 import { isHolding } from "@shared/availability";
-import { directionsUrl } from "@shared/geo";
 import { useErrorMessage, useLiveQuery, useNow } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { MAX_UNUSED_RESERVATIONS_PER_DAY, STATION_COOLDOWN_MINUTES, type Reservation, type ReservationStatus } from "@shared/types";
 import { useState } from "react";
 import { useApp } from "./app-provider";
 import { ConfirmSheet } from "./confirm-sheet";
+import { enRouteHref } from "./en-route-link";
 import { BatteryIcon, BoltIcon, CarIcon, ListIcon, NavigateIcon } from "./icons";
 import { reservationKind } from "@shared/reservations";
 import { useI18n } from "./i18n-provider";
@@ -165,15 +165,13 @@ export function ReservationList() {
                 {status === "active" && (
                   <div className="flex w-full gap-2">
                     {station && (
-                      <a
-                        href={directionsUrl(station)}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <Link
+                        href={enRouteHref(r.id)}
                         className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-full bg-gp-green-dark px-4 text-sm font-semibold text-white hover:bg-gp-forest"
                       >
                         <NavigateIcon size={16} />
-                        {t.station.directions}
-                      </a>
+                        {t.enRoute.go}
+                      </Link>
                     )}
                     <Button variant="ghost" onClick={() => setCancelling(r.id)} disabled={busy} className="text-red-600 hover:bg-red-500/10 dark:text-red-400">
                       {t.reservations.cancel}

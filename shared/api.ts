@@ -18,6 +18,7 @@ export type BackendErrorCode =
   | "wrong_pickup_code"
   | "own_reservation"
   | "reservation_not_active"
+  | "invalid_position"
   | "phone_not_allowed"
   | "invalid_contact"
   | "contact_taken"

@@ -885,6 +885,66 @@ async function stationReservations(c: Ctx, stationId: string) {
 }
 
 /**
+ * POST /api/reservations/:id/position { lat, lng } or { stop: true } (migration 0068): the
+ * customer shares their position with the station while their reservation holds, after they
+ * agreed to it on the "En route" screen. Their own reservation only; stop clears it.
+ */
+async function shareReservationPosition(c: Ctx, id: string, body: { lat?: unknown; lng?: unknown; stop?: unknown }) {
+  const user = await c.requireUser();
+  const r = await c.db.prepare("select * from reservations where id = ?").bind(id).first<ReservationRow>();
+  if (!r || r.user_id !== user.id) throw new ApiError("forbidden", 403);
+  if (body.stop === true) {
+    await c.db.prepare("update reservations set share_lat = null, share_lng = null, share_at = null where id = ?").bind(id).run();
+    return { ok: true };
+  }
+  if (!stillActive(r)) throw new ApiError("reservation_not_active");
+  const lat = Number(body.lat);
+  const lng = Number(body.lng);
+  if (typeof body.lat !== "number" || typeof body.lng !== "number" || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    throw new ApiError("invalid_position");
+  }
+  // About 1 m is enough for a map; no need to keep more.
+  const round = (n: number) => Math.round(n * 1e5) / 1e5;
+  await c.db
+    .prepare("update reservations set share_lat = ?, share_lng = ?, share_at = ? where id = ? and status = 'active'")
+    .bind(round(lat), round(lng), nowIso(), id)
+    .run();
+  return { ok: true };
+}
+
+/**
+ * POST /api/reservations/:id/ready and /redirect (migration 0068): the station marks the
+ * reserved battery or place ready, or asks the customer to go to another station because its
+ * stock ran out. At the active station only (R7); the customer is told by a notification.
+ */
+async function markReservation(c: Ctx, id: string, what: "ready" | "redirect") {
+  const user = await c.requireUser();
+  const r = await c.db.prepare(`${RESERVATION_SELECT} where r.id = ?`).bind(id).first<ReservationRow>();
+  if (!r || !(await c.isStaffOf(user, r.station_id))) throw new ApiError("forbidden", 403);
+  await stationActor(c, r.station_id);
+  if (r.user_id === user.id) throw new ApiError("own_reservation");
+  if (!stillActive(r)) throw new ApiError("reservation_not_active");
+  const column = what === "ready" ? "ready_at" : "redirected_at";
+  const at = nowIso();
+  await c.db.batch([
+    c.db.prepare(`update reservations set ${column} = ? where id = ? and status = 'active'`).bind(at, id),
+    c.audit(user.id, "reservations", "update", id, { [column]: [r[column] ?? null, at] }, { stationId: r.station_id, userId: r.user_id }),
+  ]);
+  const station = await c.db.prepare("select name from stations where id = ?").bind(r.station_id).first<{ name: string }>();
+  await notifyUser(
+    c.env,
+    r.user_id,
+    what === "ready"
+      ? { subject: "Votre réservation est prête", text: `poinderecharge : la station ${station?.name ?? ""} a préparé votre réservation. Montrez votre code à l'arrivée.` }
+      : {
+          subject: "La station vous propose une autre station",
+          text: `poinderecharge : la station ${station?.name ?? ""} n'a plus ce que vous avez réservé. Ouvrez l'app pour choisir une autre station proche.`,
+        },
+  );
+  return { ok: true };
+}
+
+/**
  * POST /api/reservations/:id/complete { pickupCode }: a charging reservation is used.
  * A battery reservation is completed by its swap (the swap form, recordSwap with the
  * reservation), so it is refused here. A charge at a connected outlet is completed by
@@ -2135,6 +2195,13 @@ const ROUTES: [string, RegExp, Handler][] = [
     },
   ],
   ["POST", /^\/api\/reservations\/([\w-]+)\/cancel$/, async (c, [id]) => cancelReservation(c, id)],
+  [
+    "POST",
+    /^\/api\/reservations\/([\w-]+)\/position$/,
+    async (c, [id]) => shareReservationPosition(c, id, await readJson<{ lat?: unknown; lng?: unknown; stop?: unknown }>(c.request)),
+  ],
+  ["POST", /^\/api\/reservations\/([\w-]+)\/ready$/, async (c, [id]) => markReservation(c, id, "ready")],
+  ["POST", /^\/api\/reservations\/([\w-]+)\/redirect$/, async (c, [id]) => markReservation(c, id, "redirect")],
   [
     "POST",
     /^\/api\/reservations\/([\w-]+)\/complete$/,

@@ -87,6 +87,39 @@ describe("DemoBackend reservations", () => {
 
   });
 
+  it("shares the customer's position only after they agree, and keeps it to themselves in their list", async () => {
+    await asRole(backend, "customer");
+    const r = await reserveAny(backend, "st-tokoin", "battery");
+    expect((await backend.myReservations())[0].sharing).toBe(false);
+    await backend.shareReservationPosition(r.id, { lat: 6.13, lng: 1.22 });
+    const [mine] = await backend.myReservations();
+    expect(mine.sharing).toBe(true);
+    expect(mine.customerPosition).toBeUndefined();
+    await expect(backend.shareReservationPosition(r.id, { lat: 99, lng: 1 })).rejects.toMatchObject({ code: "invalid_position" });
+    await backend.shareReservationPosition(r.id, null);
+    expect((await backend.myReservations())[0].sharing).toBe(false);
+  });
+
+  it("shows the staff example customers riding toward their station, to mark ready or redirect", async () => {
+    await asRole(backend, "operator");
+    setActiveStation(STATION);
+    const first = (await backend.stationReservations(STATION)).filter((r) => r.status === "active");
+    expect(first).toHaveLength(3);
+    expect(first.every((r) => r.customerPosition && r.customerPhone && r.pickupCode === undefined)).toBe(true);
+    // Two minutes later they are closer, and nobody new is added while they hold.
+    vi.setSystemTime(new Date("2026-10-12T12:02:00Z"));
+    const later = (await backend.stationReservations(STATION)).filter((r) => r.status === "active");
+    expect(later).toHaveLength(3);
+    const station = (await backend.listStations()).find((s) => s.id === STATION)!;
+    const gap = (p: { lat: number; lng: number }) => Math.abs(p.lat - station.lat) + Math.abs(p.lng - station.lng);
+    const before = first.find((r) => r.id === later[0].id)!;
+    expect(gap(later[0].customerPosition!)).toBeLessThan(gap(before.customerPosition!));
+    const waiting = later.find((r) => !r.readyAt)!;
+    await backend.markReservationReady(waiting.id);
+    await backend.redirectReservation(waiting.id);
+    expect((await backend.stationReservations(STATION)).find((r) => r.id === waiting.id)).toMatchObject({ readyAt: expect.any(String), redirectedAt: expect.any(String) });
+  });
+
   it("locks a reservation after 5 wrong codes", async () => {
     await asRole(backend, "customer");
     const r = await reserveAny(backend, "st-universite", "slot");
