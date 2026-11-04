@@ -13,10 +13,11 @@ import type { Reservation, StationView } from "@shared/types";
 import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { GreenpointStaff } from "../greenpoint/greenpoint-staff";
-import { QrIcon } from "../icons";
+import { CheckIcon, QrIcon, WalletIcon } from "../icons";
 import { useI18n } from "../i18n-provider";
 import { LoadFailed } from "../load-state";
 import { canScanQr, QrScanner } from "../parcels/qr-scanner";
+import { BatteryBleRead } from "../ble/battery-ble-read";
 import { useReservationWhat } from "../reservation-list";
 import { Button, Card, EmptyState, Input, SkeletonCard, SuccessCheck, useReducedMotion, useToast } from "../ui";
 import { WorkShell } from "./work-shell";
@@ -32,10 +33,11 @@ export function Chips<T extends string>({ value, options, label, onChange }: { v
           aria-checked={value === o.id}
           disabled={o.disabled}
           onClick={() => onChange(o.id)}
-          className={`min-h-11 rounded-full border px-4 text-sm font-semibold disabled:opacity-40 ${
-            value === o.id ? "border-gp-green-dark bg-gp-green-dark text-white" : "border-gp-border bg-gp-surface"
+          className={`inline-flex min-h-11 items-center gap-1.5 rounded-full border px-4 text-sm font-semibold disabled:border-transparent disabled:bg-transparent disabled:text-gp-muted disabled:line-through disabled:opacity-70 ${
+            value === o.id ? "border-gp-forest bg-gp-forest text-white dark:border-gp-green dark:bg-gp-green dark:text-gp-forest" : "border-gp-border bg-gp-surface"
           }`}
         >
+          {value === o.id && <CheckIcon size={16} />}
           {o.label}
         </button>
       ))}
@@ -163,7 +165,87 @@ function BatteryNote({ stationId, serial, typeId }: { stationId: string; serial:
   );
 }
 
-type SwapStep = "customer" | "in" | "out" | "pay";
+/**
+ * One battery of the guided swap (mockup B3): dashed while it waits for its number, green once
+ * scanned (number and charge). The camera reads QR codes and barcodes; the number can be typed too.
+ */
+function BatteryCard({
+  label,
+  serial,
+  onSerial,
+  pct,
+  required,
+  hint,
+  children,
+}: {
+  label: string;
+  serial: string;
+  onSerial: (v: string) => void;
+  /** The charge typed or read, for a type priced by energy; "" = none. */
+  pct: string;
+  required: boolean;
+  hint: string;
+  children?: ReactNode;
+}) {
+  const { t } = useI18n();
+  const g = t.work.swap.guided;
+  const camera = canScanQr();
+  const [scanning, setScanning] = useState(false);
+  const [typing, setTyping] = useState(false);
+  const filled = serial.trim() !== "";
+  const showInput = !camera || typing;
+  return (
+    <div
+      className={`space-y-3 rounded-2xl p-3 transition-colors duration-240 ${
+        filled ? "border border-gp-green/50 bg-gp-green/10" : "border-2 border-dashed border-gp-border bg-gp-surface dark:border-white/15"
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <span
+          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${filled ? "bg-gp-green text-gp-forest" : "bg-gp-border/50 text-gp-forest dark:bg-white/10 dark:text-zinc-200"}`}
+          aria-hidden
+        >
+          {filled ? <CheckIcon size={24} strokeWidth={2.4} /> : <QrIcon size={22} />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs text-gp-muted">{label}</div>
+          <div className={`font-semibold ${filled ? "truncate" : "leading-snug"}`}>
+            {filled ? `${serial.trim().toUpperCase()}${pct !== "" ? ` · ${pct} %` : ""}` : g.scanPrompt}
+          </div>
+        </div>
+        {camera && (
+          <button type="button" onClick={() => setScanning(true)} className="min-h-11 shrink-0 px-1 text-sm font-semibold text-gp-green-dark dark:text-gp-green">
+            {filled ? g.edit : g.scan}
+          </button>
+        )}
+      </div>
+      {showInput ? (
+        <label className="block space-y-1">
+          <span className="sr-only">{label}</span>
+          <Input value={serial} required={required} autoComplete="off" placeholder={g.typeIt} onChange={(e) => onSerial(e.target.value)} />
+          <span className="block text-xs text-gp-muted">{hint}</span>
+        </label>
+      ) : (
+        <button type="button" onClick={() => setTyping(true)} className="text-xs font-medium text-gp-muted underline">
+          {g.typeIt}
+        </button>
+      )}
+      {children}
+      {scanning && (
+        <QrScanner
+          barcodes
+          onResult={(text) => {
+            onSerial(text);
+            setScanning(false);
+          }}
+          onClose={() => setScanning(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+type SwapStep = "customer" | "batteries" | "pay";
 
 /**
  * The swap form. From a reservation (/operator/echange?reservation=…) it comes filled in:
@@ -247,12 +329,29 @@ function SwapForm({
   // The swap price is set in the backoffice (station details); without it only a first purchase or a fleet swap goes through.
   const priceMissing = !energy && !counter.priceXof && customerType !== "first_purchase" && customerType !== "fleet";
 
-  // A first purchase brings no battery back: no step for it.
-  const steps: SwapStep[] = takesBatteryIn(customerType) ? ["customer", "in", "out", "pay"] : ["customer", "out", "pay"];
+  // Customer, then both batteries on one screen (a first purchase brings none back), then payment.
+  const steps: SwapStep[] = ["customer", "batteries", "pay"];
+  const takesIn = takesBatteryIn(customerType);
   const at = Math.min(step, steps.length - 1);
   const current = steps[at];
   const last = at === steps.length - 1;
-  const stepNames: Record<SwapStep, string> = { customer: s.steps.customer, in: s.steps.in, out: s.steps.out, pay: s.steps.pay };
+  const stepNames: Record<SwapStep, string> = { customer: s.steps.customer, batteries: s.steps.batteries, pay: s.steps.pay };
+
+  /** What the batteries step still waits for, shown under the button (which stays off until then). */
+  const g = s.guided;
+  const batteriesMissing: string | null =
+    takesIn && numbersRequired && !batteryIn.trim()
+      ? g.needIn
+      : takesIn && energy && (inPct === "" || !condition)
+        ? inPct === "" ? g.needPct : g.needCondition
+        : numbersRequired && !batteryOut.trim()
+          ? g.needOut
+          : energy && (!priced || (takesIn && inPct === ""))
+            ? g.needPct
+            : energy && !outChecked
+              ? g.needChecked
+              : null;
+  const waiting = current === "batteries" ? batteriesMissing : null;
 
   function go(to: number) {
     setError(null);
@@ -264,8 +363,9 @@ function SwapForm({
   /** What stops the current step before going on (the browser checks the required fields). */
   function stepProblem(): string | null {
     if (current === "customer" && !row) return t.errors.battery_type_required;
-    if (current === "in" && energy && !condition) return s.energy.conditionRequired;
-    if (current === "out" && energy && !priced) return s.energy.checkPct;
+    if (current === "batteries" && energy && takesIn && !condition) return s.energy.conditionRequired;
+    if (current === "batteries" && energy && !priced) return s.energy.checkPct;
+    if (current === "batteries" && batteriesMissing) return batteriesMissing;
     return null;
   }
 
@@ -358,15 +458,30 @@ function SwapForm({
 
   return (
     <form onSubmit={submit} className="space-y-5">
-      <ol className="flex gap-2" aria-label={s.steps.label}>
-        {steps.map((name, i) => (
-          <li key={name} aria-current={i === at ? "step" : undefined} className="flex min-w-0 flex-1 flex-col gap-1">
-            <span className={`h-1 rounded-full transition-colors duration-240 ${i <= at ? "bg-gp-green" : "bg-gp-border"}`} aria-hidden />
-            <span className={`truncate text-xs ${i === at ? "font-semibold" : "text-gp-muted"}`}>
-              {i + 1}. {stepNames[name]}
-            </span>
-          </li>
-        ))}
+      <ol className="flex rounded-2xl border border-gp-border bg-gp-surface px-2 py-3 dark:border-white/10" aria-label={s.steps.label}>
+        {steps.map((name, i) => {
+          const isDone = i < at;
+          return (
+            <li key={name} aria-current={i === at ? "step" : undefined} className="flex min-w-0 flex-1 justify-center">
+              <button
+                type="button"
+                disabled={!isDone}
+                onClick={() => go(i)}
+                className="flex min-w-0 flex-col items-center gap-1 disabled:cursor-default"
+              >
+                <span
+                  className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold transition-colors duration-240 ${
+                    isDone ? "bg-gp-green text-gp-forest" : i === at ? "bg-gp-forest text-white dark:bg-gp-green dark:text-gp-forest" : "bg-gp-border/70 text-gp-muted dark:bg-white/10"
+                  }`}
+                  aria-hidden
+                >
+                  {isDone ? <CheckIcon size={16} strokeWidth={2.6} /> : i + 1}
+                </span>
+                <span className={`truncate text-xs ${i === at ? "font-semibold" : isDone ? "font-medium" : "text-gp-muted"}`}>{stepNames[name]}</span>
+              </button>
+            </li>
+          );
+        })}
       </ol>
       {at > 0 && row && (
         <p className="text-sm text-gp-muted">
@@ -454,60 +569,92 @@ function SwapForm({
       </>
       )}
 
-      {current === "in" && (
+      {current === "batteries" && (
       <>
-        <ScanField
-          label={s.batteryIn}
-          hint={numbersRequired ? s.batteryHintRequired : s.batteryHint}
-          value={batteryIn}
-          onChange={setBatteryIn}
+        {takesIn && (
+          <BatteryCard
+            label={g.cardIn}
+            serial={batteryIn}
+            onSerial={setBatteryIn}
+            pct={energy ? inPct : ""}
+            required={numbersRequired}
+            hint={numbersRequired ? s.batteryHintRequired : s.batteryHint}
+          >
+            <BatteryNote stationId={station.id} serial={batteryIn} typeId={typeId} />
+            <BatteryBleRead
+              serial={batteryIn}
+              onRead={(r) => {
+                if (r.serial && !batteryIn.trim()) setBatteryIn(r.serial);
+                if (energy && r.socPct !== null) setInPct(String(r.socPct));
+              }}
+            />
+            {energy && (
+              <>
+                <PctField label={s.energy.inPct} hint={s.energy.pctHint} value={inPct} onChange={setInPct} />
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-medium">{s.energy.condition}</legend>
+                  <Chips value={condition} label={s.energy.condition} onChange={setCondition} options={BATTERY_CONDITIONS.map((id) => ({ id, label: s.energy.conditions[id] }))} />
+                  {condition && condition !== "ok" && <p className="text-sm font-medium text-amber-700 dark:text-amber-300">{s.energy.conditionRepair}</p>}
+                </fieldset>
+              </>
+            )}
+          </BatteryCard>
+        )}
+        <BatteryCard
+          label={g.cardOut}
+          serial={batteryOut}
+          onSerial={setBatteryOut}
+          pct={energy ? outPct : ""}
           required={numbersRequired}
-          barcodes
-          note={<BatteryNote stationId={station.id} serial={batteryIn} typeId={typeId} />}
-        />
-      {energy && (
-        <>
-          <PctField label={s.energy.inPct} hint={s.energy.pctHint} value={inPct} onChange={setInPct} />
-          <fieldset className="space-y-2">
-            <legend className="text-sm font-medium">{s.energy.condition}</legend>
-            <Chips value={condition} label={s.energy.condition} onChange={setCondition} options={BATTERY_CONDITIONS.map((id) => ({ id, label: s.energy.conditions[id] }))} />
-            {condition && condition !== "ok" && <p className="text-sm font-medium text-amber-700 dark:text-amber-300">{s.energy.conditionRepair}</p>}
-          </fieldset>
-        </>
-      )}
-      </>
-      )}
-      {current === "out" && (
-      <>
-      <ScanField
-        label={s.batteryOut}
-        hint={numbersRequired ? s.batteryHintRequired : s.batteryHint}
-        value={batteryOut}
-        onChange={setBatteryOut}
-        required={numbersRequired}
-        barcodes
-          note={<BatteryNote stationId={station.id} serial={batteryOut} typeId={typeId} />}
-      />
-      {energy && (
-        <>
-          <PctField label={s.energy.outPct} hint={s.energy.pctHint} value={outPct} onChange={setOutPct} />
-          {priced ? (
-            <p className="font-semibold tabular-nums">
-              {format(s.energy.supplied, { pct: priced.suppliedPct, price: formatXof(energy.priceFullXof, locale), amount: formatXof(priced.amountXof, locale) })}
-            </p>
-          ) : (
-            pctTyped && (
-              <p role="alert" className="text-sm font-medium text-red-600">
-                {s.energy.checkPct}
-              </p>
-            )
+          hint={numbersRequired ? s.batteryHintRequired : s.batteryHint}
+        >
+          <BatteryNote stationId={station.id} serial={batteryOut} typeId={typeId} />
+          <BatteryBleRead
+            serial={batteryOut}
+            onRead={(r) => {
+              if (r.serial && !batteryOut.trim()) setBatteryOut(r.serial);
+              if (energy && r.socPct !== null) setOutPct(String(r.socPct));
+            }}
+          />
+          {energy && (
+            <>
+              <PctField label={s.energy.outPct} hint={s.energy.pctHint} value={outPct} onChange={setOutPct} />
+              {!priced && pctTyped && (
+                <p role="alert" className="text-sm font-medium text-red-600">
+                  {s.energy.checkPct}
+                </p>
+              )}
+              <label className="flex items-start gap-3 text-sm">
+                <input type="checkbox" className="mt-1 size-5 accent-gp-green-dark" required checked={outChecked} onChange={(e) => setOutChecked(e.target.checked)} />
+                <span>{s.energy.outChecked}</span>
+              </label>
+            </>
           )}
-          <label className="flex items-start gap-3 text-sm">
-            <input type="checkbox" className="mt-1 size-5 accent-gp-green-dark" required checked={outChecked} onChange={(e) => setOutChecked(e.target.checked)} />
-            <span>{s.energy.outChecked}</span>
-          </label>
-        </>
-      )}
+        </BatteryCard>
+
+        {customerType !== "fleet" && (
+          <div className="flex items-center gap-3 rounded-2xl border border-gp-border bg-gp-surface p-4 dark:border-white/10">
+            <WalletIcon size={22} className="shrink-0 text-gp-green-dark dark:text-gp-green" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm text-gp-muted">{g.planned}</div>
+              <div className="font-semibold">
+                {energy ? (chosenNetwork === "flooz" ? "Flooz" : chosenNetwork === "tmoney" ? "T-Money" : s.energy.pay) : wallet ? s.payments.wallet : s.payments.cash}
+              </div>
+            </div>
+            <div className="shrink-0 font-heading text-lg font-bold tabular-nums">
+              {energy
+                ? priced
+                  ? formatXof(priced.amountXof, locale)
+                  : "–"
+                : customerType === "first_purchase"
+                  ? amount !== "" ? formatXof(Number(amount), locale) : "–"
+                  : counter.priceXof
+                    ? formatXof(counter.priceXof, locale)
+                    : "–"}
+            </div>
+          </div>
+        )}
+        {customerType === "fleet" && <p className="text-sm text-gp-muted">{s.payments.fleet}</p>}
       </>
       )}
       {current === "pay" && energy && (
@@ -592,11 +739,19 @@ function SwapForm({
           type="submit"
           size="lg"
           className="flex-1"
-          disabled={!row || row.full <= 0 || priceMissing || (last && !!energy && (!priced || !chosenNetwork || !condition))}
+          disabled={!row || row.full <= 0 || priceMissing || !!waiting || (last && !!energy && (!priced || !chosenNetwork || (takesIn && !condition)))}
         >
-          {last ? s.confirm : s.steps.next}
+          {last ? (
+            <>
+              <CheckIcon size={18} />
+              {s.confirm}
+            </>
+          ) : (
+            s.steps.next
+          )}
         </Button>
       </div>
+      {waiting && <p className="-mt-2 text-center text-sm text-gp-muted">{waiting}</p>}
 
       <ConfirmSheet open={confirming} title={s.confirmTitle} confirmLabel={s.confirm} busy={busy} onConfirm={() => void record()} onCancel={() => setConfirming(false)}>
         <p>{format(takesBatteryIn(customerType) ? s.confirmText : s.confirmFirst, { type: typeLabel })}</p>
