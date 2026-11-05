@@ -320,6 +320,12 @@ export const en: Dictionary = {
     credit: "Green Credit",
     parcels: "Parcels",
     seeMap: "See all stations",
+    guestTitle: "Track your scooter",
+    guestBody: "Create your free account to reserve a battery, see your last swap and read your battery level.",
+    guestSignup: "Create my account",
+    guestLogin: "I already have an account",
+    nearby: "Nearby stations",
+    viewAll: "See all",
   },
   bleRead: {
     read: "Read the battery (Bluetooth)",

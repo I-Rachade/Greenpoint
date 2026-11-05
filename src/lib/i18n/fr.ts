@@ -320,6 +320,12 @@ export const fr = {
     credit: "Green Credit",
     parcels: "Colis",
     seeMap: "Voir toutes les stations",
+    guestTitle: "Suivez votre scooter",
+    guestBody: "Créez votre compte gratuit pour réserver une batterie, voir votre dernier échange et lire le niveau de votre batterie.",
+    guestSignup: "Créer mon compte",
+    guestLogin: "J'ai déjà un compte",
+    nearby: "Stations à proximité",
+    viewAll: "Voir tout",
   },
   bleRead: {
     read: "Lire la batterie (Bluetooth)",
