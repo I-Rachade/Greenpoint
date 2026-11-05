@@ -158,7 +158,71 @@ function workshopCard(w: RepairCenter, labels: { title: string; call: string }):
   return box;
 }
 
-export function StationMap({ stations, workshops = [], share = [], position, selectedId, onSelect, labels, route = false, onRouteKind, padding, controls = true, others, fit = false }: Props) {
+/** How long a lost map gets for the browser to give its drawing surface back before it is rebuilt. */
+const RESTORE_WAIT_MS = 1500;
+
+/**
+ * Phones take the map's drawing surface (WebGL) away from a page in the background, e.g. while
+ * the screen is locked. The browser is meant to hand it back on return, but some (Safari, many
+ * Android phones) never do, and the map stays a blank white box. When it is still lost a moment
+ * after the page is visible again, the map is simply built anew.
+ */
+export function StationMap(props: Props) {
+  const [generation, setGeneration] = useState(0);
+  const [watch] = useState(() => {
+    let lost = false;
+    let timer: number | undefined;
+    const check = () => {
+      if (!lost || document.visibilityState !== "visible") return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (!lost) return;
+        lost = false;
+        setGeneration((g) => g + 1);
+      }, RESTORE_WAIT_MS);
+    };
+    return {
+      check,
+      stop: () => window.clearTimeout(timer),
+      lost: () => {
+        lost = true;
+        check();
+      },
+      restored: () => {
+        lost = false;
+        window.clearTimeout(timer);
+      },
+    };
+  });
+
+  useEffect(() => {
+    document.addEventListener("visibilitychange", watch.check);
+    return () => {
+      document.removeEventListener("visibilitychange", watch.check);
+      watch.stop();
+    };
+  }, [watch]);
+
+  return <MapView key={generation} {...props} onContextLost={watch.lost} onContextRestored={watch.restored} />;
+}
+
+function MapView({
+  stations,
+  workshops = [],
+  share = [],
+  position,
+  selectedId,
+  onSelect,
+  labels,
+  route = false,
+  onRouteKind,
+  padding,
+  controls = true,
+  others,
+  fit = false,
+  onContextLost,
+  onContextRestored,
+}: Props & { onContextLost: () => void; onContextRestored: () => void }) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -184,6 +248,8 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
     // MapLibre opens the compact credits at first; on a small preview they would cover the map.
     // They stay one tap away on the "i" (and open in full on the big map).
     if (fit) map.once("load", () => containerRef.current?.querySelector(".maplibregl-compact-show")?.classList.remove("maplibregl-compact-show"));
+    map.on("webglcontextlost", onContextLost);
+    map.on("webglcontextrestored", onContextRestored);
     mapRef.current = map;
     return () => {
       map.remove();
