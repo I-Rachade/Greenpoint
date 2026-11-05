@@ -3294,6 +3294,7 @@ export const fr = {
   },
   ui: {
     cancel: "Annuler",
+    more: "Plus",
     confirm: "Confirmer",
     retry: "Réessayer",
     undo: "Annuler",

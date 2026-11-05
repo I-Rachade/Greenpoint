@@ -139,7 +139,7 @@ function QuickAction({ href, icon: Icon, label, primary }: { href: string; icon:
     <Link
       href={href}
       className={`flex min-h-24 min-w-0 flex-col items-center justify-center gap-2 rounded-[20px] p-2 text-center active:scale-[0.99] ${
-        primary ? "bg-gp-forest text-white" : "border border-gp-border bg-gp-surface dark:border-white/10"
+        primary ? "bg-gp-forest text-white hover:bg-gp-forest/90" : "border border-gp-border bg-gp-surface hover:border-gp-green dark:border-white/10"
       }`}
     >
       <span
@@ -186,8 +186,8 @@ export function MyScooterHome() {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto pb-6">
-      <header className="bg-gp-forest px-4 pb-16 pt-4 text-white">
-        <div className="flex items-center gap-3">
+      <header className="bg-gp-forest px-4 pb-16 pt-4 text-white md:pt-6">
+        <div className="mx-auto flex max-w-5xl items-center gap-3">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-gp-green font-heading text-lg font-bold text-gp-forest">
             {firstName ? firstName[0].toUpperCase() : "⚡"}
           </span>
@@ -207,13 +207,15 @@ export function MyScooterHome() {
               {format(M.points, { n: new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-GB").format(greenpoint.points) })}
             </Link>
           )}
-          <Link href="/notifications" aria-label={t.ui.alerts.title} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white hover:bg-white/10">
+          {/* On computers the bell is already in the top bar. */}
+          <Link href="/notifications" aria-label={t.ui.alerts.title} className="flex h-10 w-10 shrink-0 md:hidden items-center justify-center rounded-full text-white hover:bg-white/10">
             <BellIcon size={22} />
           </Link>
         </div>
       </header>
 
-      <div className="-mt-12 space-y-4 px-4">
+      {/* Phones: one column. Computers: the scooter beside the nearest station, quick actions below. */}
+      <div className="mx-auto -mt-12 max-w-5xl space-y-4 px-4 md:grid md:grid-cols-2 md:items-start md:gap-4 md:space-y-0">
         <section className="rounded-[20px] border border-gp-border bg-gp-surface p-4 shadow-sm dark:border-white/10">
           <div className="flex items-baseline justify-between gap-2">
             <h1 className="font-heading text-lg font-bold">{M.title}</h1>
@@ -253,46 +255,49 @@ export function MyScooterHome() {
         </section>
 
         {nearest ? (
-          <>
-            <section className="flex gap-3 rounded-[20px] border border-gp-green/30 bg-gp-green/10 p-4">
-              <Link href={stationHref(nearest.station.id)} className="min-w-0 flex-1">
-                <h2 className="font-heading text-base font-bold">{M.nearest}</h2>
-                <p className="mt-1 text-sm">
-                  <span className="font-semibold">{nearest.station.name}</span>
-                  {nearest.distance !== null && (
-                    <>
-                      {" · "}
-                      <b>{formatDistance(nearest.distance)}</b> · {format(t.stationLook.summary.minutes, { n: scooterMinutes(nearest.distance) })}
-                    </>
-                  )}
-                </p>
-                <p className="mt-2 flex flex-wrap gap-2 text-sm font-semibold">
-                  <span className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-gp-surface px-3 text-gp-green-dark dark:text-gp-green">
-                    <BatteryIcon size={16} />
-                    {availableBatteries(nearest.station) > 0 ? format(M.full, { n: availableBatteries(nearest.station) }) : M.noneFull}
-                  </span>
-                  <span className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-gp-surface px-3 text-gp-green-dark dark:text-gp-green">
-                    <span aria-hidden className="h-2 w-2 rounded-full bg-gp-green-dark dark:bg-gp-green" />
-                    {M.open}
-                  </span>
-                </p>
-              </Link>
-              <Link
-                href="/carte"
-                aria-label={M.seeMap}
-                className="relative h-28 w-28 shrink-0 overflow-hidden rounded-[14px] border-2 border-gp-surface sm:w-40 [&_*]:pointer-events-none"
-              >
-                <StationMap
-                  stations={single}
-                  position={position}
-                  selectedId={nearest.station.id}
-                  onSelect={() => undefined}
-                  controls={false}
-                  route
-                  padding={{ top: 24, bottom: 16, left: 16, right: 16 }}
-                />
-              </Link>
-            </section>
+          <div className="space-y-4">
+            {/* The tint sits on a solid card: on computers this card overlaps the dark header. */}
+            <div className="rounded-[20px] bg-gp-surface">
+              <section className="flex gap-3 rounded-[20px] border border-gp-green/30 bg-gp-green/10 p-4">
+                <Link href={stationHref(nearest.station.id)} className="min-w-0 flex-1">
+                  <h2 className="font-heading text-base font-bold">{M.nearest}</h2>
+                  <p className="mt-1 text-sm">
+                    <span className="font-semibold">{nearest.station.name}</span>
+                    {nearest.distance !== null && (
+                      <>
+                        {" · "}
+                        <b>{formatDistance(nearest.distance)}</b> · {format(t.stationLook.summary.minutes, { n: scooterMinutes(nearest.distance) })}
+                      </>
+                    )}
+                  </p>
+                  <p className="mt-2 flex flex-wrap gap-2 text-sm font-semibold">
+                    <span className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-gp-surface px-3 text-gp-green-dark dark:text-gp-green">
+                      <BatteryIcon size={16} />
+                      {availableBatteries(nearest.station) > 0 ? format(M.full, { n: availableBatteries(nearest.station) }) : M.noneFull}
+                    </span>
+                    <span className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-gp-surface px-3 text-gp-green-dark dark:text-gp-green">
+                      <span aria-hidden className="h-2 w-2 rounded-full bg-gp-green-dark dark:bg-gp-green" />
+                      {M.open}
+                    </span>
+                  </p>
+                </Link>
+                <Link
+                  href="/carte"
+                  aria-label={M.seeMap}
+                  className="relative h-28 w-28 shrink-0 overflow-hidden rounded-[14px] border-2 border-gp-surface sm:w-40 md:h-36 lg:w-48 [&_*]:pointer-events-none"
+                >
+                  <StationMap
+                    stations={single}
+                    position={position}
+                    selectedId={nearest.station.id}
+                    onSelect={() => undefined}
+                    controls={false}
+                    route
+                    padding={{ top: 24, bottom: 16, left: 16, right: 16 }}
+                  />
+                </Link>
+              </section>
+            </div>
             <Link
               href={stationHref(nearest.station.id)}
               className="flex min-h-14 items-center justify-center gap-2 rounded-[14px] bg-gp-green-dark px-5 font-heading text-lg font-bold text-white hover:bg-gp-forest"
@@ -300,12 +305,12 @@ export function MyScooterHome() {
               <NavigateIcon size={22} />
               {M.go}
             </Link>
-          </>
+          </div>
         ) : (
           stations && <p className="rounded-[20px] border border-gp-border bg-gp-surface p-4 text-sm text-gp-muted dark:border-white/10">{M.noStation}</p>
         )}
 
-        <section>
+        <section className="md:col-span-2">
           <div className="flex items-baseline justify-between">
             <h2 className="font-heading text-lg font-bold">{M.quick}</h2>
             <Link href="/carte" className="inline-flex items-center gap-0.5 text-sm font-semibold text-gp-green-dark dark:text-gp-green">

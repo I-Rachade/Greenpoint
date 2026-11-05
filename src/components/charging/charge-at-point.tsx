@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { boxFromCode, outletParam, type ChargeOutletSocket, type ChargePointState } from "@shared/charging";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format, formatXof } from "@/lib/i18n/format";
@@ -29,6 +29,8 @@ const STATE_TONE: Record<ChargePointState, string> = {
   disabled: "text-zinc-600 dark:text-zinc-400",
 };
 
+const noSubscribe = () => () => undefined;
+
 export function ChargeAtPoint() {
   const { t } = useI18n();
   const q = t.charging.qr;
@@ -44,6 +46,8 @@ export function ChargeAtPoint() {
   // renders this page in the browser only, so canScanQr() can be asked here.
   const [scanning, setScanning] = useState(() => params.get("scan") === "1" && canScanQr());
   const [scanError, setScanError] = useState<string | null>(null);
+  // false while rendered on the server, so the first browser render matches it (no hydration error).
+  const scanAvailable = useSyncExternalStore(noSubscribe, canScanQr, () => false);
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 px-4 pb-6 pt-4">
@@ -67,7 +71,7 @@ export function ChargeAtPoint() {
             if (box) router.replace(`/recharge?o=${box.token}${box.outlet ? `&s=${box.outlet}` : ""}`);
           }}
         />
-      ) : canScanQr() ? (
+      ) : scanAvailable ? (
         <button
           type="button"
           onClick={() => {

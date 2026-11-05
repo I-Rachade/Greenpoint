@@ -3294,6 +3294,7 @@ export const en: Dictionary = {
   },
   ui: {
     cancel: "Cancel",
+    more: "More",
     confirm: "Confirm",
     retry: "Try again",
     undo: "Undo",
