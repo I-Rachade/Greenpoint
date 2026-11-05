@@ -29,7 +29,8 @@ const context = await browser.newContext({
 const page = await context.newPage();
 const fr = lang !== "en";
 const T = {
-  reserve: fr ? "Réserver une batterie" : "Reserve a battery",
+  // The station page shows the short "Réserver" when the swap price sits beside it.
+  reserve: fr ? /^Réserver( une batterie)?$/ : /^Reserve( a battery)?$/,
   register: fr ? "Inscription" : "Sign up",
   sendCode: fr ? "Recevoir le code" : "Send code",
   confirm: fr ? "Valider" : "Confirm",
@@ -66,9 +67,10 @@ async function open(path) {
 await open("/");
 await shot("1-carte");
 
-// 2. Station details.
-await page.getByText("poinderecharge Grand Marché").first().click();
-await page.waitForTimeout(1200);
+// 2. Station details. Opened by its address: the home screen's station card has changed shape
+// often, and Grand Marché is the demo station that can be reserved.
+const STATION = "/station.html?id=st-grand-marche";
+await open(STATION);
 await shot("2-station");
 
 // 3. Sign up: phone number confirmed by SMS code, then a PIN.
@@ -90,10 +92,13 @@ await page.getByRole("button", { name: T.confirm }).click();
 await page.waitForTimeout(2500);
 
 // 4. Reserve a battery.
-await open("/");
-await page.getByText("poinderecharge Grand Marché").first().click();
-await page.waitForTimeout(1000);
-await page.getByRole("button", { name: T.reserve }).click();
+await open(STATION);
+// The battery button sits in the bottom bar, after the charger list's own "Réserver" buttons.
+await page.getByRole("button", { name: T.reserve }).last().click();
+await page.waitForTimeout(800);
+// Stations that swap several battery types ask which one first.
+const picker = page.getByRole("dialog").filter({ has: page.getByRole("radiogroup") });
+if (await picker.count()) await picker.getByRole("button", { name: T.reserve }).last().click();
 await page.waitForTimeout(1500);
 await shot("4-reservation");
 
