@@ -30,6 +30,34 @@ export interface EvCharger {
   isActive: boolean;
   /** The connected outlet that switches and meters it; null: not connected. */
   pointId: string | null;
+  /**
+   * Backoffice list only: that outlet as the admin tests it (its device, live state, whether
+   * it can be switched remotely). The devices list leaves a charger's outlet out (notEvPointSql).
+   */
+  outlet?: EvChargerOutlet | null;
+}
+
+/** The linked outlet of a charger, for the backoffice test buttons. */
+export interface EvChargerOutlet {
+  deviceId: string;
+  vendor: string;
+  outlet: number;
+  status: ChargingPoint["status"];
+  lastSeenAt: string | null;
+  /** Model the device reports (OCPP BootNotification) or the admin typed. */
+  model: string;
+  /** "ocpp": OCPP 1.6 (start, stop, meter, card swipes); otherwise a vendor's cloud or bridge. */
+  ocpp: boolean;
+  /** Live readings: power in W, energy of the current charge in Wh, car battery in % (OCPP "SoC", 0069). */
+  powerWatts: number | null;
+  energyWh: number | null;
+  socPercent: number | null;
+  /** The device can be switched on and off remotely (shared/iot/devices.ts canSwitch). */
+  switchable: boolean;
+  /** Customers may start it by scanning the device's QR code (charging_points.qr_start). */
+  qrStart: boolean;
+  /** The device's QR code (or token), for the sticker; null before it has one. */
+  qrCode: string | null;
 }
 
 /** The outlet of a connected charger, as the app shows its state. */

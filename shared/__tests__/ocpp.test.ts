@@ -86,6 +86,9 @@ describe("OCPP reports", () => {
     expect(meterReading(payload, 1000)).toEqual({ outlet: 2, powerWatts: 260, energyWh: 251 });
     // The default measurand is the energy register, in Wh.
     expect(meterReading({ connectorId: 1, meterValue: [{ sampledValue: [{ value: "5" }] }] }, 2)).toEqual({ outlet: 1, energyWh: 3 });
+    // The car's battery level (mostly DC chargers), in %; a value out of range is ignored.
+    expect(meterReading({ connectorId: 1, meterValue: [{ sampledValue: [{ value: "80", measurand: "SoC", unit: "Percent" }] }] })).toEqual({ outlet: 1, socPercent: 80 });
+    expect(meterReading({ connectorId: 1, meterValue: [{ sampledValue: [{ value: "180", measurand: "SoC" }] }] })).toEqual({ outlet: 1 });
     // Per-phase power adds up.
     const phases = ["L1", "L2", "L3"].map((phase) => ({ value: "100", measurand: "Power.Active.Import", phase }));
     expect(meterReading({ connectorId: 1, meterValue: [{ sampledValue: phases }] })).toEqual({ outlet: 1, powerWatts: 300 });

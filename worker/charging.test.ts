@@ -757,6 +757,20 @@ describe("car chargers linked to a connected outlet (0048)", () => {
     expect(db.prepare("select point_id from ev_chargers where id = ?").get(evId)).toEqual({ point_id: null });
   });
 
+  it("lists a linked charger with its outlet, so the admin can switch it on for a test", async () => {
+    const { db, env } = await linked();
+    const { data } = await api<{ name: string; outlet: object | null }[]>(env, "admin", "GET", "/api/admin/ev-chargers");
+    expect(data).toEqual([
+      expect.objectContaining({ name: "Borne VE 1", outlet: expect.objectContaining({ deviceId: "777777", outlet: 1, status: "free", switchable: true }) }),
+    ]);
+    // The test switches the outlet itself, without a customer charge.
+    expect((await api(env, "admin", "POST", "/api/admin/devices/777777/outlets/1/start", {})).status).toBe(200);
+    expect(db.prepare("select kind from device_commands where external_id = '777777'").all()).toEqual([{ kind: "start" }]);
+    expect(db.prepare("select count(*) as n from charging_sessions where device_id = '777777'").get()).toEqual({ n: 0 });
+    // Only admins see and switch it.
+    expect((await api(env, "kofi", "GET", "/api/admin/ev-chargers")).status).toBe(403);
+  });
+
   it("shows the outlet on its charger, not among the motorbike places", async () => {
     const { env } = await linked();
     const { data } = await api<{ id: string; chargingPoints: { id: string }[]; evChargers: { name: string; point?: { id: string; status: string; qrStart?: boolean } }[] }[]>(
@@ -797,9 +811,13 @@ describe("car chargers linked to a connected outlet (0048)", () => {
     expect(started.status).toBe(200);
     expect(started.data).toMatchObject({ pointLabel: "Borne VE 1", tariff: { kwhXof: 200, minXof: 500 }, creditLimitXof: 3000 });
     expect(db.prepare("select kind, outlet from device_commands").get()).toMatchObject({ kind: "start", outlet: 1 });
+    // The customer sees the power and, from a charger that reads it, the car's battery level (0069).
+    await ingest(env.DB)("777777", [{ outlet: 1, status: "charging", power_watts: 7000, soc_percent: 42 }], {});
+    const mine = await api<ChargeSession[]>(env, "kofi", "GET", "/api/charging/mine");
+    expect(mine.data[0]).toMatchObject({ status: "charging", powerWatts: 7000, socPercent: 42 });
+    db.exec("update charging_sessions set status = 'cancelled'");
     // The car charger needs the "ev" service.
     db.exec("update station_services set unlocked = 0 where station_id = 'st' and service = 'ev'");
-    db.exec("update charging_sessions set status = 'cancelled'");
     expect((await startAt(env, "e1")).data.error).toBe("service_not_offered");
   });
 

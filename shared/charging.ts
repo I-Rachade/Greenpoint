@@ -57,6 +57,8 @@ export interface ChargeSession {
   customer: string | null;
   /** Current power draw in watts while charging, else 0. */
   powerWatts: number;
+  /** Car chargers that read it (OCPP "SoC"): the car's battery level in %, while charging. */
+  socPercent?: number;
   energyWh: number;
   tariff: ChargeTariff;
   /** The price so far (charging), the price to pay (stopped) or the amount paid. */

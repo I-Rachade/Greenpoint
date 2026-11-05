@@ -81,6 +81,8 @@ function ChargeCard({ charge: c, showStation = false, children }: { charge: Char
       {c.endedByDevice && c.status === "stopped" && <p className="text-xs text-zinc-600 dark:text-zinc-400">{ch.endedByDevice}</p>}
       <div className={`grid grid-cols-2 gap-3 ${c.status === "charging" ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
         {c.status === "charging" && <Figure label={ch.power} value={`${c.powerWatts} W`} />}
+        {/* A car charger that reads the car's battery (OCPP "SoC"). */}
+        {c.status === "charging" && c.socPercent !== undefined && <Figure label={ch.carBattery} value={`${c.socPercent} %`} />}
         <Figure label={ch.energy} value={formatKwh(c.energyWh, locale)} />
         <Figure label={ch.duration} value={formatDuration(chargeSeconds(c, now))} />
         <Figure label={ch.kwhPrice} value={`${xof(c.tariff.kwhXof)}/kWh`} />
