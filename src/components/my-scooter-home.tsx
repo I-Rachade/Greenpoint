@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { availableBatteries, DEFAULT_FILTER, isOpenNow, offersSwap, rankStations } from "@shared/availability";
-import { formatDistance, scooterMinutes } from "@shared/geo";
+import { distanceMeters, formatDistance, scooterMinutes } from "@shared/geo";
 import { daysAgo, isLow, kmLeft } from "@shared/scooter-battery";
 import { bleReady, readBattery, scanBatteries, stopScan, type FoundBattery } from "@/lib/ble/oves-reader";
 import { useLiveQuery, useNow, useRelativeTime } from "@/lib/hooks";
@@ -28,9 +28,9 @@ function Gauge({ pct }: { pct: number | null }) {
   const fill = pct === null ? 0 : Math.max(6, Math.min(100, pct));
   const tone = pct !== null && isLow(pct) ? "bg-gp-low" : "bg-gp-green";
   return (
-    <span aria-hidden className="relative flex h-24 w-14 shrink-0 flex-col justify-end rounded-[14px] border-[3px] border-gp-forest p-1.5 dark:border-zinc-200">
-      <span className="absolute -top-2 left-1/2 h-1.5 w-5 -translate-x-1/2 rounded-t-[4px] bg-gp-forest dark:bg-zinc-200" />
-      {pct !== null && <span className={`w-full rounded-[8px] ${tone}`} style={{ height: `${fill}%` }} />}
+    <span aria-hidden className="relative flex h-16 w-10 shrink-0 flex-col justify-end rounded-[10px] border-[3px] border-gp-forest p-1 dark:border-zinc-200">
+      <span className="absolute -top-[7px] left-1/2 h-1 w-4 -translate-x-1/2 rounded-t-[3px] bg-gp-forest dark:bg-zinc-200" />
+      {pct !== null && <span className={`w-full rounded-[5px] ${tone}`} style={{ height: `${fill}%` }} />}
     </span>
   );
 }
@@ -101,22 +101,23 @@ function ReadButton({ demo, hasReading, onRead }: { demo: boolean; hasReading: b
     }
   }
 
-  if (!native && !demo) return <p className="mt-3 text-sm text-gp-muted dark:text-zinc-400">{M.appOnly}</p>;
+  // Laid out by the card's row: the button sits beside the battery, the scan list wraps under it.
+  if (!native && !demo) return <p className="basis-full text-sm text-gp-muted dark:text-zinc-400">{M.appOnly}</p>;
   const list = Object.values(found).sort((a, b) => (b.rssi ?? -999) - (a.rssi ?? -999));
   return (
-    <div className="mt-3 space-y-2">
+    <div className="contents">
       <button
         type="button"
         onClick={scanning ? stop : start}
         disabled={reading !== null}
-        className="inline-flex min-h-11 items-center gap-2 rounded-[14px] border-2 border-gp-green-dark px-4 text-sm font-semibold text-gp-green-dark disabled:opacity-60 dark:border-gp-green dark:text-gp-green"
+        className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-[14px] border-2 border-gp-green-dark px-3 text-sm font-semibold text-gp-green-dark disabled:opacity-60 dark:border-gp-green dark:text-gp-green"
       >
         <BatteryIcon size={18} />
         {scanning ? x.stop : hasReading ? M.reread : M.read}
       </button>
-      {scanning && <p className="text-sm text-gp-muted dark:text-zinc-400">{list.length ? x.pick : `${x.searching} ${x.hint}`}</p>}
+      {scanning && <p className="basis-full text-sm text-gp-muted dark:text-zinc-400">{list.length ? x.pick : `${x.searching} ${x.hint}`}</p>}
       {list.length > 0 && (
-        <ul className="divide-y divide-gp-border dark:divide-white/10">
+        <ul className="basis-full divide-y divide-gp-border dark:divide-white/10">
           {list.map((b, i) => (
             <li key={b.id}>
               <button type="button" onClick={() => read(b)} disabled={reading !== null} className="flex min-h-11 w-full items-center gap-3 py-2 text-left">
@@ -177,7 +178,15 @@ export function MyScooterHome() {
     const ranked = all.filter(({ station }) => offersSwap(station.kind) && isOpenNow(station));
     return ranked.find(({ station }) => availableBatteries(station) > 0) ?? ranked[0] ?? null;
   }, [all]);
-  const single = useMemo(() => (nearest ? [nearest.station] : []), [nearest]);
+  // The preview map shows the nearest swap station and a few others around it (within 3 km,
+  // so the map stays close enough to read the streets).
+  const around = useMemo(() => {
+    if (!nearest) return [];
+    const others = all
+      .filter(({ station }) => offersSwap(station.kind) && station.id !== nearest.station.id && distanceMeters(station, nearest.station) <= 3_000)
+      .slice(0, 5);
+    return [nearest.station, ...others.map(({ station }) => station)];
+  }, [all, nearest]);
 
   const firstName = profile?.fullName?.trim().split(/\s+/)[0] ?? "";
   const evening = now.getHours() >= 17;
@@ -250,42 +259,42 @@ export function MyScooterHome() {
             </div>
           </section>
         ) : (
-          <section className="rounded-[20px] border border-gp-border bg-gp-surface p-4 shadow-sm dark:border-white/10">
+          <section className="rounded-[20px] border border-gp-border bg-gp-surface px-4 py-3 shadow-sm dark:border-white/10">
             <div className="flex items-baseline justify-between gap-2">
-              <h1 className="font-heading text-lg font-bold">{M.title}</h1>
+              <h1 className="font-heading text-base font-bold">{M.title}</h1>
               {lastSwap?.batteryTypeLabel && <span className="min-w-0 truncate text-sm text-gp-muted dark:text-zinc-400">{lastSwap.batteryTypeLabel}</span>}
             </div>
-            <div className="mt-3 flex items-center gap-4">
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
               <Gauge pct={pct} />
               <div className="min-w-0 flex-1">
                 {battery ? (
                   <>
-                    <p className="flex items-baseline gap-2">
-                      <span className="font-heading text-5xl font-bold leading-none tabular-nums">{kmLeft(battery)}</span>
-                      <span className="text-base font-semibold">{M.kmLeft}</span>
+                    <p className="flex items-baseline gap-1.5">
+                      <span className="font-heading text-4xl font-bold leading-none tabular-nums">{kmLeft(battery)}</span>
+                      <span className="text-sm font-semibold">{M.kmLeft}</span>
                     </p>
-                    <p className={`mt-2 flex items-start gap-1.5 text-sm font-semibold ${low ? "text-amber-800 dark:text-amber-300" : "text-gp-green-dark dark:text-gp-green"}`}>
-                      {low && <InfoIcon size={18} className="mt-px shrink-0" />}
+                    <p className={`mt-1 flex items-start gap-1 text-sm font-semibold ${low ? "text-amber-800 dark:text-amber-300" : "text-gp-green-dark dark:text-gp-green"}`}>
+                      {low && <InfoIcon size={16} className="mt-0.5 shrink-0" />}
                       {format(low ? M.low : M.battery, { pct: pct ?? 0 })}
                     </p>
-                    <p className="mt-1 text-xs text-gp-muted dark:text-zinc-400">{format(M.readAt, { when: relativeTime(battery.at, now) })}</p>
                   </>
                 ) : (
                   <>
-                    <p className="font-heading text-xl font-bold">{M.unknown}</p>
-                    <p className="mt-1 text-sm text-gp-muted dark:text-zinc-400">{M.readHint}</p>
+                    <p className="font-heading text-lg font-bold leading-tight">{M.unknown}</p>
+                    <p className="mt-0.5 text-xs text-gp-muted dark:text-zinc-400">{M.readHint}</p>
                   </>
                 )}
               </div>
+              <ReadButton demo={backend.mode === "demo"} hasReading={!!battery} onRead={setBattery} />
             </div>
-            <p className="mt-3 text-sm text-gp-muted dark:text-zinc-400">
+            <p className="mt-2 text-xs text-gp-muted dark:text-zinc-400">
+              {battery && <>{format(M.readAt, { when: relativeTime(battery.at, now) })} · </>}
               {lastSwap
                 ? lastSwap.outPct !== null
                   ? format(M.lastSwapPct, { when: day(lastSwap.at), station: lastSwap.stationName, pct: lastSwap.outPct })
                   : format(M.lastSwap, { when: day(lastSwap.at), station: lastSwap.stationName })
                 : M.noSwap}
             </p>
-            <ReadButton demo={backend.mode === "demo"} hasReading={!!battery} onRead={setBattery} />
           </section>
         )}
 
@@ -293,10 +302,10 @@ export function MyScooterHome() {
           <div className="space-y-4">
             {/* The tint sits on a solid card: on computers this card overlaps the dark header. */}
             <div className="rounded-[20px] bg-gp-surface">
-              <section className="flex gap-3 rounded-[20px] border border-gp-green/30 bg-gp-green/10 p-4">
-                <Link href={stationHref(nearest.station.id)} className="min-w-0 flex-1">
+              <section className="rounded-[20px] border border-gp-green/30 bg-gp-green/10 p-3">
+                <Link href={stationHref(nearest.station.id)} className="block px-1">
                   <h2 className="font-heading text-base font-bold">{M.nearest}</h2>
-                  <p className="mt-1 text-sm">
+                  <p className="mt-0.5 text-sm">
                     <span className="font-semibold">{nearest.station.name}</span>
                     {nearest.distance !== null && (
                       <>
@@ -316,19 +325,20 @@ export function MyScooterHome() {
                     </span>
                   </p>
                 </Link>
+                {/* The nearest station and a few others around it; a tap opens the full map. */}
                 <Link
                   href="/carte"
                   aria-label={M.seeMap}
-                  className="relative h-28 w-28 shrink-0 overflow-hidden rounded-[14px] border-2 border-gp-surface sm:w-40 md:h-36 lg:w-48 [&_*]:pointer-events-none"
+                  className="relative mt-3 block h-52 overflow-hidden rounded-[14px] border-2 border-gp-surface md:h-56 [&_*]:pointer-events-none"
                 >
                   <StationMap
-                    stations={single}
+                    stations={around}
                     position={position}
                     selectedId={nearest.station.id}
                     onSelect={() => undefined}
                     controls={false}
-                    route
-                    padding={{ top: 24, bottom: 16, left: 16, right: 16 }}
+                    fit
+                    padding={{ top: 48, bottom: 28, left: 32, right: 32 }}
                   />
                 </Link>
               </section>

@@ -111,7 +111,7 @@ export function BottomNav() {
   return (
     <nav
       className="fixed inset-x-0 bottom-0 z-30 border-t border-gp-border bg-gp-surface/95 backdrop-blur md:hidden dark:border-white/10"
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      style={{ paddingBottom: "var(--gp-safe-bottom)" }}
     >
       <div className="mx-auto flex h-16 max-w-lg items-stretch">
         <ul className="flex flex-1 items-stretch">{renderTabs(tabs.slice(0, split))}</ul>

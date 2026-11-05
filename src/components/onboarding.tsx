@@ -41,7 +41,7 @@ export function Onboarding() {
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col bg-background"
-      style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
+      style={{ paddingTop: "var(--gp-safe-top)", paddingBottom: "var(--gp-safe-bottom)" }}
       role="dialog"
       aria-modal
       aria-label={slides[index].title}
