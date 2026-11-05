@@ -2828,7 +2828,33 @@ export class DemoBackend implements Backend {
   async listEvChargers() {
     const state = this.load();
     this.requireAdmin(state);
-    return [...(state.evChargers ?? DEMO_EV_CHARGERS)].sort((a, b) => a.name.localeCompare(b.name));
+    const devices = state.devices ?? seedDevices();
+    const seen = new Date().toISOString();
+    // As listEvChargers() in worker/ev-chargers.ts: a linked charger with its outlet's device and state.
+    const outletOf = (pointId: string | null) => {
+      for (const d of devices) {
+        const p = pointId ? d.points.find((x) => x.id === pointId) : undefined;
+        if (p && p.outlet !== null) {
+          return {
+            deviceId: d.externalId,
+            vendor: d.vendor,
+            outlet: p.outlet,
+            status: p.status,
+            lastSeenAt: seen,
+            model: d.model,
+            ocpp: d.protocol === "ocpp1.6",
+            powerWatts: p.powerWatts,
+            energyWh: null,
+            socPercent: null,
+            switchable: canSwitch(d),
+            qrStart: !!p.qrStart,
+            qrCode: boxCode(d),
+          };
+        }
+      }
+      return null;
+    };
+    return [...(state.evChargers ?? DEMO_EV_CHARGERS)].map((c) => ({ ...c, outlet: outletOf(c.pointId) })).sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async saveEvCharger(id: string | null, input: EvChargerInput) {

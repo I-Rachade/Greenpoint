@@ -9,6 +9,8 @@ export interface OutletReading {
   status?: DeviceStatus;
   powerWatts?: number;
   energyWh?: number;
+  /** Car battery level in % (OCPP measurand "SoC"), when the charger can read it. */
+  socPercent?: number;
   /** The charge the reading belongs to, when the device says (Xingke cloud transactionId). */
   transactionId?: string;
 }
@@ -252,6 +254,7 @@ export interface IngestOutlet {
   status?: DeviceStatus;
   power_watts?: number;
   energy_wh?: number;
+  soc_percent?: number;
   transaction_id?: string;
 }
 
@@ -262,6 +265,7 @@ export function toIngestOutlets(event: DeviceEvent): IngestOutlet[] {
     status: o.status,
     power_watts: o.powerWatts,
     energy_wh: o.energyWh,
+    soc_percent: o.socPercent,
     transaction_id: o.transactionId,
   }));
 }

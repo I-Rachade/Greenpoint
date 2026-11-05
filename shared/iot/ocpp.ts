@@ -174,6 +174,9 @@ export function meterReading(payload: Record<string, unknown>, meterStart?: numb
   const register = measure(samples, "Energy.Active.Import.Register");
   if (power !== undefined && power >= 0) reading.powerWatts = Math.round(power);
   if (register !== undefined && meterStart !== undefined && register >= meterStart) reading.energyWh = Math.round(register - meterStart);
+  // The car's battery level, when the charger reads it (mostly DC): one value in %, never per phase.
+  const soc = samples.filter((s) => s.measurand === "SoC").map((s) => Number(s.value)).slice(-1)[0];
+  if (soc !== undefined && Number.isFinite(soc) && soc >= 0 && soc <= 100) reading.socPercent = Math.round(soc);
   return reading;
 }
 

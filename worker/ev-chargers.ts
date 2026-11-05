@@ -1,3 +1,4 @@
+import { canSwitch, type Device, type DeviceProtocol } from "../shared/iot/devices";
 import { validEvCharger, type EvCharger, type EvChargerInput, type StationEvCharger } from "../shared/ev-chargers";
 import type { AuditEntry, AuditTable } from "../shared/admin/types";
 import type { ChargingPointStatus } from "../shared/types";
@@ -41,9 +42,58 @@ const toCharger = (r: ChargerRow): EvCharger => ({
 
 const COLUMNS = "id, name, connector, power_kw, station_id, is_active, point_id";
 
+/** Every charger, a linked one with its outlet's device and live state (backoffice test buttons). */
 export async function listEvChargers(db: D1Database): Promise<EvCharger[]> {
-  const { results } = await db.prepare(`select ${COLUMNS} from ev_chargers order by name`).all<ChargerRow>();
-  return results.map(toCharger);
+  const { results } = await db
+    .prepare(
+      `select e.id, e.name, e.connector, e.power_kw, e.station_id, e.is_active, e.point_id,
+              p.outlet as p_outlet, p.status as p_status, p.last_seen_at as p_seen, p.qr_start as p_qr,
+              p.power_watts as p_power, p.energy_wh as p_energy, p.soc_percent as p_soc, d.model as d_model,
+              d.external_id as d_id, d.vendor as d_vendor, d.link as d_link, d.protocol as d_protocol,
+              coalesce(d.qr_code, d.qr_token) as d_qr
+         from ev_chargers e
+         left join charging_points p on p.id = e.point_id
+         left join devices d on d.external_id = p.device_id
+        order by e.name`,
+    )
+    .all<
+      ChargerRow & {
+        p_outlet: number | null;
+        p_status: ChargingPointStatus | null;
+        p_seen: string | null;
+        d_id: string | null;
+        d_vendor: string | null;
+        d_link: Device["link"] | null;
+        d_protocol: DeviceProtocol | null;
+        p_qr: number | null;
+        p_power: number | null;
+        p_energy: number | null;
+        p_soc: number | null;
+        d_model: string | null;
+        d_qr: string | null;
+      }
+    >();
+  return results.map((r) => ({
+    ...toCharger(r),
+    outlet:
+      r.d_id && r.p_outlet !== null
+        ? {
+            deviceId: r.d_id,
+            vendor: r.d_vendor ?? "",
+            outlet: r.p_outlet,
+            status: r.p_status ?? "free",
+            lastSeenAt: r.p_seen,
+            model: r.d_model ?? "",
+            ocpp: r.d_protocol === "ocpp1.6",
+            powerWatts: r.p_power,
+            energyWh: r.p_energy,
+            socPercent: r.p_soc,
+            switchable: canSwitch({ externalId: r.d_id, vendor: r.d_vendor ?? "", link: r.d_link!, protocol: r.d_protocol }),
+            qrStart: !!r.p_qr,
+            qrCode: r.d_qr,
+          }
+        : null,
+  }));
 }
 
 /** Active chargers of each station, by name; a connected one with its outlet's state. */

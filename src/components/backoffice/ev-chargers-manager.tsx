@@ -3,13 +3,32 @@
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
-import { EV_CONNECTORS, MAX_EV_POWER_KW, type EvCharger, type EvChargerInput } from "@shared/ev-chargers";
+import { EV_CONNECTORS, MAX_EV_POWER_KW, type EvCharger, type EvChargerInput, type EvChargerOutlet } from "@shared/ev-chargers";
+import { formatKwh, socketQrUrl } from "@shared/charging";
+import { isOffline } from "@shared/iot/charging-points";
 import type { Device } from "@shared/iot/devices";
-import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
+import { useErrorMessage, useLiveQuery, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
+import { QrImage } from "../parcels/qr-image";
 import { card, field, Loading, Pill, StaleNotice, useAdminSnapshot } from "./shared";
 
-const EMPTY: EvChargerInput = { name: "", connector: "type2", powerKw: 22, stationId: null, isActive: true, pointId: null };
+const TONE = {
+  free: "green",
+  reserved: "blue",
+  charging: "blue",
+  done: "gray",
+  fault: "red",
+  offline: "red",
+} as const;
+
+const EMPTY: EvChargerInput = {
+  name: "",
+  connector: "type2",
+  powerKw: 22,
+  stationId: null,
+  isActive: true,
+  pointId: null,
+};
 
 /** An outlet of a connected device a charger can be linked to. */
 interface OutletChoice {
@@ -24,7 +43,11 @@ function outletChoices(devices: Device[], text: (device: Device, outlet: number)
     d.points
       .filter((p) => p.outlet && p.deviceId)
       .sort((a, b) => a.outlet! - b.outlet!)
-      .map((p) => ({ id: p.id, stationId: p.stationId, label: text(d, p.outlet!) })),
+      .map((p) => ({
+        id: p.id,
+        stationId: p.stationId,
+        label: text(d, p.outlet!),
+      })),
   );
 }
 
@@ -45,9 +68,13 @@ export function EvChargersManager() {
   const { data: chargers, error, reload } = useLiveQuery(() => backend.listEvChargers());
   const { data: snap, error: snapError, reload: reloadSnap } = useAdminSnapshot();
   const { data: devices } = useLiveQuery(() => backend.listDevices());
+  const now = useNow(30_000);
+  const relativeTime = useRelativeTime();
   // null = no form; "new" = adding; otherwise the id being edited.
   const [editing, setEditing] = useState<string | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  // The charger whose test command is being sent.
+  const [testing, setTesting] = useState<string | null>(null);
   const retry = () => {
     reload();
     reloadSnap();
@@ -69,6 +96,16 @@ export function EvChargersManager() {
       setMessage({ ok: false, text: errorMessage(err) });
       return false;
     }
+  }
+
+  /** Switches a linked charger's outlet on or off, then reads its state again as the charger answers. */
+  async function test(c: EvCharger, o: EvChargerOutlet, on: boolean) {
+    if (on && !window.confirm(format(b.test.confirm, { name: c.name }))) return;
+    setMessage(null);
+    setTesting(c.id);
+    const ok = await run(() => backend.switchOutlet(o.deviceId, o.outlet, on), format(on ? b.test.started : b.test.stopped, { name: c.name }));
+    setTesting(null);
+    if (ok) for (const ms of [4_000, 12_000, 30_000]) window.setTimeout(reload, ms);
   }
 
   const form = (charger: EvCharger | null) => (
@@ -135,9 +172,27 @@ export function EvChargersManager() {
                   </div>
                   {c.pointId && (
                     <div className="text-xs text-zinc-500">
-                      {format(b.connectedHint, { outlet: outlets.find((o) => o.id === c.pointId)?.label ?? c.pointId })}
+                      {format(c.outlet && !c.outlet.qrStart ? b.linkedHint : b.connectedHint, {
+                        outlet: c.outlet
+                          ? format(b.form.pointOption, {
+                              device: c.outlet.deviceId,
+                              vendor: c.outlet.vendor,
+                              n: c.outlet.outlet,
+                            })
+                          : (outlets.find((o) => o.id === c.pointId)?.label ?? c.pointId),
+                      })}
                     </div>
                   )}
+                  <TestRow
+                    charger={c}
+                    busy={testing === c.id}
+                    now={now}
+                    relativeTime={relativeTime}
+                    onSwitch={(o, on) => test(c, o, on)}
+                    onQrStart={(on) =>
+                      run(() => backend.setQrStart(c.pointId!, on), format(on ? t.backoffice.devices.qrOn : t.backoffice.devices.qrOff, { label: c.name }))
+                    }
+                  />
                 </div>
                 <div className="flex flex-wrap items-center gap-3 text-sm">
                   {/* Assigning is the everyday step, so it saves right away. */}
@@ -150,7 +205,12 @@ export function EvChargersManager() {
                       onChange={(e) =>
                         run(
                           // Another station: its outlet is not there, so the link goes.
-                          () => backend.saveEvCharger(c.id, { ...inputOf(c), stationId: e.target.value || null, pointId: null }),
+                          () =>
+                            backend.saveEvCharger(c.id, {
+                              ...inputOf(c),
+                              stationId: e.target.value || null,
+                              pointId: null,
+                            }),
                           format(b.saved, { name: c.name }),
                         )
                       }
@@ -193,6 +253,125 @@ export function EvChargersManager() {
       )}
     </div>
   );
+}
+
+/** Live state of a linked charger and the buttons to switch it on and off for a test, without a customer or payment. */
+function TestRow({
+  charger,
+  busy,
+  now,
+  relativeTime,
+  onSwitch,
+  onQrStart,
+}: {
+  charger: EvCharger;
+  busy: boolean;
+  now: Date;
+  relativeTime: (iso: string, now: Date) => string;
+  onSwitch: (outlet: EvChargerOutlet, on: boolean) => void;
+  onQrStart: (on: boolean) => void;
+}) {
+  const { t, locale } = useI18n();
+  const b = t.backoffice.evChargers.test;
+  const d = t.backoffice.devices;
+  const [qrShown, setQrShown] = useState(false);
+  const o = charger.outlet;
+  if (!charger.pointId || !o) return <p className="mt-1 text-xs text-zinc-500">{b.notLinked}</p>;
+  const offline = isOffline(
+    {
+      id: charger.pointId,
+      stationId: charger.stationId ?? "",
+      label: "",
+      status: o.status,
+      deviceId: o.deviceId,
+      outlet: o.outlet,
+      powerWatts: null,
+      lastSeenAt: o.lastSeenAt,
+    },
+    now,
+  );
+  const status = offline ? "offline" : o.status;
+  const button = "rounded-full border px-3 py-1 text-xs font-medium disabled:opacity-50";
+  return (
+    <div className="mt-2 space-y-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-zinc-500">{b.state}</span>
+        <Pill tone={TONE[status]}>{t.backoffice.devices.status[status]}</Pill>
+        <span className="text-zinc-500">
+          {t.backoffice.devices.lastSeen}: {o.lastSeenAt ? relativeTime(o.lastSeenAt, now) : t.backoffice.devices.never}
+        </span>
+        {o.switchable ? (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onSwitch(o, true)}
+              title={b.hint}
+              className={`${button} border-gp-green-dark text-gp-green-dark`}
+            >
+              {b.start}
+            </button>
+            <button type="button" disabled={busy} onClick={() => onSwitch(o, false)} className={`${button} border-zinc-400 text-zinc-700 dark:text-zinc-300`}>
+              {b.stop}
+            </button>
+            {offline && <span className="text-amber-700 dark:text-amber-400">{b.offlineHint}</span>}
+          </>
+        ) : (
+          <span className="text-zinc-500">{b.notSwitchable}</span>
+        )}
+      </div>
+      {/* What the device is and what it reports live, as on the customer's charge screen. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-zinc-600 dark:text-zinc-400">
+        <span>
+          {[o.vendor, o.model].filter(Boolean).join(" ") || o.deviceId} · {o.ocpp ? b.viaOcpp : b.viaCloud}
+        </span>
+        {status === "charging" && o.powerWatts !== null && (
+          <span>
+            {t.charging.power}: {o.powerWatts} W
+          </span>
+        )}
+        {status === "charging" && o.energyWh !== null && (
+          <span>
+            {t.charging.energy}: {formatKwh(o.energyWh, locale)}
+          </span>
+        )}
+        {o.socPercent !== null && status === "charging" && (
+          <span>
+            {t.charging.carBattery}: {o.socPercent} %
+          </span>
+        )}
+        <span>{o.ocpp ? b.startsWithCard : b.noCard}</span>
+      </div>
+      {/* Customers start it by scanning the box's QR code; the motorbike devices page does not list this outlet. */}
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2" title={d.qrStartHint}>
+          <input
+            type="checkbox"
+            checked={o.qrStart}
+            disabled={!o.switchable && !o.qrStart}
+            onChange={(e) => onQrStart(e.target.checked)}
+            className="h-4 w-4 accent-gp-green-dark"
+          />
+          {d.qrStart}
+        </label>
+        {o.qrStart && o.qrCode && (
+          <button type="button" onClick={() => setQrShown(!qrShown)} aria-expanded={qrShown} className="text-gp-green-dark hover:underline">
+            {qrShown ? d.qrHide : d.qrShow}
+          </button>
+        )}
+      </div>
+      {o.qrStart && o.qrCode && qrShown && (
+        <div className="flex flex-col items-start gap-1">
+          <QrImage text={socketQrUrl(qrOrigin(), o.qrCode, o.outlet)} label={`${d.qrStart} ${charger.name}`} size={180} />
+          <p className="text-zinc-500">{b.qrHint}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function qrOrigin(): string {
+  return window.location.protocol.startsWith("http") ? window.location.origin : "https://app.poinderecharge.com";
 }
 
 function ChargerForm({
@@ -304,12 +483,7 @@ function OutletField({
   return (
     <label className="flex flex-col gap-1 text-sm sm:col-span-2">
       {f.point}
-      <select
-        value={input.pointId ?? ""}
-        onChange={(e) => onChange(e.target.value || null)}
-        disabled={!input.stationId || here.length === 0}
-        className={field}
-      >
+      <select value={input.pointId ?? ""} onChange={(e) => onChange(e.target.value || null)} disabled={!input.stationId || here.length === 0} className={field}>
         <option value="">{f.noPoint}</option>
         {here.map((o) => {
           const other = taken.find((x) => x.pointId === o.id);

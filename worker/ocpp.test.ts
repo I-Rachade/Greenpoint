@@ -160,13 +160,22 @@ describe("OCPP charge points", () => {
     await handleOcppCall(d1, ID, "MeterValues", {
       connectorId: 2,
       transactionId: start.transactionId,
-      meterValue: [{ timestamp: "2026-10-15T06:10:00Z", sampledValue: [{ value: "10350" }, { value: "260", measurand: "Power.Active.Import", unit: "W" }] }],
+      meterValue: [
+        {
+          timestamp: "2026-10-15T06:10:00Z",
+          sampledValue: [{ value: "10350" }, { value: "260", measurand: "Power.Active.Import", unit: "W" }, { value: "63.4", measurand: "SoC", unit: "Percent" }],
+        },
+      ],
     });
-    expect(db.prepare("select status, power_watts, energy_wh from charging_points where outlet = 2").get()).toEqual({
+    expect(db.prepare("select status, power_watts, energy_wh, soc_percent from charging_points where outlet = 2").get()).toEqual({
       status: "charging",
       power_watts: 260,
       energy_wh: 350,
+      soc_percent: 63,
     });
+    // A reading without the car's level keeps the last one.
+    await handleOcppCall(d1, ID, "MeterValues", { connectorId: 2, transactionId: start.transactionId, meterValue: [{ timestamp: "2026-10-15T06:11:00Z", sampledValue: [{ value: "10400" }] }] });
+    expect(db.prepare("select soc_percent from charging_points where outlet = 2").get()).toEqual({ soc_percent: 63 });
 
     // Switch off: the connector's open charge is stopped.
     await stopOutlet(env, CP, 2, "admin");

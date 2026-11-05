@@ -141,9 +141,10 @@ export function ingest(db: D1Database): Ingest {
       statements.push(
         db
           .prepare(
-            "update charging_points set status = ?, power_watts = coalesce(?, power_watts), energy_wh = coalesce(?, energy_wh) where id = ?",
+            `update charging_points set status = ?1, power_watts = coalesce(?2, power_watts), energy_wh = coalesce(?3, energy_wh),
+               soc_percent = case when ?1 = 'free' then null else coalesce(?4, soc_percent) end where id = ?5`,
           )
-          .bind(status, o.power_watts ?? null, o.energy_wh ?? null, point.id),
+          .bind(status, o.power_watts ?? null, o.energy_wh ?? null, o.soc_percent ?? null, point.id),
       );
       // The charge staff started on this outlet adds up the energy and ends with it (worker/charging.ts).
       statements.push(chargeReadingStatement(db, point.id, o.status, o.energy_wh, now, o.transaction_id, device.protocol === "ocpp1.6"));

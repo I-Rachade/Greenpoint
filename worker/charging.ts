@@ -64,6 +64,7 @@ interface SessionRow {
   payment_ref: string | null;
   paid_at: string | null;
   power_watts: number | null;
+  soc_percent: number | null;
   point_status: string | null;
   full_name: string | null;
   phone: string | null;
@@ -79,7 +80,7 @@ interface SessionRow {
 }
 
 const SESSION_SELECT = `
-  select cs.*, s.name as station_name, p.power_watts, p.status as point_status,
+  select cs.*, s.name as station_name, p.power_watts, p.soc_percent, p.status as point_status,
          u.full_name, u.phone, u.email,
          (select points from greenpoint_ledger g where g.charging_session_id = cs.id) as greenpoints
     from charging_sessions cs
@@ -98,6 +99,8 @@ function toSession(r: SessionRow): ChargeSession {
     customer: r.user_id ? personLabel({ fullName: r.full_name, phone: r.phone, email: r.email }) : null,
     powerWatts: r.status === "charging" && r.point_status === "charging" ? (r.power_watts ?? 0) : 0,
     energyWh: r.energy_wh,
+    // The car's battery level while it charges, from a charger that reads it (0069).
+    ...(r.status === "charging" && r.soc_percent !== null && r.soc_percent !== undefined ? { socPercent: r.soc_percent } : {}),
     tariff,
     amountXof: r.status === "paid" ? (r.amount_xof ?? 0) : chargePrice(r.energy_wh, tariff),
     startedAt: r.started_at,
@@ -558,7 +561,7 @@ async function openCharge(
       ),
     ...(hold ? holdStatements(db, hold, now) : []),
     // Old values of the previous charge must not show as this one's.
-    db.prepare("update charging_points set power_watts = null, energy_wh = null where id = ? and exists (select 1 from charging_sessions where id = ?)").bind(point.id, id),
+    db.prepare("update charging_points set power_watts = null, energy_wh = null, soc_percent = null where id = ? and exists (select 1 from charging_sessions where id = ?)").bind(point.id, id),
     db
       .prepare(
         `insert into audit_log (at, actor, table_name, action, row_id, station_id, user_id, changes)
@@ -1202,7 +1205,7 @@ export async function openCardCharge(
       .bind(id, p.station_id, p.id, deviceId, outlet, label, card.tag, card.userId, tariff.kwhXof, tariff.minXof, actor, now, creditLimit, hold.trxId, order),
     ...holdStatements(db, hold, now),
     // Old values of the previous charge must not show as this one's.
-    db.prepare("update charging_points set power_watts = null, energy_wh = null where id = ?").bind(p.id),
+    db.prepare("update charging_points set power_watts = null, energy_wh = null, soc_percent = null where id = ?").bind(p.id),
     audit(db, actor, "insert", { id, station_id: p.station_id, user_id: card.userId }, {
       point: label,
       customer: card.userId,
