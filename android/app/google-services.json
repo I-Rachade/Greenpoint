@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "954591325489",
+    "project_id": "poinderecharge-app",
+    "storage_bucket": "poinderecharge-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:954591325489:android:e1021c79385317c84d9410",
+        "android_client_info": {
+          "package_name": "com.poinderecharge.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD811Kn3QgOL44Ix6TrERRVz-xImgRj4p8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

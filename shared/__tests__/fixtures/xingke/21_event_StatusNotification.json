@@ -1,0 +1,31 @@
+{
+  "messageId": "evt-0021",
+  "deviceId": "XK16-DEMO-000001",
+  "action": "StatusNotification",
+  "timestamp": "2026-10-13T02:00:00Z",
+  "data": {
+    "temperature": 26.01,
+    "voltage": 220.35,
+    "firmwareVersion": "2.1.22",
+    "connectors": [
+      {
+        "connectorId": 1,
+        "status": "Available",
+        "errorCode": "NoError",
+        "vendorCode": "00"
+      },
+      {
+        "connectorId": 2,
+        "status": "Charging",
+        "errorCode": "NoError",
+        "vendorCode": "01"
+      },
+      {
+        "connectorId": 3,
+        "status": "Faulted",
+        "errorCode": "RelayStuck",
+        "vendorCode": "90"
+      }
+    ]
+  }
+}

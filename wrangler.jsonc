@@ -1,0 +1,64 @@
+// Cloudflare Worker: the static web app (`out/`) plus the API in `worker/`
+// (D1 database, R2 images, SMS login). See docs/DEPLOYMENT.md.
+// The Worker name must match the project name in the Cloudflare dashboard.
+// The "greenpoint" Worker belongs to the landing page; this is a separate one.
+// The Worker keeps its original name although the app is now called poinderecharge.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pointderecharge-app",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-10-01",
+  "build": { "command": "npm run build" },
+  "routes": [{ "pattern": "app.poinderecharge.com", "custom_domain": true }],
+  "assets": {
+    "directory": "./out",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    // Only /api/* and the sockets' short QR links (/q/*) run the Worker code; pages and files are served directly.
+    "run_worker_first": ["/api/*", "/q/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "poinderecharge-db",
+      "database_id": "fb6b9f3a-e01b-4391-9237-dced6151602a",
+      "migrations_dir": "worker/migrations"
+    }
+  ],
+  // Each OCPP charge point keeps a WebSocket to its own Durable Object (worker/ocpp.ts).
+  // One more holds the Tutrack MQTT subscription of the Share trackers (worker/tutrack-bridge.ts).
+  "durable_objects": {
+    "bindings": [
+      { "name": "OCPP", "class_name": "OcppConnection" },
+      { "name": "TUTRACK", "class_name": "TutrackBridge" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["OcppConnection"] },
+    { "tag": "v2", "new_sqlite_classes": ["TutrackBridge"] }
+  ],
+  // Request limits per minute (worker/security.ts). Counted per Cloudflare location, so a
+  // little more can pass; enough against robots. namespace_id: any number unique in the account.
+  "ratelimits": [
+    { "name": "API_IP_LIMIT", "namespace_id": "62001", "simple": { "limit": 300, "period": 60 } },
+    { "name": "API_USER_LIMIT", "namespace_id": "62002", "simple": { "limit": 120, "period": 60 } },
+    { "name": "API_WRITE_LIMIT", "namespace_id": "62003", "simple": { "limit": 30, "period": 60 } },
+    { "name": "API_STAFF_LIMIT", "namespace_id": "62004", "simple": { "limit": 600, "period": 60 } },
+    { "name": "PARTNER_LIMIT", "namespace_id": "62005", "simple": { "limit": 60, "period": 60 } }
+  ],
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "poinderecharge-media" }],
+  // Login codes by e-mail through Cloudflare Email Service. The domain must be
+  // onboarded under Email Service > Email Sending (see docs/DEPLOYMENT.md).
+  "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["noreply@poinderecharge.com"] }],
+  // Settings and secrets (TEST_OTP, DIDIT_API_KEY, ACCESS_AUD, …) are set in the
+  // dashboard; keep them on deploy. See worker/env.ts.
+  "keep_vars": true,
+  // Daily at 08:00 in Lomé (UTC): parcel pickup reminders and returns (worker/parcels.ts).
+  // Every minute: webhooks to partner apps and their retries (worker/partners.ts), and driver
+  // offers sent out and run out (worker/drivers.ts runDispatch).
+  "triggers": { "crons": ["0 8 * * *", "* * * * *"] },
+  "observability": { "enabled": true },
+  // Branches other than production build a Preview (`npx wrangler preview`),
+  // which needs this block. Empty: Previews use the top-level settings.
+  "previews": {}
+}

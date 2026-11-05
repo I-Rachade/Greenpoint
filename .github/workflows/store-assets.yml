@@ -1,0 +1,75 @@
+name: Store screenshots
+
+# Phone screenshots for the Google Play and App Store listings, taken from the demo build
+# (sample stations, no real accounts). Run again from Actions after UI changes.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/store-screenshots.mjs
+      - .github/workflows/store-assets.yml
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-24.04 # Playwright 1.56 cannot install Chromium deps on ubuntu-latest (26.04)
+    permissions:
+      contents: write # publish the images as release downloads
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
+      - name: Take screenshots (FR, EN)
+        run: |
+          python3 -m http.server 4173 --directory out >/dev/null 2>&1 &
+          sleep 2
+          node scripts/store-screenshots.mjs http://localhost:4173 store-assets/fr fr
+          node scripts/store-screenshots.mjs http://localhost:4173 store-assets/en en
+      - name: Take iPhone screenshots (FR, EN)
+        run: |
+          python3 -m http.server 4173 --directory out >/dev/null 2>&1 &
+          sleep 2
+          node scripts/store-screenshots.mjs http://localhost:4173 app-store-assets/fr fr ios
+          node scripts/store-screenshots.mjs http://localhost:4173 app-store-assets/en en ios
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: play-store-screenshots
+          path: store-assets
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: app-store-screenshots
+          path: app-store-assets
+      # Direct downloads: https://github.com/I-Rachade/Greenpoint/releases/tag/play-store-assets
+      - name: Publish screenshots
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p upload
+          for lang in fr en; do
+            for f in store-assets/$lang/*.png; do cp "$f" "upload/$lang-$(basename "$f")"; done
+          done
+          if ! gh release view play-store-assets --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create play-store-assets --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+              --title "Google Play Screenshots" --notes "Handy-Screenshots (1080 × 1920) für den Store-Eintrag, aus der Demo-Version. Werden bei jedem Lauf ersetzt."
+          fi
+          gh release upload play-store-assets upload/*.png --repo "$GITHUB_REPOSITORY" --clobber
+      # Direct downloads: https://github.com/I-Rachade/Greenpoint/releases/tag/app-store-assets
+      - name: Publish iPhone screenshots
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p upload-ios
+          for lang in fr en; do
+            for f in app-store-assets/$lang/*.png; do cp "$f" "upload-ios/$lang-$(basename "$f")"; done
+          done
+          if ! gh release view app-store-assets --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create app-store-assets --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+              --title "App Store Screenshots" --notes "iPhone-Screenshots (1320 × 2868, 6,9 Zoll) für den App-Store-Eintrag, aus der Demo-Version. Werden bei jedem Lauf ersetzt."
+          fi
+          gh release upload app-store-assets upload-ios/*.png --repo "$GITHUB_REPOSITORY" --clobber
