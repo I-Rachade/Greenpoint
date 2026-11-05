@@ -13,10 +13,10 @@ import { isNativeApp } from "@/lib/native";
 import { useMyBattery, type MyBatteryReading } from "@/lib/prefs";
 import { usePosition } from "@/lib/use-position";
 import { useApp } from "./app-provider";
-import { BatteryIcon, BellIcon, BoxIcon, ChevronIcon, InfoIcon, NavigateIcon, QrIcon, ScooterIcon, StarIcon, WalletIcon } from "./icons";
+import { BatteryIcon, BellIcon, BoxIcon, ChevronIcon, InfoIcon, NavigateIcon, QrIcon, ScooterIcon, StarIcon, UserIcon, WalletIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
-import { stationHref } from "./station-card";
-import { useToast } from "./ui";
+import { StationCard, stationHref } from "./station-card";
+import { SkeletonCard, useToast } from "./ui";
 
 // MapLibre needs the browser (WebGL), so it is never rendered on the server.
 const StationMap = dynamic(() => import("./station-map").then((m) => m.StationMap), { ssr: false });
@@ -139,7 +139,7 @@ function QuickAction({ href, icon: Icon, label, primary }: { href: string; icon:
     <Link
       href={href}
       className={`flex min-h-24 min-w-0 flex-col items-center justify-center gap-2 rounded-[20px] p-2 text-center active:scale-[0.99] ${
-        primary ? "bg-gp-forest text-white" : "border border-gp-border bg-gp-surface dark:border-white/10"
+        primary ? "bg-gp-forest text-white hover:bg-gp-forest/90" : "border border-gp-border bg-gp-surface hover:border-gp-green dark:border-white/10"
       }`}
     >
       <span
@@ -160,19 +160,23 @@ function QuickAction({ href, icon: Icon, label, primary }: { href: string; icon:
 export function MyScooterHome() {
   const { t, locale } = useI18n();
   const M = t.myScooter;
-  const { backend, features, profile } = useApp();
+  const { backend, features, profile, ready } = useApp();
+  // Visitors see the same home, with an invitation to sign up in place of their battery.
+  const guest = ready && !profile;
   const now = useNow(60_000);
   const relativeTime = useRelativeTime();
   const { position } = usePosition();
   const [battery, setBattery] = useMyBattery();
   const { data: stations } = useLiveQuery(() => backend.listStations());
-  const { data: lastSwap } = useLiveQuery(() => backend.myLastSwap().catch(() => null));
-  const { data: greenpoint } = useLiveQuery(() => backend.myGreenpoint().catch(() => null));
+  const signedIn = !!profile;
+  const { data: lastSwap } = useLiveQuery(() => (signedIn ? backend.myLastSwap().catch(() => null) : Promise.resolve(null)), String(signedIn));
+  const { data: greenpoint } = useLiveQuery(() => (signedIn ? backend.myGreenpoint().catch(() => null) : Promise.resolve(null)), String(signedIn));
 
+  const all = useMemo(() => rankStations(stations ?? [], position, DEFAULT_FILTER), [stations, position]);
   const nearest = useMemo(() => {
-    const ranked = rankStations(stations ?? [], position, DEFAULT_FILTER).filter(({ station }) => offersSwap(station.kind) && isOpenNow(station));
+    const ranked = all.filter(({ station }) => offersSwap(station.kind) && isOpenNow(station));
     return ranked.find(({ station }) => availableBatteries(station) > 0) ?? ranked[0] ?? null;
-  }, [stations, position]);
+  }, [all]);
   const single = useMemo(() => (nearest ? [nearest.station] : []), [nearest]);
 
   const firstName = profile?.fullName?.trim().split(/\s+/)[0] ?? "";
@@ -186,8 +190,8 @@ export function MyScooterHome() {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto pb-6">
-      <header className="bg-gp-forest px-4 pb-16 pt-4 text-white">
-        <div className="flex items-center gap-3">
+      <header className="bg-gp-forest px-4 pb-16 pt-4 text-white md:pt-6">
+        <div className="mx-auto flex max-w-5xl items-center gap-3">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-gp-green font-heading text-lg font-bold text-gp-forest">
             {firstName ? firstName[0].toUpperCase() : "⚡"}
           </span>
@@ -207,92 +211,128 @@ export function MyScooterHome() {
               {format(M.points, { n: new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-GB").format(greenpoint.points) })}
             </Link>
           )}
-          <Link href="/notifications" aria-label={t.ui.alerts.title} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white hover:bg-white/10">
-            <BellIcon size={22} />
-          </Link>
+          {/* On computers the bell is already in the top bar. */}
+          {profile && (
+            <Link href="/notifications" aria-label={t.ui.alerts.title} className="flex h-10 w-10 shrink-0 md:hidden items-center justify-center rounded-full text-white hover:bg-white/10">
+              <BellIcon size={22} />
+            </Link>
+          )}
         </div>
       </header>
 
-      <div className="-mt-12 space-y-4 px-4">
-        <section className="rounded-[20px] border border-gp-border bg-gp-surface p-4 shadow-sm dark:border-white/10">
-          <div className="flex items-baseline justify-between gap-2">
-            <h1 className="font-heading text-lg font-bold">{M.title}</h1>
-            {lastSwap?.batteryTypeLabel && <span className="min-w-0 truncate text-sm text-gp-muted dark:text-zinc-400">{lastSwap.batteryTypeLabel}</span>}
-          </div>
-          <div className="mt-3 flex items-center gap-4">
-            <Gauge pct={pct} />
-            <div className="min-w-0 flex-1">
-              {battery ? (
-                <>
-                  <p className="flex items-baseline gap-2">
-                    <span className="font-heading text-5xl font-bold leading-none tabular-nums">{kmLeft(battery)}</span>
-                    <span className="text-base font-semibold">{M.kmLeft}</span>
-                  </p>
-                  <p className={`mt-2 flex items-start gap-1.5 text-sm font-semibold ${low ? "text-amber-800 dark:text-amber-300" : "text-gp-green-dark dark:text-gp-green"}`}>
-                    {low && <InfoIcon size={18} className="mt-px shrink-0" />}
-                    {format(low ? M.low : M.battery, { pct: pct ?? 0 })}
-                  </p>
-                  <p className="mt-1 text-xs text-gp-muted dark:text-zinc-400">{format(M.readAt, { when: relativeTime(battery.at, now) })}</p>
-                </>
-              ) : (
-                <>
-                  <p className="font-heading text-xl font-bold">{M.unknown}</p>
-                  <p className="mt-1 text-sm text-gp-muted dark:text-zinc-400">{M.readHint}</p>
-                </>
-              )}
+      {/* Phones: one column. Computers: the scooter beside the nearest station, quick actions below. */}
+      <div className="mx-auto -mt-12 max-w-5xl space-y-4 px-4 md:grid md:grid-cols-2 md:items-start md:gap-4 md:space-y-0">
+        {!ready ? (
+          <SkeletonCard className="h-48 rounded-[20px]" />
+        ) : guest ? (
+          <section className="rounded-[20px] border border-gp-border bg-gp-surface p-4 shadow-sm dark:border-white/10">
+            <div className="flex items-center gap-3">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[14px] bg-gp-green/15 text-gp-green-dark dark:text-gp-green">
+                <ScooterIcon size={26} />
+              </span>
+              <h1 className="font-heading text-lg font-bold">{M.guestTitle}</h1>
             </div>
-          </div>
-          <p className="mt-3 text-sm text-gp-muted dark:text-zinc-400">
-            {lastSwap
-              ? lastSwap.outPct !== null
-                ? format(M.lastSwapPct, { when: day(lastSwap.at), station: lastSwap.stationName, pct: lastSwap.outPct })
-                : format(M.lastSwap, { when: day(lastSwap.at), station: lastSwap.stationName })
-              : M.noSwap}
-          </p>
-          <ReadButton demo={backend.mode === "demo"} hasReading={!!battery} onRead={setBattery} />
-        </section>
-
-        {nearest ? (
-          <>
-            <section className="flex gap-3 rounded-[20px] border border-gp-green/30 bg-gp-green/10 p-4">
-              <Link href={stationHref(nearest.station.id)} className="min-w-0 flex-1">
-                <h2 className="font-heading text-base font-bold">{M.nearest}</h2>
-                <p className="mt-1 text-sm">
-                  <span className="font-semibold">{nearest.station.name}</span>
-                  {nearest.distance !== null && (
-                    <>
-                      {" · "}
-                      <b>{formatDistance(nearest.distance)}</b> · {format(t.stationLook.summary.minutes, { n: scooterMinutes(nearest.distance) })}
-                    </>
-                  )}
-                </p>
-                <p className="mt-2 flex flex-wrap gap-2 text-sm font-semibold">
-                  <span className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-gp-surface px-3 text-gp-green-dark dark:text-gp-green">
-                    <BatteryIcon size={16} />
-                    {availableBatteries(nearest.station) > 0 ? format(M.full, { n: availableBatteries(nearest.station) }) : M.noneFull}
-                  </span>
-                  <span className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-gp-surface px-3 text-gp-green-dark dark:text-gp-green">
-                    <span aria-hidden className="h-2 w-2 rounded-full bg-gp-green-dark dark:bg-gp-green" />
-                    {M.open}
-                  </span>
-                </p>
+            <p className="mt-2 text-sm text-gp-muted dark:text-zinc-400">{M.guestBody}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Link
+                href="/login?inscription=1"
+                className="inline-flex min-h-11 items-center gap-2 rounded-[14px] bg-gp-green-dark px-4 text-sm font-semibold text-white hover:bg-gp-forest"
+              >
+                <UserIcon size={18} />
+                {M.guestSignup}
               </Link>
               <Link
-                href="/carte"
-                aria-label={M.seeMap}
-                className="relative h-28 w-28 shrink-0 overflow-hidden rounded-[14px] border-2 border-gp-surface sm:w-40 [&_*]:pointer-events-none"
+                href="/login"
+                className="inline-flex min-h-11 items-center rounded-[14px] border-2 border-gp-green-dark px-4 text-sm font-semibold text-gp-green-dark dark:border-gp-green dark:text-gp-green"
               >
-                <StationMap
-                  stations={single}
-                  position={position}
-                  selectedId={nearest.station.id}
-                  onSelect={() => undefined}
-                  controls={false}
-                  route
-                  padding={{ top: 24, bottom: 16, left: 16, right: 16 }}
-                />
+                {M.guestLogin}
               </Link>
-            </section>
+            </div>
+          </section>
+        ) : (
+          <section className="rounded-[20px] border border-gp-border bg-gp-surface p-4 shadow-sm dark:border-white/10">
+            <div className="flex items-baseline justify-between gap-2">
+              <h1 className="font-heading text-lg font-bold">{M.title}</h1>
+              {lastSwap?.batteryTypeLabel && <span className="min-w-0 truncate text-sm text-gp-muted dark:text-zinc-400">{lastSwap.batteryTypeLabel}</span>}
+            </div>
+            <div className="mt-3 flex items-center gap-4">
+              <Gauge pct={pct} />
+              <div className="min-w-0 flex-1">
+                {battery ? (
+                  <>
+                    <p className="flex items-baseline gap-2">
+                      <span className="font-heading text-5xl font-bold leading-none tabular-nums">{kmLeft(battery)}</span>
+                      <span className="text-base font-semibold">{M.kmLeft}</span>
+                    </p>
+                    <p className={`mt-2 flex items-start gap-1.5 text-sm font-semibold ${low ? "text-amber-800 dark:text-amber-300" : "text-gp-green-dark dark:text-gp-green"}`}>
+                      {low && <InfoIcon size={18} className="mt-px shrink-0" />}
+                      {format(low ? M.low : M.battery, { pct: pct ?? 0 })}
+                    </p>
+                    <p className="mt-1 text-xs text-gp-muted dark:text-zinc-400">{format(M.readAt, { when: relativeTime(battery.at, now) })}</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-heading text-xl font-bold">{M.unknown}</p>
+                    <p className="mt-1 text-sm text-gp-muted dark:text-zinc-400">{M.readHint}</p>
+                  </>
+                )}
+              </div>
+            </div>
+            <p className="mt-3 text-sm text-gp-muted dark:text-zinc-400">
+              {lastSwap
+                ? lastSwap.outPct !== null
+                  ? format(M.lastSwapPct, { when: day(lastSwap.at), station: lastSwap.stationName, pct: lastSwap.outPct })
+                  : format(M.lastSwap, { when: day(lastSwap.at), station: lastSwap.stationName })
+                : M.noSwap}
+            </p>
+            <ReadButton demo={backend.mode === "demo"} hasReading={!!battery} onRead={setBattery} />
+          </section>
+        )}
+
+        {nearest ? (
+          <div className="space-y-4">
+            {/* The tint sits on a solid card: on computers this card overlaps the dark header. */}
+            <div className="rounded-[20px] bg-gp-surface">
+              <section className="flex gap-3 rounded-[20px] border border-gp-green/30 bg-gp-green/10 p-4">
+                <Link href={stationHref(nearest.station.id)} className="min-w-0 flex-1">
+                  <h2 className="font-heading text-base font-bold">{M.nearest}</h2>
+                  <p className="mt-1 text-sm">
+                    <span className="font-semibold">{nearest.station.name}</span>
+                    {nearest.distance !== null && (
+                      <>
+                        {" · "}
+                        <b>{formatDistance(nearest.distance)}</b> · {format(t.stationLook.summary.minutes, { n: scooterMinutes(nearest.distance) })}
+                      </>
+                    )}
+                  </p>
+                  <p className="mt-2 flex flex-wrap gap-2 text-sm font-semibold">
+                    <span className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-gp-surface px-3 text-gp-green-dark dark:text-gp-green">
+                      <BatteryIcon size={16} />
+                      {availableBatteries(nearest.station) > 0 ? format(M.full, { n: availableBatteries(nearest.station) }) : M.noneFull}
+                    </span>
+                    <span className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-gp-surface px-3 text-gp-green-dark dark:text-gp-green">
+                      <span aria-hidden className="h-2 w-2 rounded-full bg-gp-green-dark dark:bg-gp-green" />
+                      {M.open}
+                    </span>
+                  </p>
+                </Link>
+                <Link
+                  href="/carte"
+                  aria-label={M.seeMap}
+                  className="relative h-28 w-28 shrink-0 overflow-hidden rounded-[14px] border-2 border-gp-surface sm:w-40 md:h-36 lg:w-48 [&_*]:pointer-events-none"
+                >
+                  <StationMap
+                    stations={single}
+                    position={position}
+                    selectedId={nearest.station.id}
+                    onSelect={() => undefined}
+                    controls={false}
+                    route
+                    padding={{ top: 24, bottom: 16, left: 16, right: 16 }}
+                  />
+                </Link>
+              </section>
+            </div>
             <Link
               href={stationHref(nearest.station.id)}
               className="flex min-h-14 items-center justify-center gap-2 rounded-[14px] bg-gp-green-dark px-5 font-heading text-lg font-bold text-white hover:bg-gp-forest"
@@ -300,12 +340,12 @@ export function MyScooterHome() {
               <NavigateIcon size={22} />
               {M.go}
             </Link>
-          </>
+          </div>
         ) : (
           stations && <p className="rounded-[20px] border border-gp-border bg-gp-surface p-4 text-sm text-gp-muted dark:border-white/10">{M.noStation}</p>
         )}
 
-        <section>
+        <section className="md:col-span-2">
           <div className="flex items-baseline justify-between">
             <h2 className="font-heading text-lg font-bold">{M.quick}</h2>
             <Link href="/carte" className="inline-flex items-center gap-0.5 text-sm font-semibold text-gp-green-dark dark:text-gp-green">
@@ -320,6 +360,25 @@ export function MyScooterHome() {
             {features.parcels && <QuickAction href="/colis" icon={BoxIcon} label={M.parcels} />}
           </div>
         </section>
+
+        {guest && all.length > 0 && (
+          <section className="md:col-span-2">
+            <div className="flex items-baseline justify-between">
+              <h2 className="font-heading text-lg font-bold">{M.nearby}</h2>
+              <Link href="/stations" className="inline-flex items-center gap-0.5 text-sm font-semibold text-gp-green-dark dark:text-gp-green">
+                {M.viewAll}
+                <ChevronIcon size={16} />
+              </Link>
+            </div>
+            <ul className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
+              {all.slice(0, 4).map(({ station, distance }) => (
+                <li key={station.id} className="min-w-0">
+                  <StationCard station={station} distance={distance} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </div>
     </div>
   );

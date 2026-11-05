@@ -1,5 +1,10 @@
-import { LoginForm } from "@/components/login-form";
+import { Suspense } from "react";
+import { LoginPageForm } from "@/components/login-form";
 
 export default function LoginPage() {
-  return <LoginForm />;
+  return (
+    <Suspense>
+      <LoginPageForm />
+    </Suspense>
+  );
 }

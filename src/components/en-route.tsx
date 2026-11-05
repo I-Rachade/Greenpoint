@@ -16,7 +16,7 @@ import { useI18n } from "./i18n-provider";
 import { LoadFailed } from "./load-state";
 import { effectiveStatus } from "./reservation-list";
 import { StationMap } from "./station-map";
-import { Button, EmptyState, SkeletonCard, formatRemaining, useCountdown } from "./ui";
+import { Button, EmptyState, SkeletonCard, formatRemaining, useCountdown, useWideScreen } from "./ui";
 
 /** A new point is sent at most every half minute, or sooner once the customer moved this far. */
 const SHARE_EVERY_MS = 30_000;
@@ -94,6 +94,9 @@ function Trip({ reservation: r, station, onChanged }: { reservation: Reservation
   const sharing = sharingLocal ?? !!r.sharing;
   useSharePosition(r.id, sharing, position);
   const single = useMemo(() => [station], [station]);
+  // On computers the route is framed to the right of the floating sheet.
+  const wide = useWideScreen();
+  const padding = useMemo(() => (wide ? { top: 60, bottom: 60, left: 480, right: 60 } : { top: 110, bottom: 50, left: 50, right: 50 }), [wide]);
 
   const distance = position ? distanceMeters(position, station) : null;
   const minutes = distance !== null ? scooterMinutes(distance) : null;
@@ -143,7 +146,9 @@ function Trip({ reservation: r, station, onChanged }: { reservation: Reservation
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+    // Phones: the map, then the sheet below it. Computers: the map fills the page and the sheet
+    // floats on its left, like a navigation app.
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:relative md:overflow-hidden">
       <div className="relative min-h-[220px] flex-1">
         <div className="absolute inset-0">
           <StationMap
@@ -153,11 +158,11 @@ function Trip({ reservation: r, station, onChanged }: { reservation: Reservation
             onSelect={() => undefined}
             route
             controls={false}
-            padding={{ top: 110, bottom: 50, left: 50, right: 50 }}
+            padding={padding}
           />
         </div>
 
-        <div className="absolute inset-x-0 top-0 flex items-start gap-2 p-3">
+        <div className="absolute inset-x-0 top-0 flex items-start gap-2 p-3 md:right-auto md:w-[452px] md:p-4">
           <button
             type="button"
             onClick={() => (window.history.length > 1 ? router.back() : router.push("/reservations"))}
@@ -192,8 +197,11 @@ function Trip({ reservation: r, station, onChanged }: { reservation: Reservation
         </div>
       </div>
 
-      <section aria-label={E.title} className="relative -mt-5 rounded-t-[20px] bg-gp-surface px-4 pb-10 pt-3 shadow-[0_-8px_24px_rgba(0,0,0,.12)]">
-        <span aria-hidden className="mx-auto mb-3 block h-1 w-10 rounded-full bg-gp-border dark:bg-white/20" />
+      <section
+        aria-label={E.title}
+        className="relative -mt-5 rounded-t-[20px] bg-gp-surface px-4 pb-10 pt-3 shadow-[0_-8px_24px_rgba(0,0,0,.12)] md:absolute md:bottom-4 md:left-4 md:mt-0 md:max-h-[calc(100%-7rem)] md:w-[420px] md:overflow-y-auto md:rounded-[20px] md:pb-4 md:pt-4 md:shadow-xl"
+      >
+        <span aria-hidden className="mx-auto mb-3 block h-1 w-10 rounded-full bg-gp-border md:hidden dark:bg-white/20" />
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
             {minutes !== null && distance !== null ? (

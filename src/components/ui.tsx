@@ -36,6 +36,25 @@ export function useReducedMotion(): boolean {
   );
 }
 
+// ---------- Screen width ----------
+
+const WIDE_QUERY = "(min-width: 768px)";
+
+function subscribeWide(onChange: () => void) {
+  const media = window.matchMedia(WIDE_QUERY);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+/** True on a tablet or computer (Tailwind's `md` and up): the web version lays some screens out side by side. */
+export function useWideScreen(): boolean {
+  return useSyncExternalStore(
+    subscribeWide,
+    () => window.matchMedia(WIDE_QUERY).matches,
+    () => false,
+  );
+}
+
 // ---------- Button ----------
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";

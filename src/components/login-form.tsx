@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { BackendError, HOSTED_DEMO } from "@/lib/backend";
@@ -46,7 +46,7 @@ const digits = (value: string, max: number) => value.replace(/\D/g, "").slice(0,
  * merchant: the shop registration (/marchand/inscription), the same with the shop's name,
  * phone, address and pin; the account is a merchant account with a shop waiting for an admin.
  */
-export function LoginForm({ fleet = false, merchant = false }: { fleet?: boolean; merchant?: boolean }) {
+export function LoginForm({ fleet = false, merchant = false, startSignup = false }: { fleet?: boolean; merchant?: boolean; startSignup?: boolean }) {
   const { t, locale } = useI18n();
   const { backend } = useApp();
   const router = useRouter();
@@ -54,7 +54,7 @@ export function LoginForm({ fleet = false, merchant = false }: { fleet?: boolean
   const shopProblem = useShopProblem();
   // Fleet and shop registrations only have the "register" steps.
   const signup = fleet || merchant;
-  const [mode, setMode] = useState<Mode>(signup ? "register" : "pin");
+  const [mode, setMode] = useState<Mode>(signup || startSignup ? "register" : "pin");
   const [fleetName, setFleetName] = useState("");
   const [shop, setShop] = useState<MerchantShopInput>(EMPTY_SHOP);
   const [method, setMethod] = useState<Method>("phone");
@@ -531,4 +531,10 @@ function ResendCode({ onResend }: { onResend: () => Promise<void> }) {
       {note && <span className="text-gp-muted">{note}</span>}
     </p>
   );
+}
+
+/** /login: "?inscription=1" (the home's "Create my account") opens on the sign-up tab. */
+export function LoginPageForm() {
+  const params = useSearchParams();
+  return <LoginForm startSignup={params.get("inscription") === "1"} />;
 }

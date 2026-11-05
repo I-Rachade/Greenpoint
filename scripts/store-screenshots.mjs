@@ -63,8 +63,8 @@ async function open(path) {
   await page.waitForTimeout(8000);
 }
 
-// 1. Map and the nearest stations.
-await open("/");
+// 1. Map and the nearest stations. The full-screen map: "/" is now the "Mon scooter" home.
+await open("/carte");
 await shot("1-carte");
 
 // 2. Station details. Opened by its address: the home screen's station card has changed shape
