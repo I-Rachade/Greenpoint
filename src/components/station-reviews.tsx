@@ -5,7 +5,7 @@ import { useState, type FormEvent } from "react";
 import { useErrorMessage, useLiveQuery, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { loginHref } from "@/lib/next-path";
-import { MAX_REVIEW_COMMENT, ratingOf, starCounts, type StationReview } from "@shared/station-extras";
+import { MAX_REVIEW_COMMENT, ratingOf, reviewThemes, starCounts, type StationReview } from "@shared/station-extras";
 import type { StationView } from "@shared/types";
 import { useApp } from "./app-provider";
 import { StarIcon, TrashIcon } from "./icons";
@@ -77,10 +77,13 @@ export function StationReviews({ station, onChanged }: { station: StationView; o
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [showAll, setShowAll] = useState(false);
+  // The form opens on "Rate this station" (mockup A4), below the reviews.
+  const [writing, setWriting] = useState(false);
 
   const summary = ratingOf(reviews ?? []);
   const counts = starCounts(reviews ?? []);
-  const formOpen = !!profile && (!mine || editing);
+  const formOpen = !!profile && (mine ? editing : writing);
+  const themes = reviewThemes(reviews ?? []);
 
   function startEdit() {
     setRating(mine?.rating ?? 0);
@@ -97,6 +100,7 @@ export function StationReviews({ station, onChanged }: { station: StationView; o
     try {
       await backend.saveReview(station.id, { rating, comment });
       setEditing(false);
+      setWriting(false);
       setMessage({ ok: true, text: r.thanks });
       reload();
       onChanged();
@@ -159,6 +163,40 @@ export function StationReviews({ station, onChanged }: { station: StationView; o
         </div>
       )}
 
+      {themes.length > 0 && (
+        <ul className="flex flex-wrap gap-1.5" aria-label={r.themesLabel}>
+          {themes.map(({ theme, n }) => (
+            <li
+              key={theme}
+              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                theme === "wait" ? "bg-gp-border/60 text-gp-forest dark:bg-white/10 dark:text-zinc-200" : "bg-gp-green/15 text-gp-green-dark dark:text-gp-green"
+              }`}
+            >
+              {r.themes[theme]} ({n})
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {reviews !== null && reviews.length === 0 && <p className="text-sm text-gp-muted dark:text-zinc-400">{r.none}</p>}
+
+      {shown.length > 0 && (
+        <ul className="space-y-2">
+          {shown.map((review) => (
+            <ReviewItem key={review.id} review={review} onDelete={profile?.role === "admin" ? () => remove(review.id) : undefined} />
+          ))}
+        </ul>
+      )}
+      {others.length > FIRST_REVIEWS && (
+        <button
+          type="button"
+          onClick={() => setShowAll(!showAll)}
+          className="w-full rounded-full border border-gp-border py-2 text-sm font-semibold text-gp-green-dark dark:border-white/15 dark:text-gp-green"
+        >
+          {showAll ? r.showLess : r.viewAll}
+        </button>
+      )}
+
       {!profile ? (
         <Link
           href={loginHref(stationHref(station.id))}
@@ -187,19 +225,28 @@ export function StationReviews({ station, onChanged }: { station: StationView; o
             >
               {r.send}
             </button>
-            {mine && (
-              <button type="button" onClick={() => setEditing(false)} className="rounded-full px-4 py-2 text-sm underline">
-                {r.cancel}
-              </button>
-            )}
+            <button type="button" onClick={() => (mine ? setEditing(false) : setWriting(false))} className="rounded-full px-4 py-2 text-sm underline">
+              {r.cancel}
+            </button>
             <span className="ml-auto text-xs text-gp-muted">
               {comment.length}/{MAX_REVIEW_COMMENT}
             </span>
           </div>
         </form>
+      ) : !mine ? (
+        <button
+          type="button"
+          onClick={() => {
+            setWriting(true);
+            setMessage(null);
+          }}
+          className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-gp-green-dark px-4 py-3 text-sm font-semibold text-gp-green-dark dark:border-gp-green dark:text-gp-green"
+        >
+          <StarIcon size={18} />
+          {r.rate}
+        </button>
       ) : (
-        mine && (
-          <div className="space-y-2">
+        <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold">{r.yours}</span>
               <button type="button" onClick={startEdit} className="text-sm font-semibold text-gp-green-dark hover:underline dark:text-gp-green">
@@ -210,7 +257,6 @@ export function StationReviews({ station, onChanged }: { station: StationView; o
               <ReviewItem review={mine} onDelete={() => remove(mine.id)} />
             </ul>
           </div>
-        )
       )}
 
       {message && (
@@ -222,25 +268,6 @@ export function StationReviews({ station, onChanged }: { station: StationView; o
         >
           {message.text}
         </p>
-      )}
-
-      {reviews !== null && reviews.length === 0 && <p className="text-sm text-gp-muted dark:text-zinc-400">{r.none}</p>}
-
-      {shown.length > 0 && (
-        <ul className="space-y-2">
-          {shown.map((review) => (
-            <ReviewItem key={review.id} review={review} onDelete={profile?.role === "admin" ? () => remove(review.id) : undefined} />
-          ))}
-        </ul>
-      )}
-      {others.length > FIRST_REVIEWS && (
-        <button
-          type="button"
-          onClick={() => setShowAll(!showAll)}
-          className="w-full rounded-full border border-gp-border py-2 text-sm font-semibold text-gp-green-dark dark:border-white/15 dark:text-gp-green"
-        >
-          {showAll ? r.showLess : r.viewAll}
-        </button>
       )}
     </section>
   );

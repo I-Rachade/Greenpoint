@@ -31,6 +31,7 @@ function HourChart({ items, now }: { items: ActivityItem[]; now: Date }) {
   );
   const top = peak(buckets);
   const max = Math.max(1, ...buckets.map((b) => b.n));
+  const step = Math.max(1, Math.ceil(buckets.length / 7));
   return (
     <figure className="mt-4">
       <div className="flex h-32 items-end gap-1.5" aria-hidden>
@@ -44,9 +45,10 @@ function HourChart({ items, now }: { items: ActivityItem[]; now: Date }) {
         ))}
       </div>
       <div className="mt-1 flex gap-1.5 text-center text-[11px] text-gp-muted dark:text-zinc-400" aria-hidden>
-        {buckets.map((b) => (
-          <span key={b.hour} className="min-w-0 flex-1 truncate">
-            {b.hour % (buckets.length > 12 ? 2 : 1) === 0 ? `${b.hour}h` : ""}
+        {buckets.map((b, i) => (
+          // Never cut a label: at most about 7 labels, each free to overflow its narrow column.
+          <span key={b.hour} className="flex min-w-0 flex-1 justify-center overflow-visible whitespace-nowrap">
+            {i % step === 0 ? `${b.hour}h` : ""}
           </span>
         ))}
       </div>

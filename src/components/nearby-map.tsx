@@ -109,6 +109,8 @@ export function NearbyMap() {
   const [brandPref, setBrandPref] = useBrandPref();
   const [onlyFull, setOnlyFull] = useState(false);
   const [openNow, setOpenNow] = useState(false);
+  // Whether the map could draw the way by road (else the straight-line hint shows).
+  const [road, setRoad] = useState(false);
   const [brand, setBrand] = useState<string>(brandPref || "all");
   /** The chosen station, for the order it was chosen in: a new order starts again from the nearest. */
   const [chosen, setChosen] = useState<{ order: string; id: string } | null>(null);
@@ -172,6 +174,7 @@ export function NearbyMap() {
           onSelect={selectFromMap}
           labels={labels}
           route
+          onRouteKind={setRoad}
           controls={false}
           padding={{ top: 150, bottom: 250, left: 50, right: 50 }}
         />
@@ -227,7 +230,7 @@ export function NearbyMap() {
           <p className="mx-3 rounded-2xl bg-gp-surface p-4 text-center text-sm text-gp-muted shadow-lg">{t.map.noResults}</p>
         ) : (
           <>
-            {position && current && <p className="mb-2 px-4 text-[11px] font-medium text-gp-forest/80 drop-shadow-sm dark:text-white/80">{M.straight}</p>}
+            {position && current && !road && <p className="mb-2 px-4 text-[11px] font-medium text-gp-forest/80 drop-shadow-sm dark:text-white/80">{M.straight}</p>}
             <div
               ref={rowRef}
               onScroll={onRowScroll}

@@ -44,3 +44,6 @@ next-env.d.ts
 # Cloudflare Worker (local)
 .wrangler/
 .dev.vars
+
+# copied from maplibre-gl by next.config.ts
+/public/maplibre-gl-worker.mjs

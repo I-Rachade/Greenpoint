@@ -433,6 +433,8 @@ export const en: Dictionary = {
       full: "full",
       charging: "{n} charging",
       chargingWord: "charging",
+      oldestSince: "Oldest one charging for {time}",
+      oldestBeforeToday: "Oldest one charging since before today",
       freeOfPlaces: "{free} free · {places} places",
       plusFull: "+1 full",
       levels: { ok: "OK", low: "Low", out: "Out" },
@@ -3563,6 +3565,8 @@ export const en: Dictionary = {
       viewAll: "See all reviews",
       seeAll: "See all",
       showLess: "Fewer reviews",
+      themesLabel: "What customers say",
+      themes: { fast: "Quick swap", friendly: "Friendly staff", ready: "Battery ready", clean: "Clean", shade: "Shade and benches", wait: "Waiting time" },
     },
     admin: {
       mainActivity: "Main activity",

@@ -374,6 +374,66 @@ export function StationDetail({ station, distance, onChanged }: Props) {
       </div>
 
       <div className="space-y-6 px-4 pb-6 pt-4">
+        <Section title={S.glance}>
+          <ul className="grid gap-2" style={{ gridTemplateColumns: `repeat(${tiles.length === 4 ? 2 : Math.min(tiles.length, 3)}, minmax(0, 1fr))` }}>
+            {tiles.map(({ key, Icon, value, label, warn }) => (
+              <li key={key} className="rounded-[14px] bg-gp-border/40 p-3 dark:bg-white/5">
+                <Icon size={18} className="text-gp-green-dark dark:text-gp-green" />
+                <div className={`mt-1.5 truncate font-heading text-lg font-bold leading-tight ${warn ? "text-gp-closed" : ""}`}>{value}</div>
+                <div className="text-xs text-gp-muted dark:text-zinc-400">{label}</div>
+              </li>
+            ))}
+          </ul>
+          {battery && types.length === 0 && (
+            <p className="text-xs text-gp-muted">{format(t.station.updated, { time: relativeTime(station.status.updatedAt, now) })}</p>
+          )}
+          {station.status.isOpen && !withinOpeningHours(station.openingHours, now) && (
+            <p className="text-sm text-red-700 dark:text-red-400">{t.station.outsideHours}</p>
+          )}
+          {battery && isStale(station, now) && <p className="text-sm text-amber-700 dark:text-amber-400">{t.station.stale}</p>}
+        </Section>
+
+        {types.length > 0 && (
+          <Section
+            title={S.byType}
+            action={<span className="text-xs text-gp-muted dark:text-zinc-400">{format(t.station.updated, { time: relativeTime(station.status.updatedAt, now) })}</span>}
+          >
+            <ul className="divide-y divide-gp-border dark:divide-white/10">
+              {types.map((bt) => {
+                const n = freeOfType(bt);
+                const level = typeLevel(n);
+                const total = bt.capacity ?? 0;
+                return (
+                  <li key={bt.id} className="flex items-center gap-3 py-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gp-border/40 dark:bg-white/5" aria-hidden>
+                      <BatteryIcon size={20} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <b className="truncate text-sm font-semibold">{batteryTypeLabel(bt)}</b>
+                        <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold ${TYPE_CHIP[level]}`}>
+                          <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />
+                          {level === "out" ? S.typeOut : level === "low" ? S.typeLow : S.typeAvailable}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        {total > 0 && (
+                          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-gp-border dark:bg-white/10" aria-hidden>
+                            <span className={`block h-full rounded-full ${TYPE_BAR[level]}`} style={{ width: `${Math.min(100, (n / total) * 100)}%` }} />
+                          </span>
+                        )}
+                        <span className={`text-xs font-semibold ${total > 0 ? "" : "flex-1 text-right"}`}>
+                          {total > 0 ? format(L.fullOf, { n, total }) : format(t.station.typeFull, { n })}
+                        </span>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </Section>
+        )}
+
         <div className="flex flex-wrap items-center gap-1.5 text-xs">
           <RestBadge station={station} />
           <EvBadge station={station} />
@@ -393,17 +453,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
           </p>
         )}
 
-        <Section title={S.glance}>
-          <ul className="grid gap-2" style={{ gridTemplateColumns: `repeat(${tiles.length === 4 ? 2 : Math.min(tiles.length, 3)}, minmax(0, 1fr))` }}>
-            {tiles.map(({ key, Icon, value, label, warn }) => (
-              <li key={key} className="rounded-[14px] bg-gp-border/40 p-3 dark:bg-white/5">
-                <Icon size={18} className="text-gp-green-dark dark:text-gp-green" />
-                <div className={`mt-1.5 truncate font-heading text-lg font-bold leading-tight ${warn ? "text-gp-closed" : ""}`}>{value}</div>
-                <div className="text-xs text-gp-muted dark:text-zinc-400">{label}</div>
-              </li>
-            ))}
-          </ul>
-
+        <div className="space-y-2 empty:hidden">
           {connected && (
             <div className="flex items-center gap-3 rounded-2xl border border-gp-border bg-gp-surface p-3 shadow-sm dark:border-white/10">
               <span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gp-green/15 text-gp-green-dark dark:text-gp-green">
@@ -462,56 +512,7 @@ export function StationDetail({ station, distance, onChanged }: Props) {
               </ul>
             </div>
           )}
-
-          {battery && types.length === 0 && (
-            <p className="text-xs text-gp-muted">{format(t.station.updated, { time: relativeTime(station.status.updatedAt, now) })}</p>
-          )}
-          {station.status.isOpen && !withinOpeningHours(station.openingHours, now) && (
-            <p className="text-sm text-red-700 dark:text-red-400">{t.station.outsideHours}</p>
-          )}
-          {battery && isStale(station, now) && <p className="text-sm text-amber-700 dark:text-amber-400">{t.station.stale}</p>}
-        </Section>
-
-        {types.length > 0 && (
-          <Section
-            title={S.byType}
-            action={<span className="text-xs text-gp-muted dark:text-zinc-400">{format(t.station.updated, { time: relativeTime(station.status.updatedAt, now) })}</span>}
-          >
-            <ul className="divide-y divide-gp-border dark:divide-white/10">
-              {types.map((bt) => {
-                const n = freeOfType(bt);
-                const level = typeLevel(n);
-                const total = bt.capacity ?? 0;
-                return (
-                  <li key={bt.id} className="flex items-center gap-3 py-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gp-border/40 dark:bg-white/5" aria-hidden>
-                      <BatteryIcon size={20} />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <b className="truncate text-sm font-semibold">{batteryTypeLabel(bt)}</b>
-                        <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold ${TYPE_CHIP[level]}`}>
-                          <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />
-                          {level === "out" ? S.typeOut : level === "low" ? S.typeLow : S.typeAvailable}
-                        </span>
-                      </div>
-                      <div className="mt-1.5 flex items-center gap-2">
-                        {total > 0 && (
-                          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-gp-border dark:bg-white/10" aria-hidden>
-                            <span className={`block h-full rounded-full ${TYPE_BAR[level]}`} style={{ width: `${Math.min(100, (n / total) * 100)}%` }} />
-                          </span>
-                        )}
-                        <span className={`text-xs font-semibold ${total > 0 ? "" : "flex-1 text-right"}`}>
-                          {total > 0 ? format(L.fullOf, { n, total }) : format(t.station.typeFull, { n })}
-                        </span>
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </Section>
-        )}
+        </div>
 
         {features.evChargers && (
           <Section title={t.station.ev.title}>

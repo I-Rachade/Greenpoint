@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Copied from maplibre-gl by next.config.ts.
+    "public/maplibre-gl-worker.mjs",
     // Native app projects (Capacitor), including the web files copied into them.
     "android/**",
     "ios/**",

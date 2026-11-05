@@ -433,6 +433,8 @@ export const fr = {
       full: "pleines",
       charging: "{n} en charge",
       chargingWord: "en charge",
+      oldestSince: "Plus ancienne en charge depuis {time}",
+      oldestBeforeToday: "Plus ancienne en charge depuis avant aujourd'hui",
       freeOfPlaces: "{free} libres · {places} places",
       plusFull: "+1 pleine",
       levels: { ok: "OK", low: "Bas", out: "Épuisé" },
@@ -3563,6 +3565,8 @@ export const fr = {
       viewAll: "Voir tous les avis",
       seeAll: "Tout voir",
       showLess: "Moins d'avis",
+      themesLabel: "Ce que disent les clients",
+      themes: { fast: "Échange rapide", friendly: "Personnel aimable", ready: "Batterie prête", clean: "Propre", shade: "Ombre et bancs", wait: "Attente" },
     },
     admin: {
       mainActivity: "Activité principale",

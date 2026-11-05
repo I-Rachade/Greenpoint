@@ -103,19 +103,42 @@ export function WorkShell({
     body = (
       <>
         <StaleNotice error={error} onRetry={reload} />
-        {/* The station home shows the name and role in its own header; the row stays to change station. */}
-        {(!home || stations.length > 1) && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gp-muted">{station.name}</span>
-            <RoleBadge role={role} />
-            {stations.length > 1 && (
+        {home ? (
+          // The station home shows the name and role in its own dark header; the row stays to change station.
+          stations.length > 1 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gp-muted">{station.name}</span>
+              <RoleBadge role={role} />
               <button type="button" onClick={() => setActive(null)} className="min-h-11 rounded-full px-3 text-sm font-semibold text-gp-green-dark dark:text-gp-green">
                 {t.work.change}
               </button>
+            </div>
+          )
+        ) : (
+          // Service pages: dark header with back, title and station (mockups B2 to B5).
+          <header className="flex items-center gap-3 rounded-[20px] bg-gp-forest p-3 pr-4 text-white shadow-sm">
+            <Link
+              href="/operator"
+              aria-label={t.operator.back}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] bg-white/10 hover:bg-white/20"
+            >
+              <BackIcon size={20} />
+            </Link>
+            <div className="min-w-0 flex-1">
+              {title && <h1 className="truncate font-heading text-xl font-semibold leading-tight">{title}</h1>}
+              <p className="flex min-w-0 items-center gap-2 text-sm text-white/75">
+                <span className="truncate">{station.name}</span>
+                <RoleBadge role={role} />
+              </p>
+            </div>
+            {stations.length > 1 && (
+              <button type="button" onClick={() => setActive(null)} className="min-h-11 shrink-0 rounded-full px-2 text-sm font-semibold text-gp-green">
+                {t.work.change}
+              </button>
             )}
-          </div>
+          </header>
         )}
-        {title && <h1 className="font-heading text-2xl font-semibold">{title}</h1>}
+        {home && title && <h1 className="font-heading text-2xl font-semibold">{title}</h1>}
         {services && !services.some((s) => active.includes(s)) ? (
           <EmptyState text={t.work.serviceOff} />
         ) : (
@@ -127,7 +150,7 @@ export function WorkShell({
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 overflow-y-auto p-4 sm:p-6">
-      {!home && (
+      {!home && !station && (
         <Link href="/operator" className="-ml-1 inline-flex min-h-11 items-center gap-1 text-sm text-gp-green-dark dark:text-gp-green">
           <BackIcon size={18} />
           {t.operator.back}

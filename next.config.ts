@@ -1,5 +1,12 @@
+import { copyFileSync } from "node:fs";
 import type { NextConfig } from "next";
 import { version } from "./package.json";
+
+// MapLibre 6 draws the map in a Web Worker it finds next to its own file (import.meta.url),
+// which the bundled app no longer has: without this file every map stays empty (no streets,
+// no route). It is copied into public/ on each dev and build; src/components/station-map.tsx
+// points MapLibre at it. Not committed (.gitignore): it always matches the installed version.
+copyFileSync("node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs", "public/maplibre-gl-worker.mjs");
 
 // Cloudflare sets WORKERS_CI (Workers Builds) or CF_PAGES (Pages) while building.
 const hostedBuild = Boolean(process.env.WORKERS_CI || process.env.CF_PAGES);
