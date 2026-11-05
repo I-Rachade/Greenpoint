@@ -60,7 +60,7 @@ export function NativeShell() {
     <div
       role="status"
       className="animate-gp-slide-up fixed inset-x-0 z-[70] flex justify-center px-4"
-      style={{ bottom: "calc(80px + env(safe-area-inset-bottom))" }}
+      style={{ bottom: "calc(80px + var(--gp-safe-bottom))" }}
     >
       <span className="rounded-full bg-gp-forest px-4 py-2 text-sm text-white shadow-lg">{t.ui.exitHint}</span>
     </div>

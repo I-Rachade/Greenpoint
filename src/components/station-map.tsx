@@ -42,6 +42,8 @@ interface Props {
   padding?: { top: number; bottom: number; left: number; right: number };
   /** Other people on the map, e.g. customers on their way (staff screen B2): a small blue dot with a label. */
   others?: { id: string; lat: number; lng: number; label?: string }[];
+  /** Small preview map (home A1): keep all the stations given and the user in view, attribution folded. */
+  fit?: boolean;
 }
 
 const ROUTE_SOURCE = "gp-route";
@@ -156,7 +158,7 @@ function workshopCard(w: RepairCenter, labels: { title: string; call: string }):
   return box;
 }
 
-export function StationMap({ stations, workshops = [], share = [], position, selectedId, onSelect, labels, route = false, onRouteKind, padding, controls = true, others }: Props) {
+export function StationMap({ stations, workshops = [], share = [], position, selectedId, onSelect, labels, route = false, onRouteKind, padding, controls = true, others, fit = false }: Props) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -179,6 +181,9 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
       attributionControl: { compact: true },
     });
     if (controls) map.addControl(new NavigationControl({ showCompass: false }), "top-right");
+    // MapLibre opens the compact credits at first; on a small preview they would cover the map.
+    // They stay one tap away on the "i" (and open in full on the big map).
+    if (fit) map.once("load", () => containerRef.current?.querySelector(".maplibregl-compact-show")?.classList.remove("maplibregl-compact-show"));
     mapRef.current = map;
     return () => {
       map.remove();
@@ -494,11 +499,34 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
     );
   }, [roadLine, selectedId, padding, reduced]);
 
+  // Preview map: the stations and the user, all in view (again when the user's position arrives).
+  const fitKeyRef = useRef("");
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !fit || stations.length === 0) return;
+    const key = `${stations.map((s) => s.id).join(",")}|${position ? "p" : ""}`;
+    if (fitKeyRef.current === key) return;
+    fitKeyRef.current = key;
+    const pts = stations.map((s) => [s.lng, s.lat]);
+    if (position) pts.push([position.lng, position.lat]);
+    const lngs = pts.map((p) => p[0]);
+    const lats = pts.map((p) => p[1]);
+    // The card may have been laid out after the map was made: measure it again first.
+    map.resize();
+    map.fitBounds(
+      [
+        [Math.min(...lngs), Math.min(...lats)],
+        [Math.max(...lngs), Math.max(...lats)],
+      ],
+      { padding: padding ?? 32, maxZoom: 15, duration: 0 },
+    );
+  }, [fit, stations, position, padding]);
+
   // Move to the selected station: a flight, or a jump with reduced motion.
   useEffect(() => {
     const map = mapRef.current;
     const station = stations.find((s) => s.id === selectedId);
-    if (!map || !station) return;
+    if (!map || !station || fit) return;
     if (route && position) {
       const bounds: [[number, number], [number, number]] = [
         [Math.min(position.lng, station.lng), Math.min(position.lat, station.lat)],
@@ -519,13 +547,13 @@ export function StationMap({ stations, workshops = [], share = [], position, sel
   useEffect(() => {
     const map = mapRef.current;
     // With a route the map keeps the user and the station in view instead (above).
-    if (map && position && !centredRef.current && !route) {
+    if (map && position && !centredRef.current && !route && !fit) {
       centredRef.current = true;
       const view = { center: [position.lng, position.lat] as [number, number], zoom: 13 };
       if (reduced) map.jumpTo(view);
       else map.flyTo(view);
     }
-  }, [position, reduced, route]);
+  }, [position, reduced, route, fit]);
 
   return <div ref={containerRef} className="h-full w-full" />;
 }

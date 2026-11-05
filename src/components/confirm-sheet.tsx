@@ -54,7 +54,7 @@ export function ConfirmSheet({
       className="gp-sheet m-0 mt-auto w-full max-w-none rounded-t-3xl bg-white p-0 text-gp-forest shadow-xl sm:m-auto sm:max-w-md sm:rounded-3xl dark:bg-gp-surface dark:text-zinc-100"
     >
       {open && (
-        <div className="space-y-4 p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+        <div className="space-y-4 p-5 pb-[calc(1.25rem+var(--gp-safe-bottom))]">
           <div className="mx-auto h-1 w-10 rounded-full bg-zinc-300 sm:hidden dark:bg-white/20" aria-hidden />
           <h2 id="confirm-sheet-title" className="font-heading text-lg font-semibold leading-snug">
             {title}

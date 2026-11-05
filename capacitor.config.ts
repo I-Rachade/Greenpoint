@@ -11,6 +11,12 @@ const config: CapacitorConfig = {
     allowMixedContent: false,
   },
   plugins: {
+    // Edge to edge: the page pads itself for the status and gesture bars (globals.css --gp-safe-*).
+    // "css" also hands the real sizes to the page, for Android WebViews where env() reads 0.
+    SystemBars: {
+      insetsHandling: "css",
+      initialViewportFitValueHint: "cover",
+    },
     SplashScreen: {
       launchShowDuration: 1500,
       backgroundColor: "#0B3B2E",

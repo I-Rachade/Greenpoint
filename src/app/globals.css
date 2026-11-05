@@ -81,7 +81,7 @@
 /* Bottom tab bar on phones: pages leave room for it. */
 @media (max-width: 767px) {
   body.has-tabs main {
-    padding-bottom: calc(64px + env(safe-area-inset-bottom));
+    padding-bottom: calc(64px + var(--gp-safe-bottom));
   }
 }
 
@@ -193,8 +193,18 @@
   }
 }
 
+/* Space taken by the phone's status bar, notch and gesture bar. Some Android WebViews report
+   env(safe-area-inset-*) as 0 while drawing under the bars; the Capacitor app then also sets
+   --safe-area-inset-* itself (capacitor.config.ts, SystemBars insetsHandling "css"). */
+:root {
+  --gp-safe-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
+  --gp-safe-right: max(env(safe-area-inset-right, 0px), var(--safe-area-inset-right, 0px));
+  --gp-safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
+  --gp-safe-left: max(env(safe-area-inset-left, 0px), var(--safe-area-inset-left, 0px));
+}
+
 body {
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  padding: var(--gp-safe-top) var(--gp-safe-right) var(--gp-safe-bottom) var(--gp-safe-left);
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-inter), "Segoe UI", Roboto, sans-serif;
