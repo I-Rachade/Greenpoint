@@ -36,6 +36,29 @@ function keepFeatures(features: Features) {
   } catch {}
 }
 
+/**
+ * The signed-in profile as last seen, so the app opens straight on the right screen (and keeps
+ * it when the phone comes back offline or on a slow network) while the server is asked again.
+ * Same device storage as the session itself (src/lib/backend/cloudflare.ts).
+ */
+const PROFILE_KEY = "poinderecharge-profile";
+
+function readProfile(): Profile | null {
+  try {
+    const raw = window.localStorage.getItem(PROFILE_KEY);
+    return raw ? (JSON.parse(raw) as Profile) : null;
+  } catch {
+    return null;
+  }
+}
+
+function keepProfile(profile: Profile | null) {
+  try {
+    if (profile) window.localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+    else window.localStorage.removeItem(PROFILE_KEY);
+  } catch {}
+}
+
 function sameProfile(a: Profile | null, b: Profile | null): boolean {
   return a === b || (!!a && !!b && a.id === b.id && a.role === b.role && a.phone === b.phone && a.email === b.email && a.fullName === b.fullName && a.driverStatus === b.driverStatus && (a.ownerOf ?? []).join() === (b.ownerOf ?? []).join());
 }
@@ -53,13 +76,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // React a fresh object, and an effect re-run (which Next.js can trigger while
     // navigating) turns into an endless render loop.
     const update = (p: Profile | null) => {
-      if (active) setProfile((prev) => (sameProfile(prev, p) ? prev : p));
+      if (!active) return;
+      keepProfile(p);
+      setProfile((prev) => (sameProfile(prev, p) ? prev : p));
     };
+    // The profile kept from last time first: no wait on the network before the first screen.
+    const kept = readProfile();
+    if (kept) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setProfile(kept);
+      setReady(true);
+    }
     backend
       .getProfile()
-      .catch(() => null)
-      .then((p) => {
-        update(p);
+      .then(update, () => {
+        // Network trouble: keep the profile kept from last time (a session that ended is
+        // reported through onAuthChange and clears it).
+      })
+      .finally(() => {
         if (active) setReady(true);
       });
     const unsubscribe = backend.onAuthChange(update);

@@ -8,6 +8,7 @@ import { I18nProvider } from "@/components/i18n-provider";
 import { NativeShell } from "@/components/native-shell";
 import { Onboarding } from "@/components/onboarding";
 import { PromoPopup } from "@/components/promo-popup";
+import { ResumeGuard } from "@/components/resume-guard";
 import { Splash } from "@/components/splash";
 import { THEME_BOOT_SCRIPT, ThemeController } from "@/components/theme-controller";
 import { ToastProvider } from "@/components/ui";
@@ -68,6 +69,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <ToastProvider>
               <ThemeController />
               <NativeShell />
+              <ResumeGuard />
               <Header />
               <FleetInviteBanner />
               <main className="flex min-h-0 flex-1 flex-col">{children}</main>

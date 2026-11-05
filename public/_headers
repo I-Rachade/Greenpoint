@@ -7,3 +7,8 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(self), geolocation=(self), microphone=()
+
+# Files under /_next/static carry a hash of their content in their name and never change:
+# the phone keeps them for a year instead of asking the server again on every start.
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable

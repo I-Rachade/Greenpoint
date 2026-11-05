@@ -1,4 +1,4 @@
-import { copyFileSync } from "node:fs";
+import { copyFileSync, writeFileSync } from "node:fs";
 import type { NextConfig } from "next";
 import { version } from "./package.json";
 
@@ -7,6 +7,13 @@ import { version } from "./package.json";
 // no route). It is copied into public/ on each dev and build; src/components/station-map.tsx
 // points MapLibre at it. Not committed (.gitignore): it always matches the installed version.
 copyFileSync("node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs", "public/maplibre-gl-worker.mjs");
+
+// One id per build, also served as /version.txt (not committed): an app left open in the
+// background asks for it when it comes back and reloads when a newer version went online
+// meanwhile (src/components/resume-guard.tsx). Kept in the environment so that every
+// process of the same build agrees on it.
+process.env.GP_BUILD_ID ??= process.env.WORKERS_CI_COMMIT_SHA || Date.now().toString(36);
+writeFileSync("public/version.txt", process.env.GP_BUILD_ID);
 
 // Cloudflare sets WORKERS_CI (Workers Builds) or CF_PAGES (Pages) while building.
 const hostedBuild = Boolean(process.env.WORKERS_CI || process.env.CF_PAGES);
@@ -29,6 +36,7 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_BACKOFFICE_BUILD: backOffice ? "1" : "",
     // Shown in Settings.
     NEXT_PUBLIC_APP_VERSION: version,
+    NEXT_PUBLIC_BUILD_ID: process.env.GP_BUILD_ID,
   },
   turbopack: {
     rules: {
