@@ -147,6 +147,11 @@ export interface Profile {
   driverStatus?: "pending" | "active" | "rejected" | "suspended" | null;
   /** Operators this person runs (operator accounts, see operators.ts). */
   ownerOf?: string[];
+  /**
+   * Operator account that only reads (migration 0070): My stations without any change, no work at
+   * the stations. Set only when every operator link of the person is read-only.
+   */
+  ownerReadOnly?: boolean;
   /** Merchant accounts: the shop and whether this is its merchant (shared/merchants.ts). */
   merchant?: { id: string; name: string; status: "pending" | "approved" | "rejected" | "suspended"; isOwner: boolean } | null;
   /** Accounts of a point partner, who owns charging sockets (shared/point-partners.ts). */

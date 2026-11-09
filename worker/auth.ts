@@ -42,6 +42,8 @@ interface UserRow {
   role: string;
   /** Comma-separated operators this person runs (operator_owners). */
   owner_of?: string | null;
+  /** 1 when every operator_owners link of this person is 'read' (migration 0070). */
+  owner_read_only?: number | null;
   driver_status?: Profile["driverStatus"];
   /** Merchant accounts: "id|status|is_owner|name" of the shop (merchantOf). */
   merchant?: string | null;
@@ -69,6 +71,7 @@ export function toProfile(u: UserRow): Profile {
     fullName: u.full_name,
     role: roleFromDb(u.role),
     ownerOf: u.owner_of ? u.owner_of.split(",") : [],
+    ...(u.owner_of && u.owner_read_only ? { ownerReadOnly: true } : {}),
     driverStatus: u.driver_status ?? null,
     ...(u.role === "merchant" ? { merchant: toMerchant(u.merchant) } : {}),
     ...(u.point_partner ? { pointPartner: toPointPartner(u.point_partner) } : {}),
@@ -76,7 +79,8 @@ export function toProfile(u: UserRow): Profile {
 }
 
 const ownerOf = (alias: string) =>
-  `(select group_concat(operator_id) from operator_owners where user_id = ${alias}.id) as owner_of`;
+  `(select group_concat(operator_id) from operator_owners where user_id = ${alias}.id) as owner_of,
+   not exists (select 1 from operator_owners where user_id = ${alias}.id and access = 'manage') as owner_read_only`;
 
 const merchantOf = (alias: string) =>
   `(select m.id || '|' || m.status || '|' || mm.is_owner || '|' || m.name from merchant_members mm join merchants m on m.id = mm.merchant_id

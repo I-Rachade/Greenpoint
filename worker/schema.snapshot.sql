@@ -554,7 +554,7 @@ CREATE TABLE merchants (id text primary key, owner_id text not null unique refer
 CREATE TABLE ocpp_transactions (id integer primary key autoincrement, external_id text not null references devices (external_id) on delete cascade, connector_id integer not null check (connector_id >= 1), id_tag text not null, meter_start integer not null, -- Wh meter_stop integer, -- Wh started_at text not null, stopped_at text, stop_reason text);
 
 -- table operator_owners
-CREATE TABLE operator_owners (operator_id text not null references operators (id) on delete cascade, user_id text not null references users (id) on delete cascade, created_at text not null, primary key (operator_id, user_id));
+CREATE TABLE operator_owners (operator_id text not null references operators (id) on delete cascade, user_id text not null references users (id) on delete cascade, created_at text not null, access text not null default 'manage' check (access in ('manage', 'read')), primary key (operator_id, user_id));
 
 -- table operators
 CREATE TABLE operators (id text primary key, name text not null, is_own integer not null default 0, contact_phone text, created_at text not null , is_active integer not null default 1 check (is_active in (0, 1)));

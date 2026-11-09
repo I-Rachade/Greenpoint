@@ -239,6 +239,11 @@ const BATTERY_SELECT = `
 function toBattery(r: BatteryRow, own: Set<string> | null): BatteryView {
   // An owner sees who has it only when it was handed out at one of their stations.
   const holderShown = r.location === "customer" && (!own || (r.out_station !== null && own.has(r.out_station)));
+  // An owner never learns which other operator's station has it (operator accounts, migration 0070).
+  const elsewhere =
+    !!own &&
+    ((r.location === "station" && r.station_id !== null && !own.has(r.station_id)) ||
+      (r.location === "customer" && r.out_station !== null && !own.has(r.out_station)));
   return {
     id: r.id,
     serial: r.serial,
@@ -248,8 +253,9 @@ function toBattery(r: BatteryRow, own: Set<string> | null): BatteryView {
     status: r.status,
     source: r.source,
     location: r.location,
-    stationId: r.station_id,
-    stationName: r.station_name,
+    stationId: elsewhere && r.location === "station" ? null : r.station_id,
+    stationName: elsewhere && r.location === "station" ? null : r.station_name,
+    ...(elsewhere ? { elsewhere: true } : {}),
     holder: holderShown ? label(r.h_name, r.h_phone, r.h_email) : null,
     swaps: r.swaps,
     lastSwapAt: r.last_swap_at,
@@ -311,6 +317,22 @@ interface HistoryRow {
   amount_xof: number | null;
 }
 
+const ELSEWHERE = (id: string): BatteryHistoryEntry => ({
+  id: `elsewhere-${id}`,
+  type: "elsewhere",
+  stationId: null,
+  stationName: null,
+  swapId: null,
+  holder: null,
+  payment: null,
+  amountXof: null,
+  status: null,
+  reason: null,
+  person: "",
+  role: "staff",
+  createdAt: "",
+});
+
 /** GET /api/batteries/:id: one battery with its history, newest first. */
 export async function batteryDetail(c: Ctx, id: string): Promise<BatteryDetail> {
   const v = await viewer(c);
@@ -331,25 +353,32 @@ export async function batteryDetail(c: Ctx, id: string): Promise<BatteryDetail> 
     .bind(id)
     .all<HistoryRow>();
   if (own && !results.some((h) => h.station_id && own.has(h.station_id))) throw new ApiError("not_found", 404);
-  const history: BatteryHistoryEntry[] = results.map((h) => {
-    // An owner does not see the people of another operator's station.
-    const hidden = own !== null && h.station_id !== null && !own.has(h.station_id);
-    return {
+  // An owner sees only what happened at its own stations (operator accounts, migration 0070); each
+  // stretch at other operators' stations becomes one "elsewhere" entry without station, date or people.
+  // Entries without a station (registered or status set in the backoffice) concern the battery itself.
+  const history: BatteryHistoryEntry[] = [];
+  for (const h of results) {
+    const foreign = own !== null && h.station_id !== null && !own.has(h.station_id);
+    if (foreign) {
+      if (history.at(-1)?.type !== "elsewhere") history.push(ELSEWHERE(h.id));
+      continue;
+    }
+    history.push({
       id: h.id,
       type: h.type,
       stationId: h.station_id,
       stationName: h.station_name,
       swapId: h.swap_id,
-      holder: hidden ? null : label(h.h_name, h.h_phone, h.h_email),
-      payment: hidden ? null : h.payment,
-      amountXof: hidden ? null : h.amount_xof,
+      holder: label(h.h_name, h.h_phone, h.h_email),
+      payment: h.payment,
+      amountXof: h.amount_xof,
       status: h.status,
       reason: h.reason,
-      person: hidden ? "" : (label(h.p_name, h.p_phone, h.p_email) ?? ""),
+      person: label(h.p_name, h.p_phone, h.p_email) ?? "",
       role: h.role,
       createdAt: h.created_at,
-    };
-  });
+    });
+  }
   return { ...toBattery(row, own), history };
 }
 

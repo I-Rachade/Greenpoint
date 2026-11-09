@@ -4,7 +4,7 @@ import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { ConfirmSheet } from "@/components/confirm-sheet";
 import { useI18n } from "@/components/i18n-provider";
-import { Loaded, ResponsiveRows, Section, useWhen, useXof } from "@/components/owner/shared";
+import { Loaded, PeriodPicker, ResponsiveRows, Section, useWhen, useXof } from "@/components/owner/shared";
 import { Badge, EmptyState, useToast, type BadgeTone } from "@/components/ui";
 import {
   BATTERY_LIST_MAX,
@@ -18,6 +18,9 @@ import {
 import { batteryTypeLabel, groupByBrand } from "@shared/battery-types";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
+import { downloadText, toCsv } from "@/lib/csv";
+import type { UsedSerial } from "@shared/owner-activity";
+import type { ReportPeriod } from "@shared/owner-backoffice";
 
 export const STATUS_TONE: Record<BatteryStatus, BadgeTone> = { in_service: "green", repair: "amber", lost: "red", retired: "neutral" };
 
@@ -48,7 +51,7 @@ export function BatteryRegistry({ stationId = null }: { stationId?: string | nul
 
   const remove = useDeleteBattery(reload);
 
-  if (open) return <BatteryHistory id={open} onBack={() => setOpen(null)} />;
+  if (open) return <BatteryHistory id={open} stationId={stationId} onBack={() => setOpen(null)} />;
 
   const brandName = (x: string) => x || b.unknownBrand;
   const total = data?.brands.reduce((n, x) => n + x.count, 0) ?? 0;
@@ -108,8 +111,61 @@ export function BatteryRegistry({ stationId = null }: { stationId?: string | nul
           </>
         )}
       </Loaded>
+      {stationId && <UsedSerials stationId={stationId} />}
       {remove.sheet}
     </div>
+  );
+}
+
+/** The battery numbers handed out or brought back at one station over a period, as a table and a CSV file. */
+function UsedSerials({ stationId }: { stationId: string }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const u = t.batteries.used;
+  const when = useWhen();
+  const [days, setDays] = useState<ReportPeriod>(7);
+  const { data, error, reload } = useLiveQuery(() => backend.usedSerials(stationId, days), `${stationId}:${days}`);
+  const download = (rows: UsedSerial[]) =>
+    void downloadText(
+      `numeros-${stationId}-${days}j.csv`,
+      toCsv([[u.serial, u.brand, u.out, u.in, u.last], ...rows.map((r) => [r.serial, r.brand, r.out, r.in, r.lastAt])]),
+    );
+  return (
+    <Section title={u.title}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <PeriodPicker value={days} onChange={setDays} />
+        {data && data.length > 0 && (
+          <button type="button" onClick={() => download(data)} className="min-h-11 rounded-full border border-gp-border px-4 text-sm font-semibold hover:bg-black/5 dark:hover:bg-white/10">
+            {u.csv}
+          </button>
+        )}
+      </div>
+      <Loaded data={data} error={error} reload={reload}>
+        {(rows) =>
+          rows.length === 0 ? (
+            <p className="text-sm text-gp-muted">{u.none}</p>
+          ) : (
+            <ResponsiveRows<UsedSerial>
+              rows={rows}
+              rowKey={(r) => `${r.brand}:${r.serial}`}
+              columns={[
+                { label: u.serial, cell: (r) => <span className="font-mono">{r.serial}</span> },
+                { label: u.brand, cell: (r) => r.brand || t.batteries.unknownBrand },
+                { label: u.out, cell: (r) => r.out, className: "text-right tabular-nums" },
+                { label: u.in, cell: (r) => r.in, className: "text-right tabular-nums" },
+                { label: u.last, cell: (r) => when(r.lastAt) },
+              ]}
+              card={(r) => (
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                  <span className="font-mono font-medium">{r.serial}</span>
+                  <span className="text-xs text-gp-muted">{format(u.card, { out: r.out, in: r.in, last: when(r.lastAt) })}</span>
+                </div>
+              )}
+            />
+          )
+        }
+      </Loaded>
+    </Section>
   );
 }
 
@@ -160,8 +216,10 @@ function useDeleteBattery(onDone: () => void) {
 function useWhere() {
   const { t } = useI18n();
   const w = t.batteries.where;
-  return (x: Pick<BatteryView, "location" | "stationName" | "holder">) =>
-    x.location === "station"
+  return (x: Pick<BatteryView, "location" | "stationName" | "holder" | "elsewhere">) =>
+    x.elsewhere
+      ? w.elsewhere
+      : x.location === "station"
       ? format(w.station, { station: x.stationName ?? "–" })
       : x.location === "customer"
         ? x.holder
@@ -313,7 +371,7 @@ function RegisterForm({ onClose, onDone }: { onClose: () => void; onDone: () => 
   );
 }
 
-function BatteryHistory({ id, onBack }: { id: string; onBack: () => void }) {
+function BatteryHistory({ id, stationId, onBack }: { id: string; stationId: string | null; onBack: () => void }) {
   const { t, locale } = useI18n();
   const { backend } = useApp();
   const b = t.batteries;
@@ -321,6 +379,8 @@ function BatteryHistory({ id, onBack }: { id: string; onBack: () => void }) {
   const { profile } = useApp();
   const { data, error, reload } = useLiveQuery(() => backend.batteryDetail(id), id);
   const remove = useDeleteBattery(onBack);
+  // With a station picked: only what happened there, or the whole history (of the viewer's stations).
+  const [onlyHere, setOnlyHere] = useState(true);
   const dateFmt = new Intl.DateTimeFormat(locale === "fr" ? "fr-TG" : "en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
   return (
     <div className="space-y-4">
@@ -352,7 +412,16 @@ function BatteryHistory({ id, onBack }: { id: string; onBack: () => void }) {
               </Section>
               <StatusForm battery={x} onSaved={reload} />
               <Section title={b.detail.history} aside={<span className="text-sm text-gp-muted">{format(b.swapsCount, { n: x.swaps })}</span>}>
-                {x.history.length === 0 ? <p className="text-sm text-gp-muted">{b.detail.noHistory}</p> : <Timeline entries={x.history} />}
+                {stationId && (
+                  <label className="flex min-h-11 items-center gap-2 text-sm">
+                    <input type="checkbox" checked={onlyHere} onChange={(e) => setOnlyHere(e.target.checked)} className="h-5 w-5 accent-gp-green-dark" />
+                    {b.detail.onlyHere}
+                  </label>
+                )}
+                {(() => {
+                  const entries = stationId && onlyHere ? x.history.filter((h) => h.stationId === stationId) : x.history;
+                  return entries.length === 0 ? <p className="text-sm text-gp-muted">{b.detail.noHistory}</p> : <Timeline entries={entries} />;
+                })()}
               </Section>
               {profile?.role === "admin" && (
                 <button
@@ -378,6 +447,7 @@ const DOT: Record<BatteryHistoryEntry["type"], string> = {
   out: "bg-gp-green-dark",
   in: "bg-gp-green",
   status: "bg-gp-low",
+  elsewhere: "bg-gp-border",
 };
 
 function Timeline({ entries }: { entries: BatteryHistoryEntry[] }) {
@@ -396,9 +466,16 @@ function Timeline({ entries }: { entries: BatteryHistoryEntry[] }) {
       : h.type === "status"
         ? format(e.status, { status: h.status ? b.statuses[h.status] : "" })
         : e[h.type];
+  // A stretch at other operators' stations (operator accounts): one line, no date or people.
+  const elsewhere = (h: BatteryHistoryEntry) => (
+    <li key={h.id} className="relative">
+      <span className={`absolute -left-[27px] top-1.5 h-3 w-3 rounded-full ring-4 ring-gp-surface ${DOT.elsewhere}`} aria-hidden />
+      <span className="text-sm italic text-gp-muted">{e.elsewhere}</span>
+    </li>
+  );
   return (
     <ol className="relative space-y-4 border-l-2 border-gp-border pl-5">
-      {entries.map((h) => (
+      {entries.map((h) => h.type === "elsewhere" ? elsewhere(h) : (
         <li key={h.id} className="relative">
           <span className={`absolute -left-[27px] top-1.5 h-3 w-3 rounded-full ring-4 ring-gp-surface ${DOT[h.type]}`} aria-hidden />
           <div className="flex flex-wrap items-baseline justify-between gap-x-3">

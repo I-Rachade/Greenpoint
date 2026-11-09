@@ -70,6 +70,8 @@ export type BackendErrorCode =
   | "vehicle_unavailable"
   | "vehicle_too_small"
   | "has_other_role"
+  /** A read-only operator account (migration 0070) tried to change something. */
+  | "read_only"
   | "partner_suspended"
   | "already_point_partner"
   | "no_vehicle"

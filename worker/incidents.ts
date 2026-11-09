@@ -115,7 +115,7 @@ export async function reportIncident(c: WorkCtx, stationId: string, input: Incid
 /** GET /api/stations/:id/incidents: the open reports, then the last 30 days' handled ones (anyone with rights there). */
 export async function stationIncidents(c: WorkCtx, stationId: string): Promise<Incident[]> {
   const user = await c.requireUser();
-  if (!(await roleAtStation(c.db, user, stationId))) throw new ApiError("forbidden", 403);
+  if (!(await roleAtStation(c.db, user, stationId, "read"))) throw new ApiError("forbidden", 403);
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const { results } = await c.db
     .prepare(

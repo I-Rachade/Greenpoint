@@ -13,6 +13,17 @@ export interface OperatorPerson {
   label: string;
 }
 
+/**
+ * What an operator account may do (migration 0070): `manage` runs the stations (staff, hours,
+ * prices, corrections) and works there; `read` only looks at My stations.
+ */
+export type OwnerAccess = "manage" | "read";
+
+/** An account linked to an operator in the backoffice, with what it may do. */
+export interface OperatorOwner extends OperatorPerson {
+  access: OwnerAccess;
+}
+
 export interface OperatorStaff extends OperatorPerson {
   stationId: string;
 }
@@ -72,6 +83,8 @@ export interface OwnerView {
   /** Open staff invites of the stations (oldest first). */
   invites: StaffInvite[];
   prices: StationPrices[];
+  /** The signed-in account only reads (migration 0070): no button that changes anything. */
+  readOnly: boolean;
 }
 
 /** The station details an operator account may change itself. Prices left out stay as they are. */
@@ -107,7 +120,7 @@ export interface AdminOperator extends Operator {
   stationCount: number;
   /** Its stations, by name. */
   stations: OperatorStation[];
-  owners: OperatorPerson[];
+  owners: OperatorOwner[];
 }
 
 export interface OperatorInput {
@@ -121,16 +134,24 @@ export const OPERATOR_NAME_MAX = 80;
  * Whether the station pages (status, reservations, parcels) are for this profile.
  * Menu and rights follow the role: operators and admins; which stations comes from the assignments.
  */
-export function worksAtStations(profile: { role: string } | null | undefined): boolean {
-  return profile?.role === "operator" || profile?.role === "admin";
+export function worksAtStations(profile: { role: string; ownerReadOnly?: boolean } | null | undefined): boolean {
+  return (profile?.role === "operator" && !profile.ownerReadOnly) || profile?.role === "admin";
 }
 
 /** Station staff accounts: their menu is the map, their station and their account, and they have no greenpoints. */
-export function isStationStaff(profile: { role: string } | null | undefined): boolean {
-  return profile?.role === "operator";
+export function isStationStaff(profile: { role: string; ownerReadOnly?: boolean } | null | undefined): boolean {
+  return profile?.role === "operator" && !profile.ownerReadOnly;
 }
 
-/** Whether this profile runs at least one operator ("Mes stations"). */
+/**
+ * Read-only operator account (migration 0070): its menu is My stations and its account; it changes
+ * nothing and does not work at the stations (the server refuses its writes, worker/api.ts).
+ */
+export function isReadOnlyOwner(profile: { role: string; ownerReadOnly?: boolean; ownerOf?: string[] } | null | undefined): boolean {
+  return profile?.role === "operator" && !!profile.ownerReadOnly && !!profile.ownerOf?.length;
+}
+
+/** Whether this profile runs at least one operator ("Mes stations"), read-only accounts included. */
 export function runsOperator(profile: { role: string; ownerOf?: string[] } | null | undefined): boolean {
-  return worksAtStations(profile) && !!profile?.ownerOf?.length;
+  return (profile?.role === "operator" || profile?.role === "admin") && !!profile?.ownerOf?.length;
 }

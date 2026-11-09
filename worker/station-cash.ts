@@ -376,7 +376,17 @@ export async function closeCashDay(c: CashCtx, input: HandoverInput): Promise<Ca
   const staffId = own ? (input.staffId ?? user.id) : null;
   if (staffId === user.id) {
     if (!(await c.isStaffOf(user, input.stationId))) throw new ApiError("forbidden", 403);
-  } else await backofficeStations(c, input.stationId);
+  } else {
+    await backofficeStations(c, input.stationId);
+    // A read-only operator link (migration 0070) shows the cash, it never closes it.
+    const manages =
+      user.role === "admin" ||
+      (await c.db
+        .prepare("select 1 from stations s join operator_owners o on o.operator_id = s.operator_id where s.id = ? and o.user_id = ? and o.access = 'manage'")
+        .bind(input.stationId, user.id)
+        .first());
+    if (!manages) throw new ApiError("forbidden", 403);
+  }
   const error = handoverInputError(input);
   if (error) throw new ApiError(error as "bad_request");
   const now = new Date();

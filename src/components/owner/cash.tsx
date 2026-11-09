@@ -187,7 +187,20 @@ function HandoverItem({ h, admin, onChanged }: { h: CashHandover; admin: boolean
  * since the last closing, the carry over, the commission kept back and the amount due; the closing
  * form and the handovers.
  */
-export function StationCashCard({ cash, admin, onChanged, extra }: { cash: StationCash; admin: boolean; onChanged: () => void; extra?: ReactNode }) {
+export function StationCashCard({
+  cash,
+  admin,
+  readOnly = false,
+  onChanged,
+  extra,
+}: {
+  cash: StationCash;
+  admin: boolean;
+  /** Read-only operator account (migration 0070): the figures and handovers, no closing. */
+  readOnly?: boolean;
+  onChanged: () => void;
+  extra?: ReactNode;
+}) {
   const { t } = useI18n();
   const xof = useXof();
   const when = useWhen();
@@ -238,7 +251,7 @@ export function StationCashCard({ cash, admin, onChanged, extra }: { cash: Stati
         />
       ) : cash.dueXof === 0 && cash.lines.totalXof === 0 ? (
         <p className="text-sm text-gp-muted">{c.nothingDue}</p>
-      ) : (
+      ) : readOnly ? null : (
         <Button onClick={() => setClosing(true)}>{c.close}</Button>
       )}
       <div className="space-y-1">
@@ -261,7 +274,7 @@ export function StationCashCard({ cash, admin, onChanged, extra }: { cash: Stati
 export const cashKey = (s: StationCash) => `${s.stationId}:${s.staffId ?? ""}`;
 
 /** The owner's "Cash" tab: one card per partner station of the selection, per staff member at own stations. */
-export function CashView({ stationId }: { stationId: string | null }) {
+export function CashView({ stationId, readOnly = false }: { stationId: string | null; readOnly?: boolean }) {
   const { t } = useI18n();
   const { backend, profile } = useApp();
   const { data, error, reload } = useLiveQuery(() => backend.ownerCash(stationId), stationId ?? "");
@@ -274,7 +287,7 @@ export function CashView({ stationId }: { stationId: string | null }) {
           <div className="space-y-4">
             <p className="text-sm text-gp-muted">{t.stationCash.ownerIntro}</p>
             {stations.map((s) => (
-              <StationCashCard key={cashKey(s)} cash={s} admin={profile?.role === "admin"} onChanged={reload} />
+              <StationCashCard key={cashKey(s)} cash={s} admin={profile?.role === "admin"} readOnly={readOnly} onChanged={reload} />
             ))}
           </div>
         )

@@ -51,6 +51,7 @@ import {
   type MyStaffInvite,
   type OperatorInput,
   type OperatorPerson,
+  type OwnerAccess,
   type OwnerStationInput,
   type OwnerView,
   validPrice,
@@ -58,6 +59,7 @@ import {
 import { cleanOpeningHours } from "../shared/opening-hours";
 import { reportPeriod } from "../shared/owner-backoffice";
 import { ownerLive, ownerReport } from "./owner";
+import { ownerActivity, usedSerials } from "./owner-activity";
 import { closeCashDay, decideHandover, myStationCash, ownerCash, saveStationCashSettings } from "./station-cash";
 import type { HandoverInput, StationCashSettings } from "../shared/station-cash";
 import { normalizeTogoPhone } from "../shared/phone";
@@ -525,7 +527,7 @@ class Ctx {
       .prepare(
         `select 1 from stations s where s.id = ?1 and (
            exists (select 1 from station_staff where station_id = s.id and user_id = ?2)
-           or exists (select 1 from operator_owners where operator_id = s.operator_id and user_id = ?2))`,
+           or exists (select 1 from operator_owners where operator_id = s.operator_id and user_id = ?2 and access = 'manage'))`,
       )
       .bind(stationId, user.id)
       .first();
@@ -777,18 +779,18 @@ async function customerUser(c: Ctx): Promise<Profile> {
 
 async function staffStations(c: Ctx) {
   const user = await c.requireUser();
-  // Station work is for staff, owners and admins (R2): everyone else 403.
-  if (user.role !== "admin" && user.role !== "operator") throw new ApiError("forbidden", 403);
+  // Station work is for staff, owners and admins (R2): everyone else 403, read-only accounts too (0070).
+  if ((user.role !== "admin" && user.role !== "operator") || user.ownerReadOnly) throw new ApiError("forbidden", 403);
   const [stations, active, owned, creditIds] = await Promise.all([
     user.role === "admin"
       ? c.stations("where s.is_active = 1")
       : c.stations(
           `where s.is_active = 1 and (s.id in (select station_id from station_staff where user_id = ?2)
-             or s.operator_id in (select operator_id from operator_owners where user_id = ?2))`,
+             or s.operator_id in (select operator_id from operator_owners where user_id = ?2 and access = 'manage'))`,
           user.id,
         ),
     activeServices(c.db),
-    c.db.prepare("select operator_id from operator_owners where user_id = ?").bind(user.id).all<{ operator_id: string }>(),
+    c.db.prepare("select operator_id from operator_owners where user_id = ? and access = 'manage'").bind(user.id).all<{ operator_id: string }>(),
     c.db.prepare("select id from stations where green_credit = 1").all<{ id: string }>(),
   ]);
   const owner = new Set(owned.results.map((r) => r.operator_id));
@@ -1421,7 +1423,10 @@ async function resolveReassignment(c: Ctx, id: string) {
   const row = await c.db.prepare("select operator_id, resolved_at from staff_reassignments where id = ?").bind(id).first<{ operator_id: string; resolved_at: string | null }>();
   if (!row) throw new ApiError("not_found", 404);
   if (user.role !== "admin") {
-    const owner = await c.db.prepare("select 1 from operator_owners where operator_id = ? and user_id = ?").bind(row.operator_id, user.id).first();
+    const owner = await c.db
+      .prepare("select 1 from operator_owners where operator_id = ? and user_id = ? and access = 'manage'")
+      .bind(row.operator_id, user.id)
+      .first();
     if (user.role !== "operator" || !owner) throw new ApiError("forbidden", 403);
   }
   if (row.resolved_at) return;
@@ -1467,13 +1472,13 @@ async function findAccount(c: Ctx, rawContact: unknown): Promise<PersonRow> {
   return row;
 }
 
-/** Someone who runs the operator of this station (or an admin). */
+/** Someone who runs the operator of this station (or an admin); a read-only link (0070) does not count. */
 async function requireOwnerOf(c: Ctx, stationId: string): Promise<Profile> {
   const user = await c.requireUser();
   if (user.role === "admin") return user;
   if (user.role !== "operator") throw new ApiError("forbidden", 403);
   const row = await c.db
-    .prepare("select 1 from stations s join operator_owners o on o.operator_id = s.operator_id where s.id = ? and o.user_id = ?")
+    .prepare("select 1 from stations s join operator_owners o on o.operator_id = s.operator_id where s.id = ? and o.user_id = ? and o.access = 'manage'")
     .bind(stationId, user.id)
     .first();
   if (!row) throw new ApiError("forbidden", 403);
@@ -1545,6 +1550,7 @@ async function ownerView(c: Ctx): Promise<OwnerView> {
       expiresAt: i.expires_at,
     })),
     prices: prices.results.map((p) => ({ stationId: p.id, swapXof: p.price_battery_xof, chargeKwhXof: p.charge_kwh_xof, chargeMinXof: p.charge_min_xof })),
+    readOnly: !admin && !!user.ownerReadOnly,
   };
 }
 
@@ -1789,10 +1795,10 @@ async function adminOperators(c: Ctx): Promise<AdminOperator[]> {
       .all<{ id: string; operator_id: string; name: string; address: string; is_active: number; paused_with_operator: number }>(),
     c.db
       .prepare(
-        `select oo.operator_id, u.id, u.phone, u.email, u.full_name from operator_owners oo
+        `select oo.operator_id, oo.access, u.id, u.phone, u.email, u.full_name from operator_owners oo
          join users u on u.id = oo.user_id order by oo.created_at`,
       )
-      .all<PersonRow & { operator_id: string }>(),
+      .all<PersonRow & { operator_id: string; access: OwnerAccess }>(),
   ]);
   return operators.results.map((o) => {
     const own = stations.results
@@ -1806,7 +1812,7 @@ async function adminOperators(c: Ctx): Promise<AdminOperator[]> {
       contactPhone: o.contact_phone,
       stationCount: own.length,
       stations: own,
-      owners: owners.results.filter((r) => r.operator_id === o.id).map(person),
+      owners: owners.results.filter((r) => r.operator_id === o.id).map((r) => ({ ...person(r), access: r.access })),
     };
   });
 }
@@ -1897,15 +1903,32 @@ async function addOperatorOwner(c: Ctx, operatorId: string, contact: unknown) {
   const account = await findAccount(c, contact);
   await refuseOtherRole(c, account.id);
   const inserted = await c.db
-    .prepare("insert or ignore into operator_owners (operator_id, user_id, created_at) values (?, ?, ?)")
+    // New accounts only read (migration 0070); an admin switches one to "manage" afterwards.
+    .prepare("insert or ignore into operator_owners (operator_id, user_id, created_at, access) values (?, ?, ?, 'read')")
     .bind(operatorId, account.id, nowIso())
     .run();
   if (inserted.meta.changes) {
     await c.db.batch([
-      c.audit(admin.id, "operator_owners", "insert", `${operatorId}:${account.id}`, { operator_id: operatorId }, { userId: account.id }),
+      c.audit(admin.id, "operator_owners", "insert", `${operatorId}:${account.id}`, { operator_id: operatorId, access: "read" }, { userId: account.id }),
       promoteToOperator(c, account.id),
     ]);
   }
+}
+
+/** POST /api/admin/operators/:id/owners/:userId/access { access }: read only or manage (migration 0070). */
+async function setOperatorOwnerAccess(c: Ctx, operatorId: string, userId: string, access: unknown) {
+  const admin = await c.requireAdmin();
+  if (access !== "read" && access !== "manage") throw new ApiError("bad_request");
+  const before = await c.db
+    .prepare("select access from operator_owners where operator_id = ? and user_id = ?")
+    .bind(operatorId, userId)
+    .first<{ access: OwnerAccess }>();
+  if (!before) throw new ApiError("not_found", 404);
+  if (before.access === access) return;
+  await c.db.batch([
+    c.db.prepare("update operator_owners set access = ? where operator_id = ? and user_id = ?").bind(access, operatorId, userId),
+    c.audit(admin.id, "operator_owners", "update", `${operatorId}:${userId}`, { access: [before.access, access] }, { userId }),
+  ]);
 }
 
 async function removeOperatorOwner(c: Ctx, operatorId: string, userId: string) {
@@ -2346,6 +2369,11 @@ const ROUTES: [string, RegExp, Handler][] = [
     async (c, [id]) => addOperatorOwner(c, id, (await readJson<{ contact: string }>(c.request)).contact),
   ],
   [
+    "POST",
+    /^\/api\/admin\/operators\/([\w-]+)\/owners\/([\w-]+)\/access$/,
+    async (c, [id, userId]) => setOperatorOwnerAccess(c, id, userId, (await readJson<{ access: unknown }>(c.request)).access),
+  ],
+  [
     "DELETE",
     /^\/api\/admin\/operators\/([\w-]+)\/owners\/([\w-]+)$/,
     (c, [id, userId]) => removeOperatorOwner(c, id, userId),
@@ -2392,6 +2420,17 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/stations\/([\w-]+)\/battery-events$/, (c, [id]) => stationBatteryEvents(c, id, c.url.searchParams.get("days"))],
   // Owner backoffice (worker/owner.ts): live queue and handovers, settlement and statistics.
   ["GET", /^\/api\/owner\/live$/, (c) => ownerLive(c, c.url.searchParams.get("stationId") || null)],
+  [
+    "GET",
+    /^\/api\/owner\/activity$/,
+    (c) =>
+      ownerActivity(c, {
+        stationId: c.url.searchParams.get("stationId"),
+        kind: c.url.searchParams.get("kind") as never,
+        before: c.url.searchParams.get("before"),
+      }),
+  ],
+  ["GET", /^\/api\/owner\/serials$/, (c) => usedSerials(c, c.url.searchParams.get("stationId") || null, reportPeriod(c.url.searchParams.get("days")))],
   ["GET", /^\/api\/owner\/report$/, (c) => ownerReport(c, c.url.searchParams.get("stationId") || null, reportPeriod(c.url.searchParams.get("days")))],
   // Station cash (worker/station-cash.ts): what partner stations (at own stations: staff members) owe, their closings and the admin's confirmation.
   ["GET", /^\/api\/stations\/([\w-]+)\/cash$/, (c, [id]) => myStationCash(c, id)],
@@ -2970,6 +3009,19 @@ export function routeName(method: string, pattern: RegExp): string {
 
 const OPEN = new Set(ROUTES.filter(([method, pattern]) => OPEN_ROUTES.has(routeName(method, pattern))));
 
+/**
+ * What a read-only operator account (migration 0070) may still send besides GET: signing in and
+ * out, its own contact and account, and its phone's push token. Everything else is refused here,
+ * before any handler runs, so a new write route is closed to it without further code.
+ */
+const READ_ONLY_WRITES = /^\/api\/(auth\/|push\/token(\/remove)?$)/;
+
+async function readOnlyGuard(c: Ctx, path: string) {
+  if (READ_ONLY_WRITES.test(path)) return;
+  const user = await c.user();
+  if (user?.ownerReadOnly) throw new ApiError("read_only", 403);
+}
+
 export async function handleApi(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const c = new Ctx(env, request, url);
@@ -3003,6 +3055,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       if (!m) continue;
       if (request.method !== method) continue;
       if (!OPEN.has(route)) await limitByUser(env, request, await c.requireUser());
+      if (request.method !== "GET") await readOnlyGuard(c, url.pathname);
       const result = await handler(c, m.slice(1));
       if (c.stationAction && request.method !== "GET") await logStationAction(c, request.method, url.pathname);
       return json(result ?? null);

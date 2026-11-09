@@ -196,8 +196,23 @@ function OperatorCard({
         ) : (
           <ul className="divide-y divide-black/5 dark:divide-white/10">
             {operator.owners.map((o) => (
-              <li key={o.userId} className="flex items-center gap-2 py-1.5">
-                <span className="flex-1">{o.label}</span>
+              <li key={o.userId} className="flex flex-wrap items-center gap-2 py-1.5">
+                <span className="min-w-0 flex-1">
+                  {o.label}
+                  <span className="block text-xs text-zinc-500">{t.operators.accessHint[o.access]}</span>
+                </span>
+                <Pill tone={o.access === "manage" ? "green" : "gray"}>{t.operators.access[o.access]}</Pill>
+                <button
+                  type="button"
+                  className={outline}
+                  onClick={() => {
+                    const access = o.access === "read" ? "manage" : "read";
+                    if (access === "manage" && !window.confirm(format(t.operators.confirmManage, { user: o.label, operator: operator.name }))) return;
+                    act(() => backend.setOperatorOwnerAccess(operator.id, o.userId, access));
+                  }}
+                >
+                  {o.access === "read" ? t.operators.makeManage : t.operators.makeRead}
+                </button>
                 <button
                   type="button"
                   className={outline}
