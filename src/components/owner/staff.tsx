@@ -72,14 +72,15 @@ export function StaffView({ view, stations, onChanged }: { view: OwnerView; stat
 
   return (
     <div className="space-y-4">
-      {view.reassignments.length > 0 && <Reassignments view={view} name={name} busy={busy} run={run} />}
+      {view.reassignments.length > 0 && !view.readOnly && <Reassignments view={view} name={name} busy={busy} run={run} />}
       {stations.map((s) => (
         <StationStaff
           key={s.id}
           station={s}
           staff={view.staff.filter((p) => p.stationId === s.id)}
           invites={view.invites.filter((i) => i.stationId === s.id)}
-          others={view.stations.filter((x) => x.id !== s.id)}
+          others={view.readOnly ? [] : view.stations.filter((x) => x.id !== s.id)}
+          readOnly={view.readOnly}
           busy={busy}
           onInvite={(contact) => run(() => backend.ownerInviteStaff(s.id, contact), format(o.invited, { user: contact.trim(), station: s.name }))}
           onAsk={setPending}
@@ -105,6 +106,7 @@ function StationStaff({
   staff,
   invites,
   others,
+  readOnly,
   busy,
   onInvite,
   onAsk,
@@ -113,6 +115,8 @@ function StationStaff({
   staff: OperatorStaff[];
   invites: StaffInvite[];
   others: StationView[];
+  /** Read-only operator account (migration 0070): the list, without buttons. */
+  readOnly: boolean;
   busy: boolean;
   onInvite: (contact: string) => Promise<boolean>;
   onAsk: (p: Pending) => void;
@@ -160,9 +164,11 @@ function StationStaff({
                   </Button>
                 </span>
               )}
-              <Button variant="ghost" className="text-red-600" disabled={busy} onClick={() => onAsk({ kind: "remove", person: p })}>
-                {o.remove}
-              </Button>
+              {!readOnly && (
+                <Button variant="ghost" className="text-red-600" disabled={busy} onClick={() => onAsk({ kind: "remove", person: p })}>
+                  {o.remove}
+                </Button>
+              )}
             </li>
           ))}
         </ul>
@@ -177,14 +183,17 @@ function StationStaff({
                   <span className="font-medium">{i.label}</span>
                   <span className="block text-xs text-gp-muted">{format(o.invites.until, { date: longDate(i.expiresAt) })}</span>
                 </span>
-                <Button variant="ghost" className="text-red-600" disabled={busy} onClick={() => onAsk({ kind: "cancel", invite: i })}>
-                  {o.invites.cancel}
-                </Button>
+                {!readOnly && (
+                  <Button variant="ghost" className="text-red-600" disabled={busy} onClick={() => onAsk({ kind: "cancel", invite: i })}>
+                    {o.invites.cancel}
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
         </div>
       )}
+      {!readOnly && (
       <form onSubmit={invite} className="space-y-1">
         <label htmlFor={`add-${station.id}`} className="text-sm">
           {o.staffContact}
@@ -197,6 +206,7 @@ function StationStaff({
         </div>
         <p className="text-xs text-gp-muted">{o.staffHint}</p>
       </form>
+      )}
     </Section>
   );
 }

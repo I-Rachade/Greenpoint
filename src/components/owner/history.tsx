@@ -15,21 +15,32 @@ import { SwapSheetExport } from "@/components/station-work/swap-sheet";
 import { Loaded, ResponsiveRows, Section, useWhen, useXof } from "./shared";
 
 /** Swap log and counter history of one station over the period (owners and admins only). */
-export function HistoryView({ stationId, stationName, days }: { stationId: string | null; stationName: string; days: ReportPeriod }) {
+export function HistoryView({
+  stationId,
+  stationName,
+  days,
+  readOnly = false,
+}: {
+  stationId: string | null;
+  stationName: string;
+  days: ReportPeriod;
+  /** Read-only operator account (migration 0070): everything to read, nothing to correct. */
+  readOnly?: boolean;
+}) {
   const { t } = useI18n();
   if (!stationId) return <EmptyState text={t.owner.history.pickStation} />;
   return (
     <div className="space-y-4">
-      <Incidents stationId={stationId} />
+      <Incidents stationId={stationId} readOnly={readOnly} />
       <SwapSheetExport key={stationId} stationId={stationId} stationName={stationName} pickDates />
-      <Swaps stationId={stationId} days={days} />
+      <Swaps stationId={stationId} days={days} readOnly={readOnly} />
       <CounterHistory stationId={stationId} days={days} />
     </div>
   );
 }
 
 /** Problems the staff reported: open ones first, each with "Mark handled" and an optional note. */
-function Incidents({ stationId }: { stationId: string }) {
+function Incidents({ stationId, readOnly }: { stationId: string; readOnly: boolean }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const x = t.work.incident;
@@ -43,7 +54,7 @@ function Incidents({ stationId }: { stationId: string }) {
           ) : (
             <ul className="-mx-4 divide-y divide-gp-border">
               {incidents.map((i) => (
-                <IncidentItem key={i.id} incident={i} action={i.status === "open" ? <ResolveIncident incident={i} onDone={reload} /> : undefined} />
+                <IncidentItem key={i.id} incident={i} action={i.status === "open" && !readOnly ? <ResolveIncident incident={i} onDone={reload} /> : undefined} />
               ))}
             </ul>
           )
@@ -83,7 +94,7 @@ function ResolveIncident({ incident, onDone }: { incident: Incident; onDone: () 
   );
 }
 
-function Swaps({ stationId, days }: { stationId: string; days: ReportPeriod }) {
+function Swaps({ stationId, days, readOnly }: { stationId: string; days: ReportPeriod; readOnly: boolean }) {
   const { t } = useI18n();
   const { backend, profile } = useApp();
   const when = useWhen();
@@ -94,8 +105,10 @@ function Swaps({ stationId, days }: { stationId: string; days: ReportPeriod }) {
   const [editing, setEditing] = useState<SwapEntry | null>(null);
   const [deleting, setDeleting] = useState<SwapEntry | null>(null);
   // Owners and admins see this page; a swap paid from Green Credit is deleted by an admin, who refunds it.
+  // The battery numbers of the swap: handed out ↑, brought back ↓.
+  const numbers = (s: SwapEntry) => [s.batteryOut ? `↑ ${s.batteryOut}` : null, s.batteryIn ? `↓ ${s.batteryIn}` : null].filter(Boolean).join("  ");
   const canDelete = (s: SwapEntry) => s.payment !== "wallet" || profile?.role === "admin";
-  const actions = (s: SwapEntry) => (
+  const actions = (s: SwapEntry) => readOnly ? null : (
     <span className="-my-2 inline-flex gap-1 whitespace-nowrap">
       <button
         type="button"
@@ -136,6 +149,9 @@ function Swaps({ stationId, days }: { stationId: string; days: ReportPeriod }) {
                   <div className="text-gp-muted">
                     {[s.customer ?? s.driver ?? s.customerName ?? s.plate, w.payments[s.payment], s.batteryTypeLabel].filter(Boolean).join(" · ")}
                   </div>
+                  {(s.batteryOut || s.batteryIn) && (
+                    <div className="font-mono text-xs text-gp-muted">{numbers(s)}</div>
+                  )}
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs tabular-nums text-gp-muted">
                       {when(s.createdAt)} · {s.person}
@@ -150,8 +166,9 @@ function Swaps({ stationId, days }: { stationId: string; days: ReportPeriod }) {
                 { label: h.customer, cell: (s) => s.customer ?? s.driver ?? s.customerName ?? s.plate ?? "–" },
                 { label: h.payment, cell: (s) => w.payments[s.payment] },
                 { label: h.amount, cell: (s) => xof(s.amountXof), className: "text-right tabular-nums whitespace-nowrap" },
+                { label: h.batteries, cell: (s) => <span className="whitespace-nowrap font-mono text-xs">{numbers(s) || "–"}</span> },
                 { label: h.person, cell: (s) => s.person },
-                { label: "", cell: actions, className: "text-right" },
+                ...(readOnly ? [] : [{ label: "", cell: actions, className: "text-right" }]),
               ]}
             />
           )

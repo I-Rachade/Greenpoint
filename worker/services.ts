@@ -88,7 +88,7 @@ export const unlockedSql = (station: string, service: StationService) =>
 /** Stations the account runs as owner (Betreiber); staff of a station are not owners. */
 async function ownedStation(c: Ctx, user: Profile, stationId: string): Promise<boolean> {
   const row = await c.db
-    .prepare("select 1 from stations s join operator_owners o on o.operator_id = s.operator_id where s.id = ? and o.user_id = ?")
+    .prepare("select 1 from stations s join operator_owners o on o.operator_id = s.operator_id where s.id = ? and o.user_id = ? and o.access = 'manage'")
     .bind(stationId, user.id)
     .first();
   return !!row;

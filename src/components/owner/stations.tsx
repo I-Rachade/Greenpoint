@@ -25,26 +25,29 @@ export function StationsView({
   stations,
   prices,
   services,
+  readOnly = false,
   onChanged,
 }: {
   stations: StationView[];
   prices: StationPrices[];
   services: StationServiceInfo[];
+  /** Read-only operator account (migration 0070): the same details, nothing to change. */
+  readOnly?: boolean;
   onChanged: () => void;
 }) {
   return (
     <div className="space-y-4">
       {stations.map((s) => (
         <Section key={s.id} title={s.name} aside={<span className="text-sm text-gp-muted">{s.address}</span>}>
-          {services.some((x) => x.stationId === s.id) && <Services station={s} services={services.filter((x) => x.stationId === s.id)} onChanged={onChanged} />}
-          <Details key={`${s.id}:${s.openingHours}`} station={s} prices={prices.find((p) => p.stationId === s.id)} onChanged={onChanged} />
+          {services.some((x) => x.stationId === s.id) && <Services station={s} services={services.filter((x) => x.stationId === s.id)} readOnly={readOnly} onChanged={onChanged} />}
+          <Details key={`${s.id}:${s.openingHours}`} station={s} prices={prices.find((p) => p.stationId === s.id)} readOnly={readOnly} onChanged={onChanged} />
         </Section>
       ))}
     </div>
   );
 }
 
-function Services({ station, services, onChanged }: { station: StationView; services: StationServiceInfo[]; onChanged: () => void }) {
+function Services({ station, services, readOnly, onChanged }: { station: StationView; services: StationServiceInfo[]; readOnly: boolean; onChanged: () => void }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
@@ -67,7 +70,7 @@ function Services({ station, services, onChanged }: { station: StationView; serv
   return (
     <div className="space-y-2">
       <h3 className="text-sm font-medium">{t.services.title}</h3>
-      <p className="text-xs text-gp-muted">{t.services.ownerIntro}</p>
+      {!readOnly && <p className="text-xs text-gp-muted">{t.services.ownerIntro}</p>}
       <ul className="divide-y divide-black/5 text-sm dark:divide-white/10">
         {services.map((info) => {
           const display = serviceDisplay(info);
@@ -75,7 +78,7 @@ function Services({ station, services, onChanged }: { station: StationView; serv
             <li key={info.service} className="flex min-h-11 flex-wrap items-center gap-2 py-1.5">
               <span className="flex-1">{t.services.names[info.service]}</span>
               <Badge tone={SERVICE_TONE[display]}>{t.services.status[display]}</Badge>
-              {canRequest(info) && (
+              {canRequest(info) && !readOnly && (
                 <Button variant="secondary" busy={busy === info.service} disabled={busy !== null} onClick={() => ask(info)}>
                   {t.services.request}
                 </Button>
@@ -90,7 +93,7 @@ function Services({ station, services, onChanged }: { station: StationView; serv
 
 const priceText = (n: number | null | undefined) => (n === null || n === undefined ? "" : String(n));
 
-function Details({ station, prices, onChanged }: { station: StationView; prices: StationPrices | undefined; onChanged: () => void }) {
+function Details({ station, prices, readOnly, onChanged }: { station: StationView; prices: StationPrices | undefined; readOnly: boolean; onChanged: () => void }) {
   const { t } = useI18n();
   const { backend } = useApp();
   const errorMessage = useErrorMessage();
@@ -135,7 +138,9 @@ function Details({ station, prices, onChanged }: { station: StationView; prices:
   return (
     <form onSubmit={save} className="space-y-3 border-t border-gp-border pt-3">
       <h3 className="text-sm font-medium">{o.details}</h3>
-      <OpeningHoursInput value={hours} onChange={setHours} disabled={busy} />
+      {/* A read-only account sees the same fields, switched off. */}
+      <fieldset disabled={readOnly} className="space-y-3">
+      <OpeningHoursInput value={hours} onChange={setHours} disabled={busy || readOnly} />
       <label htmlFor={`phone-${station.id}`} className="block space-y-1 text-sm">
         <span>{o.phone}</span>
         <Input id={`phone-${station.id}`} type="tel" maxLength={40} value={phone} onChange={(e) => setPhone(e.target.value)} />
@@ -147,16 +152,19 @@ function Details({ station, prices, onChanged }: { station: StationView; prices:
           {price(`kwh-${station.id}`, o.prices.kwh, kwh, setKwh)}
           {price(`min-${station.id}`, o.prices.minute, minute, setMinute)}
         </div>
-        <p className="text-xs text-gp-muted">{o.prices.hint}</p>
+        {!readOnly && <p className="text-xs text-gp-muted">{o.prices.hint}</p>}
+      </fieldset>
       </fieldset>
       {problem && (
         <p role="alert" className="text-sm text-red-600">
           {problem}
         </p>
       )}
-      <Button type="submit" busy={busy}>
-        {o.save}
-      </Button>
+      {!readOnly && (
+        <Button type="submit" busy={busy}>
+          {o.save}
+        </Button>
+      )}
     </form>
   );
 }

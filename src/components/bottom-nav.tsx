@@ -7,7 +7,7 @@ import { useApp } from "./app-provider";
 import { BoxIcon, ClockIcon, ListIcon, MapIcon, QrIcon, ScooterIcon, StoreIcon, TruckIcon, UserIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
-import { isStationStaff } from "@shared/operators";
+import { isReadOnlyOwner, isStationStaff } from "@shared/operators";
 import { isDriverAccount } from "@shared/drivers";
 import { isMerchantAccount } from "@shared/merchants";
 
@@ -30,7 +30,9 @@ export function BottomNav() {
   const fleet = profile?.role === "fleet_manager";
   // Merchants and their employees get the map, the stations, their shop and their account (planung/marchand.md).
   const merchant = isMerchantAccount(profile);
-  const customer = !staff && !driver && !fleet && !merchant;
+  // A read-only operator account (migration 0070): My stations and its account only.
+  const viewer = isReadOnlyOwner(profile);
+  const customer = !staff && !driver && !fleet && !merchant && !viewer;
   const hidden = (staff ? STAFF_HIDDEN_PREFIXES : HIDDEN_PREFIXES).some((p) => pathname.startsWith(p));
 
   useEffect(() => {
@@ -44,8 +46,9 @@ export function BottomNav() {
   // Favourites and alerts live on the account page; its tab carries the unread count.
   // Parcels and trips only show while the parcel module is on in the backoffice.
   const tabs = [
-    { href: "/", label: t.ui.tabs.map, icon: MapIcon, active: pathname === "/", show: true },
-    { href: "/stations", label: t.ui.tabs.stations, icon: ListIcon, active: pathname.startsWith("/stations") || pathname.startsWith("/station"), show: !staff && !features.lite && !features.share },
+    { href: "/", label: t.ui.tabs.map, icon: MapIcon, active: pathname === "/", show: !viewer },
+    { href: "/exploitant", label: t.nav.owner, icon: StoreIcon, active: pathname.startsWith("/exploitant"), show: viewer },
+    { href: "/stations", label: t.ui.tabs.stations, icon: ListIcon, active: pathname.startsWith("/stations") || pathname.startsWith("/station"), show: !staff && !viewer && !features.lite && !features.share },
     { href: "/share", label: t.ui.tabs.share, icon: ScooterIcon, active: pathname.startsWith("/share"), show: features.share && customer },
     { href: "/chauffeur", label: t.nav.driver, icon: ScooterIcon, active: pathname.startsWith("/chauffeur"), show: driver },
     { href: "/flotte", label: t.nav.fleet, icon: TruckIcon, active: pathname.startsWith("/flotte"), show: fleet && features.parcels },

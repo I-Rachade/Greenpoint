@@ -7,9 +7,10 @@ import { format } from "@/lib/i18n/format";
 import type { ReportPeriod } from "@shared/owner-backoffice";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
-import { BatteryIcon, CheckCircleIcon, ClipboardIcon, HistoryIcon, PulseIcon, StoreIcon, UsersIcon, WalletIcon } from "./icons";
+import { BatteryIcon, CheckCircleIcon, ClipboardIcon, ClockIcon, HistoryIcon, PulseIcon, StoreIcon, UsersIcon, WalletIcon } from "./icons";
 import { LoadFailed, StaleNotice } from "./load-state";
 import { BatteryRegistry } from "./batteries/battery-registry";
+import { ActivityView } from "./owner/activity";
 import { CashView } from "./owner/cash";
 import { HistoryView } from "./owner/history";
 import { LiveView } from "./owner/live";
@@ -21,7 +22,7 @@ import { EmptyState, SkeletonCard } from "./ui";
 
 export { SERVICE_TONE } from "./owner/stations";
 
-const TABS = ["live", "report", "cash", "history", "batteries", "staff", "stations"] as const;
+const TABS = ["live", "report", "cash", "history", "activity", "batteries", "staff", "stations"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_ICON: Record<Tab, ComponentType<SVGProps<SVGSVGElement> & { size?: number }>> = {
@@ -29,6 +30,7 @@ const TAB_ICON: Record<Tab, ComponentType<SVGProps<SVGSVGElement> & { size?: num
   report: WalletIcon,
   cash: ClipboardIcon,
   history: HistoryIcon,
+  activity: ClockIcon,
   batteries: BatteryIcon,
   staff: UsersIcon,
   stations: StoreIcon,
@@ -71,7 +73,12 @@ export function OwnerPanel() {
     reloadServices();
   };
 
-  const intro = profile?.role === "admin" ? o.introAdmin : format(o.intro, { operators: data.operators.map((x) => x.name).join(", ") });
+  // A read-only operator account (migration 0070) reads every tab; nothing on the page changes anything.
+  const readOnly = data.readOnly;
+  const intro =
+    profile?.role === "admin"
+      ? o.introAdmin
+      : format(readOnly ? o.introReadOnly : o.intro, { operators: data.operators.map((x) => x.name).join(", ") });
   const none = data.stations.length === 0;
   const stationOptions = (
     <>
@@ -129,13 +136,19 @@ export function OwnerPanel() {
               );
             })}
           </div>
-          <Link
-            href="/operator"
-            className="mt-auto flex min-h-10 items-center gap-3 rounded-lg border border-white/15 px-3 text-sm font-semibold text-gp-green hover:bg-white/10"
-          >
-            <CheckCircleIcon size={18} />
-            {o.statusLink}
-          </Link>
+          {readOnly ? (
+            <span className="mt-auto flex min-h-10 items-center gap-3 rounded-lg border border-white/15 px-3 text-sm font-semibold text-white/70">
+              {o.readOnly}
+            </span>
+          ) : (
+            <Link
+              href="/operator"
+              className="mt-auto flex min-h-10 items-center gap-3 rounded-lg border border-white/15 px-3 text-sm font-semibold text-gp-green hover:bg-white/10"
+            >
+              <CheckCircleIcon size={18} />
+              {o.statusLink}
+            </Link>
+          )}
         </aside>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -171,9 +184,11 @@ export function OwnerPanel() {
                       {stationOptions}
                     </select>
                   </label>
-                  <Link href="/operator" className="inline-flex min-h-11 items-center text-sm text-gp-green-dark underline dark:text-gp-green">
-                    {o.statusLink}
-                  </Link>
+                  {!readOnly && (
+                    <Link href="/operator" className="inline-flex min-h-11 items-center text-sm text-gp-green-dark underline dark:text-gp-green">
+                      {o.statusLink}
+                    </Link>
+                  )}
                 </div>
                 <div role="tablist" aria-label={o.title} className="flex gap-1 overflow-x-auto border-b border-gp-border pb-2">
                   {TABS.map((k) => (
@@ -200,11 +215,12 @@ export function OwnerPanel() {
                 {(tab === "report" || tab === "history") && <PeriodPicker value={days} onChange={setDays} />}
                 {tab === "live" && <LiveView stationId={selected?.id ?? null} stationName={stationName} />}
                 {tab === "report" && <ReportView stationId={selected?.id ?? null} days={days} />}
-                {tab === "cash" && <CashView stationId={selected?.id ?? null} />}
-                {tab === "history" && <HistoryView stationId={selected?.id ?? null} stationName={selected?.name ?? ""} days={days} />}
+                {tab === "cash" && <CashView stationId={selected?.id ?? null} readOnly={readOnly} />}
+                {tab === "history" && <HistoryView stationId={selected?.id ?? null} stationName={selected?.name ?? ""} days={days} readOnly={readOnly} />}
+                {tab === "activity" && <ActivityView stationId={selected?.id ?? null} />}
                 {tab === "batteries" && <BatteryRegistry stationId={selected?.id ?? null} />}
                 {tab === "staff" && <StaffView view={data} stations={shown} onChanged={changed} />}
-                {tab === "stations" && <StationsView stations={shown} prices={data.prices} services={services ?? []} onChanged={changed} />}
+                {tab === "stations" && <StationsView stations={shown} prices={data.prices} services={services ?? []} readOnly={readOnly} onChanged={changed} />}
               </div>
             </>
           )}

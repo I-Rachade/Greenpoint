@@ -322,8 +322,10 @@ import {
   type MyStaffInvite,
   type OperatorInput,
   type OwnerStationInput,
+  type OwnerAccess,
   type OwnerView,
 } from "@shared/operators";
+import { ACTIVITY_PAGE, ACTIVITY_TABLES, visibleChanges, type ActivityEntry, type ActivityFilter, type ActivityPage, type UsedSerial } from "@shared/owner-activity";
 import {
   POINT_PARTNER_NAME_MAX,
   type AdminPointPartner,
@@ -465,7 +467,8 @@ interface DemoState {
   /** Fleet managers: which manager each linked driver belongs to (missing = nobody). */
   fleetLinks?: { driverId: string; managerId: string }[];
   /** Operator accounts: who runs which operator (missing = nobody). */
-  operatorOwners?: { operatorId: string; userId: string }[];
+  /** access: "read" = read-only operator account (migration 0070); left out = manage. */
+  operatorOwners?: { operatorId: string; userId: string; access?: OwnerAccess }[];
   /** Point partners who own sockets (as point_partners, migration 0039); missing = the seed. */
   pointPartners?: DemoPointPartner[];
   /** Accounts of point partners (as point_partner_accounts); one partner per account. */
@@ -1061,6 +1064,12 @@ function ownedOperators(state: DemoState, userId: string): string[] {
   return (state.operatorOwners ?? []).filter((x) => x.userId === userId).map((x) => x.operatorId);
 }
 
+/** Every operator link of the person is read-only (migration 0070, Profile.ownerReadOnly). */
+function ownerReadOnly(state: DemoState, userId: string): boolean {
+  const links = (state.operatorOwners ?? []).filter((x) => x.userId === userId);
+  return links.length > 0 && links.every((x) => x.access === "read");
+}
+
 /** Whoever gets station work becomes "operator" (customers only; admins stay admins). */
 function promoted(state: DemoState, userId: string) {
   const users = state.users ?? demoUsers(new Date());
@@ -1332,6 +1341,7 @@ export class DemoBackend implements Backend {
     const partner = link && this.pointPartnersOf(state).find((p) => p.id === link.partnerId);
     return {
       ...state.profile,
+      ...(ownerReadOnly(state, state.profile.id) ? { ownerReadOnly: true } : {}),
       driverStatus: driver?.status ?? null,
       ...(partner ? { pointPartner: { id: partner.id, name: partner.name, status: partner.status } } : {}),
       ...(state.profile.role === "merchant"
@@ -3267,7 +3277,72 @@ export class DemoBackend implements Backend {
         chargeKwhXof: tariffs[s.id]?.kwhXof ?? null,
         chargeMinXof: tariffs[s.id]?.minXof ?? null,
       })),
+      readOnly: !admin && ownerReadOnly(state, profile.id),
     };
+  }
+
+  // Activity of the owner's stations (worker/owner-activity.ts) -----------------------
+
+  async ownerActivity(filter: ActivityFilter): Promise<ActivityPage> {
+    const state = this.load();
+    const { ids } = this.backofficeStations(state, filter.stationId ?? null);
+    const set = new Set(ids);
+    const name = (id: string) => state.stations.find((s) => s.id === id)?.name ?? id;
+    const who = (id: string | null | undefined) => {
+      const u = (state.users ?? demoUsers(new Date())).find((x) => x.id === id);
+      return !u || u.role === "admin" ? "" : personLabel(u);
+    };
+    const entries: ActivityEntry[] = [
+      ...(state.swaps ?? [])
+        .filter((x) => set.has(x.stationId))
+        .map((x): ActivityEntry => ({
+          id: `a${x.id}`,
+          at: x.createdAt,
+          stationId: x.stationId,
+          stationName: name(x.stationId),
+          person: who(x.staffId),
+          role: x.role,
+          kind: "swaps",
+          action: "swaps",
+        })),
+      ...(state.audit ?? [])
+        .filter((a) => a.stationId && set.has(a.stationId) && a.table in ACTIVITY_TABLES)
+        .map((a): ActivityEntry => ({
+          id: `c${a.id}`,
+          at: a.at,
+          stationId: a.stationId!,
+          stationName: name(a.stationId!),
+          person: who(a.actorId),
+          role: null,
+          kind: ACTIVITY_TABLES[a.table],
+          table: a.table,
+          change: a.action,
+          changes: visibleChanges(a.changes),
+        })),
+    ]
+      .filter((e) => (!filter.kind || e.kind === filter.kind) && (!filter.before || e.at < filter.before))
+      .sort((a, b) => b.at.localeCompare(a.at));
+    const page = entries.slice(0, ACTIVITY_PAGE);
+    return { entries: page, next: entries.length > ACTIVITY_PAGE ? page[page.length - 1].at : null };
+  }
+
+  async usedSerials(stationId: string, days: ReportPeriod): Promise<UsedSerial[]> {
+    const state = this.load();
+    this.backofficeStations(state, stationId);
+    const since = periodStart(days);
+    const reg = this.batteryRegister(state);
+    const byId = new Map<string, UsedSerial>();
+    for (const h of reg.history) {
+      if (h.stationId !== stationId || (h.type !== "out" && h.type !== "in") || h.createdAt < since) continue;
+      const b = reg.batteries.find((x) => x.id === h.batteryId);
+      if (!b) continue;
+      const row = byId.get(b.id) ?? { serial: b.serial, brand: b.brand, out: 0, in: 0, lastAt: h.createdAt };
+      if (h.type === "out") row.out++;
+      else row.in++;
+      if (h.createdAt > row.lastAt) row.lastAt = h.createdAt;
+      byId.set(b.id, row);
+    }
+    return [...byId.values()].sort((a, b) => b.lastAt.localeCompare(a.lastAt));
   }
 
   // Staff invites (as worker/api.ts, migration 0050) ------------------------------------
@@ -3963,7 +4038,7 @@ export class DemoBackend implements Backend {
           isActive: !off.has(o.id),
           stationCount: stations.length,
           stations,
-          owners: owners.filter((x) => x.operatorId === o.id).map((x) => this.label(state, x.userId)),
+          owners: owners.filter((x) => x.operatorId === o.id).map((x) => ({ ...this.label(state, x.userId), access: x.access ?? "manage" })),
         };
       });
   }
@@ -4031,8 +4106,23 @@ export class DemoBackend implements Backend {
     if (owners.some((x) => x.operatorId === operatorId && x.userId === user.id)) return;
     this.saveOwners(
       { ...state, users: promoted(state, user.id) },
-      [...owners, { operatorId, userId: user.id }],
-      { table: "operator_owners", action: "insert", rowId: `${operatorId}:${user.id}`, userId: user.id, changes: { operator_id: operatorId } },
+      [...owners, { operatorId, userId: user.id, access: "read" }],
+      { table: "operator_owners", action: "insert", rowId: `${operatorId}:${user.id}`, userId: user.id, changes: { operator_id: operatorId, access: "read" } },
+    );
+  }
+
+  async setOperatorOwnerAccess(operatorId: string, userId: string, access: OwnerAccess) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const owners = state.operatorOwners ?? [];
+    const link = owners.find((x) => x.operatorId === operatorId && x.userId === userId);
+    if (!link) throw new BackendError("unknown", "owner not found");
+    const before = link.access ?? "manage";
+    if (before === access) return;
+    this.saveOwners(
+      state,
+      owners.map((x) => (x === link ? { ...x, access } : x)),
+      { table: "operator_owners", action: "update", rowId: `${operatorId}:${userId}`, userId, changes: { access: [before, access] } },
     );
   }
 
@@ -4047,7 +4137,7 @@ export class DemoBackend implements Backend {
     );
   }
 
-  private saveOwners(state: DemoState, operatorOwners: { operatorId: string; userId: string }[], audit: AuditInput) {
+  private saveOwners(state: DemoState, operatorOwners: NonNullable<DemoState["operatorOwners"]>, audit: AuditInput) {
     const next = { ...state, operatorOwners };
     const profile = state.profile && { ...state.profile, ownerOf: ownedOperators(next, state.profile.id) };
     this.save(withAudit({ ...next, profile }, audit));

@@ -25,7 +25,8 @@ import type { Features } from "@shared/features";
 import type { Device, DeviceInput } from "@shared/iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "@shared/parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "@shared/partners";
-import type { AdminOperator, MyStaffInvite, OperatorInput, OwnerStationInput, OwnerView } from "@shared/operators";
+import type { AdminOperator, MyStaffInvite, OperatorInput, OwnerAccess, OwnerStationInput, OwnerView } from "@shared/operators";
+import type { ActivityFilter, ActivityPage, UsedSerial } from "@shared/owner-activity";
 import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "@shared/point-partners";
 import type { Promotion, PromotionInput } from "@shared/promo";
 import type { SecurityOverview } from "@shared/security";
@@ -602,6 +603,19 @@ export class CloudflareBackend implements Backend {
     return this.call<OwnerLive>("GET", `/api/owner/live${stationId ? `?stationId=${encodeURIComponent(stationId)}` : ""}`);
   }
 
+  ownerActivity(filter: ActivityFilter) {
+    const q = new URLSearchParams();
+    if (filter.stationId) q.set("stationId", filter.stationId);
+    if (filter.kind) q.set("kind", filter.kind);
+    if (filter.before) q.set("before", filter.before);
+    const query = q.toString();
+    return this.call<ActivityPage>("GET", `/api/owner/activity${query ? `?${query}` : ""}`);
+  }
+
+  usedSerials(stationId: string, days: ReportPeriod) {
+    return this.call<UsedSerial[]>("GET", `/api/owner/serials?${new URLSearchParams({ stationId, days: String(days) })}`);
+  }
+
   ownerReport(stationId: string | null, days: ReportPeriod) {
     const q = new URLSearchParams({ days: String(days) });
     if (stationId) q.set("stationId", stationId);
@@ -771,6 +785,10 @@ export class CloudflareBackend implements Backend {
 
   async addOperatorOwner(operatorId: string, contact: string) {
     await this.call("POST", `/api/admin/operators/${encodeURIComponent(operatorId)}/owners`, { contact });
+  }
+
+  async setOperatorOwnerAccess(operatorId: string, userId: string, access: OwnerAccess) {
+    await this.call("POST", `/api/admin/operators/${encodeURIComponent(operatorId)}/owners/${encodeURIComponent(userId)}/access`, { access });
   }
 
   async removeOperatorOwner(operatorId: string, userId: string) {

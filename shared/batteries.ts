@@ -27,6 +27,11 @@ export type BatteryStatus = (typeof BATTERY_STATUSES)[number];
 export type BatterySource = "registered" | "swap";
 export type BatteryLocation = "station" | "customer" | "unknown";
 export type BatteryHistoryType = "registered" | "added_at_swap" | "out" | "in" | "status";
+/**
+ * What a history entry can be on screen: a row of battery_history, or, for an operator account,
+ * "elsewhere": one stretch of rows at another operator's stations, shown without any detail.
+ */
+export type BatteryHistoryEntryType = BatteryHistoryType | "elsewhere";
 
 /** Most numbers one register request takes. */
 export const REGISTER_MAX = 500;
@@ -42,9 +47,11 @@ export interface BatteryView {
   status: BatteryStatus;
   source: BatterySource;
   location: BatteryLocation;
-  /** location "station": where. */
+  /** location "station": where (null for an operator account when it is at another operator's station). */
   stationId: string | null;
   stationName: string | null;
+  /** Operator accounts: it is at another operator's station, or with a customer from there. */
+  elsewhere?: boolean;
   /** location "customer": the customer or driver, when known (an owner: only at own stations). */
   holder: string | null;
   /** Swaps it was part of (handed out or brought back). */
@@ -55,7 +62,7 @@ export interface BatteryView {
 
 export interface BatteryHistoryEntry {
   id: string;
-  type: BatteryHistoryType;
+  type: BatteryHistoryEntryType;
   stationId: string | null;
   stationName: string | null;
   swapId: string | null;

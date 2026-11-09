@@ -10,7 +10,7 @@ import { useApp } from "./app-provider";
 import { BellIcon, ChevronIcon, GearIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { useAlerts } from "./use-alerts";
-import { isStationStaff, runsOperator, worksAtStations } from "@shared/operators";
+import { isReadOnlyOwner, isStationStaff, runsOperator, worksAtStations } from "@shared/operators";
 import { ownsPoints } from "@shared/point-partners";
 import { isDriverAccount } from "@shared/drivers";
 import { isMerchantAccount } from "@shared/merchants";
@@ -28,14 +28,16 @@ export function Header() {
   const fleet = profile?.role === "fleet_manager";
   // Shop accounts are not customers either (planung/marchand.md): their home is /marchand.
   const merchant = isMerchantAccount(profile);
-  const customer = !!profile && !isDriverAccount(profile) && !fleet && !merchant;
+  // A read-only operator account (migration 0070) gets My stations and its account, nothing else.
+  const viewer = isReadOnlyOwner(profile);
+  const customer = !!profile && !isDriverAccount(profile) && !fleet && !merchant && !viewer;
 
   // `tier`: which links stay in the bar as the screen narrows, the others go into the "Plus" menu,
   // so the bar keeps one line at any width. 0 always, 1 from lg, 2 from xl, 3 always in the menu.
   const links: { href: string; label: string; show: boolean; tier: Tier }[] = [
-    { href: "/", label: t.nav.map, show: true, tier: 0 },
-    { href: "/stations", label: t.ui.tabs.stations, show: true, tier: 0 },
-    { href: "/favoris", label: t.ui.tabs.favorites, show: true, tier: 3 },
+    { href: "/", label: t.nav.map, show: !viewer, tier: 0 },
+    { href: "/stations", label: t.ui.tabs.stations, show: !viewer, tier: 0 },
+    { href: "/favoris", label: t.ui.tabs.favorites, show: !viewer, tier: 3 },
     // Scan a socket or show my QR code (staff: scan the customer's); on phones it is the raised button in the tab bar.
     { href: "/scanner", label: t.ui.tabs.scan, show: !profile || customer, tier: 2 },
     { href: "/reservations", label: t.nav.reservations, show: customer, tier: 2 },

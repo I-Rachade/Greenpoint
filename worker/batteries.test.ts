@@ -234,10 +234,13 @@ describe("battery register", () => {
     expect(mine.brands.find((b) => b.brand === "Spiro")?.count).toBe(2);
     // SP-3 never came through Yao's stations.
     expect((await detail(env, idOf(db, "Spiro", "SP-3")!, "yao")).status).toBe(404);
+    // SP-2 is now at Kara: Yao does not learn which station of another operator has it.
+    expect(mine.batteries.find((b) => b.serial === "SP-2")).toMatchObject({ location: "station", stationId: null, stationName: null, elsewhere: true });
     expect((await list(env, "yao", "?stationId=kara")).status).toBe(403);
     const sp2 = (await detail(env, idOf(db, "Spiro", "SP-2")!, "yao")).body;
+    // What happened at Kossi's station is one entry without station, date or people (0070).
     expect(sp2.history.map((h) => [h.type, h.stationName, h.holder, h.person])).toEqual([
-      ["in", "Kara", null, ""],
+      ["elsewhere", null, null, ""],
       ["out", "Lomé", "Ama", "Afi"],
       ["added_at_swap", "Lomé", null, "Afi"],
     ]);

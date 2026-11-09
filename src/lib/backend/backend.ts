@@ -36,7 +36,8 @@ import type { Features } from "@shared/features";
 import type { Device, DeviceInput } from "@shared/iot/devices";
 import type { AdminParcels, Parcel, ParcelDepotInput, ParcelInfo, ParcelInput, ParcelMeasures, ParcelRun, ParcelSizeTier } from "@shared/parcels";
 import type { AdminPartners, PartnerInput, PartnerKey, StationBooking } from "@shared/partners";
-import type { AdminOperator, MyStaffInvite, OperatorInput, OwnerStationInput, OwnerView } from "@shared/operators";
+import type { AdminOperator, MyStaffInvite, OperatorInput, OwnerAccess, OwnerStationInput, OwnerView } from "@shared/operators";
+import type { ActivityFilter, ActivityPage, UsedSerial } from "@shared/owner-activity";
 import type { AdminPointPartner, PointPartnerDashboard, PointPartnerInput } from "@shared/point-partners";
 import type { Promotion, PromotionInput } from "@shared/promo";
 import type {
@@ -275,6 +276,10 @@ export interface Backend {
 
   // Owner backoffice (see shared/owner-backoffice.ts): one station or all (`null`)
   ownerLive(stationId: string | null): Promise<OwnerLive>;
+  /** Actions and changes at the owner's stations (one or all), newest first (shared/owner-activity.ts). */
+  ownerActivity(filter: ActivityFilter): Promise<ActivityPage>;
+  /** The battery numbers handed out or brought back at one station over the period. */
+  usedSerials(stationId: string, days: ReportPeriod): Promise<UsedSerial[]>;
   // Station cash (see shared/station-cash.ts): partner stations, and per staff member at own stations
   /** The balance, what is due now and the handovers of the owner's stations (admins: all of them). */
   ownerCash(stationId: string | null): Promise<StationCash[]>;
@@ -350,6 +355,8 @@ export interface Backend {
   /** Lets the account with this phone number or e-mail address run the operator. */
   addOperatorOwner(operatorId: string, contact: string): Promise<void>;
   removeOperatorOwner(operatorId: string, userId: string): Promise<void>;
+  /** Read only or manage (migration 0070). */
+  setOperatorOwnerAccess(operatorId: string, userId: string, access: OwnerAccess): Promise<void>;
 
   // Connected sockets (admins only; see shared/iot/devices.ts)
   listDevices(): Promise<Device[]>;

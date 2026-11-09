@@ -13,19 +13,20 @@ import { d1Of, fakeD1 } from "./test-d1";
 // matrix of the plan (bauplan "Role matrix"); a role the matrix leaves out gets 401 (not signed
 // in) or 403, a role it allows never does. Each call runs on a fresh copy of the same database.
 
-type Role = "anonymous" | "rider" | "staff" | "owner" | "driver" | "fleet_manager" | "merchant" | "admin";
+type Role = "anonymous" | "rider" | "staff" | "owner" | "viewer" | "driver" | "fleet_manager" | "merchant" | "admin";
 const ROLES: Record<Role, string | null> = {
   anonymous: null,
   rider: "ama",
   staff: "afi", // staff at Bè
   owner: "yao", // owns Bè and Lomé
+  viewer: "kodjo", // read-only operator account of the same operator (migration 0070)
   driver: "yawa",
   fleet_manager: "edem",
   merchant: "kofi", // the merchant of an approved shop
   admin: "admin",
 };
 
-const SIGNED: Role[] = ["rider", "staff", "owner", "driver", "fleet_manager", "merchant", "admin"];
+const SIGNED: Role[] = ["rider", "staff", "owner", "viewer", "driver", "fleet_manager", "merchant", "admin"];
 const ALL: Role[] = ["anonymous", ...SIGNED];
 /** Wallet, greenpoints, payments, reservations, bookings: customers; an admin keeps them, to test. */
 const CUSTOMER: Role[] = ["rider", "admin"];
@@ -78,6 +79,8 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/owner/staff-invites/:id/revoke": OWNER,
   "POST /api/owner/reassignments/:id/resolve": OWNER,
   "GET /api/owner/live": OWNER,
+  "GET /api/owner/activity": OWNER,
+  "GET /api/owner/serials": OWNER,
   "GET /api/owner/report": OWNER,
   "GET /api/owner/cash": OWNER,
   "POST /api/owner/cash/handovers": STATION, // staff close their own Green Credit at our stations (0051)
@@ -103,6 +106,7 @@ const POLICY: Record<string, Role[]> = {
   "POST /api/admin/operators": ADMIN,
   "POST /api/admin/operators/:id/active": ADMIN,
   "POST /api/admin/operators/:id/owners": ADMIN,
+  "POST /api/admin/operators/:id/owners/:id/access": ADMIN,
   "DELETE /api/admin/operators/:id/owners/:id": ADMIN,
   "PATCH /api/stations/:id/status": STATION,
   "GET /api/stations/:id/reservations": STATION,
@@ -339,6 +343,36 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/point-partner": [],
 };
 
+/**
+ * A read-only operator account (migration 0070) reads what an owner reads in My stations and
+ * changes nothing: of the other routes it keeps only signing in and out and its own account.
+ */
+const VIEWER_READS = new Set([
+  "GET /api/owner",
+  "GET /api/owner/live",
+  "GET /api/owner/report",
+  "GET /api/owner/activity",
+  "GET /api/owner/serials",
+  "GET /api/owner/cash",
+  "GET /api/batteries",
+  "GET /api/batteries/:id",
+  "GET /api/stations/:id/counter",
+  "GET /api/stations/:id/swaps",
+  "GET /api/stations/:id/battery-events",
+  "GET /api/stations/:id/incidents",
+  "GET /api/station-services",
+]);
+
+function withViewer(name: string, allowed: Role[]): Role[] {
+  const [method, path] = name.split(" ");
+  const everyone = allowed.includes("rider") && allowed.includes("owner");
+  const viewer =
+    VIEWER_READS.has(name) ||
+    (method === "GET" && everyone) ||
+    (/^\/api\/(auth\/|push\/token)/.test(path) && allowed.includes("owner"));
+  return viewer ? [...allowed, "viewer"] : allowed.filter((r) => r !== "viewer");
+}
+
 const OWN = "00000000-0000-4000-8000-000000000001";
 let dir = "";
 let seedFile = "";
@@ -352,6 +386,7 @@ beforeAll(async () => {
   const users: [string, string, string][] = [
     ["admin", "+22890000001", "admin"],
     ["yao", "+22890000002", "operator"],
+    ["kodjo", "+22890000003", "operator"],
     ["afi", "+22890000004", "operator"],
     ["ama", "+22890000006", "rider"],
     ["edem", "+22890000008", "fleet_manager"],
@@ -364,6 +399,7 @@ beforeAll(async () => {
   }
   db.exec(`
     insert into operator_owners (operator_id, user_id, created_at) values ('${OWN}', 'yao', '${now}');
+    insert into operator_owners (operator_id, user_id, created_at, access) values ('${OWN}', 'kodjo', '${now}', 'read');
     insert into stations (id, operator_id, name, lat, lng, kind, battery_capacity, opening_hours, price_battery_xof, created_at) values
       ('be', '${OWN}', 'Bè', 6.13, 1.22, 'both', 10, '00:00-24:00', 500, '${now}'),
       ('lome', '${OWN}', 'Lomé', 6.14, 1.23, 'both', 10, '00:00-24:00', 500, '${now}');
@@ -427,7 +463,7 @@ describe("R2: route × role matrix", () => {
     const wrong: string[] = [];
     for (const [method, re] of API_ROUTES) {
       const name = routeName(method, re);
-      const allowed = POLICY[name] ?? [];
+      const allowed = withViewer(name, POLICY[name] ?? []);
       for (const role of Object.keys(ROLES) as Role[]) {
         const { status, body } = await call(method, pathFor(re), role, JSON.stringify({ stationId: "be" }));
         const refused = status === 401 || status === 403;

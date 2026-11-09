@@ -78,15 +78,17 @@ function activeStationOf(c: WorkCtx): string | null {
 }
 
 /** The viewer's role at a station, or null without rights there. Staff work at the stations they are assigned to. */
-export async function roleAtStation(db: D1Database, user: Profile, stationId: string): Promise<StationRole | null> {
+export async function roleAtStation(db: D1Database, user: Profile, stationId: string, mode: "act" | "read" = "act"): Promise<StationRole | null> {
   if (user.role === "admin") return "admin";
   if (user.role !== "operator") return null;
+  // A read-only operator account (migration 0070) is an owner for reading only: it never acts here.
   const row = await db
     .prepare(
-      `select exists (select 1 from stations s join operator_owners o on o.operator_id = s.operator_id where s.id = ?1 and o.user_id = ?2) as owner,
+      `select exists (select 1 from stations s join operator_owners o on o.operator_id = s.operator_id
+                      where s.id = ?1 and o.user_id = ?2 and (?3 = 'read' or o.access = 'manage')) as owner,
               exists (select 1 from station_staff where station_id = ?1 and user_id = ?2) as staff`,
     )
-    .bind(stationId, user.id)
+    .bind(stationId, user.id, mode)
     .first<{ owner: number; staff: number }>();
   return row?.owner ? "owner" : row?.staff ? "staff" : null;
 }
@@ -111,11 +113,13 @@ export async function stationActor(c: WorkCtx, stationId: string): Promise<Stati
 }
 
 /** Read access (counter page, swap log): anyone with rights at the station, no active station needed. */
-async function stationReader(c: WorkCtx, stationId: string): Promise<StationActor> {
+async function stationReader(c: WorkCtx, stationId: string): Promise<StationActor & { readOnly: boolean }> {
   const user = await c.requireUser();
-  const role = await roleAtStation(c.db, user, stationId);
+  const role = await roleAtStation(c.db, user, stationId, "read");
   if (!role) throw new ApiError("forbidden", 403);
-  return { user, role };
+  // An owner only through a read-only link (migration 0070) reads and changes nothing.
+  const readOnly = role === "owner" && (await roleAtStation(c.db, user, stationId, "act")) !== "owner";
+  return { user, role, readOnly };
 }
 
 // Counter ------------------------------------------------------------------------------
@@ -361,7 +365,7 @@ export async function stationCounter(c: WorkCtx, stationId: string): Promise<Sta
     capacity: station.battery_capacity,
     rows,
     events: results.map(toEvent),
-    canCorrect: actor.role !== "staff",
+    canCorrect: actor.role !== "staff" && !actor.readOnly,
     priceXof: station.price_battery_xof,
   };
 }
@@ -966,7 +970,7 @@ export async function stationSwaps(c: WorkCtx, stationId: string, filter: SwapFi
 /** The station's owners and admins; the swap must be one of this station's. */
 async function swapEditor(c: WorkCtx, stationId: string, swapId: string): Promise<{ actor: StationActor; row: SwapRow & { battery_in_id: string | null; battery_out_id: string | null; wallet_trx_id: string | null; has_battery_in: number } }> {
   const actor = await stationReader(c, stationId);
-  if (actor.role === "staff") throw new ApiError("forbidden", 403);
+  if (actor.role === "staff" || actor.readOnly) throw new ApiError("forbidden", 403);
   const row = await c.db
     .prepare(`${SWAP_SELECT} where l.id = ? and l.station_id = ?`)
     .bind(swapId, stationId)

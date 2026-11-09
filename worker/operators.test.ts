@@ -119,6 +119,8 @@ async function withOperator() {
   const all = (await call(env, "admin", "GET", "/api/stations")).body as StationView[];
   const id = (name: string) => all.find((s) => s.name === name)!.id;
   expect(await call(env, "admin", "POST", `/api/admin/operators/${operatorId}/owners`, { contact: "90 00 00 02" })).toEqual({ status: 200, body: null });
+  // New accounts only read (migration 0070); Yao runs the stations.
+  expect(await call(env, "admin", "POST", `/api/admin/operators/${operatorId}/owners/yao/access`, { access: "manage" })).toEqual({ status: 200, body: null });
   return { db, env, operatorId, lome: id("Lomé Centre"), kara: id("Kara Gare"), be: id("Bè") };
 }
 
