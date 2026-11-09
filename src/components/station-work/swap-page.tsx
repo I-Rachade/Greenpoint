@@ -584,7 +584,7 @@ function SwapForm({
             <BatteryBleRead
               serial={batteryIn}
               onRead={(r) => {
-                if (r.serial && !batteryIn.trim()) setBatteryIn(r.serial);
+                if (r.serial) setBatteryIn(r.serial);
                 if (energy && r.socPct !== null) setInPct(String(r.socPct));
               }}
             />
@@ -612,7 +612,7 @@ function SwapForm({
           <BatteryBleRead
             serial={batteryOut}
             onRead={(r) => {
-              if (r.serial && !batteryOut.trim()) setBatteryOut(r.serial);
+              if (r.serial) setBatteryOut(r.serial);
               if (energy && r.socPct !== null) setOutPct(String(r.socPct));
             }}
           />

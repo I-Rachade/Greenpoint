@@ -339,7 +339,9 @@ export const fr = {
     failed: "Lecture impossible : {error}",
     noSoc: "La batterie n'a pas donné sa charge. Réessayez ou tapez le % à la main.",
     capacity: "{ah} Ah",
-    otherBattery: "Attention : la batterie lue ({read}) n'est pas celle du numéro saisi ({typed}).",
+    replaced: "Numéro de batterie remplacé par celui lu : {read} (il y avait {typed}).",
+    noSerial: "La batterie n'a pas donné son numéro de série. Scannez-le ou tapez-le.",
+    noSerialSuffix: "La batterie n'a pas donné son numéro de série complet (il finit par {end}). Scannez-le ou tapez-le.",
   },
   ble: {
     title: "Diagnostic Bluetooth",
