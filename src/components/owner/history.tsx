@@ -5,7 +5,7 @@ import { useApp } from "@/components/app-provider";
 import { ConfirmSheet } from "@/components/confirm-sheet";
 import { useI18n } from "@/components/i18n-provider";
 import { format } from "@/lib/i18n/format";
-import { Button, EmptyState, Input, useToast } from "@/components/ui";
+import { Badge, Button, EmptyState, Input, useToast } from "@/components/ui";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import type { Incident } from "@shared/incidents";
 import { IncidentItem } from "@/components/station-work/incident-page";
@@ -101,15 +101,43 @@ function Swaps({ stationId, days, readOnly }: { stationId: string; days: ReportP
   const xof = useXof();
   const h = t.owner.history;
   const w = t.work.swap;
-  const { data, error, reload } = useLiveQuery(() => backend.stationSwaps(stationId, { days }), `${stationId}:${days}`);
+  const o = t.offline;
+  // Offline swaps marked "to check" (0071), whatever their day, until someone marks them checked.
+  const [toCheck, setToCheck] = useState(false);
+  const { data, error, reload } = useLiveQuery(() => backend.stationSwaps(stationId, { days, toCheck }), `${stationId}:${days}:${toCheck}`);
   const [editing, setEditing] = useState<SwapEntry | null>(null);
   const [deleting, setDeleting] = useState<SwapEntry | null>(null);
   // Owners and admins see this page; a swap paid from Green Credit is deleted by an admin, who refunds it.
   // The battery numbers of the swap: handed out ↑, brought back ↓.
   const numbers = (s: SwapEntry) => [s.batteryOut ? `↑ ${s.batteryOut}` : null, s.batteryIn ? `↓ ${s.batteryIn}` : null].filter(Boolean).join("  ");
   const canDelete = (s: SwapEntry) => s.payment !== "wallet" || profile?.role === "admin";
+  const stillToCheck = (s: SwapEntry) => !!s.review && !s.reviewedAt;
+  const flags = (s: SwapEntry) =>
+    s.offline || s.review ? (
+      <span className="inline-flex flex-wrap gap-1">
+        {s.offline && <Badge tone="blue">{o.offlineLabel}</Badge>}
+        {stillToCheck(s) && s.review && (
+          <Badge tone="amber">
+            {o.reviewLabel} : {o.reviews[s.review]}
+          </Badge>
+        )}
+      </span>
+    ) : null;
+  async function checked(s: SwapEntry) {
+    await backend.markSwapChecked(s.stationId, s.id).catch(() => undefined);
+    reload();
+  }
   const actions = (s: SwapEntry) => readOnly ? null : (
     <span className="-my-2 inline-flex gap-1 whitespace-nowrap">
+      {stillToCheck(s) && (
+        <button
+          type="button"
+          onClick={() => void checked(s)}
+          className="min-h-9 rounded-full px-3 text-sm font-semibold text-amber-800 hover:bg-amber-50 dark:text-amber-200 dark:hover:bg-amber-950/40"
+        >
+          {o.markChecked}
+        </button>
+      )}
       <button
         type="button"
         onClick={() => setEditing(s)}
@@ -131,7 +159,19 @@ function Swaps({ stationId, days, readOnly }: { stationId: string; days: ReportP
     </span>
   );
   return (
-    <Section title={h.swaps}>
+    <Section
+      title={h.swaps}
+      aside={
+        <button
+          type="button"
+          aria-pressed={toCheck}
+          onClick={() => setToCheck(!toCheck)}
+          className={`min-h-9 rounded-full border px-3 text-sm font-semibold ${toCheck ? "border-amber-500 bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100" : "border-gp-border text-gp-muted dark:border-white/10"}`}
+        >
+          {o.toCheckFilter}
+        </button>
+      }
+    >
       <Loaded data={data} error={error} reload={reload}>
         {(swaps) =>
           swaps.length === 0 ? (
@@ -152,6 +192,7 @@ function Swaps({ stationId, days, readOnly }: { stationId: string; days: ReportP
                   {(s.batteryOut || s.batteryIn) && (
                     <div className="font-mono text-xs text-gp-muted">{numbers(s)}</div>
                   )}
+                  {flags(s)}
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs tabular-nums text-gp-muted">
                       {when(s.createdAt)} · {s.person}
@@ -161,7 +202,15 @@ function Swaps({ stationId, days, readOnly }: { stationId: string; days: ReportP
                 </div>
               )}
               columns={[
-                { label: h.when, cell: (s) => <span className="whitespace-nowrap tabular-nums">{when(s.createdAt)}</span> },
+                {
+                  label: h.when,
+                  cell: (s) => (
+                    <span className="flex flex-col gap-1">
+                      <span className="whitespace-nowrap tabular-nums">{when(s.createdAt)}</span>
+                      {flags(s)}
+                    </span>
+                  ),
+                },
                 { label: h.type, cell: (s) => w.customerTypes[s.customerType] },
                 { label: h.customer, cell: (s) => s.customer ?? s.driver ?? s.customerName ?? s.plate ?? "–" },
                 { label: h.payment, cell: (s) => w.payments[s.payment] },

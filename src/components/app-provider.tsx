@@ -5,6 +5,7 @@ import { getBackend, type Backend } from "@/lib/backend";
 import { sameFeatures, UNKNOWN_FEATURES, type Features } from "@shared/features";
 import type { Profile } from "@shared/types";
 import { PushRegistrar } from "./push-registrar";
+import { OfflineSync } from "./offline/offline-sync";
 
 interface AppContextValue {
   backend: Backend;
@@ -136,6 +137,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext value={{ backend, profile, ready, features, featuresReady }}>
       {children}
       <PushRegistrar />
+      <OfflineSync />
     </AppContext>
   );
 }

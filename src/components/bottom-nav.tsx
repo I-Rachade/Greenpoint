@@ -46,6 +46,14 @@ export function BottomNav() {
   // Favourites and alerts live on the account page; its tab carries the unread count.
   // Parcels and trips only show while the parcel module is on in the backoffice.
   const tabs = [
+    // Station staff: their station comes first (it is where the app opens), then the map.
+    {
+      href: "/operator",
+      label: t.ui.tabs.myStation,
+      icon: ListIcon,
+      active: pathname === "/operator" || (staff && pathname.startsWith("/operator/") && !pathname.startsWith("/operator/activite")),
+      show: staff,
+    },
     { href: "/", label: t.ui.tabs.map, icon: MapIcon, active: pathname === "/", show: !viewer },
     { href: "/exploitant", label: t.nav.owner, icon: StoreIcon, active: pathname.startsWith("/exploitant"), show: viewer },
     { href: "/stations", label: t.ui.tabs.stations, icon: ListIcon, active: pathname.startsWith("/stations") || pathname.startsWith("/station"), show: !staff && !viewer && !features.lite && !features.share },
@@ -60,14 +68,6 @@ export function BottomNav() {
       icon: BoxIcon,
       active: ["/livraisons", "/colis", "/courses"].some((p) => pathname.startsWith(p)),
       show: features.parcels && customer,
-    },
-    // Station staff (mockup B1): their station and its day, next to the map.
-    {
-      href: "/operator",
-      label: t.ui.tabs.myStation,
-      icon: ListIcon,
-      active: pathname === "/operator" || (staff && pathname.startsWith("/operator/") && !pathname.startsWith("/operator/activite")),
-      show: staff,
     },
     { href: "/operator/activite", label: t.ui.tabs.activity, icon: ClockIcon, active: pathname.startsWith("/operator/activite"), show: staff },
     {

@@ -3,6 +3,8 @@
 import { usePathname } from "next/navigation";
 import { useRef, useState } from "react";
 import { useOnboarding } from "@/lib/prefs";
+import { isStationStaff } from "@shared/operators";
+import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
 
 /**
@@ -20,12 +22,14 @@ const skipsIntro = (path: string) => SKIP_PREFIXES.some((p) => path === p || pat
 export function Onboarding() {
   const { t } = useI18n();
   const pathname = usePathname();
+  const { profile } = useApp();
   const [show, setSeen] = useOnboarding();
   const [index, setIndex] = useState(0);
   const track = useRef<HTMLDivElement>(null);
   const slides = t.ui.onboarding.slides;
 
-  if (!show || skipsIntro(pathname)) return null;
+  // Station staff open the app on their station: the riders' introduction is not for them.
+  if (!show || skipsIntro(pathname) || isStationStaff(profile)) return null;
 
   const last = index === slides.length - 1;
   const goTo = (i: number) => {

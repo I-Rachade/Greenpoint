@@ -189,6 +189,49 @@ export interface SwapInput {
   /** Network and transaction id of the customer's payment. */
   mmNetwork?: MmNetwork | null;
   mmRef?: string | null;
+  /**
+   * A swap made without network and sent later (0071): when it really happened (ISO). The
+   * server keeps that time, and records a swap that contradicts the back-office as "to
+   * check" instead of refusing it, since it already happened (see checkOfflineAt).
+   */
+  offlineAt?: string | null;
+}
+
+// Offline swaps (migration 0071) ----------------------------------------------------------
+
+/** Swaps one phone keeps while offline; the next one waits for the network. */
+export const OFFLINE_QUEUE_MAX = 10;
+/** Oldest offline swap the server takes, and how long an offline login lasts without network. */
+export const OFFLINE_MAX_DAYS = 14;
+/** Phone clocks run a little ahead: an offline time this far in the future is still taken. */
+const OFFLINE_CLOCK_SLACK_MS = 10 * 60_000;
+
+/** Why an offline swap was recorded "to check": stock, battery register, payment or customer did not match. */
+export const SWAP_REVIEWS = ["stock", "battery", "payment", "customer"] as const;
+export type SwapReview = (typeof SWAP_REVIEWS)[number];
+
+/** The offline time when it is usable, else the error the server answers. */
+export function checkOfflineAt(raw: unknown, now = Date.now()): { ok: true; at: string } | { ok: false; error: "offline_too_old" | "offline_in_future" | "bad_request" } {
+  if (typeof raw !== "string" || !/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(raw)) return { ok: false, error: "bad_request" };
+  const at = Date.parse(raw);
+  if (!Number.isFinite(at)) return { ok: false, error: "bad_request" };
+  if (at > now + OFFLINE_CLOCK_SLACK_MS) return { ok: false, error: "offline_in_future" };
+  if (at < now - OFFLINE_MAX_DAYS * 86_400_000) return { ok: false, error: "offline_too_old" };
+  return { ok: true, at: new Date(Math.min(at, now)).toISOString() };
+}
+
+/** A refused offline swap the admin decides on (0071, /admin): the form as sent and the server's answer. */
+export interface OfflineSwapReject {
+  id: string;
+  requestId: string;
+  stationId: string;
+  stationName: string | null;
+  person: string;
+  occurredAt: string;
+  error: string;
+  input: SwapInput;
+  createdAt: string;
+  resolvedAt: string | null;
 }
 
 export interface SwapEntry {
@@ -215,6 +258,13 @@ export interface SwapEntry {
   person: string;
   role: StationRole;
   createdAt: string;
+  /** Made without network and sent later (0071); createdAt is when it happened, syncedAt when it arrived. */
+  offline?: boolean;
+  syncedAt?: string | null;
+  /** Recorded "to check" (offline swaps only), with the server's reason, until someone marks it checked. */
+  review?: SwapReview | null;
+  reviewNote?: string | null;
+  reviewedAt?: string | null;
 }
 
 /** A customer's latest swap (home "Mon scooter", mockup A1): where, which battery and its charge when given. */
@@ -235,6 +285,8 @@ export interface SwapFilter {
   /** Owners and admins: a range of days (YYYY-MM-DD, Lomé time = UTC, both included) instead of `days`, for the swap sheet export. */
   from?: string | null;
   to?: string | null;
+  /** Owners and admins: only the swaps still "to check" (0071). */
+  toCheck?: boolean | null;
 }
 
 /** Longest range the swap sheet exports, and the most swaps one export reads. */

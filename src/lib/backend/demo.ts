@@ -75,6 +75,7 @@ import {
   type SwapEditInput,
   type SwapEntry,
   type SwapFilter,
+  type OfflineSwapReject,
   type SwapInput,
   type SwapPayment,
 } from "@shared/station-work";
@@ -2287,6 +2288,8 @@ export class DemoBackend implements Backend {
     const range = ranged ? swapDayRange(filter.from, filter.to) : null;
     if (ranged && !range) throw new BackendError("invalid_date_range");
     const since = role === "staff" ? dayStartLome() : (range?.since ?? periodStart(reportPeriod(filter.days ?? 1)));
+    // The demo never records swaps offline, so nothing is ever to check (0071).
+    if (filter.toCheck && role !== "staff") return [];
     return (state.swaps ?? [])
       .filter(
         (x) =>
@@ -2307,6 +2310,22 @@ export class DemoBackend implements Backend {
     const swap = (state.swaps ?? []).find((x) => x.id === swapId && x.stationId === stationId);
     if (!swap) throw new BackendError("swap_not_found");
     return { profile, role, swap };
+  }
+
+  /** As markSwapChecked() in worker/station-work.ts; demo swaps are never to check. */
+  async markSwapChecked(stationId: string, swapId: string): Promise<SwapEntry> {
+    const { swap } = this.swapEditor(this.load(), stationId, swapId);
+    return swapView(swap);
+  }
+
+  async offlineSwapRejects(): Promise<OfflineSwapReject[]> {
+    this.requireAdmin(this.load());
+    return [];
+  }
+
+  async resolveOfflineReject(): Promise<void> {
+    this.requireAdmin(this.load());
+    throw new BackendError("offline_reject_not_found");
   }
 
   /** As editSwap() in worker/station-work.ts. */

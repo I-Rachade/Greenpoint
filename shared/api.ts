@@ -206,4 +206,9 @@ export type BackendErrorCode =
   | "handover_decided"
   | "reject_reason_required"
   | "own_station"
+  | "offline_too_old"
+  | "offline_in_future"
+  | "offline_not_allowed"
+  | "offline_reject_not_found"
+  | "offline_login_unavailable"
   | "unknown";

@@ -21,6 +21,10 @@ import { BatteryBleRead } from "../ble/battery-ble-read";
 import { useReservationWhat } from "../reservation-list";
 import { Button, Card, EmptyState, Input, SkeletonCard, SuccessCheck, useReducedMotion, useToast } from "../ui";
 import { WorkShell } from "./work-shell";
+import { useOffline, useQueuedSwaps } from "@/lib/offline/hooks";
+import { isNetworkError } from "@/lib/offline/storage";
+import { enqueueSwap, QueueFullError } from "@/lib/offline/swap-queue";
+import { personLabel } from "@shared/wallet";
 
 export function Chips<T extends string>({ value, options, label, onChange }: { value: T; options: { id: T; label: string; disabled?: boolean }[]; label: string; onChange: (v: T) => void }) {
   return (
@@ -269,7 +273,8 @@ function SwapForm({
   initialContact?: string;
 }) {
   const { t, locale } = useI18n();
-  const { backend, features } = useApp();
+  const { backend, features, profile } = useApp();
+  const offline = useOffline();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const what = useReservationWhat();
@@ -281,8 +286,9 @@ function SwapForm({
   const [code, setCode] = useState(initialCode);
   const [contact, setContact] = useState(initialContact);
   const [driverCode, setDriverCode] = useState("");
-  // Green Credit only at a station an admin designated (0047).
-  const creditHere = !!station.greenCredit;
+  // Green Credit only at a station an admin designated (0047), and never without network:
+  // its one-time code is checked by the server only.
+  const creditHere = !!station.greenCredit && !offline;
   const [payment, setPayment] = useState<"wallet" | "cash">(creditHere ? "wallet" : "cash");
   const [creditCode, setCreditCode] = useState("");
   const [amount, setAmount] = useState("");
@@ -305,7 +311,7 @@ function SwapForm({
   const [direction, setDirection] = useState(1);
   const reduced = useReducedMotion();
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState<false | "sent" | "kept">(false);
   const [error, setError] = useState<string | null>(null);
 
   const row = rows.find((r) => r.batteryTypeId === typeId);
@@ -410,10 +416,25 @@ function SwapForm({
     };
     setBusy(true);
     try {
-      await backend.recordSwap(station.id, input);
-      toast(t.work.saved);
+      let kept = false;
+      try {
+        await backend.recordSwap(station.id, input);
+      } catch (err) {
+        // No network: a walk-in, cash or fleet swap is kept on the phone and sent later at its real
+        // time (src/lib/offline/swap-queue.ts); Green Credit and reservations need the server.
+        if (!isNetworkError(err) || reservation || wallet || !profile || backend.mode !== "cloudflare") throw err;
+        enqueueSwap({
+          stationId: station.id,
+          stationName: station.name,
+          userId: profile.id,
+          person: personLabel(profile),
+          input: { ...input, offlineAt: new Date().toISOString() },
+        });
+        kept = true;
+      }
+      toast(kept ? t.offline.savedOffline : t.work.saved);
       if (reservation) return onReservationDone?.();
-      setDone(true);
+      setDone(kept ? "kept" : "sent");
       setStep(0);
       setRequestId(newRequestId());
       setContact("");
@@ -429,7 +450,7 @@ function SwapForm({
       setOutChecked(false);
       setMmRef("");
     } catch (err) {
-      setError(errorMessage(err));
+      setError(err instanceof QueueFullError ? t.offline.queueFull : errorMessage(err));
     } finally {
       setBusy(false);
       setConfirming(false);
@@ -440,7 +461,8 @@ function SwapForm({
     return (
       <Card className="flex flex-col items-center gap-3 p-6 text-center">
         <SuccessCheck />
-        <p className="font-semibold">{t.work.saved}</p>
+        <p className="font-semibold">{done === "kept" ? t.offline.savedOffline : t.work.saved}</p>
+        {done === "kept" && <p className="text-sm text-gp-muted">{t.offline.savedOfflineHint}</p>}
         <Button size="lg" onClick={() => setDone(false)}>
           {s.title}
         </Button>
@@ -529,7 +551,8 @@ function SwapForm({
                 id: r.batteryTypeId,
                 label: `${r.label ?? ""} · ${format(s.full, { n: r.full })}${held ? ` · ${format(s.held, { n: held })}` : ""}`,
                 // From a reservation only its type; without one, only what no reservation holds.
-                disabled: r.full <= 0 || (reservation?.target ? r.batteryTypeId !== reservation.target : !reservation && r.full - held <= 0),
+                // Offline the counter may be old: the swap goes through and the server marks it to check.
+                disabled: offline ? false : r.full <= 0 || (reservation?.target ? r.batteryTypeId !== reservation.target : !reservation && r.full - held <= 0),
               };
             })}
           />
@@ -739,7 +762,7 @@ function SwapForm({
           type="submit"
           size="lg"
           className="flex-1"
-          disabled={!row || row.full <= 0 || priceMissing || !!waiting || (last && !!energy && (!priced || !chosenNetwork || (takesIn && !condition)))}
+          disabled={!row || (!offline && row.full <= 0) || priceMissing || !!waiting || (last && !!energy && (!priced || !chosenNetwork || (takesIn && !condition)))}
         >
           {last ? (
             <>
@@ -784,6 +807,7 @@ function SwapView({ station }: { station: StationView }) {
   const reservationId = params.get("reservation");
   // Kept once the swap completed the reservation, while the list reloads without it.
   const [finished, setFinished] = useState(false);
+  const queue = useQueuedSwaps();
   const { data, error, reload } = useLiveQuery(
     () => Promise.all([backend.stationCounter(station.id), reservationId ? backend.stationReservations(station.id) : Promise.resolve([])]),
     `${station.id}:${reservationId ?? ""}`,
@@ -800,7 +824,18 @@ function SwapView({ station }: { station: StationView }) {
     );
   }
   if (!data) return error ? <LoadFailed error={error} onRetry={reload} /> : <SkeletonCard />;
-  const [counter, reservations] = data;
+  const [kept, reservations] = data;
+  // Swaps waiting on the phone already took their full battery: the counter shows it.
+  const waiting = queue.filter((q) => q.stationId === station.id && q.status === "pending");
+  const counter = waiting.length
+    ? {
+        ...kept,
+        rows: kept.rows.map((r) => {
+          const n = waiting.filter((q) => (q.input.batteryTypeId ?? "") === r.batteryTypeId || (kept.rows.length === 1 && !q.input.batteryTypeId)).length;
+          return { ...r, full: Math.max(r.full - n, 0) };
+        }),
+      }
+    : kept;
   const reservation = reservationId ? reservations.find((r) => r.id === reservationId && reservationKind(r) === "swap") : undefined;
   if (reservationId && (!reservation || !isHolding(reservation))) {
     return <EmptyState text={t.work.reservations.gone} action={<Button href="/operator/reservations">{t.work.reservations.back}</Button>} />;

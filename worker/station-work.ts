@@ -39,6 +39,9 @@ import {
   type SwapFilter,
   type SwapInput,
   type SwapPayment,
+  type SwapReview,
+  type OfflineSwapReject,
+  checkOfflineAt,
 } from "../shared/station-work";
 import type { Profile } from "../shared/types";
 import { periodStart, reportPeriod } from "../shared/owner-backoffice";
@@ -216,6 +219,13 @@ interface EventSpec {
   keepHeld?: boolean;
   /** Correction: also take this many empty batteries off (a deleted swap's battery brought back, −1). */
   emptyDelta?: -1 | 0;
+  /**
+   * Issue of an offline swap (0071): it already happened, so it is written even without a full
+   * battery in the counter (which stays at 0); the swap is then marked to check.
+   */
+  force?: boolean;
+  /** When the event happened, when not now (an offline swap); the counter's updated_at stays now. */
+  at?: string;
 }
 
 /**
@@ -225,10 +235,12 @@ interface EventSpec {
  */
 function eventStatements(db: D1Database, e: EventSpec): D1PreparedStatement[] {
   const fullDelta = e.type === "empty_in" ? 0 : e.delta;
+  const fullAfter = e.force ? "max(bc.full + ?7, 0)" : "bc.full + ?7";
   const emptyAfter =
     e.type === "full" || (e.type === "correction" && e.emptyDelta === -1) ? "max(bc.empty - 1, 0)" : e.type === "empty_in" ? "bc.empty + 1" : "bc.empty";
-  const guard =
-    e.type === "issue"
+  const guard = e.force
+    ? "1"
+    : e.type === "issue"
       ? e.keepHeld
         ? `bc.full - ${heldBatteriesSql("?3", "?4", "?13")} > 0`
         : "bc.full > 0"
@@ -251,11 +263,11 @@ function eventStatements(db: D1Database, e: EventSpec): D1PreparedStatement[] {
     db
       .prepare(
         `insert into battery_events (id, request_id, station_id, battery_type_id, type, delta, full_after, empty_after, reason, swap_id, person_id, role, created_at)
-         select ?2, ?1, ?3, ?4, ?5, ?6, bc.full + ?7, ${emptyAfter}, ?8, ?9, ?10, ?11, ?13
+         select ?2, ?1, ?3, ?4, ?5, ?6, ${fullAfter}, ${emptyAfter}, ?8, ?9, ?10, ?11, ?14
          from battery_counter bc join stations s on s.id = bc.station_id
          where bc.station_id = ?3 and bc.battery_type_id = ?4 and ${guard} and ${e.onlyIf?.sql ?? "?12 is null"}`,
       )
-      .bind(e.requestId, uuid(), e.stationId, e.key, e.type, e.delta, fullDelta, e.reason, e.swapId, e.actor.user.id, e.actor.role, e.onlyIf?.value ?? null, e.now),
+      .bind(e.requestId, uuid(), e.stationId, e.key, e.type, e.delta, fullDelta, e.reason, e.swapId, e.actor.user.id, e.actor.role, e.onlyIf?.value ?? null, e.now, e.at ?? e.now),
     db
       .prepare(
         `update battery_counter set full = (select full_after from battery_events where request_id = ?1),
@@ -521,6 +533,11 @@ interface SwapRow {
   staff_id: string;
   role: StationRole;
   created_at: string;
+  offline?: number | null;
+  synced_at?: string | null;
+  review?: SwapReview | null;
+  review_note?: string | null;
+  reviewed_at?: string | null;
   type_label: string | null;
   c_name: string | null;
   c_phone: string | null;
@@ -568,6 +585,11 @@ function toSwap(r: SwapRow): SwapEntry {
     person: label(r.s_name, r.s_phone, r.s_email) ?? "",
     role: r.role,
     createdAt: r.created_at,
+    offline: !!r.offline,
+    syncedAt: r.synced_at ?? null,
+    review: r.review ?? null,
+    reviewNote: r.review_note ?? null,
+    reviewedAt: r.reviewed_at ?? null,
   };
 }
 
@@ -612,8 +634,9 @@ async function creditCustomer(db: D1Database, raw: unknown, staffId: string): Pr
  * pass made for the fleet the driver belongs to now. A typed driver code is not enough:
  * the swap is billed to the fleet.
  */
-async function findFleetDriver(db: D1Database, raw: unknown): Promise<{ driverId: string; managerId: string }> {
-  const pass = await checkDriverPass(await passSecret(db), String(raw ?? ""));
+async function findFleetDriver(db: D1Database, raw: unknown, at?: number): Promise<{ driverId: string; managerId: string }> {
+  // An offline swap: the pass must have been valid when it was scanned.
+  const pass = await checkDriverPass(await passSecret(db), String(raw ?? ""), at);
   if (!pass.ok) throw new ApiError(pass.error, 409);
   const row = await db
     .prepare(
@@ -640,6 +663,35 @@ async function findFleetDriver(db: D1Database, raw: unknown): Promise<{ driverId
  * reservation, a swap cannot take a full battery an active reservation holds.
  */
 export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput): Promise<SwapEntry> {
+  if (input?.offlineAt == null) return recordSwapNow(c, stationId, input);
+  try {
+    return await recordSwapNow(c, stationId, input);
+  } catch (err) {
+    // A refused offline swap already happened: the admin sees it and decides (0071).
+    if (err instanceof ApiError && !NOT_KEPT_REJECTS.has(err.code)) await keepOfflineReject(c, stationId, input, err.code).catch(() => undefined);
+    throw err;
+  }
+}
+
+/** Answers that say nothing about the swap itself: the app keeps it and sends it again later. */
+const NOT_KEPT_REJECTS = new Set<string>(["not_authenticated", "rate_limited", "active_station_required"]);
+
+async function keepOfflineReject(c: WorkCtx, stationId: string, input: SwapInput, error: string) {
+  const user = await c.requireUser();
+  if (!validRequestId(input.requestId)) return;
+  const payload = JSON.stringify(input).slice(0, 4000);
+  await c.db
+    .prepare(
+      `insert into offline_swap_rejects (id, request_id, station_id, staff_id, occurred_at, error, payload, created_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?)
+       on conflict (request_id) do update set error = excluded.error, payload = excluded.payload, created_at = excluded.created_at
+       where offline_swap_rejects.resolved_at is null`,
+    )
+    .bind(uuid(), input.requestId, String(stationId).slice(0, 80), user.id, String(input.offlineAt).slice(0, 40), error.slice(0, 80), payload, nowIso())
+    .run();
+}
+
+async function recordSwapNow(c: WorkCtx, stationId: string, input: SwapInput): Promise<SwapEntry> {
   const actor = await stationActor(c, stationId);
   await requireService(c.db, stationId, "swap");
   if (!input || !validRequestId(input.requestId) || !isSwapCustomerType(input.customerType)) throw new ApiError("bad_request");
@@ -662,7 +714,22 @@ export async function recordSwap(c: WorkCtx, stationId: string, input: SwapInput
 
 async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: StationActor): Promise<SwapEntry> {
   const db = c.db;
-  const type = input.customerType;
+  let type = input.customerType;
+  // Made without network and sent later (0071): kept at its real time, and what no longer matches
+  // the back-office is marked to check rather than refused, since the customer already left with it.
+  let offlineAt: string | null = null;
+  if (input.offlineAt != null) {
+    const checked = checkOfflineAt(input.offlineAt);
+    if (!checked.ok) throw new ApiError(checked.error);
+    offlineAt = checked.at;
+    // Green Credit codes and pickup codes are checked by the server only: never taken offline.
+    if (input.reservationId || (type === "app" && input.payment !== "cash")) {
+      const energyType = input.reservationId ? null : await energyOfKey(db, await counterKey(db, stationId, input.batteryTypeId));
+      if (!energyType) throw new ApiError("offline_not_allowed");
+    }
+  }
+  const reviews: { review: SwapReview; note: string }[] = [];
+  const toCheck = (review: SwapReview, note: string) => reviews.push({ review, note });
   const station = await stationInfo(db, stationId);
   const features = await featuresOf(db);
   const batteryIn = takesBatteryIn(type) ? cleanBatteryLabel(input.batteryIn) : null;
@@ -695,15 +762,26 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
   } else if (type === "app" && input.payment !== "cash" && !energyWalkIn) {
     // Paid from Green Credit: the customer's one-time code, shown after the PIN on their phone (0047).
     customer = await creditCustomer(db, input.creditCode ?? input.contact, actor.user.id);
-  } else if (type === "app") {
-    customer = await findCustomer(db, input.contact, actor.user.id);
-  } else if (type === "first_purchase" && input.contact) {
-    customer = await findCustomer(db, input.contact, actor.user.id);
+  } else if (type === "app" || (type === "first_purchase" && input.contact)) {
+    try {
+      customer = await findCustomer(db, input.contact, actor.user.id);
+    } catch (err) {
+      // Offline: the customer took the battery and paid cash; who they are is checked afterwards.
+      if (!offlineAt || !(err instanceof ApiError) || !input.contact) throw err;
+      toCheck("customer", err.code);
+    }
   } else if (type === "fleet") {
     // Lite switches drivers off everywhere: no fleet swaps (W8, R9).
     if (features.lite) throw new ApiError("cash_only", 409);
-    driver = await findFleetDriver(db, input.driverCode);
-    if (driver.driverId === actor.user.id) throw new ApiError("own_reservation");
+    try {
+      driver = await findFleetDriver(db, input.driverCode, offlineAt ? Date.parse(offlineAt) : undefined);
+    } catch (err) {
+      // Offline: the driver left with the battery but the fleet cannot be billed; recorded unpaid, to check.
+      if (!offlineAt || !(err instanceof ApiError)) throw err;
+      toCheck("payment", err.code);
+      type = "cash";
+    }
+    if (driver?.driverId === actor.user.id) throw new ApiError("own_reservation");
   }
 
   const key = await counterKey(db, stationId, input.batteryTypeId);
@@ -716,9 +794,14 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
   };
   const energy = await energyOfKey(db, key);
   const energySwap = energy ? energySwapOf(input, energy) : null;
+  if (offlineAt) {
+    // Offline: the register may have moved on meanwhile (a battery taken out of service, or moved by a later swap).
+    if (batteriesOf.out?.status && batteriesOf.out.status !== "in_service") toCheck("battery", "battery_out_not_in_service");
+    else if (await movedSince(db, [batteryOut, batteryIn], offlineAt)) toCheck("battery", "battery_moved_since");
+  }
   if (energySwap) {
     // The procedure: never hand out a battery that is not in service.
-    if (batteriesOf.out?.status && batteriesOf.out.status !== "in_service") throw new ApiError("battery_out_not_in_service", 409);
+    if (!offlineAt && batteriesOf.out?.status && batteriesOf.out.status !== "in_service") throw new ApiError("battery_out_not_in_service", 409);
     const used = await db.prepare("select 1 from swap_log where mm_network = ? and mm_ref = ?").bind(energySwap.mmNetwork, energySwap.mmRef).first();
     if (used) throw new ApiError("mm_ref_used", 409);
   }
@@ -732,6 +815,10 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
     amount = energySwap.amountXof;
   } else if (type === "fleet") {
     payment = "fleet";
+    amount = station.price_battery_xof ?? 0;
+  } else if (input.customerType === "fleet") {
+    // An offline fleet swap whose pass no longer holds: unpaid, to check (no driver to bill).
+    payment = "none";
     amount = station.price_battery_xof ?? 0;
   } else if (type === "app" && input.payment !== "cash") {
     // App payments only where the swap is ours (our stations, shop stations: 0045), cash elsewhere,
@@ -755,7 +842,8 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
     }
   }
 
-  const now = nowIso();
+  const realNow = nowIso();
+  const now = offlineAt ?? realNow;
   const swapId = uuid();
   const outRequest = `${input.requestId}:out`;
   const inRequest = `${input.requestId}:in`;
@@ -768,9 +856,11 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
                               else (select full_batteries from station_battery_types where station_id = ?1 and battery_type_id = ?2) end, 0) as full,
                 ${heldBatteriesSql("?1", "?2", "?3")} as held`,
       )
-      .bind(stationId, key, now)
+      .bind(stationId, key, realNow)
       .first<{ full: number; held: number }>();
-    if (left && left.full > 0 && left.full - left.held <= 0) throw new ApiError("battery_reserved", 409);
+    if (offlineAt) {
+      if (!left || left.full - left.held <= 0) toCheck("stock", left && left.full > 0 ? "battery_reserved" : "no_full_battery");
+    } else if (left && left.full > 0 && left.full - left.held <= 0) throw new ApiError("battery_reserved", 409);
   }
   const statements: D1PreparedStatement[] = [
     ...eventStatements(db, {
@@ -782,8 +872,10 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
       requestId: outRequest,
       swapId,
       actor,
-      now,
-      keepHeld: !reservation,
+      now: realNow,
+      at: now,
+      force: !!offlineAt,
+      keepHeld: !reservation && !offlineAt,
       // From a reservation: only while it is still active, so it completes exactly once.
       onlyIf: reservation ? { sql: "exists (select 1 from reservations where id = ?12 and status = 'active')", value: reservation.id } : undefined,
     }),
@@ -791,8 +883,8 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
       .prepare(
         `insert into swap_log (id, request_id, station_id, battery_type_id, has_battery_in, battery_in_label, battery_out_label, customer_type,
            customer_user_id, driver_id, fleet_manager_id, reservation_id, payment, amount_xof, wallet_trx_id, staff_id, role, created_at, owner,
-           in_pct, out_pct, plate, customer_name, battery_in_condition, mm_network, mm_ref)
-         select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27
+           in_pct, out_pct, plate, customer_name, battery_in_condition, mm_network, mm_ref, offline, synced_at, review, review_note)
+         select ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31
          where exists (select 1 from battery_events where request_id = ?19)`,
       )
       .bind(
@@ -823,11 +915,15 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
         energySwap?.condition ?? null,
         energySwap?.mmNetwork ?? null,
         energySwap?.mmRef ?? null,
+        offlineAt ? 1 : 0,
+        offlineAt ? realNow : null,
+        reviews[0]?.review ?? null,
+        reviews.length ? reviews.map((r) => r.note).join(", ").slice(0, 200) : null,
       ),
   ];
   const swapExists = { sql: "exists (select 1 from swap_log where request_id = ?12)", value: input.requestId };
   if (takesBatteryIn(type)) {
-    statements.push(...eventStatements(db, { stationId, key, type: "empty_in", delta: 1, reason: null, requestId: inRequest, swapId, actor, now, onlyIf: swapExists }));
+    statements.push(...eventStatements(db, { stationId, key, type: "empty_in", delta: 1, reason: null, requestId: inRequest, swapId, actor, now: realNow, at: now, onlyIf: swapExists }));
   }
   for (const direction of ["out", "in"] as const) {
     const battery = batteriesOf[direction];
@@ -937,6 +1033,17 @@ async function bookSwap(c: WorkCtx, stationId: string, input: SwapInput, actor: 
   return toSwap(row);
 }
 
+/** A battery of the swap moved by a swap after `at` (an offline swap sent late): its place in the register is newer. */
+async function movedSince(db: D1Database, serials: (string | null)[], at: string): Promise<boolean> {
+  const wanted = serials.filter((s): s is string => !!s);
+  if (!wanted.length) return false;
+  const row = await db
+    .prepare(`select 1 from batteries where serial in (${wanted.map(() => "?").join(", ")}) and last_swap_at > ? limit 1`)
+    .bind(...wanted, at)
+    .first();
+  return !!row;
+}
+
 /** A swap priced by energy, checked (shared/energy-swap.ts). */
 function energySwapOf(input: SwapInput, energy: EnergyPricing) {
   const checked = checkEnergySwap(input, energy);
@@ -954,13 +1061,16 @@ export async function stationSwaps(c: WorkCtx, stationId: string, filter: SwapFi
   const ranged = !staff && (filter.from != null || filter.to != null);
   const range = ranged ? swapDayRange(filter.from, filter.to) : null;
   if (ranged && !range) throw new ApiError("invalid_date_range");
-  const since = staff ? dayStartLome() : (range?.since ?? periodStart(reportPeriod(filter.days ?? 1)));
+  // Swaps to check (offline swaps, 0071) are listed whatever their day, until someone checks them.
+  const toCheck = !staff && !!filter.toCheck;
+  const since = staff ? dayStartLome() : toCheck ? "" : (range?.since ?? periodStart(reportPeriod(filter.days ?? 1)));
   const { results } = await c.db
     .prepare(
       `${SWAP_SELECT} where l.station_id = ?1 and l.created_at >= ?2 and (?3 is null or l.customer_type = ?3)
-         and (?4 is null or l.staff_id = ?4) and (?5 is null or l.created_at < ?5) order by l.created_at desc limit ?6`,
+         and (?4 is null or l.staff_id = ?4) and (?5 is null or l.created_at < ?5)
+         and (?7 = 0 or (l.review is not null and l.reviewed_at is null)) order by l.created_at desc limit ?6`,
     )
-    .bind(stationId, since, type, staff ? actor.user.id : null, range?.until ?? null, range ? SWAP_EXPORT_LIMIT : 500)
+    .bind(stationId, since, type, staff ? actor.user.id : null, range?.until ?? null, range ? SWAP_EXPORT_LIMIT : 500, toCheck ? 1 : 0)
     .all<SwapRow>();
   return results.map(toSwap);
 }
@@ -1143,4 +1253,79 @@ export async function deleteSwap(c: WorkCtx, stationId: string, swapId: string, 
     if (isUnique(err)) throw new ApiError("swap_not_found", 404);
     throw err;
   }
+}
+
+// Offline swaps to check and refused (migration 0071) --------------------------------------
+
+/** POST /api/stations/:id/swaps/:swapId/checked: an owner or admin looked at a swap marked to check. */
+export async function markSwapChecked(c: WorkCtx, stationId: string, swapId: string): Promise<SwapEntry> {
+  const { actor, row } = await swapEditor(c, stationId, swapId);
+  if (!row.review) return toSwap(row);
+  const now = nowIso();
+  await c.db.batch([
+    c.db.prepare("update swap_log set reviewed_at = ?, reviewed_by = ? where id = ? and reviewed_at is null").bind(now, actor.user.id, row.id),
+    swapAudit(c.db, actor, "update", row, { reviewed: true }),
+  ]);
+  const updated = await c.db.prepare(`${SWAP_SELECT} where l.id = ?`).bind(row.id).first<SwapRow>();
+  return toSwap(updated ?? row);
+}
+
+interface RejectRow {
+  id: string;
+  request_id: string;
+  station_id: string;
+  station_name: string | null;
+  occurred_at: string;
+  error: string;
+  payload: string;
+  created_at: string;
+  resolved_at: string | null;
+  p_name: string | null;
+  p_phone: string | null;
+  p_email: string | null;
+}
+
+function toReject(r: RejectRow): OfflineSwapReject {
+  let input: SwapInput;
+  try {
+    input = JSON.parse(r.payload) as SwapInput;
+  } catch {
+    input = { requestId: r.request_id, customerType: "cash" };
+  }
+  return {
+    id: r.id,
+    requestId: r.request_id,
+    stationId: r.station_id,
+    stationName: r.station_name,
+    person: label(r.p_name, r.p_phone, r.p_email) ?? "",
+    occurredAt: r.occurred_at,
+    error: r.error,
+    input,
+    createdAt: r.created_at,
+    resolvedAt: r.resolved_at,
+  };
+}
+
+/** GET /api/admin/offline-swap-rejects: refused offline swaps not dealt with yet, newest first (admins). */
+export async function offlineSwapRejects(c: WorkCtx & { requireAdmin(): Promise<Profile> }): Promise<OfflineSwapReject[]> {
+  await c.requireAdmin();
+  const { results } = await c.db
+    .prepare(
+      `select r.*, s.name as station_name, u.full_name as p_name, u.phone as p_phone, u.email as p_email
+       from offline_swap_rejects r left join stations s on s.id = r.station_id left join users u on u.id = r.staff_id
+       where r.resolved_at is null order by r.created_at desc limit 200`,
+    )
+    .all<RejectRow>();
+  return results.map(toReject);
+}
+
+/** POST /api/admin/offline-swap-rejects/:id/resolve: the admin dealt with it (counter corrected, swap entered by hand). */
+export async function resolveOfflineReject(c: WorkCtx & { requireAdmin(): Promise<Profile> }, id: string): Promise<{ ok: true }> {
+  const admin = await c.requireAdmin();
+  const done = await c.db
+    .prepare("update offline_swap_rejects set resolved_at = ?, resolved_by = ? where id = ? and resolved_at is null")
+    .bind(nowIso(), admin.id, id)
+    .run();
+  if (!done.meta.changes) throw new ApiError("offline_reject_not_found", 404);
+  return { ok: true };
 }

@@ -14,6 +14,8 @@ import { format } from "@/lib/i18n/format";
 import { PIN_LENGTH } from "@shared/pin";
 import type { Profile, UserRole } from "@shared/types";
 import { useApp } from "./app-provider";
+import { isOffline } from "@/lib/offline/connectivity";
+import { useQueuedSwaps } from "@/lib/offline/hooks";
 import { CountryPicker } from "./country-picker";
 import { useI18n } from "./i18n-provider";
 import { MailIcon, PhoneIcon } from "./icons";
@@ -51,6 +53,8 @@ export function LoginForm({ fleet = false, merchant = false, startSignup = false
   const { backend } = useApp();
   const router = useRouter();
   const errorMessage = useErrorMessage();
+  // Swaps kept on this phone without network wait for their staff to sign in again.
+  const queued = useQueuedSwaps().filter((q) => q.status === "pending").length;
   const shopProblem = useShopProblem();
   // Fleet and shop registrations only have the "register" steps.
   const signup = fleet || merchant;
@@ -136,7 +140,8 @@ export function LoginForm({ fleet = false, merchant = false, startSignup = false
     router.push(
       profile.role === "admin"
         ? ADMIN_HOME
-        : runsOperator(profile)
+        : // Signed in without network: straight to the station screens, the ones that work offline.
+          runsOperator(profile) && !isOffline()
           ? "/exploitant"
           : profile.role === "operator"
             ? "/operator"
@@ -374,6 +379,11 @@ export function LoginForm({ fleet = false, merchant = false, startSignup = false
       </div>
 
       <div className="mx-auto -mt-8 w-full max-w-sm flex-1 space-y-4 rounded-t-3xl bg-background px-6 pb-8 pt-6">
+        {!signup && !codeSentTo && mode === "pin" && queued > 0 && (
+          <p role="status" className="rounded-xl bg-amber-100 px-3 py-2 text-sm text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">
+            {t.offline.loginPending(queued)}
+          </p>
+        )}
         {!signup && !codeSentTo && mode !== "reset" && (
           <div role="tablist" className="flex rounded-full bg-gp-border/60 p-1 dark:bg-white/10">
             {tab("pin", t.ui.auth.tabLogin)}

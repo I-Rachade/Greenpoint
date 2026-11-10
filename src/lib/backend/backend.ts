@@ -105,6 +105,7 @@ import type {
 } from "@shared/merchants";
 import type { StationService, StationServiceInfo } from "@shared/station-services";
 import type { ReservationKind } from "@shared/reservations";
+import type { OfflineSwapReject } from "@shared/station-work";
 import type { BatteryEventInput, BatteryEventView, MyLastSwap, StationCounter, SwapEditInput, SwapEntry, SwapFilter, SwapInput } from "@shared/station-work";
 import type { ReviewInput, StationReview } from "@shared/station-extras";
 import type { LatLng } from "@shared/geo";
@@ -242,6 +243,12 @@ export interface Backend {
    * admins, who refund it). `restoreCounter` puts its full battery back on the counter.
    */
   deleteSwap(stationId: string, swapId: string, restoreCounter: boolean): Promise<void>;
+  /** An owner or admin looked at an offline swap marked "to check" (0071). */
+  markSwapChecked(stationId: string, swapId: string): Promise<SwapEntry>;
+  /** Admins: offline swaps the server refused, not dealt with yet (0071). */
+  offlineSwapRejects(): Promise<OfflineSwapReject[]>;
+  /** Admins: a refused offline swap dealt with (counter corrected, swap entered by hand). */
+  resolveOfflineReject(id: string): Promise<void>;
   /** Counter history of a report period, newest first: owners and admins only (backoffice). */
   stationBatteryEvents(stationId: string, days: ReportPeriod): Promise<BatteryEventView[]>;
   /** Reports a problem at the station (charger, power, battery, payment, other); its owners and the admins are told. */
