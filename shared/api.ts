@@ -210,4 +210,5 @@ export type BackendErrorCode =
   | "offline_in_future"
   | "offline_not_allowed"
   | "offline_reject_not_found"
+  | "offline_login_unavailable"
   | "unknown";

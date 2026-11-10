@@ -47,6 +47,8 @@ export const ADMIN_NAV: { group: GroupKey; links: { href: string; key: NavKey }[
       // Live queue, settlement and statistics of every station (the owners' backoffice; admin all).
       { href: "/exploitant", key: "stationBackoffice" },
       { href: "/admin/activity", key: "activity" },
+      // Swaps made without network that the server refused (migration 0071).
+      { href: "/admin/echanges-hors-ligne", key: "offlineRejects" },
     ],
   },
   {
@@ -99,6 +101,7 @@ const NAV_ICON: Record<NavKey, ComponentType<SVGProps<SVGSVGElement> & { size?: 
   share: ScooterIcon,
   stationBackoffice: StoreIcon,
   activity: HistoryIcon,
+  offlineRejects: WifiIcon,
   reservations: TicketIcon,
   users: UsersIcon,
   security: ShieldIcon,

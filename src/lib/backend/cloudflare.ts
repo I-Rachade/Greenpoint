@@ -108,11 +108,15 @@ import type {
 } from "@shared/types";
 import type { StationService, StationServiceInfo } from "@shared/station-services";
 import { getActiveStation } from "../active-station";
-import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type MyLastSwap, type StationCounter, type SwapEditInput, type SwapEntry, type SwapFilter, type SwapInput } from "@shared/station-work";
+import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type MyLastSwap, type StationCounter, type SwapEditInput, type SwapEntry, type SwapFilter, type SwapInput, type OfflineSwapReject } from "@shared/station-work";
 import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "@shared/station-cash";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
 import { kindFrom, type ReservationKind } from "@shared/reservations";
 import { storedPushToken, storePushToken } from "../push";
+import { reportReached } from "@/lib/offline/connectivity";
+import { isKeptPath, keepAnswer, keptAnswer, setKeptUser } from "@/lib/offline/kept";
+import { endOfflineSession, offlineSession, offlineSignIn, refreshOfflineProfile, rememberOfflineLogin, startOfflineSession } from "@/lib/offline/offline-login";
+import { isNetworkError } from "@/lib/offline/storage";
 
 const TOKEN_KEY = "poinderecharge-session";
 /** How often open pages reload station data (other customers' holds, staff updates). */
@@ -272,6 +276,7 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "offline_in_future",
   "offline_not_allowed",
   "offline_reject_not_found",
+  "offline_login_unavailable",
 ];
 
 /**
@@ -305,12 +310,13 @@ export class CloudflareBackend implements Backend {
     }
   }
 
-  private async call<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async call<T>(method: string, path: string, body?: unknown, station?: string): Promise<T> {
     const headers: Record<string, string> = {};
     const token = this.token;
     if (token) headers.Authorization = `Bearer ${token}`;
-    // Station actions carry the station the person works at now (shared/station-work.ts).
-    const active = typeof window === "undefined" ? null : getActiveStation();
+    // Station actions carry the station the person works at now (shared/station-work.ts);
+    // a swap sent later from the phone's queue carries the station it was made at.
+    const active = station ?? (typeof window === "undefined" ? null : getActiveStation());
     if (active) headers[ACTIVE_STATION_HEADER] = active;
     let payload: BodyInit | undefined;
     if (body instanceof Blob) {
@@ -324,8 +330,13 @@ export class CloudflareBackend implements Backend {
     try {
       res = await fetch(`${this.apiBase}${path}`, { method, headers, body: payload });
     } catch {
+      reportReached(false);
+      // Without network the station screens show what they showed last (src/lib/offline/kept.ts).
+      const kept = method === "GET" && isKeptPath(path) ? keptAnswer<T>(path) : undefined;
+      if (kept !== undefined) return kept;
       throw new BackendError("unknown", "network");
     }
+    reportReached(true);
     const data = (await res.json().catch(() => null)) as T & { error?: string; retryAfter?: number };
     if (!res.ok) {
       const code = KNOWN_CODES.find((c) => c === data?.error) ?? "unknown";
@@ -333,6 +344,7 @@ export class CloudflareBackend implements Backend {
       const wait = Number(data?.retryAfter ?? res.headers.get("Retry-After")) || undefined;
       throw new BackendError(code, data?.error, wait);
     }
+    if (method === "GET" && isKeptPath(path)) keepAnswer(path, data);
     return data;
   }
 
@@ -343,6 +355,8 @@ export class CloudflareBackend implements Backend {
 
   private dropSession() {
     this.token = null;
+    endOfflineSession();
+    setKeptUser(null);
     this.authListeners.forEach((fn) => fn(null));
   }
 
@@ -373,8 +387,26 @@ export class CloudflareBackend implements Backend {
   // Auth ------------------------------------------------------------------------
 
   async getProfile(): Promise<Profile | null> {
-    if (!this.token) return null;
-    return this.call<Profile | null>("GET", "/api/me");
+    if (!this.token) {
+      // Signed in without network: that lasts while the server stays out of reach; once it
+      // answers, the person signs in with it (the swaps kept on the phone go out right after).
+      const offline = offlineSession();
+      if (!offline) return null;
+      const reached = await fetch(`${this.apiBase}/api/features`).then(
+        () => true,
+        () => false,
+      );
+      reportReached(reached);
+      if (!reached) return offline;
+      endOfflineSession();
+      return null;
+    }
+    const profile = await this.call<Profile | null>("GET", "/api/me");
+    if (profile) {
+      setKeptUser(profile.id);
+      refreshOfflineProfile(profile);
+    }
+    return profile;
   }
 
   onAuthChange(callback: (profile: Profile | null) => void) {
@@ -392,17 +424,47 @@ export class CloudflareBackend implements Backend {
     return (await this.call<{ siteKey: string | null }>("GET", "/api/auth/captcha")).siteKey;
   }
 
-  register(contact: string, code: string, pin: string) {
-    return this.startSession("/api/auth/register", { contact, code: code.trim(), pin });
+  async register(contact: string, code: string, pin: string) {
+    const profile = await this.startSession("/api/auth/register", { contact, code: code.trim(), pin });
+    await rememberOfflineLogin(contact, pin, profile).catch(() => undefined);
+    return profile;
   }
 
-  signIn(contact: string, pin: string, _demoRole?: UserRole, captcha?: string) {
-    return this.startSession("/api/auth/login", { contact, pin, captcha });
+  async signIn(contact: string, pin: string, _demoRole?: UserRole, captcha?: string) {
+    let profile: Profile;
+    try {
+      profile = await this.startSession("/api/auth/login", { contact, pin, captcha });
+    } catch (err) {
+      if (!isNetworkError(err)) throw err;
+      return this.signInOffline(contact, pin);
+    }
+    // Station staff can sign in on this phone without network for the next days (src/lib/offline/).
+    await rememberOfflineLogin(contact, pin, profile).catch(() => undefined);
+    return profile;
+  }
+
+  /** No network: the PIN is checked against the fingerprint kept at the last login on this phone. */
+  private async signInOffline(contact: string, pin: string): Promise<Profile> {
+    const result = await offlineSignIn(contact, pin);
+    if (!result.ok) {
+      if (result.error === "wrong_pin") throw new BackendError("invalid_pin");
+      if (result.error === "locked") throw new BackendError("pin_locked");
+      throw new BackendError("offline_login_unavailable");
+    }
+    // A server session of another account must not send this person's actions.
+    this.token = null;
+    startOfflineSession(result.profile);
+    setKeptUser(result.profile.id);
+    this.authListeners.forEach((fn) => fn(result.profile));
+    this.changed();
+    return result.profile;
   }
 
   private async startSession(path: string, body: unknown) {
     const { token, profile } = await this.call<{ token: string; profile: Profile }>("POST", path, body);
     this.token = token;
+    endOfflineSession();
+    setKeptUser(profile.id);
     this.authListeners.forEach((fn) => fn(profile));
     this.changed();
     return profile;
@@ -506,7 +568,7 @@ export class CloudflareBackend implements Backend {
   }
 
   async recordSwap(stationId: string, input: SwapInput) {
-    const swap = await this.call<SwapEntry>("POST", `/api/stations/${encodeURIComponent(stationId)}/swaps`, input);
+    const swap = await this.call<SwapEntry>("POST", `/api/stations/${encodeURIComponent(stationId)}/swaps`, input, stationId);
     this.changed();
     return swap;
   }
@@ -537,8 +599,24 @@ export class CloudflareBackend implements Backend {
     if (filter.days) q.set("days", String(filter.days));
     if (filter.from) q.set("from", filter.from);
     if (filter.to) q.set("to", filter.to);
+    if (filter.toCheck) q.set("toCheck", "1");
     const qs = q.toString();
     return this.call<SwapEntry[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/swaps${qs ? `?${qs}` : ""}`);
+  }
+
+  async markSwapChecked(stationId: string, swapId: string) {
+    const swap = await this.call<SwapEntry>("POST", `/api/stations/${encodeURIComponent(stationId)}/swaps/${encodeURIComponent(swapId)}/checked`, undefined, stationId);
+    this.changed();
+    return swap;
+  }
+
+  offlineSwapRejects() {
+    return this.call<OfflineSwapReject[]>("GET", "/api/admin/offline-swap-rejects");
+  }
+
+  async resolveOfflineReject(id: string) {
+    await this.call("POST", `/api/admin/offline-swap-rejects/${encodeURIComponent(id)}/resolve`);
+    this.changed();
   }
 
   async editSwap(stationId: string, swapId: string, input: SwapEditInput) {

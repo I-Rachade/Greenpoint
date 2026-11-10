@@ -10,6 +10,8 @@ import { useApp } from "../app-provider";
 import { BackIcon, ChevronIcon, StoreIcon } from "../icons";
 import { useI18n } from "../i18n-provider";
 import { LoadFailed, StaleNotice } from "../load-state";
+import { OfflinePanel } from "../offline/offline-panel";
+import { isNetworkError } from "@/lib/offline/storage";
 import { Badge, EmptyState, SkeletonCard } from "../ui";
 import { useActiveStation } from "./use-active-station";
 
@@ -102,7 +104,9 @@ export function WorkShell({
     const active = station.activeServices ?? [];
     body = (
       <>
-        <StaleNotice error={error} onRetry={reload} />
+        <OfflinePanel />
+        {/* Offline the panel above says it; the last data stays on screen. */}
+        {!isNetworkError(error) && <StaleNotice error={error} onRetry={reload} />}
         {home ? (
           // The station home shows the name and role in its own dark header; the row stays to change station.
           stations.length > 1 && (
