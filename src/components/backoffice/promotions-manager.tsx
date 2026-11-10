@@ -126,7 +126,7 @@ export function PromotionsManager() {
               <li key={p.id} className={`${card} flex flex-wrap items-center gap-3`}>
                 {image ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={image} alt="" className="h-14 w-20 shrink-0 rounded-lg bg-zinc-100 object-cover dark:bg-zinc-800" />
+                  <img src={image} alt="" loading="lazy" decoding="async" className="h-14 w-20 shrink-0 rounded-lg bg-zinc-100 object-cover dark:bg-zinc-800" />
                 ) : (
                   <div className="h-14 w-20 shrink-0 rounded-lg bg-gp-green/15" />
                 )}

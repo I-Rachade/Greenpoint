@@ -16,7 +16,7 @@ import {
   type BatteryView,
 } from "@shared/batteries";
 import { batteryTypeLabel, groupByBrand } from "@shared/battery-types";
-import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
+import { useDebouncedValue, useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import { downloadText, toCsv } from "@/lib/csv";
 import type { UsedSerial } from "@shared/owner-activity";
@@ -44,9 +44,11 @@ export function BatteryRegistry({ stationId = null }: { stationId?: string | nul
   const [status, setStatus] = useState<BatteryStatus | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [registering, setRegistering] = useState(false);
+  // Searches once typing pauses, not at every letter.
+  const search = useDebouncedValue(q.trim());
   const { data, error, reload } = useLiveQuery(
-    () => backend.listBatteries({ brand, q: q.trim() || null, status, stationId }),
-    `${brand ?? "*"}:${q.trim()}:${status ?? ""}:${stationId ?? ""}`,
+    () => backend.listBatteries({ brand, q: search || null, status, stationId }),
+    `${brand ?? "*"}:${search}:${status ?? ""}:${stationId ?? ""}`,
   );
 
   const remove = useDeleteBattery(reload);

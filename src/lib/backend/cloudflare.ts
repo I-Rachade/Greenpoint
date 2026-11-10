@@ -121,6 +121,12 @@ import { isNetworkError } from "@/lib/offline/storage";
 const TOKEN_KEY = "poinderecharge-session";
 /** How often open pages reload station data (other customers' holds, staff updates). */
 const POLL_MS = 15_000;
+/**
+ * Longest wait for a read: a server that does not answer counts as no network, so the
+ * station screens fall back on what they showed last (src/lib/offline/kept.ts). Writes have
+ * no such limit: a swap or a payment that timed out here may still have gone through.
+ */
+const READ_TIMEOUT_MS = 15_000;
 
 const KNOWN_CODES: BackendErrorCode[] = [
   "not_authenticated",
@@ -287,6 +293,10 @@ const KNOWN_CODES: BackendErrorCode[] = [
 export class CloudflareBackend implements Backend {
   readonly mode = "cloudflare" as const;
   private listeners = new Set<() => void>();
+  /** Reads under way, by session, station and path: the same read asked twice shares one request. */
+  private reads = new Map<string, Promise<unknown>>();
+  /** One timer and one visibility listener for all open views (subscribe). */
+  private stopPolling: (() => void) | null = null;
   private authListeners = new Set<(profile: Profile | null) => void>();
   private memoryToken: string | null = null;
 
@@ -310,7 +320,20 @@ export class CloudflareBackend implements Backend {
     }
   }
 
-  private async call<T>(method: string, path: string, body?: unknown, station?: string): Promise<T> {
+  private call<T>(method: string, path: string, body?: unknown, station?: string): Promise<T> {
+    if (method !== "GET") return this.send<T>(method, path, body, station);
+    // Several views on screen often ask for the same thing at the same moment (the station
+    // list, the profile): they share the request under way instead of each sending one.
+    const active = station ?? (typeof window === "undefined" ? null : getActiveStation());
+    const key = `${this.token ?? ""}|${active ?? ""}|${path}`;
+    const pending = this.reads.get(key) as Promise<T> | undefined;
+    if (pending) return pending;
+    const read = this.send<T>(method, path, body, station).finally(() => this.reads.delete(key));
+    this.reads.set(key, read);
+    return read;
+  }
+
+  private async send<T>(method: string, path: string, body?: unknown, station?: string): Promise<T> {
     const headers: Record<string, string> = {};
     const token = this.token;
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -327,14 +350,19 @@ export class CloudflareBackend implements Backend {
       payload = JSON.stringify(body);
     }
     let res: Response;
+    // Reads give up after READ_TIMEOUT_MS (AbortSignal.timeout is missing on older phones).
+    const ctrl = method === "GET" && typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), READ_TIMEOUT_MS) : null;
     try {
-      res = await fetch(`${this.apiBase}${path}`, { method, headers, body: payload });
+      res = await fetch(`${this.apiBase}${path}`, { method, headers, body: payload, signal: ctrl?.signal });
     } catch {
       reportReached(false);
       // Without network the station screens show what they showed last (src/lib/offline/kept.ts).
       const kept = method === "GET" && isKeptPath(path) ? keptAnswer<T>(path) : undefined;
       if (kept !== undefined) return kept;
       throw new BackendError("unknown", "network");
+    } finally {
+      if (timer) clearTimeout(timer);
     }
     reportReached(true);
     const data = (await res.json().catch(() => null)) as T & { error?: string; retryAfter?: number };
@@ -350,6 +378,8 @@ export class CloudflareBackend implements Backend {
 
   /** Reloads every open view after a change made here. */
   private changed() {
+    // A read that started before a change may answer with the old data: views reload afresh.
+    this.reads.clear();
     this.listeners.forEach((fn) => fn());
   }
 
@@ -372,15 +402,23 @@ export class CloudflareBackend implements Backend {
 
   subscribe(onChange: () => void) {
     this.listeners.add(onChange);
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") onChange();
-    }, POLL_MS);
-    const onVisible = () => document.visibilityState === "visible" && onChange();
-    document.addEventListener("visibilitychange", onVisible);
+    // All open views reload together, every POLL_MS and when the app comes back to the front,
+    // so their identical reads share one request (call).
+    if (!this.stopPolling) {
+      const reloadAll = () => document.visibilityState === "visible" && this.changed();
+      const timer = window.setInterval(reloadAll, POLL_MS);
+      document.addEventListener("visibilitychange", reloadAll);
+      this.stopPolling = () => {
+        window.clearInterval(timer);
+        document.removeEventListener("visibilitychange", reloadAll);
+      };
+    }
     return () => {
       this.listeners.delete(onChange);
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
+      if (!this.listeners.size && this.stopPolling) {
+        this.stopPolling();
+        this.stopPolling = null;
+      }
     };
   }
 
