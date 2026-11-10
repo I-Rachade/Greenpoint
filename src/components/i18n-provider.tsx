@@ -1,11 +1,16 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { en } from "@/lib/i18n/en";
 import { fr, type Dictionary } from "@/lib/i18n/fr";
 
 export type Locale = "fr" | "en";
-const dictionaries: Record<Locale, Dictionary> = { fr, en };
+/**
+ * French ships with every page (the pages are rendered in French); English is fetched only
+ * when someone uses it, so the others do not download it (about 100 KB compressed).
+ */
+let english: Dictionary | null = null;
+const loadEnglish = (): Promise<Dictionary> =>
+  english ? Promise.resolve(english) : import("@/lib/i18n/en").then((m) => (english = m.en));
 const STORAGE_KEY = "poinderecharge-locale";
 
 interface I18nContextValue {
@@ -18,6 +23,7 @@ const I18nContext = createContext<I18nContextValue | null>(null);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>("fr");
+  const [englishLoaded, setEnglishLoaded] = useState<Dictionary | null>(english);
 
   useEffect(() => {
     let saved: string | null = null;
@@ -31,8 +37,15 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    document.documentElement.lang = locale;
-  }, [locale]);
+    // Until English arrives (a moment, from the app's own files) the page stays in French.
+    if (locale === "en" && !englishLoaded) loadEnglish().then(setEnglishLoaded, () => {});
+  }, [locale, englishLoaded]);
+
+  const dictionary = locale === "en" && englishLoaded ? englishLoaded : fr;
+  const shown: Locale = dictionary === fr ? "fr" : "en";
+  useEffect(() => {
+    document.documentElement.lang = shown;
+  }, [shown]);
 
   const setLocale = useCallback((next: Locale) => {
     setLocaleState(next);
@@ -42,7 +55,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <I18nContext value={{ locale, t: dictionaries[locale], setLocale }}>{children}</I18nContext>
+    <I18nContext value={{ locale: shown, t: dictionary, setLocale }}>{children}</I18nContext>
   );
 }
 
