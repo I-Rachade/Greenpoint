@@ -181,12 +181,21 @@ function FreeSlots({ station }: { station: StationView }) {
   const evPoints = new Set((station.evChargers ?? []).map((c) => c.point?.id));
   const places = (station.chargingPoints ?? []).filter((p) => isConnected(p) && !evPoints.has(p.id));
   const max = places.length ? places.filter((p) => !isOffline(p, now)).length : station.chargingSlots;
-  const value = Math.min(station.status.freeSlots, max);
-  const set = (n: number) =>
-    backend.updateStatus(station.id, { freeSlots: n }).then(
+  const saved = Math.min(station.status.freeSlots, max);
+  // The number changes at the tap, before the server answers (two quick taps count twice);
+  // it holds while the station data still shows the number it started from, and goes back on an error.
+  const [pending, setPending] = useState<{ n: number; from: number } | null>(null);
+  const value = pending && pending.from === saved ? pending.n : saved;
+  const set = (n: number) => {
+    setPending({ n, from: saved });
+    return backend.updateStatus(station.id, { freeSlots: n }).then(
       () => toast(t.work.saved),
-      (err) => toast(errorMessage(err), { tone: "error" }),
+      (err) => {
+        setPending(null);
+        toast(errorMessage(err), { tone: "error" });
+      },
     );
+  };
   const button = "grid h-14 w-14 place-items-center rounded-full bg-gp-green-dark text-3xl font-bold text-white active:scale-95 disabled:opacity-30";
   return (
     <Card className="p-4">
