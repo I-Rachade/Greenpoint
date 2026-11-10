@@ -3061,7 +3061,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     await limitByIp(env, request);
     if (partnerApi) return await handlePartnerApi(request, env);
     // Speed measured on people's phones, anonymous (worker/vitals.ts).
-    if (url.pathname === "/api/vitals" && request.method === "POST") return await receiveVitals(request);
+    if (url.pathname === "/api/vitals" && request.method === "POST") return await receiveVitals(request, env);
     for (const route of ROUTES) {
       const [method, pattern, handler] = route;
       const m = pattern.exec(url.pathname);
