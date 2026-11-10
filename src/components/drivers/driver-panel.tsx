@@ -30,7 +30,7 @@ import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
 import { QrImage } from "../parcels/qr-image";
-import { Button, Countdown, Input } from "../ui";
+import { Button, Countdown, Input, PageSkeleton } from "../ui";
 import { PIN_LENGTH } from "@shared/pin";
 import { FleetInvitesCard } from "./fleet-invites";
 import { DriverShopsSection } from "./driver-shops";
@@ -912,7 +912,7 @@ export function DriverPanel() {
   const { data, error } = useLiveQuery(() => Promise.all([backend.driverHome(), backend.listStations(), backend.parcelInfo()]));
 
   if (error) return <p className="p-6 text-sm text-red-600">{t.errors.unknown}</p>;
-  if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
+  if (!data) return <PageSkeleton label={t.loading} />;
   const [home, stations, info] = data;
   const driver = home.driver;
 

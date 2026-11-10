@@ -38,6 +38,16 @@ export function corsHeaders(request: Request): Record<string, string> {
   };
 }
 
+/**
+ * Longest wait for a call to another service (Google, Didit, Cloudflare Access, Turnstile):
+ * a slow outside service must not hold the person's request open.
+ */
+export const OUTBOUND_TIMEOUT_MS = 10_000;
+
+export function outboundSignal(ms = OUTBOUND_TIMEOUT_MS): AbortSignal {
+  return AbortSignal.timeout(ms);
+}
+
 export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,

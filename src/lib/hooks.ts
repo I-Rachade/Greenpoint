@@ -5,6 +5,7 @@ import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { BackendError } from "@/lib/backend";
 import { format } from "@/lib/i18n/format";
+import { sameData } from "@/lib/same-data";
 
 /**
  * Loads data from the backend and reloads it whenever the backend reports a change.
@@ -29,7 +30,9 @@ export function useLiveQuery<T>(load: () => Promise<T>, key = "") {
     loadRef.current().then(
       (value) => {
         if (request !== latest.current) return;
-        setData(value);
+        // The poll every 15 s mostly brings the same data: keep the old value so the screen
+        // does not redraw for nothing.
+        setData((old) => (sameData(old, value) ? old : value));
         setError(null);
       },
       (err) => {
@@ -44,6 +47,16 @@ export function useLiveQuery<T>(load: () => Promise<T>, key = "") {
   }, [backend, reload, key]);
 
   return { data, error, reload };
+}
+
+/** `value` once it stopped changing for `ms` (search fields: one request when typing pauses). */
+export function useDebouncedValue<T>(value: T, ms = 300): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSettled(value), ms);
+    return () => window.clearTimeout(timer);
+  }, [value, ms]);
+  return settled;
 }
 
 /** Current time, refreshed every `intervalMs` (for countdowns and "updated 3 min ago"). */

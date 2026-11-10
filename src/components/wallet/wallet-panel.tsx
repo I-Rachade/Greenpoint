@@ -10,7 +10,7 @@ import { creditCodePayload, formatCreditCode, type CreditCode, type WalletTransa
 import { useApp } from "../app-provider";
 import { useI18n } from "../i18n-provider";
 import { LoadFailed, OfflineNotice } from "../load-state";
-import { CountUp } from "../ui";
+import { CountUp, PageSkeleton } from "../ui";
 
 const input = "w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-base dark:border-white/20 dark:bg-zinc-900";
 const button = "rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-50";
@@ -30,7 +30,7 @@ export function WalletPanel() {
     return <p className="p-6 text-sm text-gp-muted">{t.errors.wallet_disabled}</p>;
   }
   // A failed refresh keeps the balance on screen (with a notice); only nothing at all shows the error.
-  if (!data) return error ? <LoadFailed error={error} onRetry={reload} /> : <p className="p-6 text-sm text-gp-muted">{t.loading}</p>;
+  if (!data) return error ? <LoadFailed error={error} onRetry={reload} /> : <PageSkeleton label={t.loading} />;
 
   return (
     <div className="mx-auto w-full max-w-md space-y-4 p-4 sm:p-6">

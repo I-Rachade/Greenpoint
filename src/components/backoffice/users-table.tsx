@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { effectiveReservationStatus } from "@/lib/admin/insights";
-import type { AdminUser } from "@shared/admin/types";
+import { ADMIN_PAGE_SIZE, type AdminUser } from "@shared/admin/types";
+import { Button } from "@/components/ui";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { UserRole } from "@shared/types";
@@ -26,6 +27,15 @@ export function UsersTable() {
   const [role, setRole] = useState<UserRole | "">("");
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [offset, setOffset] = useState(0);
+  // Stations and reservations by person, counted once instead of once per row.
+  const byUser = useMemo(() => {
+    const staff = new Map<string, Set<string>>();
+    const reservations = new Map<string, NonNullable<typeof snap>["reservations"]>();
+    for (const a of snap?.staff ?? []) staff.set(a.userId, (staff.get(a.userId) ?? new Set()).add(a.stationId));
+    for (const r of snap?.reservations ?? []) reservations.set(r.userId, [...(reservations.get(r.userId) ?? []), r]);
+    return { staff, reservations };
+  }, [snap]);
   if (!snap) return <Loading error={error} onRetry={reload} />;
 
   const b = t.backoffice.users;
@@ -34,6 +44,15 @@ export function UsersTable() {
   const users = snap.users.filter(
     (u) => (!role || u.role === role) && (!needle || userLabel(u).toLowerCase().includes(needle)),
   );
+  // One page of ADMIN_PAGE_SIZE rows on screen: a long list stays quick on a small laptop.
+  const from = offset < users.length ? offset : 0;
+  const page = users.slice(from, from + ADMIN_PAGE_SIZE);
+
+  /** A new filter starts again from the first page. */
+  function filter(change: () => void) {
+    change();
+    setOffset(0);
+  }
 
   async function run(action: () => Promise<void>) {
     try {
@@ -56,7 +75,7 @@ export function UsersTable() {
       <StaleNotice error={error} onRetry={reload} />
       <h1 className="text-2xl font-semibold">{b.title}</h1>
       <div className="flex flex-wrap items-center gap-2">
-        <select className={field} value={role} onChange={(e) => setRole(e.target.value as UserRole | "")} aria-label={b.role}>
+        <select className={field} value={role} onChange={(e) => filter(() => setRole(e.target.value as UserRole | ""))} aria-label={b.role}>
           <option value="">{b.allRoles}</option>
           {FILTER_ROLES.map((r) => (
             <option key={r} value={r}>
@@ -64,7 +83,7 @@ export function UsersTable() {
             </option>
           ))}
         </select>
-        <input className={field} type="search" placeholder={b.search} aria-label={b.search} value={search} onChange={(e) => setSearch(e.target.value)} />
+        <input className={field} type="search" placeholder={b.search} aria-label={b.search} value={search} onChange={(e) => filter(() => setSearch(e.target.value))} />
         <span className="text-xs text-zinc-500">{format(b.count, { n: users.length })}</span>
       </div>
       {message && (
@@ -85,11 +104,12 @@ export function UsersTable() {
           </>
         }
       >
-        {users.map((u) => {
+        {page.map((u) => {
           const isSelf = u.id === profile?.id;
-          const assigned = snap.staff.filter((a) => a.userId === u.id);
-          const unassigned = snap.stations.filter((s) => !assigned.some((a) => a.stationId === s.id));
-          const reservations = snap.reservations.filter((r) => r.userId === u.id);
+          const mine = byUser.staff.get(u.id);
+          const assigned = snap.staff.filter((a) => a.userId === u.id && mine?.has(a.stationId));
+          const unassigned = snap.stations.filter((s) => !mine?.has(s.id));
+          const reservations = byUser.reservations.get(u.id) ?? [];
           const noShows = reservations.filter((r) => effectiveReservationStatus(r, now) === "expired").length;
           return (
             <tr key={u.id}>
@@ -156,6 +176,21 @@ export function UsersTable() {
           );
         })}
       </Table>
+      {users.length > ADMIN_PAGE_SIZE && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-sm tabular-nums text-zinc-600 dark:text-zinc-400">
+            {format(b.range, { from: from + 1, to: from + page.length, total: users.length })}
+          </span>
+          <div className="flex gap-2">
+            <Button variant="secondary" disabled={from === 0} onClick={() => setOffset(Math.max(0, from - ADMIN_PAGE_SIZE))}>
+              {b.previous}
+            </Button>
+            <Button variant="secondary" disabled={from + page.length >= users.length} onClick={() => setOffset(from + ADMIN_PAGE_SIZE)}>
+              {b.next}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

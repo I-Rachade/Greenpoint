@@ -13,6 +13,7 @@ import { Splash } from "@/components/splash";
 import { THEME_BOOT_SCRIPT, ThemeController } from "@/components/theme-controller";
 import { ToastProvider } from "@/components/ui";
 import "./globals.css";
+import { WebVitals } from "@/components/web-vitals";
 
 // Fonts are bundled with the app so the build never has to reach Google Fonts.
 const inter = localFont({
@@ -77,6 +78,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <PromoPopup />
               <Onboarding />
               <Splash />
+              <WebVitals />
             </ToastProvider>
           </AppProvider>
         </I18nProvider>

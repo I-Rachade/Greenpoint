@@ -2,7 +2,7 @@
 // optional Cloudflare Turnstile check before a code is sent. The request is written down before
 // it runs, in one statement with the count, so parallel requests cannot pass the limit.
 import type { Env } from "./env";
-import { ApiError, nowIso } from "./http";
+import { ApiError, nowIso, outboundSignal } from "./http";
 import { logSecurityEvent } from "./security-log";
 
 /** "login": PIN logins and registrations (a code and a new PIN). */
@@ -66,8 +66,8 @@ export async function checkCaptcha(env: Env, request: Request, token: unknown): 
   form.append("response", token);
   const ip = clientIp(request);
   if (ip) form.append("remoteip", ip);
-  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body: form });
-  const outcome = res.ok ? await res.json<{ success?: boolean }>().catch(() => null) : null;
+  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body: form, signal: outboundSignal() }).catch(() => null);
+  const outcome = res?.ok ? await res.json<{ success?: boolean }>().catch(() => null) : null;
   if (!outcome?.success) {
     await logSecurityEvent(env.DB, { kind: "captcha_failed", ip });
     throw new ApiError("captcha_failed", 400);

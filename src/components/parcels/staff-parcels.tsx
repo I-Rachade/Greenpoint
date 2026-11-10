@@ -33,6 +33,7 @@ import { OutgoingRuns, ReceiveParcels, type RunAction } from "./collection-runs"
 import { ConfirmSheet } from "../confirm-sheet";
 import { useActiveStation } from "../station-work/use-active-station";
 import { ParcelStatusPill } from "./status";
+import { PageSkeleton } from "../ui";
 
 /** Back to the station home with its service tiles. */
 export function OperatorBack() {
@@ -672,7 +673,7 @@ export function StaffParcels({ section }: { section?: ParcelSection }) {
   const [selectedId, setSelectedId] = useActiveStation();
 
   if (error) return <p className="p-6 text-sm text-red-600">{t.errors.forbidden}</p>;
-  if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
+  if (!data) return <PageSkeleton label={t.loading} />;
   const [allMine, all, info] = data;
   // Only stations that take parcels; admins see every station and would otherwise land on one without a counter.
   const depots = new Set(info.depots.map((d) => d.stationId));

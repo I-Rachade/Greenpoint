@@ -10,7 +10,7 @@ import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { SunIcon } from "../icons";
 import { useI18n } from "../i18n-provider";
-import { CountUp, useCountdown, formatRemaining } from "../ui";
+import { CountUp, formatRemaining, PageSkeleton, useCountdown } from "../ui";
 
 const button = "rounded-full bg-gp-green-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-50";
 const section = "space-y-2 rounded-2xl border border-gp-border bg-gp-surface p-4 dark:border-white/10";
@@ -27,7 +27,7 @@ export function GreenpointPanel() {
   const [redeeming, setRedeeming] = useState(false);
 
   if (error) return <p className="p-6 text-sm text-red-600">{errorMessage(error)}</p>;
-  if (!data) return <p className="p-6 text-sm text-gp-muted">{t.loading}</p>;
+  if (!data) return <PageSkeleton label={t.loading} />;
 
   async function run(action: () => Promise<unknown>) {
     setMessage(null);

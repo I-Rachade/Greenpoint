@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
+import { shrinkImage } from "@/components/drivers/shared";
 import { PromoCard } from "@/components/promo-popup";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
@@ -126,7 +127,7 @@ export function PromotionsManager() {
               <li key={p.id} className={`${card} flex flex-wrap items-center gap-3`}>
                 {image ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={image} alt="" className="h-14 w-20 shrink-0 rounded-lg bg-zinc-100 object-cover dark:bg-zinc-800" />
+                  <img src={image} alt="" loading="lazy" decoding="async" className="h-14 w-20 shrink-0 rounded-lg bg-zinc-100 object-cover dark:bg-zinc-800" />
                 ) : (
                   <div className="h-14 w-20 shrink-0 rounded-lg bg-gp-green/15" />
                 )}
@@ -200,7 +201,10 @@ function PromotionEditor({
     if (!file) return;
     setUploading(true);
     try {
-      set({ imageUrl: await onUpload(file) });
+      // Made smaller (WebP or JPEG, 1200 px) before it goes out; an animated GIF stays as it is.
+      const small = file.type === "image/gif" ? file : await shrinkImage(file, 1200);
+      const name = small.type === "image/webp" ? "promo.webp" : small.type === "image/gif" ? file.name : "promo.jpg";
+      set({ imageUrl: await onUpload(small instanceof File ? small : new File([small], name, { type: small.type })) });
     } catch (err) {
       onError(err);
     } finally {

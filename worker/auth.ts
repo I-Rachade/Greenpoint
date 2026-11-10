@@ -5,7 +5,7 @@ import { validPinFormat, weakPin } from "../shared/pin";
 import type { Profile, UserRole } from "../shared/types";
 import { adminAllowed } from "./access";
 import type { Env } from "./env";
-import { ApiError, nowIso, randomDigits, sha256, uuid } from "./http";
+import { ApiError, nowIso, outboundSignal, randomDigits, sha256, uuid } from "./http";
 import type { MerchantShopInput } from "../shared/merchants";
 import { cleanShop } from "./merchant-rules";
 import { notifyUser } from "./notify";
@@ -123,6 +123,11 @@ async function didit<T>(env: Env, path: "send" | "check", body: unknown): Promis
     method: "POST",
     headers: { "x-api-key": env.DIDIT_API_KEY, "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal: outboundSignal(),
+  }).catch((err: Error) => {
+    // Didit did not answer in time: the person can try again.
+    console.error(`Didit ${path} unreachable`, err.message);
+    throw new ApiError("unknown", 503);
   });
   const data = (await res.json().catch(() => ({}))) as T;
   if (res.status === 429) throw new ApiError("rate_limited", 429);

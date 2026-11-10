@@ -8,6 +8,7 @@ import { worksAtStations } from "@shared/operators";
 import type { UserRole } from "@shared/types";
 import { useApp } from "./app-provider";
 import { useI18n } from "./i18n-provider";
+import { PageSkeleton } from "./ui";
 
 /**
  * Renders children only for logged-in users (optionally with one of `roles`).
@@ -18,7 +19,7 @@ export function RequireLogin({ roles, stationWork, children }: { roles?: UserRol
   const { profile, ready } = useApp();
   const pathname = usePathname();
 
-  if (!ready) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
+  if (!ready) return <PageSkeleton label={t.loading} />;
   if (!profile) {
     // After login, come back here (with the query, e.g. /portefeuille?topup=…). Only rendered once
     // `ready`, so always in the browser.

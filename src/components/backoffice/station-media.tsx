@@ -45,7 +45,7 @@ export function StationMediaFields({
     try {
       // The demo keeps photos in browser storage, so they are made smaller there.
       const blob = await shrinkImage(file, backend.mode === "demo" ? 900 : 1600);
-      const url = await backend.uploadStationPhoto(new File([blob], "station.jpg", { type: "image/jpeg" }));
+      const url = await backend.uploadStationPhoto(new File([blob], blob.type === "image/webp" ? "station.webp" : "station.jpg", { type: blob.type || "image/jpeg" }));
       onPhotos([...photos, url].slice(0, MAX_STATION_PHOTOS));
     } catch (err) {
       setProblem(err instanceof Error && err.message === "image_too_large" ? t.errors.image_too_large : errorMessage(err));
@@ -77,7 +77,7 @@ export function StationMediaFields({
               >
                 <input type="radio" name="main-activity" className="sr-only" checked={on} onChange={() => onMainActivity(c.value)} />
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={c.picture} alt="" className="aspect-[16/9] w-full object-cover" />
+                <img src={c.picture} alt="" loading="lazy" decoding="async" className="aspect-[16/9] w-full object-cover" />
                 <span className="flex items-center gap-1.5 px-2 py-1.5 font-medium">
                   <span
                     className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${on ? "border-gp-green-dark" : "border-zinc-400"}`}
@@ -105,7 +105,7 @@ export function StationMediaFields({
           {photos.map((src, i) => (
             <li key={src + i} className="group relative aspect-[16/10] overflow-hidden rounded-lg border border-black/10 dark:border-white/10">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={src} alt="" className="h-full w-full object-cover" />
+              <img src={src} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
               {i === 0 && (
                 <span className="absolute left-1.5 top-1.5 rounded-full bg-gp-green-dark px-2 py-0.5 text-[10px] font-semibold text-white">{a.cover}</span>
               )}

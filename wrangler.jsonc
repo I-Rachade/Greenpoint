@@ -8,6 +8,10 @@
   "name": "pointderecharge-app",
   "main": "worker/index.ts",
   "compatibility_date": "2025-10-01",
+  // AsyncLocalStorage, for the notices sent after the answer (worker/background.ts).
+  "compatibility_flags": ["nodejs_als"],
+  // Runs the Worker close to the database when a request makes several queries in a row.
+  "placement": { "mode": "smart" },
   "build": { "command": "npm run build" },
   "routes": [{ "pattern": "app.poinderecharge.com", "custom_domain": true }],
   "assets": {
