@@ -10,7 +10,9 @@ import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import type { Incident } from "@shared/incidents";
 import { IncidentItem } from "@/components/station-work/incident-page";
 import type { ReportPeriod } from "@shared/owner-backoffice";
-import type { BatteryEventView, SwapEditInput, SwapEntry } from "@shared/station-work";
+import type { BatteryEventView, PastSwapInput, SwapEditInput, SwapEntry } from "@shared/station-work";
+import type { OperatorPerson } from "@shared/operators";
+import type { MmNetwork } from "@shared/energy-swap";
 import { SwapSheetExport } from "@/components/station-work/swap-sheet";
 import { Loaded, ResponsiveRows, Section, useWhen, useXof } from "./shared";
 
@@ -20,10 +22,13 @@ export function HistoryView({
   stationName,
   days,
   readOnly = false,
+  staff = [],
 }: {
   stationId: string | null;
   stationName: string;
   days: ReportPeriod;
+  /** Who works at the station (staff and owners): the admin picks who did a past swap. */
+  staff?: OperatorPerson[];
   /** Read-only operator account (migration 0070): everything to read, nothing to correct. */
   readOnly?: boolean;
 }) {
@@ -33,7 +38,7 @@ export function HistoryView({
     <div className="space-y-4">
       <Incidents stationId={stationId} readOnly={readOnly} />
       <SwapSheetExport key={stationId} stationId={stationId} stationName={stationName} pickDates />
-      <Swaps stationId={stationId} days={days} readOnly={readOnly} />
+      <Swaps stationId={stationId} days={days} readOnly={readOnly} staff={staff} />
       <CounterHistory stationId={stationId} days={days} />
     </div>
   );
@@ -94,7 +99,7 @@ function ResolveIncident({ incident, onDone }: { incident: Incident; onDone: () 
   );
 }
 
-function Swaps({ stationId, days, readOnly }: { stationId: string; days: ReportPeriod; readOnly: boolean }) {
+function Swaps({ stationId, days, readOnly, staff }: { stationId: string; days: ReportPeriod; readOnly: boolean; staff: OperatorPerson[] }) {
   const { t } = useI18n();
   const { backend, profile } = useApp();
   const when = useWhen();
@@ -107,6 +112,9 @@ function Swaps({ stationId, days, readOnly }: { stationId: string; days: ReportP
   const { data, error, reload } = useLiveQuery(() => backend.stationSwaps(stationId, { days, toCheck }), `${stationId}:${days}:${toCheck}`);
   const [editing, setEditing] = useState<SwapEntry | null>(null);
   const [deleting, setDeleting] = useState<SwapEntry | null>(null);
+  // Admins add a swap made while no phone could record it, at its real time.
+  const [adding, setAdding] = useState(false);
+  const canAdd = !readOnly && profile?.role === "admin";
   // Owners and admins see this page; a swap paid from Green Credit is deleted by an admin, who refunds it.
   // The battery numbers of the swap: handed out ↑, brought back ↓.
   const numbers = (s: SwapEntry) => [s.batteryOut ? `↑ ${s.batteryOut}` : null, s.batteryIn ? `↓ ${s.batteryIn}` : null].filter(Boolean).join("  ");
@@ -115,7 +123,7 @@ function Swaps({ stationId, days, readOnly }: { stationId: string; days: ReportP
   const flags = (s: SwapEntry) =>
     s.offline || s.review ? (
       <span className="inline-flex flex-wrap gap-1">
-        {s.offline && <Badge tone="blue">{o.offlineLabel}</Badge>}
+        {s.offline && <Badge tone="blue">{s.addedLater ? h.addedLabel : o.offlineLabel}</Badge>}
         {stillToCheck(s) && s.review && (
           <Badge tone="amber">
             {o.reviewLabel} : {o.reviews[s.review]}
@@ -162,14 +170,25 @@ function Swaps({ stationId, days, readOnly }: { stationId: string; days: ReportP
     <Section
       title={h.swaps}
       aside={
-        <button
-          type="button"
-          aria-pressed={toCheck}
-          onClick={() => setToCheck(!toCheck)}
-          className={`min-h-9 rounded-full border px-3 text-sm font-semibold ${toCheck ? "border-amber-500 bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100" : "border-gp-border text-gp-muted dark:border-white/10"}`}
-        >
-          {o.toCheckFilter}
-        </button>
+        <span className="inline-flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            aria-pressed={toCheck}
+            onClick={() => setToCheck(!toCheck)}
+            className={`min-h-9 rounded-full border px-3 text-sm font-semibold ${toCheck ? "border-amber-500 bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100" : "border-gp-border text-gp-muted dark:border-white/10"}`}
+          >
+            {o.toCheckFilter}
+          </button>
+          {canAdd && (
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="min-h-9 rounded-full border border-gp-green-dark px-3 text-sm font-semibold text-gp-green-dark hover:bg-gp-green/10 dark:border-gp-green dark:text-gp-green"
+            >
+              + {h.add.button}
+            </button>
+          )}
+        </span>
       }
     >
       <Loaded data={data} error={error} reload={reload}>
@@ -225,6 +244,7 @@ function Swaps({ stationId, days, readOnly }: { stationId: string; days: ReportP
       </Loaded>
       {editing && <EditSwap key={editing.id} swap={editing} onClose={() => setEditing(null)} onDone={reload} />}
       {deleting && <DeleteSwap key={deleting.id} swap={deleting} onClose={() => setDeleting(null)} onDone={reload} />}
+      {adding && <AddPastSwap stationId={stationId} staff={staff} onClose={() => setAdding(false)} onDone={reload} />}
     </Section>
   );
 }
@@ -291,6 +311,186 @@ function EditSwap({ swap, onClose, onDone }: { swap: SwapEntry; onClose: () => v
           </label>
         )}
         <p className="text-xs text-gp-muted">{e.keepNote}</p>
+      </div>
+    </ConfirmSheet>
+  );
+}
+
+const yesterday = () => new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * Admins: a swap made at the station while no phone could record it, added afterwards at the
+ * day and time it happened (Lomé time = UTC), for the person who served the customer.
+ */
+function AddPastSwap({ stationId, staff, onClose, onDone }: { stationId: string; staff: OperatorPerson[]; onClose: () => void; onDone: () => void }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const a = t.owner.history.add;
+  // The station's battery types and swap price, for the form's choices and default amount.
+  const { data: counter } = useLiveQuery(() => backend.stationCounter(stationId), stationId);
+  const types = (counter?.rows ?? []).filter((r) => r.label);
+  const [requestId] = useState(() => crypto.randomUUID());
+  const [date, setDate] = useState(yesterday);
+  const [time, setTime] = useState("12:00");
+  const [staffId, setStaffId] = useState("");
+  const [typeId, setTypeId] = useState("");
+  const [customerType, setCustomerType] = useState<PastSwapInput["customerType"]>("cash");
+  const [contact, setContact] = useState("");
+  const [name, setName] = useState("");
+  const [plate, setPlate] = useState("");
+  const [payment, setPayment] = useState<PastSwapInput["payment"]>("cash");
+  const [network, setNetwork] = useState<MmNetwork>("tmoney");
+  const [mmRef, setMmRef] = useState("");
+  const [amount, setAmount] = useState<string | null>(null);
+  const [batteryOut, setBatteryOut] = useState("");
+  const [batteryIn, setBatteryIn] = useState("");
+  const [updateCounter, setUpdateCounter] = useState(true);
+  const [busy, setBusy] = useState(false);
+  // The first type until the admin picks another.
+  const shownType = typeId || (types[0]?.batteryTypeId ?? "");
+  const shownAmount = amount ?? (counter?.priceXof != null ? String(counter.priceXof) : "");
+  const field = "min-h-11 w-full rounded-xl border border-gp-border bg-gp-surface px-3 text-base";
+  async function save() {
+    setBusy(true);
+    try {
+      await backend.addPastSwap(stationId, {
+        requestId,
+        at: new Date(`${date}T${time || "00:00"}:00Z`).toISOString(),
+        staffId: staffId || null,
+        batteryTypeId: shownType || null,
+        customerType,
+        contact: customerType === "cash" ? null : contact.trim() || null,
+        customerName: name.trim() || null,
+        plate: plate.trim() || null,
+        payment,
+        mmNetwork: payment === "mobile_money" ? network : null,
+        mmRef: payment === "mobile_money" ? mmRef.trim() : null,
+        amountXof: shownAmount.trim() === "" ? -1 : Number(shownAmount),
+        batteryOut: batteryOut.trim() || null,
+        batteryIn: customerType === "first_purchase" ? null : batteryIn.trim() || null,
+        updateCounter,
+      });
+      toast(a.done, { tone: "success" });
+      onClose();
+      onDone();
+    } catch (err) {
+      toast(errorMessage(err), { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <ConfirmSheet open title={a.title} confirmLabel={a.save} busy={busy} onConfirm={() => void save()} onCancel={onClose}>
+      <div className="space-y-3 text-sm">
+        <p className="text-gp-muted">{a.intro}</p>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block space-y-1">
+            <span>{a.date}</span>
+            <Input type="date" value={date} max={new Date().toISOString().slice(0, 10)} onChange={(ev) => setDate(ev.target.value)} />
+          </label>
+          <label className="block space-y-1">
+            <span>{a.time}</span>
+            <Input type="time" value={time} onChange={(ev) => setTime(ev.target.value)} />
+          </label>
+        </div>
+        <label className="block space-y-1">
+          <span>{a.person}</span>
+          <select className={field} value={staffId} onChange={(ev) => setStaffId(ev.target.value)}>
+            <option value="">{a.me}</option>
+            {staff.map((p) => (
+              <option key={p.userId} value={p.userId}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {types.length > 1 && (
+          <label className="block space-y-1">
+            <span>{a.batteryType}</span>
+            <select className={field} value={shownType} onChange={(ev) => setTypeId(ev.target.value)}>
+              {types.map((r) => (
+                <option key={r.batteryTypeId} value={r.batteryTypeId}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label className="block space-y-1">
+          <span>{a.customerType}</span>
+          <select className={field} value={customerType} onChange={(ev) => setCustomerType(ev.target.value as PastSwapInput["customerType"])}>
+            {(["cash", "app", "first_purchase"] as const).map((k) => (
+              <option key={k} value={k}>
+                {a.customerTypes[k]}
+              </option>
+            ))}
+          </select>
+        </label>
+        {customerType !== "cash" && (
+          <label className="block space-y-1">
+            <span>{customerType === "app" ? a.contact : a.contactOptional}</span>
+            <Input value={contact} maxLength={120} autoComplete="off" inputMode="tel" onChange={(ev) => setContact(ev.target.value)} />
+          </label>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block space-y-1">
+            <span>{a.customerName}</span>
+            <Input value={name} maxLength={80} autoComplete="off" onChange={(ev) => setName(ev.target.value)} />
+          </label>
+          <label className="block space-y-1">
+            <span>{a.plate}</span>
+            <Input value={plate} maxLength={20} autoComplete="off" onChange={(ev) => setPlate(ev.target.value)} />
+          </label>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block space-y-1">
+            <span>{a.payment}</span>
+            <select className={field} value={payment} onChange={(ev) => setPayment(ev.target.value as PastSwapInput["payment"])}>
+              <option value="cash">{a.payments.cash}</option>
+              <option value="mobile_money">{a.payments.mobile_money}</option>
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span>{a.amount}</span>
+            <Input type="number" inputMode="numeric" min={0} step={1} value={shownAmount} onChange={(ev) => setAmount(ev.target.value)} />
+          </label>
+        </div>
+        {payment === "mobile_money" && (
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block space-y-1">
+              <span>{a.network}</span>
+              <select className={field} value={network} onChange={(ev) => setNetwork(ev.target.value as MmNetwork)}>
+                <option value="tmoney">T-Money</option>
+                <option value="flooz">Flooz</option>
+              </select>
+            </label>
+            <label className="block space-y-1">
+              <span>{a.mmRef}</span>
+              <Input value={mmRef} maxLength={40} autoComplete="off" onChange={(ev) => setMmRef(ev.target.value)} />
+            </label>
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block space-y-1">
+            <span>{a.batteryOut}</span>
+            <Input className="font-mono" value={batteryOut} maxLength={60} autoComplete="off" onChange={(ev) => setBatteryOut(ev.target.value)} />
+          </label>
+          {customerType !== "first_purchase" && (
+            <label className="block space-y-1">
+              <span>{a.batteryIn}</span>
+              <Input className="font-mono" value={batteryIn} maxLength={60} autoComplete="off" onChange={(ev) => setBatteryIn(ev.target.value)} />
+            </label>
+          )}
+        </div>
+        <label className="flex items-start gap-3">
+          <input type="checkbox" className="mt-0.5 size-5 accent-gp-green-dark" checked={updateCounter} onChange={(ev) => setUpdateCounter(ev.target.checked)} />
+          <span>
+            {a.updateCounter}
+            <span className="block text-xs text-gp-muted">{a.updateCounterHint}</span>
+          </span>
+        </label>
       </div>
     </ConfirmSheet>
   );

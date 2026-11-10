@@ -42,6 +42,9 @@ import {
   type SwapReview,
   type OfflineSwapReject,
   checkOfflineAt,
+  checkPastSwap,
+  PAST_SWAP_PREFIX,
+  type PastSwapInput,
 } from "../shared/station-work";
 import type { Profile } from "../shared/types";
 import { periodStart, reportPeriod } from "../shared/owner-backoffice";
@@ -51,7 +54,7 @@ import type { Env } from "./env";
 import { featuresOf } from "./features";
 import { earnStatement } from "./greenpoint";
 import { ApiError, nowIso, uuid } from "./http";
-import { DB_CUSTOMER, DB_DRIVER } from "./roles";
+import { DB_CUSTOMER, DB_DRIVER, roleFromDb } from "./roles";
 import { requireService } from "./services";
 import { creditCodeOwner, isCreditStation, OPEN_CREDIT_CHARGE_SQL, refuseWhileCreditCharging, spendCreditCode, walletAccess } from "./wallet";
 import { checkPickupCode, heldBatteriesSql, stillActive, type ReservationRow } from "./reservations";
@@ -590,6 +593,7 @@ function toSwap(r: SwapRow): SwapEntry {
     review: r.review ?? null,
     reviewNote: r.review_note ?? null,
     reviewedAt: r.reviewed_at ?? null,
+    addedLater: r.request_id.startsWith(PAST_SWAP_PREFIX),
   };
 }
 
@@ -1253,6 +1257,143 @@ export async function deleteSwap(c: WorkCtx, stationId: string, swapId: string, 
     if (isUnique(err)) throw new ApiError("swap_not_found", 404);
     throw err;
   }
+}
+
+// A past swap added by an admin (backoffice history) ---------------------------------------
+
+/**
+ * POST /api/stations/:id/swaps/past (admins): records a swap made at the station while no
+ * phone could record it, at the time it happened (shared/station-work.ts PastSwapInput).
+ * Attributed to the person who served the customer (staff or owner of the station), so the
+ * cash they owe and their figures include it; the admin who added it is in the activity log.
+ * Marked like an offline swap (offline = 1, synced_at = when added) and recognisable by its
+ * request id. In one batch, as a live swap: the counter (unless updateCounter is off), the
+ * battery register (never moving a battery a later swap already moved) and the log row.
+ * No Green Credit, fleet or reservation: those are paid or checked in the app at the time.
+ * Nothing is changed in the schema: it is safe with migration 0071 as applied.
+ */
+export async function addPastSwap(c: WorkCtx, stationId: string, input: PastSwapInput): Promise<SwapEntry> {
+  const admin = await c.requireUser();
+  if (admin.role !== "admin") throw new ApiError("forbidden", 403);
+  const db = c.db;
+  const station = await stationInfo(db, stationId);
+  const checked = checkPastSwap(input);
+  if (!checked.ok) throw new ApiError(checked.error);
+  const swap = checked.swap;
+  const requestId = `${PAST_SWAP_PREFIX}${input.requestId}`.slice(0, 80);
+  const existing = await swapByRequest(db, requestId);
+  if (existing) {
+    if (existing.station_id !== stationId) throw new ApiError("request_conflict", 409);
+    return toSwap(existing);
+  }
+
+  // Who served the customer: the admin, or a person working at the station.
+  let actor: StationActor = { user: admin, role: "admin" };
+  if (input.staffId && input.staffId !== admin.id) {
+    const person = await db.prepare("select id, role from users where id = ?").bind(String(input.staffId)).first<{ id: string; role: string }>();
+    const role = person ? await roleAtStation(db, { ...admin, id: person.id, role: roleFromDb(person.role) }, stationId) : null;
+    if (!person || !role || role === "admin") throw new ApiError("staff_not_at_station", 409);
+    actor = { user: { ...admin, id: person.id }, role };
+  }
+
+  const key = await counterKey(db, stationId, input.batteryTypeId);
+  const batteryType = await swapType(db, key);
+  const batteriesOf = {
+    out: swap.batteryOut ? await resolveSwapBattery(db, swap.batteryOut, batteryType) : null,
+    in: swap.batteryIn ? await resolveSwapBattery(db, swap.batteryIn, batteryType) : null,
+  };
+  const customer = swap.contact ? await findCustomer(db, swap.contact, actor.user.id) : null;
+  if (swap.mmRef) {
+    const used = await db.prepare("select 1 from swap_log where mm_network = ? and mm_ref = ?").bind(swap.mmNetwork, swap.mmRef).first();
+    if (used) throw new ApiError("mm_ref_used", 409);
+  }
+
+  const now = nowIso();
+  const at = swap.at;
+  const swapId = uuid();
+  const hasIn = takesBatteryIn(swap.customerType);
+  const swapExists = { sql: "exists (select 1 from swap_log where request_id = ?12)", value: requestId };
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `insert into swap_log (id, request_id, station_id, battery_type_id, has_battery_in, battery_in_label, battery_out_label, customer_type,
+           customer_user_id, payment, amount_xof, staff_id, role, created_at, owner, plate, customer_name, mm_network, mm_ref, offline, synced_at)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, 1, ?20)`,
+      )
+      .bind(
+        swapId,
+        requestId,
+        stationId,
+        key,
+        hasIn ? 1 : 0,
+        swap.batteryIn,
+        swap.batteryOut,
+        swap.customerType,
+        customer?.id ?? null,
+        swap.payment,
+        swap.amountXof,
+        actor.user.id,
+        actor.role,
+        at,
+        swapOwnerOf(!!station.is_own, station.swap_owner),
+        swap.plate,
+        swap.customerName,
+        swap.mmNetwork,
+        swap.mmRef,
+        now,
+      ),
+  ];
+  if (swap.updateCounter) {
+    // As an offline swap: it already happened, so the counter takes it even at 0 full.
+    const common = { stationId, key, reason: null, swapId, actor, now, at, onlyIf: swapExists };
+    statements.push(...eventStatements(db, { ...common, type: "issue", delta: -1, requestId: `${requestId}:out`, force: true }));
+    if (hasIn) statements.push(...eventStatements(db, { ...common, type: "empty_in", delta: 1, requestId: `${requestId}:in` }));
+  }
+  for (const direction of ["out", "in"] as const) {
+    const battery = batteriesOf[direction];
+    if (!battery) continue;
+    statements.push(
+      ...swapBatteryStatements(db, { battery, direction, type: batteryType, stationId, swapId, requestId, holderId: customer?.id ?? null, actor, now: at }),
+    );
+  }
+  statements.push(
+    db
+      .prepare(
+        `insert into audit_log (at, actor, table_name, action, row_id, station_id, user_id, changes)
+         select ?, ?, 'swap_log', 'insert', ?, ?, ?, ? where exists (select 1 from swap_log where id = ?)`,
+      )
+      .bind(
+        now,
+        admin.id,
+        swapId,
+        stationId,
+        customer?.id ?? null,
+        JSON.stringify({
+          added_later: true,
+          created_at: at,
+          staff_id: actor.user.id,
+          customer_type: swap.customerType,
+          payment: swap.payment,
+          amount_xof: swap.amountXof,
+          battery_out: swap.batteryOut,
+          battery_in: swap.batteryIn,
+          counter_updated: swap.updateCounter,
+        }),
+        swapId,
+      ),
+  );
+  try {
+    await db.batch(statements);
+  } catch (err) {
+    if (!isUnique(err)) throw err;
+    if (swap.mmRef && (await db.prepare("select 1 from swap_log where mm_network = ? and mm_ref = ? and request_id <> ?").bind(swap.mmNetwork, swap.mmRef, requestId).first())) {
+      throw new ApiError("mm_ref_used", 409);
+    }
+  }
+  const row = await swapByRequest(db, requestId);
+  if (!row) throw new ApiError("bad_request");
+  if (row.station_id !== stationId) throw new ApiError("request_conflict", 409);
+  return toSwap(row);
 }
 
 // Offline swaps to check and refused (migration 0071) --------------------------------------

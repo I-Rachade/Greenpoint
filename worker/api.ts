@@ -14,7 +14,7 @@ import { batteryDetail, deleteBattery, listBatteries, lookupBattery, registerBat
 import type { BatteryStatusInput, RegisterBatteriesInput } from "../shared/batteries";
 import { reportIncident, resolveIncident, stationIncidents } from "./incidents";
 import type { IncidentInput } from "../shared/incidents";
-import { capacityTrimStatements, deleteSwap, editSwap, markSwapChecked, myLastSwap, offlineSwapRejects, resolveOfflineReject, typeCapacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
+import { addPastSwap, capacityTrimStatements, deleteSwap, editSwap, markSwapChecked, myLastSwap, offlineSwapRejects, resolveOfflineReject, typeCapacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
 import type { StationRole } from "../shared/station-work";
 import {
   checkPickupCode,
@@ -30,7 +30,7 @@ import {
   type ReservationRow,
 } from "./reservations";
 import { kindFrom, typeOfKind } from "../shared/reservations";
-import type { BatteryEventInput, SwapEditInput, SwapFilter, SwapInput } from "../shared/station-work";
+import type { BatteryEventInput, PastSwapInput, SwapEditInput, SwapFilter, SwapInput } from "../shared/station-work";
 import {
   ADMIN_HISTORY_DAYS,
   ADMIN_PAGE_SIZE,
@@ -2395,6 +2395,7 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["GET", /^\/api\/stations\/([\w-]+)\/counter$/, (c, [id]) => stationCounter(c, id)],
   ["POST", /^\/api\/stations\/([\w-]+)\/battery-events$/, async (c, [id]) => postBatteryEvent(c, id, await readJson<BatteryEventInput>(c.request))],
   ["POST", /^\/api\/stations\/([\w-]+)\/swaps$/, async (c, [id]) => recordSwap(c, id, await readJson<SwapInput>(c.request))],
+  ["POST", /^\/api\/stations\/([\w-]+)\/swaps\/past$/, async (c, [id]) => addPastSwap(c, id, await readJson<PastSwapInput>(c.request))],
   ["PATCH", /^\/api\/stations\/([\w-]+)\/swaps\/([\w-]+)$/, async (c, [id, swap]) => editSwap(c, id, swap, await readJson<SwapEditInput>(c.request))],
   ["POST", /^\/api\/stations\/([\w-]+)\/swaps\/([\w-]+)\/checked$/, (c, [id, swap]) => markSwapChecked(c, id, swap)],
   ["GET", /^\/api\/admin\/offline-swap-rejects$/, (c) => offlineSwapRejects(c)],

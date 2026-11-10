@@ -1,5 +1,5 @@
 import type { StationService } from "./station-services";
-import { cleanCustomerName, cleanMmRef, cleanPlate, type BatteryCondition, type EnergyPricing, type MmNetwork } from "./energy-swap";
+import { cleanCustomerName, cleanMmRef, cleanPlate, isMmNetwork, type BatteryCondition, type EnergyPricing, type MmNetwork } from "./energy-swap";
 
 /**
  * Station work (plan phase 3): the battery counter, the swap log and the active station.
@@ -265,6 +265,8 @@ export interface SwapEntry {
   review?: SwapReview | null;
   reviewNote?: string | null;
   reviewedAt?: string | null;
+  /** Added afterwards by an admin (PastSwapInput): createdAt is when it happened, syncedAt when it was added. */
+  addedLater?: boolean;
 }
 
 /** A customer's latest swap (home "Mon scooter", mockup A1): where, which battery and its charge when given. */
@@ -385,6 +387,119 @@ export function checkSwapEdit(
 
 /** Reason of the counter correction that puts a deleted swap's battery back. */
 export const SWAP_DELETED_REASON = "Échange supprimé";
+
+// A past swap added by an admin (backoffice history) -------------------------------------
+
+/**
+ * A swap made at the station while no phone could record it (no device, no battery, app
+ * closed), entered afterwards by an admin: when it happened, who served the customer, the
+ * customer, the payment, the amount and the batteries. It is a swap_log row like any other,
+ * so it shows in the history, the reports, the cash and the swap sheet export of its day.
+ */
+export interface PastSwapInput {
+  requestId: string;
+  /** When it happened (ISO, UTC = Lomé time); in the past, at most PAST_SWAP_MAX_DAYS back. */
+  at: string;
+  /** Who did it at the station (staff or owner of the station); default the admin. */
+  staffId?: string | null;
+  batteryTypeId?: CounterKey | null;
+  /** cash = walk-in without account; app = a customer account (by phone or e-mail); first_purchase = only a battery out. */
+  customerType: "cash" | "app" | "first_purchase";
+  /** app (required) and first purchase (optional): the customer's phone number or e-mail. */
+  contact?: string | null;
+  customerName?: string | null;
+  plate?: string | null;
+  payment: "cash" | "mobile_money";
+  /** Mobile Money: network and transaction id (one transaction pays one swap). */
+  mmNetwork?: MmNetwork | null;
+  mmRef?: string | null;
+  amountXof: number;
+  batteryOut?: string | null;
+  batteryIn?: string | null;
+  /** Also count it on the counter now (full −1, empty +1); off when the counter was already corrected by hand. Default on. */
+  updateCounter?: boolean;
+}
+
+/** Oldest swap an admin may still add. */
+export const PAST_SWAP_MAX_DAYS = 92;
+/** Request ids of swaps added afterwards start with this, so the history can mark them. */
+export const PAST_SWAP_PREFIX = "added:";
+
+export const PAST_SWAP_CUSTOMER_TYPES = ["cash", "app", "first_purchase"] as const;
+
+export type PastSwapError =
+  | "bad_request"
+  | "past_swap_too_old"
+  | "past_swap_in_future"
+  | "invalid_amount"
+  | "mm_network_invalid"
+  | "mm_ref_required"
+  | "plate_required"
+  | "contact_required"
+  | "same_battery";
+
+export interface PastSwapChecked {
+  at: string;
+  customerType: PastSwapInput["customerType"];
+  contact: string | null;
+  customerName: string | null;
+  plate: string | null;
+  payment: PastSwapInput["payment"];
+  mmNetwork: MmNetwork | null;
+  mmRef: string | null;
+  amountXof: number;
+  batteryOut: string | null;
+  batteryIn: string | null;
+  updateCounter: boolean;
+}
+
+/** Checks what the admin typed (worker and demo backend alike). */
+export function checkPastSwap(input: PastSwapInput | null | undefined, now = Date.now()): { ok: true; swap: PastSwapChecked } | { ok: false; error: PastSwapError } {
+  if (!input || typeof input !== "object" || !validRequestId(input.requestId)) return { ok: false, error: "bad_request" };
+  if (!(PAST_SWAP_CUSTOMER_TYPES as readonly string[]).includes(input.customerType)) return { ok: false, error: "bad_request" };
+  if (typeof input.at !== "string" || !/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(input.at)) return { ok: false, error: "bad_request" };
+  const at = Date.parse(input.at);
+  if (!Number.isFinite(at)) return { ok: false, error: "bad_request" };
+  if (at > now) return { ok: false, error: "past_swap_in_future" };
+  if (at < now - PAST_SWAP_MAX_DAYS * 86_400_000) return { ok: false, error: "past_swap_too_old" };
+  if (!validAmount(input.amountXof)) return { ok: false, error: "invalid_amount" };
+  const contact = typeof input.contact === "string" && input.contact.trim() ? input.contact.trim() : null;
+  if (input.customerType === "app" && !contact) return { ok: false, error: "contact_required" };
+  const customerName = cleanCustomerName(input.customerName ?? null);
+  if (customerName === undefined) return { ok: false, error: "bad_request" };
+  const plateEmpty = input.plate == null || String(input.plate).trim() === "";
+  const plate = plateEmpty ? null : cleanPlate(input.plate);
+  if (!plateEmpty && !plate) return { ok: false, error: "plate_required" };
+  let mmNetwork: MmNetwork | null = null;
+  let mmRef: string | null = null;
+  if (input.payment === "mobile_money") {
+    if (!isMmNetwork(input.mmNetwork)) return { ok: false, error: "mm_network_invalid" };
+    mmNetwork = input.mmNetwork;
+    mmRef = cleanMmRef(input.mmRef);
+    if (!mmRef) return { ok: false, error: "mm_ref_required" };
+  } else if (input.payment !== "cash") return { ok: false, error: "bad_request" };
+  const batteryOut = cleanBatteryLabel(input.batteryOut);
+  const batteryIn = input.customerType === "first_purchase" ? null : cleanBatteryLabel(input.batteryIn);
+  if (batteryOut === undefined || batteryIn === undefined) return { ok: false, error: "bad_request" };
+  if (batteryOut && batteryIn && batteryOut === batteryIn) return { ok: false, error: "same_battery" };
+  return {
+    ok: true,
+    swap: {
+      at: new Date(at).toISOString(),
+      customerType: input.customerType,
+      contact,
+      customerName,
+      plate,
+      payment: input.payment,
+      mmNetwork,
+      mmRef,
+      amountXof: input.amountXof,
+      batteryOut,
+      batteryIn,
+      updateCounter: input.updateCounter !== false,
+    },
+  };
+}
 
 // Station home -----------------------------------------------------------------------
 

@@ -216,7 +216,15 @@ export function OwnerPanel() {
                 {tab === "live" && <LiveView stationId={selected?.id ?? null} stationName={stationName} />}
                 {tab === "report" && <ReportView stationId={selected?.id ?? null} days={days} />}
                 {tab === "cash" && <CashView stationId={selected?.id ?? null} readOnly={readOnly} />}
-                {tab === "history" && <HistoryView stationId={selected?.id ?? null} stationName={selected?.name ?? ""} days={days} readOnly={readOnly} />}
+                {tab === "history" && (
+                  <HistoryView
+                    stationId={selected?.id ?? null}
+                    stationName={selected?.name ?? ""}
+                    days={days}
+                    readOnly={readOnly}
+                    staff={data.staff.filter((p) => p.stationId === selected?.id)}
+                  />
+                )}
                 {tab === "activity" && <ActivityView stationId={selected?.id ?? null} />}
                 {tab === "batteries" && <BatteryRegistry stationId={selected?.id ?? null} />}
                 {tab === "staff" && <StaffView view={data} stations={shown} onChanged={changed} />}
