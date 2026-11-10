@@ -59,7 +59,10 @@ export function useFcfa() {
   return (n: number) => format(t.drivers.fcfa, { n: n.toLocaleString("fr-FR") });
 }
 
-/** Shrinks a photo to at most 1600 px and JPEG, so uploads stay small on mobile data. */
+/**
+ * Shrinks a photo to at most 1600 px, in WebP where the phone can write it (about a third
+ * smaller than JPEG for the same look), JPEG otherwise, so uploads and pages stay small on mobile data.
+ */
 export async function shrinkImage(file: Blob, maxSide = 1600): Promise<Blob> {
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
@@ -68,8 +71,12 @@ export async function shrinkImage(file: Blob, maxSide = 1600): Promise<Blob> {
   canvas.height = Math.round(bitmap.height * scale);
   canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
+  // Browsers that cannot write WebP hand back a PNG instead: JPEG then.
+  const probe = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.8));
+  const type = probe?.type === "image/webp" ? "image/webp" : "image/jpeg";
+  if (type === "image/webp" && probe && probe.size <= MAX_DRIVER_IMAGE_BYTES) return probe;
   for (const quality of [0.82, 0.7, 0.55, 0.4]) {
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
     if (blob && blob.size <= MAX_DRIVER_IMAGE_BYTES) return blob;
   }
   throw new Error("image_too_large");

@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
+import { shrinkImage } from "@/components/drivers/shared";
 import { PromoCard } from "@/components/promo-popup";
 import { useErrorMessage, useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
@@ -200,7 +201,10 @@ function PromotionEditor({
     if (!file) return;
     setUploading(true);
     try {
-      set({ imageUrl: await onUpload(file) });
+      // Made smaller (WebP or JPEG, 1200 px) before it goes out; an animated GIF stays as it is.
+      const small = file.type === "image/gif" ? file : await shrinkImage(file, 1200);
+      const name = small.type === "image/webp" ? "promo.webp" : small.type === "image/gif" ? file.name : "promo.jpg";
+      set({ imageUrl: await onUpload(small instanceof File ? small : new File([small], name, { type: small.type })) });
     } catch (err) {
       onError(err);
     } finally {

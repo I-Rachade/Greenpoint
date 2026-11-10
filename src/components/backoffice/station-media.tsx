@@ -45,7 +45,7 @@ export function StationMediaFields({
     try {
       // The demo keeps photos in browser storage, so they are made smaller there.
       const blob = await shrinkImage(file, backend.mode === "demo" ? 900 : 1600);
-      const url = await backend.uploadStationPhoto(new File([blob], "station.jpg", { type: "image/jpeg" }));
+      const url = await backend.uploadStationPhoto(new File([blob], blob.type === "image/webp" ? "station.webp" : "station.jpg", { type: blob.type || "image/jpeg" }));
       onPhotos([...photos, url].slice(0, MAX_STATION_PHOTOS));
     } catch (err) {
       setProblem(err instanceof Error && err.message === "image_too_large" ? t.errors.image_too_large : errorMessage(err));
