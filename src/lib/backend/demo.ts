@@ -2323,7 +2323,7 @@ export class DemoBackend implements Backend {
     return [];
   }
 
-  async resolveOfflineReject(_id: string): Promise<void> {
+  async resolveOfflineReject(): Promise<void> {
     this.requireAdmin(this.load());
     throw new BackendError("offline_reject_not_found");
   }

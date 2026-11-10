@@ -388,8 +388,8 @@ export class CloudflareBackend implements Backend {
 
   async getProfile(): Promise<Profile | null> {
     if (!this.token) {
-      // Signed in without network: that lasts while the server stays out of reach; once it
-      // answers, the person signs in with it (the swaps kept on the phone go out right after).
+      // Signed in without network: the person stays in; once the server answers, the station
+      // screens ask for the PIN once to open a real session (src/components/offline/offline-panel.tsx).
       const offline = offlineSession();
       if (!offline) return null;
       const reached = await fetch(`${this.apiBase}/api/features`).then(
@@ -397,9 +397,7 @@ export class CloudflareBackend implements Backend {
         () => false,
       );
       reportReached(reached);
-      if (!reached) return offline;
-      endOfflineSession();
-      return null;
+      return offline;
     }
     const profile = await this.call<Profile | null>("GET", "/api/me");
     if (profile) {

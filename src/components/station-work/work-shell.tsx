@@ -33,6 +33,11 @@ export function useWorkStation() {
     if (only && activeId !== only) setActive(only);
   }, [only, activeId, setActive]);
   const station = data?.find((s) => s.id === activeId) ?? null;
+  const stationId = station?.id ?? null;
+  useEffect(() => {
+    // Read once with the network so the swap screen has the counter without network too (src/lib/offline/kept.ts).
+    if (stationId) void backend.stationCounter(stationId).catch(() => undefined);
+  }, [backend, stationId]);
   return { stations: data, station, error, reload, setActive };
 }
 
@@ -104,7 +109,6 @@ export function WorkShell({
     const active = station.activeServices ?? [];
     body = (
       <>
-        <OfflinePanel />
         {/* Offline the panel above says it; the last data stays on screen. */}
         {!isNetworkError(error) && <StaleNotice error={error} onRetry={reload} />}
         {home ? (
@@ -160,6 +164,7 @@ export function WorkShell({
           {t.operator.back}
         </Link>
       )}
+      <OfflinePanel />
       {body}
     </div>
   );

@@ -416,6 +416,9 @@ export const en: Dictionary = {
     rejectResolve: "Dealt with",
     rejectHappened: "made",
     rejectBy: "by",
+    backOnline: "The network is back",
+    backOnlineHint: "Type your PIN to resume the session and send the swaps to the back-office.",
+    backOnlineSubmit: "Resume",
   },
   work: {
     day: {

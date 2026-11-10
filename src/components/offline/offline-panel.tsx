@@ -1,6 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
+import { useErrorMessage } from "@/lib/hooks";
+import { offlineSession } from "@/lib/offline/offline-login";
+import { PIN_LENGTH } from "@shared/pin";
 import { useOffline, useQueuedSwaps } from "@/lib/offline/hooks";
 import { flushQueue, removeQueuedSwap, type QueuedSwap } from "@/lib/offline/swap-queue";
 import { useApp } from "../app-provider";
@@ -21,11 +24,32 @@ export function OfflinePanel() {
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pin, setPin] = useState("");
+  const [pinError, setPinError] = useState<string | null>(null);
+  const errorMessage = useErrorMessage();
+  // Signed in without network and the server answers again: one PIN opens a real session.
+  const resume = !offline && profile && offlineSession()?.id === profile.id;
   const mine = queue.filter((q) => q.userId === profile?.id);
   const pending = mine.filter((q) => q.status === "pending");
   const refused = mine.filter((q) => q.status === "refused");
   const others = queue.length - mine.length;
-  if (!offline && !queue.length) return null;
+  if (!offline && !queue.length && !resume) return null;
+
+  async function resumeSession(e: FormEvent) {
+    e.preventDefault();
+    const contact = profile?.phone ?? profile?.email;
+    if (!contact) return;
+    setBusy(true);
+    setPinError(null);
+    try {
+      await backend.signIn(contact, pin);
+      setPin("");
+    } catch (err) {
+      setPinError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function sendNow() {
     if (!profile) return;
@@ -50,6 +74,29 @@ export function OfflinePanel() {
         <p>
           <span className="font-semibold">{o.banner}</span> · {o.bannerHint}
         </p>
+      )}
+      {resume && (
+        <form onSubmit={resumeSession} className="space-y-2">
+          <p>
+            <span className="font-semibold">{o.backOnline}</span> · {o.backOnlineHint}
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              inputMode="numeric"
+              autoComplete="current-password"
+              aria-label={t.login.pin}
+              maxLength={PIN_LENGTH}
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+              className="min-h-11 w-32 rounded-xl border border-amber-400 bg-white px-3 text-center tracking-[0.3em] text-zinc-900 dark:bg-zinc-900 dark:text-white"
+            />
+            <Button size="sm" type="submit" disabled={busy || pin.length < PIN_LENGTH}>
+              {o.backOnlineSubmit}
+            </Button>
+          </div>
+          {pinError && <p role="alert" className="text-red-700 dark:text-red-300">{pinError}</p>}
+        </form>
       )}
       {pending.length > 0 && <p className="font-semibold">{o.pending(pending.length)}</p>}
       {refused.length > 0 && <p className="font-semibold text-red-700 dark:text-red-300">{o.refused(refused.length)}</p>}

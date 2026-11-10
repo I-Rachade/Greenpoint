@@ -416,6 +416,9 @@ export const fr = {
     rejectResolve: "Traité",
     rejectHappened: "fait le",
     rejectBy: "par",
+    backOnline: "Le réseau est revenu",
+    backOnlineHint: "Tapez votre code PIN pour reprendre la session et envoyer les échanges au back-office.",
+    backOnlineSubmit: "Reprendre",
   },
   work: {
     day: {

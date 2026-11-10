@@ -25,9 +25,12 @@ export function OfflineSync() {
     send();
     const timer = window.setInterval(send, RETRY_MS);
     window.addEventListener("online", send);
+    // A new session (the PIN typed again once the network is back): send right away.
+    const unsubscribe = backend.onAuthChange((p) => p?.id === userId && send());
     return () => {
       window.clearInterval(timer);
       window.removeEventListener("online", send);
+      unsubscribe();
     };
   }, [backend, userId, pending, offline]);
 
