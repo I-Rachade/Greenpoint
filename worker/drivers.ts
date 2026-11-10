@@ -68,6 +68,7 @@ import {
 } from "../shared/parcels";
 import { normalizeTogoPhone } from "../shared/phone";
 import type { Profile } from "../shared/types";
+import { afterResponse } from "./background";
 import type { Env } from "./env";
 import { driversEnabled, requireDrivers } from "./features";
 import { requireService, unlockedStations, unlockedSql } from "./services";
@@ -487,8 +488,8 @@ async function requeue(db: D1Database, driverId: string, stationId: string | nul
  */
 async function tellUser(env: Env | undefined, userId: string | null, parcelId: string | null, kind: string, message: Message) {
   if (!env || !userId) return;
-  // Phase 2: a push notice reaches the phone even with the app closed.
-  await sendPush(env, userId, noticeOf(message));
+  // Phase 2: a push notice reaches the phone even with the app closed (sent after the answer).
+  await afterResponse("Push failed", () => sendPush(env, userId, noticeOf(message)));
   if (parcelId) return notifyPerson(env, parcelId, kind, userId, message);
   if (!env.EMAIL) return;
   try {

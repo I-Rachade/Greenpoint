@@ -1,3 +1,4 @@
+import { afterResponse } from "./background";
 import type { Env } from "./env";
 import { nowIso } from "./http";
 import { noticeOf, sendPush } from "./push";
@@ -51,7 +52,8 @@ export async function notifyPerson(
   message: Message,
 ): Promise<void> {
   if (!userId) return;
-  try {
+  // Sent after the answer: the parcel step does not wait for the mail service.
+  await afterResponse(`Parcel notification failed ${parcelId} ${kind}`, async () => {
     const user = await env.DB.prepare("select email from users where id = ?").bind(userId).first<{ email: string | null }>();
     if (!user?.email) return;
     const result = await sendEmail(env, user.email, message);
@@ -60,9 +62,7 @@ export async function notifyPerson(
     )
       .bind(parcelId, nowIso(), kind, user.email, result.ok ? 1 : 0, result.ok ? null : result.error)
       .run();
-  } catch (err) {
-    console.error("Parcel notification failed", parcelId, kind, (err as Error).message);
-  }
+  });
 }
 
 /**
@@ -71,11 +71,10 @@ export async function notifyPerson(
  * too (alerts). Never throws.
  */
 export async function notifyUser(env: Env, userId: string, message: Message): Promise<void> {
-  await sendPush(env, userId, noticeOf(message));
-  try {
+  // Sent after the answer: the action does not wait for Google or the mail service.
+  await afterResponse(`Notification failed ${userId}`, async () => {
+    await sendPush(env, userId, noticeOf(message));
     const user = await env.DB.prepare("select email from users where id = ?").bind(userId).first<{ email: string | null }>();
     if (user?.email) await sendEmail(env, user.email, message);
-  } catch (err) {
-    console.error("Notification failed", userId, (err as Error).message);
-  }
+  });
 }

@@ -1,5 +1,5 @@
 import type { PushNotice } from "./push";
-import { nowIso } from "./http";
+import { nowIso, outboundSignal } from "./http";
 
 // Push notices in the browser (web app) through the standard Web Push protocol: RFC 8030
 // delivery, RFC 8291 payload encryption and RFC 8292 VAPID sign-in, all with WebCrypto.
@@ -130,7 +130,12 @@ export async function sendWebPush(db: D1Database, sub: WebSubscription, notice: 
       urgency: "high",
     },
     body,
+    signal: outboundSignal(),
+  }).catch((err: Error) => {
+    console.error("Web push failed", err.message);
+    return null;
   });
+  if (!res) return "failed";
   if (res.ok) return "sent";
   if (res.status === 404 || res.status === 410) return "gone";
   console.error("Web push failed", res.status);

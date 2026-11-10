@@ -56,7 +56,7 @@ export function resetAccessKeyCache() {
 
 async function teamKeys(cfg: AccessConfig, fetcher: typeof fetch, now: number, fresh: boolean): Promise<Jwk[]> {
   if (!fresh && keyCache && keyCache.teamDomain === cfg.teamDomain && now - keyCache.at < KEYS_TTL_MS) return keyCache.keys;
-  const res = await fetcher(`${cfg.teamDomain}/cdn-cgi/access/certs`);
+  const res = await fetcher(`${cfg.teamDomain}/cdn-cgi/access/certs`, { signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`access certs ${res.status}`);
   const body = (await res.json()) as { keys?: Jwk[] };
   const keys = Array.isArray(body.keys) ? body.keys.filter((k) => k && k.kty === "RSA" && typeof k.kid === "string") : [];

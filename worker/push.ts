@@ -1,5 +1,5 @@
 import type { Env } from "./env";
-import { ApiError, nowIso } from "./http";
+import { ApiError, nowIso, outboundSignal } from "./http";
 import type { ParcelCtx } from "./parcels";
 import { parseSubscription, sendWebPush } from "./web-push";
 
@@ -105,6 +105,7 @@ async function accessToken(sa: ServiceAccount): Promise<string> {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: `grant_type=${encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer")}&assertion=${unsigned}.${b64url(signature)}`,
+    signal: outboundSignal(),
   });
   if (!res.ok) throw new Error(`fcm_auth_${res.status}`);
   const body = (await res.json()) as { access_token: string; expires_in?: number };
@@ -148,6 +149,7 @@ async function sendToPhones(env: Env, tokens: string[], notice: PushNotice, forg
   let sent = 0;
   await Promise.all(
     tokens.map(async (token) => {
+      // One phone that does not answer in time must not stop the others.
       const res = await fetch(`https://fcm.googleapis.com/v1/projects/${sa.project_id}/messages:send`, {
         method: "POST",
         headers: { authorization: `Bearer ${auth}`, "content-type": "application/json" },
@@ -160,7 +162,12 @@ async function sendToPhones(env: Env, tokens: string[], notice: PushNotice, forg
             apns: { payload: { aps: { sound: "default" } } },
           },
         }),
+        signal: outboundSignal(),
+      }).catch((err: Error) => {
+        console.error("Push send failed", err.message);
+        return null;
       });
+      if (!res) return;
       if (res.ok) sent++;
       // UNREGISTERED: the app was removed from that phone.
       else if (res.status === 404) await forget(token);

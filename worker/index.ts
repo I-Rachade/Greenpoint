@@ -1,6 +1,7 @@
 import { pruneIpRequests } from "./ip-limits";
 import { pruneSecurityEvents } from "./security-log";
 import { handleApi } from "./api";
+import { withBackground } from "./background";
 import { recountSilentFreeSlots } from "./devices";
 import { runDispatch } from "./drivers";
 import type { Env } from "./env";
@@ -61,7 +62,8 @@ export default {
 
     const cors = corsHeaders(request);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-    const response = await handleApi(request, env);
+    // Notices and e-mails of this request go out after the answer (worker/background.ts).
+    const response = await withBackground((work) => ctx.waitUntil(work), () => handleApi(request, env));
     // Tell partners right away instead of waiting for the next minute (worker/partners.ts).
     if (request.method !== "GET" && PARCEL_CHANGE.test(url.pathname)) ctx.waitUntil(runPartnerEvents(env));
     for (const [key, value] of Object.entries(cors)) response.headers.set(key, value);
