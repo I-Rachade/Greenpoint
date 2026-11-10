@@ -267,6 +267,11 @@ const KNOWN_CODES: BackendErrorCode[] = [
   "assignment_not_found",
   "merchant_driver_exists",
   "driver_checked_in_here",
+  "own_station",
+  "offline_too_old",
+  "offline_in_future",
+  "offline_not_allowed",
+  "offline_reject_not_found",
 ];
 
 /**

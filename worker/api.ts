@@ -14,7 +14,7 @@ import { batteryDetail, deleteBattery, listBatteries, lookupBattery, registerBat
 import type { BatteryStatusInput, RegisterBatteriesInput } from "../shared/batteries";
 import { reportIncident, resolveIncident, stationIncidents } from "./incidents";
 import type { IncidentInput } from "../shared/incidents";
-import { capacityTrimStatements, deleteSwap, editSwap, myLastSwap, typeCapacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
+import { capacityTrimStatements, deleteSwap, editSwap, markSwapChecked, myLastSwap, offlineSwapRejects, resolveOfflineReject, typeCapacityTrimStatements, postBatteryEvent, recordSwap, stationActor, stationBatteryEvents, stationCounter, stationSwaps, type StationActor } from "./station-work";
 import type { StationRole } from "../shared/station-work";
 import {
   checkPickupCode,
@@ -2389,6 +2389,9 @@ const ROUTES: [string, RegExp, Handler][] = [
   ["POST", /^\/api\/stations\/([\w-]+)\/battery-events$/, async (c, [id]) => postBatteryEvent(c, id, await readJson<BatteryEventInput>(c.request))],
   ["POST", /^\/api\/stations\/([\w-]+)\/swaps$/, async (c, [id]) => recordSwap(c, id, await readJson<SwapInput>(c.request))],
   ["PATCH", /^\/api\/stations\/([\w-]+)\/swaps\/([\w-]+)$/, async (c, [id, swap]) => editSwap(c, id, swap, await readJson<SwapEditInput>(c.request))],
+  ["POST", /^\/api\/stations\/([\w-]+)\/swaps\/([\w-]+)\/checked$/, (c, [id, swap]) => markSwapChecked(c, id, swap)],
+  ["GET", /^\/api\/admin\/offline-swap-rejects$/, (c) => offlineSwapRejects(c)],
+  ["POST", /^\/api\/admin\/offline-swap-rejects\/([\w-]+)\/resolve$/, (c, [id]) => resolveOfflineReject(c, id)],
   [
     "DELETE",
     /^\/api\/stations\/([\w-]+)\/swaps\/([\w-]+)$/,
@@ -2410,6 +2413,7 @@ const ROUTES: [string, RegExp, Handler][] = [
         days: Number(c.url.searchParams.get("days")) || null,
         from: c.url.searchParams.get("from"),
         to: c.url.searchParams.get("to"),
+        toCheck: c.url.searchParams.get("toCheck") === "1",
       }),
   ],
   [

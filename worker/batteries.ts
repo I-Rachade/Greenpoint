@@ -145,9 +145,11 @@ export function swapBatteryStatements(db: D1Database, s: SwapBatterySpec): D1Pre
       .prepare(
         `update batteries set location = ?, station_id = ?, holder_user_id = ?, last_swap_at = ?,
            battery_type_id = coalesce(battery_type_id, ?)
-         where brand = ? and serial = ? and ${swapExists}`,
+         where brand = ? and serial = ? and ${swapExists}
+           -- An offline swap sent late (0071) never moves a battery a later swap already moved.
+           and (last_swap_at is null or last_swap_at <= ?)`,
       )
-      .bind(handedOut ? "customer" : "station", handedOut ? null : s.stationId, handedOut ? s.holderId : null, s.now, s.type?.id ?? null, b.brand, b.serial, s.requestId),
+      .bind(handedOut ? "customer" : "station", handedOut ? null : s.stationId, handedOut ? s.holderId : null, s.now, s.type?.id ?? null, b.brand, b.serial, s.requestId, s.now),
     db
       .prepare(`update swap_log set ${handedOut ? "battery_out_id" : "battery_in_id"} = ${idOf} where request_id = ?`)
       .bind(b.brand, b.serial, s.requestId),

@@ -116,6 +116,9 @@ const POLICY: Record<string, Role[]> = {
   "GET /api/stations/:id/swaps": STATION,
   "PATCH /api/stations/:id/swaps/:id": OWNER, // backoffice history: correct a swap
   "DELETE /api/stations/:id/swaps/:id": OWNER, // backoffice history: delete a swap
+  "POST /api/stations/:id/swaps/:id/checked": OWNER, // backoffice history: an offline swap to check looked at (0071)
+  "GET /api/admin/offline-swap-rejects": ADMIN,
+  "POST /api/admin/offline-swap-rejects/:id/resolve": ADMIN,
   "POST /api/stations/:id/incidents": STATION,
   "GET /api/stations/:id/incidents": STATION,
   "POST /api/stations/:id/incidents/:id/resolve": OWNER, // owners and admins mark a report handled
