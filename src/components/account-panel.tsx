@@ -24,6 +24,7 @@ import { isDriverAccount } from "@shared/drivers";
 import { isMerchantAccount } from "@shared/merchants";
 import { MerchantInvitesCard } from "./merchants/merchant-invites";
 import { StaffInvitesCard } from "./staff-invites";
+import { PageSkeleton } from "./ui";
 
 const CODE_LENGTH = 6;
 const digits = (value: string) => value.replace(/\D/g, "").slice(0, CODE_LENGTH);
@@ -52,7 +53,7 @@ export function AccountPanel() {
   const [deleted, setDeleted] = useState(false);
   const a = t.ui.account;
 
-  if (!ready) return <p className="p-6 text-sm text-gp-muted">{t.loading}</p>;
+  if (!ready) return <PageSkeleton label={t.loading} />;
 
   const name = profile?.fullName || profile?.phone || profile?.email || a.guest;
   const initials = profile?.fullName

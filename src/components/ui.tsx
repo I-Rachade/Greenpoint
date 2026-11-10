@@ -177,6 +177,19 @@ export function SkeletonCard({ className = "" }: { className?: string }) {
   );
 }
 
+/** Whole-screen placeholder while its data loads: a few card shapes, "Loading" for screen readers. */
+export function PageSkeleton({ label, cards = 3, className = "p-4" }: { label: string; cards?: number; className?: string }) {
+  return (
+    <div role="status" className={`space-y-3 ${className}`}>
+      <span className="sr-only">{label}</span>
+      <Skeleton className="h-6 w-40" />
+      {Array.from({ length: cards }, (_, i) => (
+        <SkeletonCard key={i} />
+      ))}
+    </div>
+  );
+}
+
 // ---------- EmptyState ----------
 
 /** Nothing to show yet: round icon, title, short text and an optional action. */

@@ -7,6 +7,7 @@ import { LoadFailed } from "@/components/load-state";
 import { StaleNotice } from "@/components/stale-notice";
 import type { AdminSnapshot, AdminUser } from "@shared/admin/types";
 import { useLiveQuery } from "@/lib/hooks";
+import { PageSkeleton } from "../ui";
 
 /** Loads the backoffice data and keeps it live (reloads on every station or reservation change). */
 export function useAdminSnapshot() {
@@ -52,7 +53,7 @@ export function useDateTime() {
 export function Loading({ error, onRetry }: { error?: unknown; onRetry?: () => void }) {
   const { t } = useI18n();
   if (error) return <LoadFailed error={error} onRetry={onRetry ?? (() => window.location.reload())} />;
-  return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
+  return <PageSkeleton label={t.loading} />;
 }
 
 export { StaleNotice };

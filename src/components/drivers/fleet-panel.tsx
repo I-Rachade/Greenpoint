@@ -13,7 +13,7 @@ import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { CountryPicker } from "../country-picker";
 import { useI18n } from "../i18n-provider";
-import { Badge, Button, Input, useToast, type BadgeTone } from "../ui";
+import { Badge, Button, Input, PageSkeleton, type BadgeTone, useToast } from "../ui";
 import { AssignmentRequestList, useClock } from "./driver-shops";
 import { input, JobStatusPill, Notice, primary, secondary, useFcfa, useJobRoute } from "./shared";
 import type { TrackPoint } from "./track-map";
@@ -571,7 +571,7 @@ export function FleetPanel() {
   const [inviting, setInviting] = useState(false);
 
   if (error) return <p className="p-6 text-sm text-red-600">{errorMessage(error)}</p>;
-  if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
+  if (!data) return <PageSkeleton label={t.loading} />;
   const [view, stations] = data;
   const fleet = view.fleet;
   const manager = profile?.role === "fleet_manager";

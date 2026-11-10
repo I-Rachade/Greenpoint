@@ -18,6 +18,7 @@ import { BatteryIcon, BoltIcon, BoxIcon, CarIcon, SunIcon } from "./icons";
 import { useI18n } from "./i18n-provider";
 import { hoursOf, OpeningHoursInput, openingHoursLine } from "./opening-hours-input";
 import { SolarBadge } from "./solar-badge";
+import { PageSkeleton } from "./ui";
 
 /** The form's view of a station: general fields plus each point switched on or off. */
 interface FormState {
@@ -718,7 +719,7 @@ export function AdminStations() {
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
-  if (!data) return <p className="p-6 text-sm text-zinc-500">{t.loading}</p>;
+  if (!data) return <PageSkeleton label={t.loading} />;
   const [snap, operators, devices, { parcels, depots }, batteryTypes] = data;
   const stations = [...snap.stations].sort((a, b) => a.name.localeCompare(b.name));
   const socketsOf = (id: string) => devices.filter((d) => d.stationId === id);

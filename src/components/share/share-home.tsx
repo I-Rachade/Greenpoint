@@ -23,6 +23,7 @@ import { useApp } from "../app-provider";
 import { ConfirmSheet } from "../confirm-sheet";
 import { useI18n } from "../i18n-provider";
 import { LoadFailed, OfflineNotice } from "../load-state";
+import { PageSkeleton } from "../ui";
 
 // The Share tab (shared/share.ts, worker/share.ts): Share stations with their vehicles, the
 // customer's check, the open ride and the rides still to pay. Share stations also show on the map.
@@ -72,7 +73,7 @@ export function ShareHome() {
     document.getElementById(decodeURIComponent(window.location.hash.slice(1)))?.scrollIntoView({ block: "center" });
   }, [loaded]);
 
-  if (!overview.data) return overview.error ? <LoadFailed error={overview.error} onRetry={overview.reload} /> : <p className="p-6 text-sm text-gp-muted">{t.loading}</p>;
+  if (!overview.data) return overview.error ? <LoadFailed error={overview.error} onRetry={overview.reload} /> : <PageSkeleton label={t.loading} />;
   const mine = me.data;
 
   return (
