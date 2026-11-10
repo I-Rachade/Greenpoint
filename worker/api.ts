@@ -331,6 +331,7 @@ import {
   uploadShareDocument,
   waiveShareRide,
 } from "./share";
+import { hot } from "./hot-cache";
 import { adjustChargeCard, counterCardInfo, deleteChargeCard, listChargeCards, saveChargeCard, setChargeCardBlocked } from "./charge-cards";
 
 // Rows as stored in D1 (snake_case, booleans as 0/1, JSON as text).
@@ -1130,6 +1131,11 @@ async function saveStation(c: Ctx, id: string | null, input: StationInput) {
  * with the parcel module off, parcel points are left out; in the Lite version, car chargers too.
  */
 async function publicStations(c: Ctx) {
+  // The same for everyone: a copy of a few seconds spares the database (worker/hot-cache.ts).
+  return hot("stations", () => loadPublicStations(c));
+}
+
+async function loadPublicStations(c: Ctx) {
   const [all, features, active] = await Promise.all([c.stations("where s.is_active = 1"), getFeatures(c.env), activeServices(c.db)]);
   const stations = all
     .filter((s) => features.parcels || s.kind !== "parcel")
