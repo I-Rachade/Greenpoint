@@ -67,7 +67,7 @@ export default {
     const response = await withBackground((work) => ctx.waitUntil(work), () => handleApi(request, env));
     // A change may touch what the station list shows: its short copy is dropped (worker/hot-cache.ts).
     // Dropped before answering, so the reload that follows the change reads fresh data.
-    if (request.method !== "GET") await dropHot();
+    if (request.method !== "GET" && url.pathname !== "/api/vitals") await dropHot();
     // Tell partners right away instead of waiting for the next minute (worker/partners.ts).
     if (request.method !== "GET" && PARCEL_CHANGE.test(url.pathname)) ctx.waitUntil(runPartnerEvents(env));
     for (const [key, value] of Object.entries(cors)) response.headers.set(key, value);

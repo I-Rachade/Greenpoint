@@ -332,6 +332,7 @@ import {
   waiveShareRide,
 } from "./share";
 import { hot } from "./hot-cache";
+import { receiveVitals } from "./vitals";
 import { adjustChargeCard, counterCardInfo, deleteChargeCard, listChargeCards, saveChargeCard, setChargeCardBlocked } from "./charge-cards";
 
 // Rows as stored in D1 (snake_case, booleans as 0/1, JSON as text).
@@ -3059,6 +3060,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     // the callbacks above come from providers and devices with their own credentials.
     await limitByIp(env, request);
     if (partnerApi) return await handlePartnerApi(request, env);
+    // Speed measured on people's phones, anonymous (worker/vitals.ts).
+    if (url.pathname === "/api/vitals" && request.method === "POST") return await receiveVitals(request);
     for (const route of ROUTES) {
       const [method, pattern, handler] = route;
       const m = pattern.exec(url.pathname);
