@@ -108,7 +108,7 @@ import type {
 } from "@shared/types";
 import type { StationService, StationServiceInfo } from "@shared/station-services";
 import { getActiveStation } from "../active-station";
-import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type MyLastSwap, type StationCounter, type SwapEditInput, type SwapEntry, type SwapFilter, type SwapInput, type OfflineSwapReject } from "@shared/station-work";
+import { ACTIVE_STATION_HEADER, type BatteryEventInput, type BatteryEventView, type MyLastSwap, type PastSwapInput, type StationCounter, type SwapEditInput, type SwapEntry, type SwapFilter, type SwapInput, type OfflineSwapReject } from "@shared/station-work";
 import type { CashHandover, HandoverInput, StationCash, StationCashSettings } from "@shared/station-cash";
 import { BackendError, type Backend, type BackendErrorCode, type CodeChannel, type StartChargeInput, type StatusPatch } from "./backend";
 import { kindFrom, type ReservationKind } from "@shared/reservations";
@@ -638,6 +638,12 @@ export class CloudflareBackend implements Backend {
     if (filter.toCheck) q.set("toCheck", "1");
     const qs = q.toString();
     return this.call<SwapEntry[]>("GET", `/api/stations/${encodeURIComponent(stationId)}/swaps${qs ? `?${qs}` : ""}`);
+  }
+
+  async addPastSwap(stationId: string, input: PastSwapInput) {
+    const swap = await this.call<SwapEntry>("POST", `/api/stations/${encodeURIComponent(stationId)}/swaps/past`, input);
+    this.changed();
+    return swap;
   }
 
   async markSwapChecked(stationId: string, swapId: string) {

@@ -55,6 +55,9 @@ import {
   cleanBatteryLabel,
   cleanReason,
   checkSwapEdit,
+  checkPastSwap,
+  PAST_SWAP_PREFIX,
+  type PastSwapInput,
   dayStartLome,
   SWAP_DELETED_REASON,
   SWAP_EXPORT_LIMIT,
@@ -2310,6 +2313,71 @@ export class DemoBackend implements Backend {
     const swap = (state.swaps ?? []).find((x) => x.id === swapId && x.stationId === stationId);
     if (!swap) throw new BackendError("swap_not_found");
     return { profile, role, swap };
+  }
+
+  /** As addPastSwap() in worker/station-work.ts (the demo leaves the battery register as it is). */
+  async addPastSwap(stationId: string, input: PastSwapInput): Promise<SwapEntry> {
+    const state = this.load();
+    this.requireAdmin(state);
+    const admin = this.requireProfile(state);
+    const station = state.stations.find((s) => s.id === stationId);
+    if (!station) throw new BackendError("station_not_found");
+    const checked = checkPastSwap(input);
+    if (!checked.ok) throw new BackendError(checked.error === "bad_request" ? "unknown" : checked.error, checked.error);
+    const swap = checked.swap;
+    const requestId = `${PAST_SWAP_PREFIX}${input.requestId}`.slice(0, 80);
+    const seen = (state.swaps ?? []).find((x) => x.requestId === requestId);
+    if (seen) return swapView(seen);
+    const users = state.users ?? demoUsers(new Date());
+    let actor: { profile: Profile; role: StationRole } = { profile: admin, role: "admin" };
+    if (input.staffId && input.staffId !== admin.id) {
+      const person = users.find((u) => u.id === input.staffId);
+      const profile = person ? ({ ...admin, id: person.id, role: person.role, fullName: person.fullName, phone: person.phone, email: person.email } as Profile) : null;
+      const role = profile ? this.roleAt(state, profile, stationId) : null;
+      if (!profile || !role || role === "admin") throw new BackendError("staff_not_at_station");
+      actor = { profile, role };
+    }
+    const key = this.counterKey(state, stationId, input.batteryTypeId);
+    const customer = swap.contact ? this.findWalletUser(state, contactFromCode(swap.contact)) : null;
+    if (customer && customer.role !== "customer") throw new BackendError("not_a_customer");
+    if (swap.mmRef && (state.swaps ?? []).some((x) => x.mmNetwork === swap.mmNetwork && x.mmRef === swap.mmRef)) throw new BackendError("mm_ref_used");
+    const swapId = crypto.randomUUID();
+    let next: DemoState = state;
+    if (swap.updateCounter) {
+      const out = this.counterEvent(next, { stationId, key, type: "issue", delta: -1, reason: null, requestId: `${requestId}:out`, swapId, actor });
+      if (out) next = out.state;
+      if (takesBatteryIn(swap.customerType)) {
+        const back = this.counterEvent(next, { stationId, key, type: "empty_in", delta: 1, reason: null, requestId: `${requestId}:in`, swapId, actor });
+        if (back) next = back.state;
+      }
+    }
+    const entry: SwapEntry = {
+      id: swapId,
+      stationId,
+      batteryTypeId: key,
+      batteryTypeLabel: this.counterRows(state, stationId).find((r) => r.batteryTypeId === key)?.label ?? null,
+      batteryIn: swap.batteryIn,
+      batteryOut: swap.batteryOut,
+      customerType: swap.customerType,
+      customer: customer ? personLabel(customer) : null,
+      driver: null,
+      payment: swap.payment,
+      amountXof: swap.amountXof,
+      reservationId: null,
+      plate: swap.plate,
+      customerName: swap.customerName,
+      mmNetwork: swap.mmNetwork,
+      mmRef: swap.mmRef,
+      person: personLabel(actor.profile),
+      role: actor.role,
+      createdAt: swap.at,
+      offline: true,
+      syncedAt: new Date().toISOString(),
+      addedLater: true,
+    };
+    const swaps = [{ ...entry, requestId, staffId: actor.profile.id, customerId: customer?.id ?? null }, ...(next.swaps ?? [])].sort((a, z) => z.createdAt.localeCompare(a.createdAt));
+    this.save(withAudit({ ...next, swaps: swaps.slice(0, 1000) }, { table: "swap_log", action: "insert", rowId: swapId, stationId, changes: { added_later: true, created_at: swap.at } }));
+    return entry;
   }
 
   /** As markSwapChecked() in worker/station-work.ts; demo swaps are never to check. */
@@ -9500,6 +9568,9 @@ function swapView(x: NonNullable<DemoState["swaps"]>[number]): SwapEntry {
     person: x.person,
     role: x.role,
     createdAt: x.createdAt,
+    offline: x.offline ?? false,
+    syncedAt: x.syncedAt ?? null,
+    addedLater: x.requestId.startsWith(PAST_SWAP_PREFIX),
   };
 }
 

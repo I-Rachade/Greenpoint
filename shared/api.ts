@@ -211,4 +211,8 @@ export type BackendErrorCode =
   | "offline_not_allowed"
   | "offline_reject_not_found"
   | "offline_login_unavailable"
+  | "past_swap_too_old"
+  | "past_swap_in_future"
+  | "contact_required"
+  | "staff_not_at_station"
   | "unknown";
