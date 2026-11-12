@@ -1,0 +1,9 @@
+{
+  "messageId": "evt-0025",
+  "deviceId": "XK16-DEMO-000001",
+  "action": "DeviceOffline",
+  "timestamp": "2026-10-13T02:00:00Z",
+  "data": {
+    "reason": "HeartbeatTimeout"
+  }
+}

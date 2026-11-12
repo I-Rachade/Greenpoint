@@ -1,0 +1,17 @@
+{
+  "messageId": "stop-20261013-0001",
+  "deviceId": "XK16-DEMO-000001",
+  "action": "CommandResult",
+  "timestamp": "2026-10-13T02:00:00Z",
+  "data": {
+    "requestAction": "RemoteStopTransaction",
+    "status": "Succeeded",
+    "code": "OK",
+    "message": "Device reported stop command success",
+    "result": {
+      "connectorId": 1,
+      "transactionId": "20261013000000000001",
+      "vendorResult": "0"
+    }
+  }
+}

@@ -1,0 +1,577 @@
+import type { StationService } from "./station-services";
+import { cleanCustomerName, cleanMmRef, cleanPlate, isMmNetwork, type BatteryCondition, type EnergyPricing, type MmNetwork } from "./energy-swap";
+
+/**
+ * Station work (plan phase 3): the battery counter, the swap log and the active station.
+ * Worker: worker/station-work.ts, migrations 0027_battery_counter.sql and 0028_swap_log.sql.
+ * The demo backend (src/lib/backend/demo.ts) follows the same rules with applyBatteryEvent().
+ *
+ * Counter rules (W9, R3, R4, R5):
+ *   issue       −1 full; never below 0
+ *   full        +1 full, only when someone marks a battery full; the battery came out of
+ *               the "empty / charging" stock, so that stock goes down by one (not below 0)
+ *   correction  ±n full, only the station's owner or an admin, always with a reason
+ *   empty_in    +1 empty: the empty battery a customer brings back; never the counter
+ * Counter = start + full − issued ± corrections. Each change carries a request id: the
+ * same id twice is one change (fast taps, retries).
+ *
+ * Active station (W3, W4, R7): staff work at their one station; an owner (Betreiber)
+ * and an admin choose the station they work at, and every station action carries it
+ * (header ACTIVE_STATION_HEADER). The server answers 409 when it is missing or another
+ * station, 403 to someone without rights at the station. Every change logs station,
+ * person and role (an admin as "admin").
+ */
+
+/** Header with the station the person works at now (per device, src/lib/active-station.ts). */
+export const ACTIVE_STATION_HEADER = "X-Active-Station";
+
+/** Who did a station action. */
+export type StationRole = "staff" | "owner" | "admin";
+
+export type BatteryEventType = "issue" | "full" | "correction" | "empty_in";
+
+/** Key of a counter: a battery type id, or "" at a station that lists no battery types. */
+export type CounterKey = string;
+
+export interface CounterState {
+  full: number;
+  empty: number;
+}
+
+/** One counter of a station's page: full batteries on the shelf and empty ones charging. */
+export interface CounterRow extends CounterState {
+  batteryTypeId: CounterKey;
+  /** Brand and model; null at a station without battery types. */
+  label: string | null;
+  /** Places for this type's batteries (the station's places without types); 0 = not set. */
+  capacity: number;
+  /** Priced by the energy given (0065): the swap costs (% OUT − % IN) × this price; null = the station's price. */
+  energy?: EnergyPricing | null;
+}
+
+export interface BatteryEventView {
+  id: string;
+  type: BatteryEventType;
+  batteryTypeId: CounterKey;
+  delta: number;
+  fullAfter: number;
+  emptyAfter: number;
+  reason: string | null;
+  swapId: string | null;
+  person: string;
+  role: StationRole;
+  createdAt: string;
+}
+
+/** GET /api/stations/:id/counter */
+export interface StationCounter {
+  stationId: string;
+  /** Places for batteries, full and charging together: the sum over the rows when the station lists types. */
+  capacity: number;
+  rows: CounterRow[];
+  /** Today's changes, newest first (staff: only their own). */
+  events: BatteryEventView[];
+  /** The viewer may correct the counter (owner of the station or admin). */
+  canCorrect: boolean;
+  /** Swap price of the station in FCFA; null = none set. */
+  priceXof: number | null;
+}
+
+export interface BatteryEventInput {
+  type: "issue" | "full" | "correction";
+  batteryTypeId?: CounterKey | null;
+  /** Corrections only: the change, −CORRECTION_MAX…CORRECTION_MAX, not 0. */
+  delta?: number;
+  /** Corrections only: why. */
+  reason?: string;
+  /** Unique per tap (crypto.randomUUID()); the same id twice is one change. */
+  requestId: string;
+}
+
+export const CORRECTION_MAX = 100;
+export const REASON_MAX = 200;
+export const BATTERY_LABEL_MAX = 60;
+
+export function validRequestId(id: unknown): id is string {
+  return typeof id === "string" && /^[\w:-]{8,80}$/.test(id);
+}
+
+export function cleanReason(reason: unknown): string | null {
+  const text = typeof reason === "string" ? reason.trim() : "";
+  return text.length >= 1 && text.length <= REASON_MAX ? text : null;
+}
+
+export function validCorrection(delta: unknown): delta is number {
+  return typeof delta === "number" && Number.isInteger(delta) && delta !== 0 && Math.abs(delta) <= CORRECTION_MAX;
+}
+
+/** A scanned or typed battery number; empty = none. Undefined when too long. */
+export function cleanBatteryLabel(label: unknown): string | null | undefined {
+  if (label === undefined || label === null) return null;
+  const text = String(label).trim().toUpperCase();
+  if (!text) return null;
+  return text.length <= BATTERY_LABEL_MAX ? text : undefined;
+}
+
+/** Change of full batteries an event makes. */
+export function fullDelta(type: BatteryEventType, delta: number): number {
+  return type === "empty_in" ? 0 : delta;
+}
+
+/**
+ * The counter after one event, or null when the event is refused: an issue at 0 or a
+ * correction below 0 (R4), a "full" beyond the capacity (`total` = full batteries the
+ * limit counts, `capacity` ≤ 0 = no limit; see counterLimits() in battery-types.ts).
+ */
+export function applyBatteryEvent(
+  state: CounterState,
+  type: BatteryEventType,
+  delta: number,
+  limits: { total: number; capacity: number } = { total: 0, capacity: 0 },
+): CounterState | null {
+  switch (type) {
+    case "issue":
+      return state.full > 0 ? { full: state.full - 1, empty: state.empty } : null;
+    case "full":
+      if (limits.capacity > 0 && limits.total >= limits.capacity) return null;
+      return { full: state.full + 1, empty: Math.max(state.empty - 1, 0) };
+    case "correction":
+      return state.full + delta >= 0 ? { full: state.full + delta, empty: state.empty } : null;
+    case "empty_in":
+      return { full: state.full, empty: state.empty + 1 };
+  }
+}
+
+// Swaps --------------------------------------------------------------------------
+
+/** app = customer with an account (QR or phone), cash = no account, fleet = driver QR, billed to the fleet. */
+export const SWAP_CUSTOMER_TYPES = ["app", "cash", "fleet", "first_purchase"] as const;
+export type SwapCustomerType = (typeof SWAP_CUSTOMER_TYPES)[number];
+
+/** How a swap was paid; none = paid outside the app (a reservation completed with its code). */
+export type SwapPayment = "cash" | "wallet" | "fleet" | "none" | "mobile_money";
+
+export interface SwapInput {
+  requestId: string;
+  batteryTypeId?: CounterKey | null;
+  customerType: SwapCustomerType;
+  /** Battery numbers (scan or type); required at a station with battery types (battery register, shared/batteries.ts). */
+  batteryIn?: string | null;
+  batteryOut?: string | null;
+  /** app paid in cash (and optionally first purchase): the customer's phone, e-mail or app QR. */
+  contact?: string | null;
+  /** app: "cash" or "wallet" (Green Credit, default). In Lite only cash. */
+  payment?: "cash" | "wallet";
+  /**
+   * Green Credit payment: the one-time code the customer's app shows after they typed their PIN
+   * on their phone (shared/wallet.ts). Without a reservation, `contact` may carry it instead.
+   */
+  creditCode?: string | null;
+  /** fleet: the driver's QR code or code. */
+  driverCode?: string | null;
+  /** cash and first purchase: what was taken; default the station's swap price. */
+  amountXof?: number | null;
+  /** A battery reservation completed by this swap. */
+  reservationId?: string | null;
+  pickupCode?: string | null;
+  // A type priced by energy (shared/energy-swap.ts, 0065): only "app" and "cash" customers,
+  // paid only by T-Money or Flooz; `payment`, `creditCode` and `amountXof` are ignored.
+  /** Charge of the battery brought back and of the one handed out, 0…100; OUT above IN. */
+  inPct?: number | null;
+  outPct?: number | null;
+  /** The vehicle's plate (required) and the walk-in customer's name (optional). */
+  plate?: string | null;
+  customerName?: string | null;
+  /** State of the battery brought back; anything but "ok" puts it in repair. */
+  batteryInCondition?: BatteryCondition | null;
+  /** The staff checked the battery handed out: no damage, leak, heat or smell. */
+  batteryOutChecked?: boolean;
+  /** Network and transaction id of the customer's payment. */
+  mmNetwork?: MmNetwork | null;
+  mmRef?: string | null;
+  /**
+   * A swap made without network and sent later (0071): when it really happened (ISO). The
+   * server keeps that time, and records a swap that contradicts the back-office as "to
+   * check" instead of refusing it, since it already happened (see checkOfflineAt).
+   */
+  offlineAt?: string | null;
+}
+
+// Offline swaps (migration 0071) ----------------------------------------------------------
+
+/** Swaps one phone keeps while offline; the next one waits for the network. */
+export const OFFLINE_QUEUE_MAX = 10;
+/** Oldest offline swap the server takes, and how long an offline login lasts without network. */
+export const OFFLINE_MAX_DAYS = 14;
+/** Phone clocks run a little ahead: an offline time this far in the future is still taken. */
+const OFFLINE_CLOCK_SLACK_MS = 10 * 60_000;
+
+/** Why an offline swap was recorded "to check": stock, battery register, payment or customer did not match. */
+export const SWAP_REVIEWS = ["stock", "battery", "payment", "customer"] as const;
+export type SwapReview = (typeof SWAP_REVIEWS)[number];
+
+/** The offline time when it is usable, else the error the server answers. */
+export function checkOfflineAt(raw: unknown, now = Date.now()): { ok: true; at: string } | { ok: false; error: "offline_too_old" | "offline_in_future" | "bad_request" } {
+  if (typeof raw !== "string" || !/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(raw)) return { ok: false, error: "bad_request" };
+  const at = Date.parse(raw);
+  if (!Number.isFinite(at)) return { ok: false, error: "bad_request" };
+  if (at > now + OFFLINE_CLOCK_SLACK_MS) return { ok: false, error: "offline_in_future" };
+  if (at < now - OFFLINE_MAX_DAYS * 86_400_000) return { ok: false, error: "offline_too_old" };
+  return { ok: true, at: new Date(Math.min(at, now)).toISOString() };
+}
+
+/** A refused offline swap the admin decides on (0071, /admin): the form as sent and the server's answer. */
+export interface OfflineSwapReject {
+  id: string;
+  requestId: string;
+  stationId: string;
+  stationName: string | null;
+  person: string;
+  occurredAt: string;
+  error: string;
+  input: SwapInput;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export interface SwapEntry {
+  id: string;
+  stationId: string;
+  batteryTypeId: CounterKey;
+  batteryTypeLabel: string | null;
+  batteryIn: string | null;
+  batteryOut: string | null;
+  customerType: SwapCustomerType;
+  customer: string | null;
+  driver: string | null;
+  payment: SwapPayment;
+  amountXof: number;
+  reservationId: string | null;
+  /** Swaps priced by energy (0065); null before or for other types. */
+  inPct?: number | null;
+  outPct?: number | null;
+  plate?: string | null;
+  customerName?: string | null;
+  batteryInCondition?: BatteryCondition | null;
+  mmNetwork?: MmNetwork | null;
+  mmRef?: string | null;
+  person: string;
+  role: StationRole;
+  createdAt: string;
+  /** Made without network and sent later (0071); createdAt is when it happened, syncedAt when it arrived. */
+  offline?: boolean;
+  syncedAt?: string | null;
+  /** Recorded "to check" (offline swaps only), with the server's reason, until someone marks it checked. */
+  review?: SwapReview | null;
+  reviewNote?: string | null;
+  reviewedAt?: string | null;
+  /** Added afterwards by an admin (PastSwapInput): createdAt is when it happened, syncedAt when it was added. */
+  addedLater?: boolean;
+}
+
+/** A customer's latest swap (home "Mon scooter", mockup A1): where, which battery and its charge when given. */
+export interface MyLastSwap {
+  at: string;
+  stationId: string;
+  stationName: string;
+  batteryTypeLabel: string | null;
+  batteryOut: string | null;
+  /** % of the battery handed over, on energy-priced swaps. */
+  outPct: number | null;
+}
+
+export interface SwapFilter {
+  customerType?: SwapCustomerType | null;
+  /** Days back from today (owner backoffice: 1, 7, 30 or 365); staff always see today. */
+  days?: number | null;
+  /** Owners and admins: a range of days (YYYY-MM-DD, Lomé time = UTC, both included) instead of `days`, for the swap sheet export. */
+  from?: string | null;
+  to?: string | null;
+  /** Owners and admins: only the swaps still "to check" (0071). */
+  toCheck?: boolean | null;
+}
+
+/** Longest range the swap sheet exports, and the most swaps one export reads. */
+export const SWAP_EXPORT_MAX_DAYS = 366;
+export const SWAP_EXPORT_LIMIT = 5000;
+
+/** A range of days as typed (from ≤ to, at most SWAP_EXPORT_MAX_DAYS): its start and the next midnight after `to`; else null. */
+export function swapDayRange(from: unknown, to: unknown): { since: string; until: string } | null {
+  const day = (v: unknown) => {
+    if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+    const ms = Date.parse(`${v}T00:00:00Z`);
+    return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === v ? ms : null;
+  };
+  const a = day(from);
+  const b = day(to);
+  if (a === null || b === null || b < a || (b - a) / 86_400_000 + 1 > SWAP_EXPORT_MAX_DAYS) return null;
+  return { since: new Date(a).toISOString(), until: new Date(b + 86_400_000).toISOString() };
+}
+
+export function isSwapCustomerType(value: unknown): value is SwapCustomerType {
+  return typeof value === "string" && (SWAP_CUSTOMER_TYPES as readonly string[]).includes(value);
+}
+
+/** R6: every swap takes one battery in and gives one out, except a first purchase (only out). */
+export function takesBatteryIn(type: SwapCustomerType): boolean {
+  return type !== "first_purchase";
+}
+
+export const SWAP_AMOUNT_MAX = 1_000_000;
+
+export function validAmount(n: unknown): n is number {
+  return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= SWAP_AMOUNT_MAX;
+}
+
+// Editing and deleting a swap (owners and admins, backoffice history) ------------------
+
+/**
+ * What an owner or admin may correct on a recorded swap: the walk-in customer's name, the plate,
+ * the amount and the Mobile Money transaction id. A field left out stays as it is. The customer
+ * type, battery type and battery numbers stay: a swap recorded wrong there is deleted and
+ * recorded again.
+ */
+export interface SwapEditInput {
+  customerName?: string | null;
+  plate?: string | null;
+  amountXof?: number;
+  mmRef?: string | null;
+}
+
+/** The changes a swap edit makes, as swap_log columns. */
+export interface SwapEditChanges {
+  customer_name?: string | null;
+  plate?: string | null;
+  amount_xof?: number;
+  mm_ref?: string;
+}
+
+export type SwapEditError = "bad_request" | "invalid_amount" | "plate_required" | "mm_ref_required" | "swap_amount_locked";
+
+/**
+ * Checks an edit against the swap it changes. Paid from Green Credit: the amount is what left
+ * the customer's credit, so it stays (deleting the swap refunds it). Priced by energy (0065):
+ * the plate stays required. The transaction id only on a swap paid by Mobile Money.
+ */
+export function checkSwapEdit(
+  input: SwapEditInput | null | undefined,
+  swap: { payment: SwapPayment; energy: boolean },
+): { ok: true; changes: SwapEditChanges } | { ok: false; error: SwapEditError } {
+  if (!input || typeof input !== "object") return { ok: false, error: "bad_request" };
+  const changes: SwapEditChanges = {};
+  if (input.customerName !== undefined) {
+    const name = cleanCustomerName(input.customerName);
+    if (name === undefined) return { ok: false, error: "bad_request" };
+    changes.customer_name = name;
+  }
+  if (input.plate !== undefined) {
+    const empty = input.plate === null || String(input.plate).trim() === "";
+    const plate = empty ? null : cleanPlate(input.plate);
+    if (!empty && !plate) return { ok: false, error: "plate_required" };
+    if (!plate && swap.energy) return { ok: false, error: "plate_required" };
+    changes.plate = plate;
+  }
+  if (input.amountXof !== undefined) {
+    if (!validAmount(input.amountXof)) return { ok: false, error: "invalid_amount" };
+    if (swap.payment === "wallet") return { ok: false, error: "swap_amount_locked" };
+    changes.amount_xof = input.amountXof;
+  }
+  if (input.mmRef !== undefined) {
+    if (swap.payment !== "mobile_money") return { ok: false, error: "bad_request" };
+    const ref = cleanMmRef(input.mmRef);
+    if (!ref) return { ok: false, error: "mm_ref_required" };
+    changes.mm_ref = ref;
+  }
+  return { ok: true, changes };
+}
+
+/** Reason of the counter correction that puts a deleted swap's battery back. */
+export const SWAP_DELETED_REASON = "Échange supprimé";
+
+// A past swap added by an admin (backoffice history) -------------------------------------
+
+/**
+ * A swap made at the station while no phone could record it (no device, no battery, app
+ * closed), entered afterwards by an admin: when it happened, who served the customer, the
+ * customer, the payment, the amount and the batteries. It is a swap_log row like any other,
+ * so it shows in the history, the reports, the cash and the swap sheet export of its day.
+ */
+export interface PastSwapInput {
+  requestId: string;
+  /** When it happened (ISO, UTC = Lomé time); in the past, at most PAST_SWAP_MAX_DAYS back. */
+  at: string;
+  /** Who did it at the station (staff or owner of the station); default the admin. */
+  staffId?: string | null;
+  batteryTypeId?: CounterKey | null;
+  /** cash = walk-in without account; app = a customer account (by phone or e-mail); first_purchase = only a battery out. */
+  customerType: "cash" | "app" | "first_purchase";
+  /** app (required) and first purchase (optional): the customer's phone number or e-mail. */
+  contact?: string | null;
+  customerName?: string | null;
+  plate?: string | null;
+  payment: "cash" | "mobile_money";
+  /** Mobile Money: network and transaction id (one transaction pays one swap). */
+  mmNetwork?: MmNetwork | null;
+  mmRef?: string | null;
+  amountXof: number;
+  batteryOut?: string | null;
+  batteryIn?: string | null;
+  /** Also count it on the counter now (full −1, empty +1); off when the counter was already corrected by hand. Default on. */
+  updateCounter?: boolean;
+}
+
+/** Oldest swap an admin may still add. */
+export const PAST_SWAP_MAX_DAYS = 92;
+/** Request ids of swaps added afterwards start with this, so the history can mark them. */
+export const PAST_SWAP_PREFIX = "added:";
+
+export const PAST_SWAP_CUSTOMER_TYPES = ["cash", "app", "first_purchase"] as const;
+
+export type PastSwapError =
+  | "bad_request"
+  | "past_swap_too_old"
+  | "past_swap_in_future"
+  | "invalid_amount"
+  | "mm_network_invalid"
+  | "mm_ref_required"
+  | "plate_required"
+  | "contact_required"
+  | "same_battery";
+
+export interface PastSwapChecked {
+  at: string;
+  customerType: PastSwapInput["customerType"];
+  contact: string | null;
+  customerName: string | null;
+  plate: string | null;
+  payment: PastSwapInput["payment"];
+  mmNetwork: MmNetwork | null;
+  mmRef: string | null;
+  amountXof: number;
+  batteryOut: string | null;
+  batteryIn: string | null;
+  updateCounter: boolean;
+}
+
+/** Checks what the admin typed (worker and demo backend alike). */
+export function checkPastSwap(input: PastSwapInput | null | undefined, now = Date.now()): { ok: true; swap: PastSwapChecked } | { ok: false; error: PastSwapError } {
+  if (!input || typeof input !== "object" || !validRequestId(input.requestId)) return { ok: false, error: "bad_request" };
+  if (!(PAST_SWAP_CUSTOMER_TYPES as readonly string[]).includes(input.customerType)) return { ok: false, error: "bad_request" };
+  if (typeof input.at !== "string" || !/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(input.at)) return { ok: false, error: "bad_request" };
+  const at = Date.parse(input.at);
+  if (!Number.isFinite(at)) return { ok: false, error: "bad_request" };
+  if (at > now) return { ok: false, error: "past_swap_in_future" };
+  if (at < now - PAST_SWAP_MAX_DAYS * 86_400_000) return { ok: false, error: "past_swap_too_old" };
+  if (!validAmount(input.amountXof)) return { ok: false, error: "invalid_amount" };
+  const contact = typeof input.contact === "string" && input.contact.trim() ? input.contact.trim() : null;
+  if (input.customerType === "app" && !contact) return { ok: false, error: "contact_required" };
+  const customerName = cleanCustomerName(input.customerName ?? null);
+  if (customerName === undefined) return { ok: false, error: "bad_request" };
+  const plateEmpty = input.plate == null || String(input.plate).trim() === "";
+  const plate = plateEmpty ? null : cleanPlate(input.plate);
+  if (!plateEmpty && !plate) return { ok: false, error: "plate_required" };
+  let mmNetwork: MmNetwork | null = null;
+  let mmRef: string | null = null;
+  if (input.payment === "mobile_money") {
+    if (!isMmNetwork(input.mmNetwork)) return { ok: false, error: "mm_network_invalid" };
+    mmNetwork = input.mmNetwork;
+    mmRef = cleanMmRef(input.mmRef);
+    if (!mmRef) return { ok: false, error: "mm_ref_required" };
+  } else if (input.payment !== "cash") return { ok: false, error: "bad_request" };
+  const batteryOut = cleanBatteryLabel(input.batteryOut);
+  const batteryIn = input.customerType === "first_purchase" ? null : cleanBatteryLabel(input.batteryIn);
+  if (batteryOut === undefined || batteryIn === undefined) return { ok: false, error: "bad_request" };
+  if (batteryOut && batteryIn && batteryOut === batteryIn) return { ok: false, error: "same_battery" };
+  return {
+    ok: true,
+    swap: {
+      at: new Date(at).toISOString(),
+      customerType: input.customerType,
+      contact,
+      customerName,
+      plate,
+      payment: input.payment,
+      mmNetwork,
+      mmRef,
+      amountXof: input.amountXof,
+      batteryOut,
+      batteryIn,
+      updateCounter: input.updateCounter !== false,
+    },
+  };
+}
+
+// Station home -----------------------------------------------------------------------
+
+/** Tiles of the station home, each its own page; shown only while its service is active. */
+export type StationTile = "swap" | "counter" | "charging" | "parcels" | "reservations" | "credit" | "share";
+
+/**
+ * The station's tiles; Green Credit only at a station an admin designated (0047). At our own
+ * stations the same tile always shows, for the staff's own cash closing (0057).
+ */
+export function stationTiles(active: readonly StationService[], greenCredit = false, isOwn = false, share = false): StationTile[] {
+  const has = (s: StationService) => active.includes(s);
+  const tiles: StationTile[] = [];
+  if (has("swap")) tiles.push("swap", "counter");
+  if (has("charging") || has("ev")) tiles.push("charging");
+  if (has("parcels")) tiles.push("parcels");
+  if (has("swap") || has("charging")) tiles.push("reservations");
+  if (greenCredit || isOwn) tiles.push("credit");
+  if (share) tiles.push("share");
+  return tiles;
+}
+
+/** The role a profile has at a station, as the server decides it (worker/station-work.ts). */
+export function roleAt(
+  profile: { role: string; ownerOf?: string[] } | null | undefined,
+  station: { operatorId: string },
+): StationRole | null {
+  if (!profile) return null;
+  if (profile.role === "admin") return "admin";
+  if (profile.role !== "operator") return null;
+  return profile.ownerOf?.includes(station.operatorId) ? "owner" : "staff";
+}
+
+/** Midnight in Lomé (UTC, no daylight saving): "today" of the swap log and the counter page. */
+export function dayStartLome(now = new Date()): string {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+}
+
+/** A fresh request id for one tap or one swap (the server counts each id once). */
+export function newRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+}
+
+/** The reason of the correction that brings a counter down to a lower capacity. */
+export const CAPACITY_REASON = "Capacité réduite";
+
+/**
+ * When the battery that has been charging the longest came in, from today's counter
+ * events of one counter (mockup B4: "the next full one"). Empties charge first in, first
+ * out: an "empty_in" adds one, a "full" takes the oldest out. Returns "before_today" when
+ * that battery was already charging this morning, and null when today's events do not
+ * explain the empties now charging (a staff member only sees their own events) or none is.
+ */
+export function oldestCharging(events: BatteryEventView[], key: CounterKey, empty: number): string | "before_today" | null {
+  if (empty <= 0) return null;
+  const mine = events.filter((e) => e.batteryTypeId === key).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  if (mine.length === 0) return "before_today";
+  const first = mine[0];
+  // Empties already there before the first event of the day.
+  // A "full" at 0 empties may have taken the last one or none: either way none is left.
+  let before = first.type === "empty_in" ? first.emptyAfter - 1 : first.type === "full" && first.emptyAfter > 0 ? first.emptyAfter + 1 : first.emptyAfter;
+  const queue: string[] = [];
+  let prev = before;
+  for (const e of mine) {
+    if (e.type === "empty_in") queue.push(e.createdAt);
+    else if (e.type === "full" && prev > 0) {
+      if (before > 0) before -= 1;
+      else queue.shift();
+    }
+    prev = e.emptyAfter;
+  }
+  if (before + queue.length !== empty || prev !== empty) return null;
+  return before > 0 ? "before_today" : (queue[0] ?? null);
+}
