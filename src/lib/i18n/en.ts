@@ -3679,6 +3679,7 @@ export const en: Dictionary = {
     freeOf: "{n}/{total} free",
     fullOf: "{n}/{total} full",
     unattended: "No reservations",
+    stale: "Old numbers",
     workshop: "Repair workshop",
     workshopOf: "{brand} repair workshop",
     call: "Call",

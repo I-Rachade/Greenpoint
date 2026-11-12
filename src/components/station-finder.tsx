@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { DEFAULT_FILTER, isOpenNow, rankStations, stationAvailability, type StationFilter } from "@shared/availability";
+import { DEFAULT_FILTER, isOpenNow, nearestStationId, rankStations, stationAvailability, type StationFilter } from "@shared/availability";
 import { formatDistance } from "@shared/geo";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
@@ -280,9 +280,9 @@ export function StationFinder() {
             </div>
           )}
           <ul className="mt-2 space-y-3">
-            {shown.slice(0, NEARBY).map(({ station, distance }, index) => (
+            {shown.slice(0, NEARBY).map(({ station, distance }) => (
               <li key={station.id}>
-                <StationCard station={station} distance={distance} nearest={index === 0 && !!position} />
+                <StationCard station={station} distance={distance} nearest={!!position && nearestStationId(shown) === station.id} />
               </li>
             ))}
           </ul>
