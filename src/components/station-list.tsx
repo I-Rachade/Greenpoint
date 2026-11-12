@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_FILTER, rankStations, type StationFilter } from "@shared/availability";
 import { allBrands } from "@shared/battery-types";
 import { useLiveQuery } from "@/lib/hooks";
@@ -46,6 +46,12 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
       (!q || fold(`${station.name} ${station.address} ${station.operatorName}`).includes(q)) &&
       (!(favoritesOnly || chip === "favorites") || favorites.has(station.id)),
   );
+
+  // Only the first cards are drawn; more appear as the person scrolls down.
+  const listKey = `${q}|${chip}|${brand}|${favoritesOnly}`;
+  const [drawn, setDrawn] = useState({ key: listKey, count: PAGE });
+  const count = drawn.key === listKey ? drawn.count : PAGE;
+  const visible = shown.slice(0, count);
 
   const chips: { id: Chip; label: string }[] = [
     { id: "all", label: t.ui.stations.all },
@@ -142,14 +148,34 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
       )}
 
       <ul className="mt-2 space-y-3">
-        {shown.map(({ station, distance }) => (
+        {visible.map(({ station, distance }) => (
           <li key={station.id}>
             <StationCard station={station} distance={distance} nearest={!!position && ranked[0]?.station.id === station.id} />
           </li>
         ))}
       </ul>
+      {visible.length < shown.length && <ShowMore key={count} onShow={() => setDrawn({ key: listKey, count: count + PAGE })} />}
 
       {favoritesOnly && shown.length > 0 && <p className="mt-4 text-center text-xs text-gp-muted">{t.ui.favorites.deviceOnly}</p>}
     </div>
   );
+}
+
+const PAGE = 30;
+
+/** Draws the next cards when this spot comes near the screen. */
+function ShowMore({ onShow }: { onShow: () => void }) {
+  const spot = useRef<HTMLDivElement>(null);
+  const show = useRef(onShow);
+  useEffect(() => {
+    show.current = onShow;
+  });
+  useEffect(() => {
+    const el = spot.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const watch = new IntersectionObserver((seen) => seen.some((s) => s.isIntersecting) && show.current(), { rootMargin: "600px" });
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, []);
+  return <div ref={spot} aria-hidden className="h-px" />;
 }
