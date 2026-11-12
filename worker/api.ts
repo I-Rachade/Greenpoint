@@ -1969,6 +1969,11 @@ async function setStationActive(c: Ctx, stationId: string, active: boolean) {
 // Advertising popup ---------------------------------------------------------
 
 async function currentPromotion(c: Ctx): Promise<Promotion | null> {
+  // The same for everyone: a copy of a few seconds spares the database (worker/hot-cache.ts).
+  return hot("promotion", () => loadCurrentPromotion(c));
+}
+
+async function loadCurrentPromotion(c: Ctx): Promise<Promotion | null> {
   const now = nowIso();
   const { results } = await c.db
     .prepare(

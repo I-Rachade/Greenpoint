@@ -26,6 +26,17 @@ describe("hot cache", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
+  it("a change drops every copy", async () => {
+    fakeCaches();
+    const load = vi.fn(async () => ({ parcels: true }));
+    await hot("features", load);
+    await hot("promotion", load);
+    await dropHot();
+    await hot("features", load);
+    await hot("promotion", load);
+    expect(load).toHaveBeenCalledTimes(4);
+  });
+
   it("loads every time where there is no cache (tests, local tools)", async () => {
     const load = vi.fn(async () => 1);
     await hot("stations", load);

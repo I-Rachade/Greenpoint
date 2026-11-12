@@ -2,6 +2,7 @@ import { effectiveFeatures, type Features } from "../shared/features";
 import type { Profile } from "../shared/types";
 import type { Env } from "./env";
 import { ApiError, nowIso } from "./http";
+import { hot } from "./hot-cache";
 
 /**
  * Modules the backoffice can switch off at run time (table app_settings).
@@ -55,8 +56,9 @@ export async function requireDrivers(db: D1Database) {
   if (!(await driversEnabled(db))) throw new ApiError("drivers_soon", 409);
 }
 
+/** The modules switched on, from a copy of a few seconds (worker/hot-cache.ts): asked on many calls. */
 export async function getFeatures(env: Env): Promise<Features> {
-  return featuresOf(env.DB);
+  return hot("features", () => featuresOf(env.DB));
 }
 
 export async function featuresOf(db: D1Database): Promise<Features> {
