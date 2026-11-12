@@ -433,6 +433,9 @@ CREATE INDEX wallet_transactions_station_idx on wallet_transactions (station_id,
 -- index wallet_transactions_user_idx
 CREATE INDEX wallet_transactions_user_idx on wallet_transactions (user_id, created_at);
 
+-- index web_vitals_at_idx
+CREATE INDEX web_vitals_at_idx on web_vitals (at);
+
 -- table app_settings
 CREATE TABLE app_settings (key text primary key, value text not null, updated_by text, updated_at text not null);
 
@@ -708,6 +711,9 @@ CREATE TABLE "wallet_transactions" (id text primary key, trx_id text not null, u
 
 -- table wallets
 CREATE TABLE wallets (user_id text primary key references users (id), currency text not null default 'XOF' check (currency = 'XOF'), balance_xof integer not null default 0 check (balance_xof >= 0), status text not null default 'active' check (status in ('active', 'frozen')), created_at text not null, updated_at text not null);
+
+-- table web_vitals
+CREATE TABLE web_vitals (at text not null, page text not null, platform text not null check (platform in ('android', 'ios', 'web')), net text, memory real, version text, country text, ttfb real, fcp real, lcp real, cls real, inp real);
 
 -- trigger charging_sessions_partner_from_device
 CREATE TRIGGER charging_sessions_partner_from_device after insert on charging_sessions begin update charging_sessions set partner_id = (select partner_id from devices where external_id = new.device_id) where id = new.id; end;
