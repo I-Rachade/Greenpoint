@@ -3679,6 +3679,7 @@ export const fr = {
     freeOf: "{n}/{total} libres",
     fullOf: "{n}/{total} pleines",
     unattended: "Sans réservation",
+    stale: "Chiffres anciens",
     workshop: "Atelier de réparation",
     workshopOf: "Atelier de réparation {brand}",
     call: "Appeler",

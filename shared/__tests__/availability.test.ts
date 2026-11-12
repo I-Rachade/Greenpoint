@@ -6,6 +6,7 @@ import {
   countHolding,
   isHolding,
   isStale,
+  nearestStationId,
   rankStations,
   stationAvailability,
   stockBatteries,
@@ -115,6 +116,17 @@ describe("rankStations", () => {
     expect(rankStations(all, null, { ...DEFAULT_FILTER, service: "charging" }).map((r) => r.station.id)).toEqual(["near"]);
     const emptySwap = station({ id: "empty", kind: "swap", reservedBatteries: 5 });
     expect(rankStations([emptySwap], null, { ...DEFAULT_FILTER, onlyAvailable: true })).toEqual([]);
+  });
+
+  it("names the really closest station, even when its numbers are old and it is listed later", () => {
+    const fresh = new Date().toISOString();
+    const old = "2026-01-01T00:00:00Z";
+    const nearOld = station({ id: "near", lat: 6.131, lng: 1.223, status: { ...near.status, updatedAt: old } });
+    const farFresh = station({ id: "far", lat: 6.2245, lng: 1.208, status: { ...far.status, updatedAt: fresh } });
+    const ranked = rankStations([nearOld, farFresh], { lat: 6.1319, lng: 1.2228 }, DEFAULT_FILTER);
+    expect(ranked[0].station.id).toBe("far");
+    expect(nearestStationId(ranked)).toBe("near");
+    expect(nearestStationId(rankStations([nearOld], null, DEFAULT_FILTER))).toBeNull();
   });
 });
 

@@ -154,3 +154,13 @@ export function rankStations(
   );
   return ranked;
 }
+
+/**
+ * The station that is really the closest. Not always the first of rankStations: stations whose
+ * numbers are old come after the others, whatever their distance.
+ */
+export function nearestStationId(ranked: RankedStation[]): string | null {
+  let best: RankedStation | null = null;
+  for (const r of ranked) if (r.distance !== null && (best === null || r.distance < (best.distance ?? Infinity))) best = r;
+  return best?.station.id ?? null;
+}
