@@ -1,4 +1,4 @@
-import type { Profile, Reservation, StationView } from "../types";
+import type { Profile, Reservation, StationView, UserRole } from "../types";
 
 /** A station as the backoffice sees it, including deactivated ones. */
 export interface AdminStation extends StationView {
@@ -187,4 +187,16 @@ export interface AuditFilter {
   /** Only entries older than this id (for "load more"). */
   beforeId?: number;
   limit?: number;
+}
+
+/**
+ * A new account made by an admin in the backoffice (POST /api/admin/users). It has no PIN: the
+ * person sets one the first time they open the app, with a code by SMS or e-mail.
+ * `stationId` only with the role "operator" (station staff, one station).
+ */
+export interface NewUserInput {
+  contact: string;
+  fullName: string | null;
+  role: UserRole;
+  stationId: string | null;
 }

@@ -1,15 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { useApp } from "@/components/app-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { effectiveReservationStatus } from "@/lib/admin/insights";
-import { ADMIN_PAGE_SIZE, type AdminUser } from "@shared/admin/types";
+import { ADMIN_PAGE_SIZE, type AdminStation, type AdminUser } from "@shared/admin/types";
 import { Button } from "@/components/ui";
 import { useErrorMessage, useNow, useRelativeTime } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
 import type { UserRole } from "@shared/types";
-import { field, indexSnapshot, Loading, StaleNotice, Table, td, th, useAdminSnapshot, useDateTime, userContact, userLabel } from "./shared";
+import { card, field, indexSnapshot, Loading, StaleNotice, Table, td, th, useAdminSnapshot, useDateTime, userContact, userLabel } from "./shared";
 
 const ROLES: UserRole[] = ["customer", "operator", "fleet_manager", "admin"];
 /** Driver accounts come and go through the driver backoffice (approve, release), not this list. */
@@ -28,6 +28,8 @@ export function UsersTable() {
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
+  const [adding, setAdding] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   // Stations and reservations by person, counted once instead of once per row.
   const byUser = useMemo(() => {
     const staff = new Map<string, Set<string>>();
@@ -73,7 +75,38 @@ export function UsersTable() {
   return (
     <div className="space-y-4">
       <StaleNotice error={error} onRetry={reload} />
-      <h1 className="text-2xl font-semibold">{b.title}</h1>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-2xl font-semibold">{b.title}</h1>
+        {!adding && (
+          <Button
+            onClick={() => {
+              setAdding(true);
+              setNotice(null);
+            }}
+          >
+            + {b.add}
+          </Button>
+        )}
+      </div>
+      {adding && (
+        <AddUserForm
+          stations={snap.stations}
+          onCancel={() => setAdding(false)}
+          onCreated={(text) => {
+            setAdding(false);
+            setNotice(text);
+            setSearch("");
+            setRole("");
+            setOffset(0);
+            reload();
+          }}
+        />
+      )}
+      {notice && (
+        <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+          {notice}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <select className={field} value={role} onChange={(e) => filter(() => setRole(e.target.value as UserRole | ""))} aria-label={b.role}>
           <option value="">{b.allRoles}</option>
@@ -192,5 +225,91 @@ export function UsersTable() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The "Add user" form: phone number or e-mail, name, role and, for station staff, the station.
+ * No PIN is typed here: the person chooses their own with a code by SMS or e-mail ("Forgot your PIN?").
+ */
+function AddUserForm({ stations, onCancel, onCreated }: { stations: AdminStation[]; onCancel: () => void; onCreated: (notice: string) => void }) {
+  const { t } = useI18n();
+  const { backend } = useApp();
+  const errorMessage = useErrorMessage();
+  const b = t.backoffice.users;
+  const [contact, setContact] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [role, setRole] = useState<UserRole>("customer");
+  const [stationId, setStationId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const label = "flex flex-col gap-1 text-sm";
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const who = fullName.trim() || contact.trim();
+    if (role === "admin" && !window.confirm(format(b.confirmAdmin, { user: who }))) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await backend.createUser({ contact, fullName: fullName.trim() || null, role, stationId: role === "operator" && stationId ? stationId : null });
+      onCreated(format(contact.includes("@") ? b.createdEmailNotice : b.createdNotice, { user: who }));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className={`${card} grid gap-3 sm:grid-cols-2`}>
+      <h2 className="text-lg font-semibold sm:col-span-2">{b.addTitle}</h2>
+      <label className={label}>
+        {b.contact}
+        <input required autoFocus className={field} value={contact} onChange={(e) => setContact(e.target.value)} placeholder="90 12 34 56" autoComplete="off" />
+        <span className="text-xs text-zinc-500">{b.contactHint}</span>
+      </label>
+      <label className={label}>
+        {b.fullName}
+        <input className={field} maxLength={80} value={fullName} onChange={(e) => setFullName(e.target.value)} autoComplete="off" />
+      </label>
+      <label className={label}>
+        {b.role}
+        <select className={field} value={role} onChange={(e) => setRole(e.target.value as UserRole)}>
+          {ROLES.map((r) => (
+            <option key={r} value={r}>
+              {t.roles[r]}
+            </option>
+          ))}
+        </select>
+      </label>
+      {role === "operator" && (
+        <label className={label}>
+          {b.station}
+          <select className={field} value={stationId} onChange={(e) => setStationId(e.target.value)}>
+            <option value="">{b.noStation}</option>
+            {stations.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <p className="text-xs text-zinc-600 sm:col-span-2 dark:text-zinc-400">{b.howToLogin}</p>
+      {error && (
+        <p role="alert" className="text-sm text-red-600 sm:col-span-2">
+          {error}
+        </p>
+      )}
+      <div className="flex gap-2 sm:col-span-2">
+        <Button type="submit" busy={busy}>
+          {busy ? b.creating : b.create}
+        </Button>
+        <Button variant="secondary" onClick={onCancel} disabled={busy}>
+          {b.cancelAdd}
+        </Button>
+      </div>
+    </form>
   );
 }

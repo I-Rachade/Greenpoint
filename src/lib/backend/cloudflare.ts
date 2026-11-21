@@ -17,7 +17,7 @@ import type { BatteryDetail, BatteryFilter, BatteryList, BatteryLookup, BatteryS
 import type { BatteryType, BatteryTypeInput } from "@shared/battery-types";
 import type { AdminCharging, ChargeOutletInfo, ChargeSession, ChargeTariffInput, StationCharging } from "@shared/charging";
 import type { ChargeCard, ChargeCardInput, CounterCard } from "@shared/charge-cards";
-import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "@shared/admin/types";
+import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter, NewUserInput } from "@shared/admin/types";
 import type { OwnerLive, OwnerReport, ReportPeriod } from "@shared/owner-backoffice";
 import type { EvCharger, EvChargerInput } from "@shared/ev-chargers";
 import type { RepairCenter, RepairCenterInput } from "@shared/repair-centers";
@@ -872,6 +872,12 @@ export class CloudflareBackend implements Backend {
     const q = new URLSearchParams();
     for (const [key, value] of Object.entries(filter)) if (value !== undefined && value !== "") q.set(key, String(value));
     return this.call<AuditEntry[]>("GET", `/api/admin/audit?${q}`);
+  }
+
+  async createUser(input: NewUserInput) {
+    const created = await this.call<{ id: string }>("POST", "/api/admin/users", input);
+    this.changed();
+    return created;
   }
 
   async setUserRole(userId: string, role: UserRole) {
