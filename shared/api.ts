@@ -178,6 +178,7 @@ export type BackendErrorCode =
   | "invite_limit"
   | "already_in_fleet"
   | "account_exists"
+  | "user_exists"
   | "parcel_not_in_run"
   | "parcel_label_missing"
   | "run_not_found"

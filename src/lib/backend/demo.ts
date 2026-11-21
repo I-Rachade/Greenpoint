@@ -147,6 +147,7 @@ import {
   type AdminUser,
   type AuditEntry,
   type AuditFilter,
+  type NewUserInput,
   type StaffAssignment,
 } from "@shared/admin/types";
 import { validPinFormat, weakPin } from "@shared/pin";
@@ -3150,6 +3151,37 @@ export class DemoBackend implements Backend {
           (!filter.beforeId || e.id < filter.beforeId),
       )
       .slice(0, filter.limit ?? 100);
+  }
+
+  /** As createUser() in worker/api.ts: a new account without a PIN, its role, and the station for staff. */
+  async createUser(input: NewUserInput) {
+    const state = this.load();
+    this.requireAdmin(state);
+    const contact = parseContact(String(input.contact ?? ""));
+    if (!contact) throw new BackendError(String(input.contact ?? "").includes("@") ? "invalid_contact" : "phone_not_allowed");
+    if (input.stationId && input.role !== "operator") throw new BackendError("unknown", "bad_request");
+    const users = state.users ?? demoUsers(new Date());
+    if (users.some((u) => (contact.kind === "phone" ? u.phone === contact.value : u.email === contact.value))) throw new BackendError("user_exists");
+    const id = crypto.randomUUID();
+    const fullName = String(input.fullName ?? "").trim().slice(0, 80) || null;
+    const user: AdminUser = {
+      id,
+      phone: contact.kind === "phone" ? contact.value : null,
+      email: contact.kind === "email" ? contact.value : null,
+      fullName,
+      role: "customer",
+      createdAt: new Date().toISOString(),
+      lastSignInAt: null,
+    };
+    this.save(
+      withAudit(
+        { ...state, users: [user, ...users] },
+        { table: "profiles", action: "insert", rowId: id, userId: id, changes: { [contact.kind]: contact.value, full_name: fullName, role: "customer", source: "backoffice" } },
+      ),
+    );
+    if (input.stationId) await this.assignStaff(input.stationId, id);
+    else if (input.role !== "customer") await this.setUserRole(id, input.role);
+    return { id };
   }
 
   async setUserRole(userId: string, role: UserRole) {

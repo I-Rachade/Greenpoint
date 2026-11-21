@@ -28,7 +28,7 @@ import type {
   StationView,
   UserRole,
 } from "@shared/types";
-import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter } from "@shared/admin/types";
+import type { AdminReservationPage, AdminReservationQuery, AdminSnapshot, AuditEntry, AuditFilter, NewUserInput } from "@shared/admin/types";
 import type { OwnerLive, OwnerReport, ReportPeriod } from "@shared/owner-backoffice";
 import type { EvCharger, EvChargerInput } from "@shared/ev-chargers";
 import type { RepairCenter, RepairCenterInput } from "@shared/repair-centers";
@@ -354,6 +354,8 @@ export interface Backend {
   adminSecurity(): Promise<SecurityOverview>;
   /** Lifts an account's PIN lock. */
   unlockAccount(userId: string): Promise<void>;
+  /** Makes an account without a PIN (the person sets it with a code by SMS or e-mail); the new id. */
+  createUser(input: NewUserInput): Promise<{ id: string }>;
   setUserRole(userId: string, role: UserRole): Promise<void>;
   assignStaff(stationId: string, userId: string): Promise<void>;
   unassignStaff(stationId: string, userId: string): Promise<void>;

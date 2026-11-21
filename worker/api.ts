@@ -40,6 +40,7 @@ import {
   type AuditEntry,
   type AuditTable,
   type ChargingPointInfo,
+  type NewUserInput,
 } from "../shared/admin/types";
 import type { CodeChannel } from "../shared/api";
 import { parseContact } from "../shared/contact";
@@ -1310,6 +1311,47 @@ async function setUserRole(c: Ctx, userId: string, role: UserRole) {
     ...managed.map((d) => c.db.prepare("delete from fleet_manager_drivers where driver_id = ?").bind(d.driver_id)),
     ...managed.map((d) => c.audit(admin.id, "fleet_manager_drivers", "delete", d.driver_id, { manager_id: userId }, { userId: d.driver_id })),
   ]);
+}
+
+/**
+ * POST /api/admin/users: an admin makes an account for a phone number or e-mail address, with
+ * a name, a role and (station staff) the station. The account has no PIN: the person sets one
+ * the first time they open the app ("PIN forgotten" or "Sign up", with a code by SMS or e-mail),
+ * so nobody else ever knows it. The role goes through setUserRole and the station through
+ * addStaff, with every rule they keep. People with an e-mail address are told by e-mail
+ * (no SMS, for the cost): the admin tells the others.
+ */
+async function createUser(c: Ctx, input: NewUserInput): Promise<{ id: string }> {
+  const admin = await c.requireAdmin();
+  const text = String(input?.contact ?? "");
+  const contact = parseContact(text);
+  if (!contact) throw new ApiError(text.includes("@") ? "invalid_contact" : "phone_not_allowed");
+  const role = input?.role ?? "customer";
+  if (!ROLES.includes(role)) throw new ApiError("bad_request");
+  const stationId = input?.stationId ? String(input.stationId) : null;
+  if (stationId && role !== "operator") throw new ApiError("bad_request");
+  if (stationId && !(await c.db.prepare("select 1 from stations where id = ?").bind(stationId).first())) throw new ApiError("not_found", 404);
+  const fullName = String(input?.fullName ?? "").trim().slice(0, 80) || null;
+  const column = contact.kind === "phone" ? "phone" : "email";
+  if (await c.db.prepare(`select 1 from users where ${column} = ?`).bind(contact.value).first()) throw new ApiError("user_exists", 409);
+  const id = uuid();
+  try {
+    await c.db.batch([
+      c.db.prepare(`insert into users (id, ${column}, full_name, role, created_at) values (?, ?, ?, ?, ?)`).bind(id, contact.value, fullName, DB_CUSTOMER, nowIso()),
+      c.audit(admin.id, "profiles", "insert", id, { [column]: contact.value, full_name: fullName, role: "customer", source: "backoffice" }, { userId: id }),
+    ]);
+  } catch (err) {
+    // Made at the same moment from elsewhere (sign-up or another admin).
+    if (/UNIQUE/i.test(String(err))) throw new ApiError("user_exists", 409);
+    throw err;
+  }
+  if (stationId) await addStaff(c, admin.id, stationId, id);
+  else if (role !== "customer") await setUserRole(c, id, role);
+  await notifyUser(c.env, id, {
+    subject: "Votre compte poinderecharge",
+    text: `Bonjour${fullName ? ` ${fullName}` : ""},\n\nUn compte poinderecharge a été créé pour vous (${contact.value}).\n\nPour vous connecter la première fois, ouvrez https://app.poinderecharge.com, touchez « Code PIN oublié ? », entrez cette adresse et choisissez votre code PIN avec le code reçu.`,
+  });
+  return { id };
 }
 
 /** Whoever gets station work becomes "operator" (customers only; admins stay admins), so the menu and rights match. */
@@ -2830,6 +2872,7 @@ const ROUTES: [string, RegExp, Handler][] = [
   ],
   ["GET", /^\/api\/admin\/snapshot$/, (c) => adminSnapshot(c)],
   ["GET", /^\/api\/admin\/audit$/, (c) => auditLog(c)],
+  ["POST", /^\/api\/admin\/users$/, async (c) => createUser(c, await readJson<NewUserInput>(c.request))],
   [
     "POST",
     /^\/api\/admin\/users\/([\w-]+)\/role$/,
