@@ -36,6 +36,26 @@ export function isOvesName(name: string | null | undefined): boolean {
   return !!name && /^OVES\b/i.test(name.trim());
 }
 
+/** "OVES BATT 100136" → "100136": the end of the serial number the battery announces; null without one. */
+export function serialSuffixFromName(name: string | null | undefined): string | null {
+  const m = /([A-Za-z0-9]{4,})\s*$/.exec(name?.trim() ?? "");
+  return m && isOvesName(name) && !/^(OVES|BATT)$/i.test(m[1]) ? m[1].toUpperCase() : null;
+}
+
+/** Standard Device Information "Serial Number String", read when a battery has no opid field. */
+export const SERIAL_NUMBER_STRING = "00002a25-0000-1000-8000-00805f9b34fb";
+
+/**
+ * Whether a text read from the battery looks like its serial number (e.g. "B0724525100136"):
+ * 8 to 24 letters and digits with at least 6 digits, and ending with the suffix of its
+ * Bluetooth name when there is one. Used for a field that is not named opid.
+ */
+export function looksLikeSerial(text: string, suffix: string | null): boolean {
+  const t = text.replace(/\0+$/, "").trim().toUpperCase();
+  if (!/^[A-Z0-9]{8,24}$/.test(t) || (t.match(/\d/g)?.length ?? 0) < 6) return false;
+  return suffix ? t.endsWith(suffix.toUpperCase()) : true;
+}
+
 export interface FieldDescriptor {
   code: string;
   /** 0 = uint16, 2 = uint32, 5 = text; other numbers are kept as they are. */
@@ -113,7 +133,7 @@ export function toReading(fields: Partial<Record<OvesField, number | string | nu
     voltageMv: num(fields.pckv),
     remainingMah: num(fields.rcap),
     fullMah: num(fields.fccp),
-    serial: typeof fields.opid === "string" && fields.opid ? fields.opid : null,
+    serial: typeof fields.opid === "string" && fields.opid.trim() ? fields.opid.trim().toUpperCase() : null,
   };
 }
 

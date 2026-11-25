@@ -339,7 +339,9 @@ export const en: Dictionary = {
     failed: "Could not read: {error}",
     noSoc: "The battery did not give its charge. Try again or type the % by hand.",
     capacity: "{ah} Ah",
-    otherBattery: "Careful: the battery read ({read}) is not the one whose number was entered ({typed}).",
+    replaced: "Battery number replaced by the one read: {read} (it was {typed}).",
+    noSerial: "The battery did not give its serial number. Scan or type it.",
+    noSerialSuffix: "The battery did not give its full serial number (it ends with {end}). Scan or type it.",
   },
   ble: {
     title: "Bluetooth diagnostic",

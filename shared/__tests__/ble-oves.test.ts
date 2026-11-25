@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { crc16Modbus, decodeFieldValue, isOvesName, parseFieldDescriptor, parseStreamFrame, sameSerial, toReading } from "../ble-oves";
+import {
+  crc16Modbus,
+  decodeFieldValue,
+  isOvesName,
+  looksLikeSerial,
+  parseFieldDescriptor,
+  parseStreamFrame,
+  sameSerial,
+  serialSuffixFromName,
+  toReading,
+} from "../ble-oves";
 
 // Frames and values from the captures of 2026-11-04 (three battery types).
 const hex = (s: string) => Uint8Array.from(s.trim().split(/\s+/).map((b) => parseInt(b, 16)));
@@ -65,5 +75,21 @@ describe("reading", () => {
     expect(isOvesName(null)).toBe(false);
     expect(sameSerial("b0724525100136 ", "B0724525100136")).toBe(true);
     expect(sameSerial("", "")).toBe(false);
+  });
+
+  it("takes the end of the serial number from the Bluetooth name", () => {
+    expect(serialSuffixFromName("OVES BATT 100136")).toBe("100136");
+    expect(serialSuffixFromName(" OVES BATT 050006 ")).toBe("050006");
+    expect(serialSuffixFromName("OVES BATT")).toBeNull();
+    expect(serialSuffixFromName("Mi Band 123456")).toBeNull();
+  });
+
+  it("recognizes a serial number in a text field", () => {
+    expect(looksLikeSerial("B0724525100136", "100136")).toBe(true);
+    expect(looksLikeSerial("b0724525100136\0", "100136")).toBe(true);
+    expect(looksLikeSerial("B0723025050006", "100136")).toBe(false);
+    expect(looksLikeSerial("1.0.7", null)).toBe(false);
+    expect(looksLikeSerial("OVES BATT", null)).toBe(false);
+    expect(toReading({ rsoc: 50, opid: " b0724525100136 " }).serial).toBe("B0724525100136");
   });
 });

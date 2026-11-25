@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { sameSerial, type OvesReading } from "@shared/ble-oves";
-import { bleReady, readBattery, scanBatteries, stopScan, type FoundBattery } from "@/lib/ble/oves-reader";
+import { sameSerial } from "@shared/ble-oves";
+import { bleReady, readBattery, scanBatteries, stopScan, type BatteryReading, type FoundBattery } from "@/lib/ble/oves-reader";
 import { format } from "@/lib/i18n/format";
 import { isNativeApp } from "@/lib/native";
 import { useI18n } from "../i18n-provider";
@@ -13,17 +13,19 @@ const SCAN_MS = 15_000;
 /**
  * "Read by Bluetooth" in the swap form (in the app only): finds the Omnivoltaic batteries
  * around, the closest first, reads the one the staff pick and hands its charge, voltage,
- * capacity and serial number to the form (shared/ble-oves.ts). `serial` is the battery
- * number already in the form, to warn when the battery read is another one.
+ * capacity and serial number to the form (shared/ble-oves.ts). The form takes the serial
+ * number read in place of the one there (`serial`); the card says when it replaced one, or
+ * when the battery did not give it.
  */
-export function BatteryBleRead({ serial, onRead }: { serial: string; onRead: (r: OvesReading) => void }) {
+export function BatteryBleRead({ serial, onRead }: { serial: string; onRead: (r: BatteryReading) => void }) {
   const { t } = useI18n();
   const x = t.bleRead;
   const toast = useToast();
   const [scanning, setScanning] = useState(false);
   const [found, setFound] = useState<Record<string, FoundBattery>>({});
   const [reading, setReading] = useState<string | null>(null);
-  const [last, setLast] = useState<OvesReading | null>(null);
+  const [last, setLast] = useState<BatteryReading | null>(null);
+  const [replaced, setReplaced] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(
@@ -51,6 +53,7 @@ export function BatteryBleRead({ serial, onRead }: { serial: string; onRead: (r:
       }
       setFound({});
       setLast(null);
+      setReplaced(null);
       await scanBatteries((b) => setFound((f) => ({ ...f, [b.id]: b })));
       setScanning(true);
       timer.current = setTimeout(stop, SCAN_MS);
@@ -63,8 +66,9 @@ export function BatteryBleRead({ serial, onRead }: { serial: string; onRead: (r:
     await stop();
     setReading(b.id);
     try {
-      const r = await readBattery(b.id);
+      const r = await readBattery(b.id, b.name);
       setLast(r);
+      setReplaced(r.serial && serial.trim() && !sameSerial(r.serial, serial) ? serial.trim() : null);
       setFound({});
       onRead(r);
     } catch (e) {
@@ -76,7 +80,6 @@ export function BatteryBleRead({ serial, onRead }: { serial: string; onRead: (r:
   }
 
   const list = Object.values(found).sort((a, b) => (b.rssi ?? -999) - (a.rssi ?? -999));
-  const otherBattery = last?.serial && serial.trim() && !sameSerial(last.serial, serial);
 
   return (
     <Card className="space-y-2 p-3">
@@ -120,9 +123,14 @@ export function BatteryBleRead({ serial, onRead }: { serial: string; onRead: (r:
               .filter(Boolean)
               .join(" · ")}
           </p>
-          {otherBattery && (
+          {last.serial && replaced && (
             <p role="alert" className="font-medium text-amber-700 dark:text-amber-300">
-              {format(x.otherBattery, { read: last.serial!, typed: serial.trim() })}
+              {format(x.replaced, { read: last.serial, typed: replaced })}
+            </p>
+          )}
+          {!last.serial && (
+            <p role="alert" className="font-medium text-amber-700 dark:text-amber-300">
+              {last.nameSuffix ? format(x.noSerialSuffix, { end: last.nameSuffix }) : x.noSerial}
             </p>
           )}
         </div>
