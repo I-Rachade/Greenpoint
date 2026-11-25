@@ -1,0 +1,5 @@
+{
+  "messageId": "config-get-0001",
+  "action": "GetConfiguration",
+  "data": {}
+}

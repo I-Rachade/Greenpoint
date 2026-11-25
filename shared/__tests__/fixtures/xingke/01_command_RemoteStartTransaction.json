@@ -1,0 +1,10 @@
+{
+  "messageId": "start-20261013-0001",
+  "action": "RemoteStartTransaction",
+  "data": {
+    "connectorId": 1,
+    "transactionId": "20261013000000000001",
+    "startSource": "Remote",
+    "chargingMode": "AutoStop"
+  }
+}

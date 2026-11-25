@@ -1,0 +1,11 @@
+{
+  "messageId": "card-msg-0001",
+  "action": "AuthorizeResponse",
+  "data": {
+    "connectorId": 1,
+    "idTag": "0012345678",
+    "status": "Accepted",
+    "cardType": "Balance",
+    "balance": 1250
+  }
+}

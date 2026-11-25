@@ -1,0 +1,24 @@
+{
+  "messageId": "config-get-0001",
+  "deviceId": "XK16-DEMO-000001",
+  "action": "CommandResult",
+  "timestamp": "2026-10-13T02:00:00Z",
+  "data": {
+    "requestAction": "GetConfiguration",
+    "status": "Succeeded",
+    "code": "OK",
+    "message": "Device configuration received",
+    "result": {
+      "configuration": {
+        "floatChargingDuration": 5400,
+        "maxChargingDuration": 43200,
+        "statusNotificationInterval": 900,
+        "chargingStatusInterval": 900,
+        "temperatureLimit": 70,
+        "powerLimit": 500,
+        "offlineStopDuration": 3600,
+        "currentLimit": 25
+      }
+    }
+  }
+}

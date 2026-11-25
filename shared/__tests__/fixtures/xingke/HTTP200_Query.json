@@ -1,0 +1,23 @@
+{
+  "code": "OK",
+  "message": "Query successful",
+  "messageId": "start-20261013-0001",
+  "data": {
+    "action": "RemoteStartTransaction",
+    "status": "Succeeded",
+    "acceptedAt": "2026-10-13T02:00:00Z",
+    "updatedAt": "2026-10-13T02:00:01Z",
+    "result": {
+      "requestAction": "RemoteStartTransaction",
+      "status": "Succeeded",
+      "code": "OK",
+      "message": "Device reported charging start success",
+      "result": {
+        "connectorId": 1,
+        "transactionId": "20261013000000000001",
+        "vendorResult": "0",
+        "vendorCode": "00"
+      }
+    }
+  }
+}

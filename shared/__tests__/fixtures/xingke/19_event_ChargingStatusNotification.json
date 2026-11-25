@@ -1,0 +1,18 @@
+{
+  "messageId": "evt-0019",
+  "deviceId": "XK16-DEMO-000001",
+  "action": "ChargingStatusNotification",
+  "timestamp": "2026-10-13T02:00:00Z",
+  "data": {
+    "connectorId": 1,
+    "transactionId": "20261013000000000001",
+    "status": "Charging",
+    "reason": "None",
+    "vendorCode": "00",
+    "voltage": 220.35,
+    "current": 1.25,
+    "power": 260.85,
+    "energy": 1.25,
+    "duration": 1800
+  }
+}

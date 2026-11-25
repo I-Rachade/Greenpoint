@@ -1,0 +1,11 @@
+{
+  "code": "ACCEPTED",
+  "message": "Command accepted",
+  "messageId": "start-20261013-0001",
+  "data": {
+    "action": "RemoteStartTransaction",
+    "status": "Accepted",
+    "acceptedAt": "2026-10-13T02:00:00Z",
+    "updatedAt": "2026-10-13T02:00:00Z"
+  }
+}

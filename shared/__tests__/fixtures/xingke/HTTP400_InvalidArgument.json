@@ -1,0 +1,5 @@
+{
+  "code": "INVALID_ARGUMENT",
+  "message": "connectorId is required for a 16-channel device",
+  "messageId": "start-20261013-0001"
+}

@@ -1,0 +1,7 @@
+{
+  "messageId": "firmware-0001",
+  "action": "UpdateFirmware",
+  "data": {
+    "location": "https://firmware.example.com/xk16/demo-v2.1.23.bin"
+  }
+}

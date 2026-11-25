@@ -1,0 +1,7 @@
+{
+  "messageId": "reset-0001",
+  "action": "Reset",
+  "data": {
+    "type": "Soft"
+  }
+}
