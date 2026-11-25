@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { availableSlots, offersCharging, offersSwap, stockBatteries } from "@shared/availability";
+import { availableSlots, isStale, offersCharging, offersSwap, stockBatteries } from "@shared/availability";
 import { directionsUrl, formatDistance } from "@shared/geo";
 import { format } from "@/lib/i18n/format";
 import { useFavorites } from "@/lib/prefs";
@@ -181,6 +181,14 @@ export function StationCard({
             <RestBadge station={station} />
             <EvBadge station={station} />
             {station.isSolar && <SolarBadge />}
+            {station.kind !== "parcel" && isStale(station) && (
+              <span
+                title={t.station.stale}
+                className="inline-flex items-center whitespace-nowrap rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-semibold text-amber-800 dark:text-amber-300"
+              >
+                {t.stationLook.stale}
+              </span>
+            )}
             {unattended && (
               <span className="inline-flex items-center whitespace-nowrap rounded-full bg-zinc-500/15 px-2.5 py-0.5 text-xs font-semibold text-gp-muted dark:text-zinc-400">
                 {t.stationLook.unattended}

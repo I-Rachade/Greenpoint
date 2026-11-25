@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_FILTER, rankStations, type StationFilter } from "@shared/availability";
+import { DEFAULT_FILTER, nearestStationId, rankStations, type StationFilter } from "@shared/availability";
 import { allBrands } from "@shared/battery-types";
 import { useLiveQuery } from "@/lib/hooks";
 import { format } from "@/lib/i18n/format";
@@ -46,6 +46,8 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
       (!q || fold(`${station.name} ${station.address} ${station.operatorName}`).includes(q)) &&
       (!(favoritesOnly || chip === "favorites") || favorites.has(station.id)),
   );
+
+  const nearestId = position ? nearestStationId(ranked) : null;
 
   // Only the first cards are drawn; more appear as the person scrolls down.
   const listKey = `${q}|${chip}|${brand}|${favoritesOnly}`;
@@ -150,7 +152,7 @@ export function StationList({ favoritesOnly = false }: { favoritesOnly?: boolean
       <ul className="mt-2 space-y-3">
         {visible.map(({ station, distance }) => (
           <li key={station.id}>
-            <StationCard station={station} distance={distance} nearest={!!position && ranked[0]?.station.id === station.id} />
+            <StationCard station={station} distance={distance} nearest={nearestId === station.id} />
           </li>
         ))}
       </ul>
